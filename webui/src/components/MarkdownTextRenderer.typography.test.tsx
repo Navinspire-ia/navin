@@ -61,14 +61,23 @@ describe("assistant markdown typography", () => {
     expect(linked).toContain('href="https://example.com/x"');
     expect(linked).not.toContain('node="[object Object]"');
   });
+
+  it("wraps tables in their own scroll box and lets cells wrap instead of being cut", () => {
+    expect(html).toContain('<div class="markdown-table-scroll" data-testid="markdown-table-scroll"><table class="w-full">');
+    // min-w-max kept every cell on one line, so wide tables overflowed the column.
+    expect(html).not.toContain("min-w-max");
+    expect(globalsCss).toMatch(/\.markdown-content \.markdown-table-scroll \{[^}]*max-width: 100%;[^}]*overflow-x: auto;/);
+    expect(globalsCss).toMatch(/\.markdown-content :where\(th, td\) \{[^}]*overflow-wrap: break-word;/);
+    expect(globalsCss).toContain("@container thread-viewport (max-width: 40rem)");
+  });
 });
 
 describe("chat reading scale (Density preference)", () => {
   it("defines the scale on the root and a compact variant", () => {
     expect(globalsCss).toContain('[data-chat-density="comfortable"]');
     expect(globalsCss).toContain('[data-chat-density="compact"]');
-    expect(globalsCss).toMatch(/--chat-font-size:\s*14px/);
-    expect(globalsCss).toMatch(/--chat-font-size:\s*13px/);
+    expect(globalsCss).toMatch(/--chat-font-size:\s*14\.5px/);
+    expect(globalsCss).toMatch(/--chat-font-size:\s*13\.5px/);
     expect(globalsCss).toMatch(/--cjk-line-height:\s*var\(--chat-line-height\)/);
   });
 
@@ -88,5 +97,12 @@ describe("chat reading scale (Density preference)", () => {
   it("scales the user pill and the assistant column with the same variables", () => {
     expect(bubbleSource).toContain("text-[length:var(--chat-font-size)] leading-[var(--chat-line-height)]");
     expect(bubbleSource).not.toContain("text-[14px]/[1.6]");
+  });
+
+  it("names a bold-only paragraph so the answer under a journal can set it as a section title", () => {
+    const lead = renderToStaticMarkup(createElement(MarkdownTextRenderer, { highlightCode: false, children: "**What was done**\n\n**Lead:** then text." }));
+    expect(lead).toContain('<p class="md-lead"><strong>What was done</strong></p>');
+    expect(lead).toContain("<p><strong>Lead:</strong> then text.</p>");
+    expect(globalsCss).toContain('[data-agent-result="true"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead)');
   });
 });

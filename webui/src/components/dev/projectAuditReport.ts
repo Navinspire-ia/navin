@@ -1,3 +1,4 @@
+import { intlLocale } from "@/i18n/intl";
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -125,7 +126,7 @@ export function buildAuditReportHtml(
   tx: Tx,
   options: { locale: string; architectureSvg?: string | null },
 ): string {
-  const fmt = new Intl.NumberFormat(options.locale === "fr" ? "fr-FR" : "en-US");
+  const fmt = new Intl.NumberFormat(intlLocale(options.locale));
   const n = (value: number) => fmt.format(value);
   const { overview } = audit;
   const generated = new Date(audit.generated_at).toLocaleString(

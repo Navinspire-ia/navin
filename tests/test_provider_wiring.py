@@ -8,11 +8,11 @@ from __future__ import annotations
 import os
 import unittest
 
-from navin.config.schema import Config, ModelPresetConfig, ProviderConfig, ProvidersConfig
 from navin.agent.loop import AgentLoop
 from navin.config.loader import set_config_path
-from navin.providers.factory import make_provider
+from navin.config.schema import Config, ModelPresetConfig, ProviderConfig, ProvidersConfig
 from navin.optional_live import live_modules_available
+from navin.providers.factory import make_provider
 from navin.providers.registry import PROVIDERS, find_by_name
 from tests.provider_test_utils import isolated_provider_env
 

@@ -63,13 +63,8 @@ def _optional_managed_usage_hooks(config: Any) -> list[Any]:
     return [ManagedUsageHook(config)]
 
 
-from prompt_toolkit import PromptSession, print_formatted_text  # noqa: E402
-from prompt_toolkit.application import run_in_terminal  # noqa: E402
-from prompt_toolkit.formatted_text import ANSI, HTML  # noqa: E402
-from prompt_toolkit.history import FileHistory  # noqa: E402
-from prompt_toolkit.key_binding import KeyBindings  # noqa: E402
-from prompt_toolkit.keys import Keys  # noqa: E402
-from prompt_toolkit.patch_stdout import patch_stdout  # noqa: E402
+# prompt_toolkit (the line-mode chat input) and the agent loop load where they
+# are used: the terminal UI starts without them.
 from rich.console import Console  # noqa: E402
 from rich.markup import escape  # noqa: E402
 from rich.table import Table  # noqa: E402
@@ -77,8 +72,6 @@ from rich.text import Text  # noqa: E402
 
 from navin import __logo__, __version__  # noqa: E402
 from navin import optional_features as feature_support  # noqa: E402
-from navin.agent.hooks import DEFAULT_HOOK_FACTORIES  # noqa: E402
-from navin.agent.loop import AgentLoop  # noqa: E402
 from navin.bus.notify import set_notification_bus  # noqa: E402
 from navin.bus.outbound_events import (  # noqa: E402
     ProgressEvent,
@@ -259,16 +252,47 @@ def _commit_dream_changes(memory: Any) -> str | None:
     return memory.git.auto_commit(message)
 
 
-class SafeFileHistory(FileHistory):
-    """FileHistory subclass that sanitizes surrogate characters on write.
+_SAFE_FILE_HISTORY: Any = None
 
-    On Windows, special Unicode input (emoji, mixed-script) can produce
-    surrogate characters that crash prompt_toolkit's file write.
-    See issue #2846.
-    """
 
-    def store_string(self, string: str) -> None:
-        super().store_string(_sanitize_surrogates(string))
+def _safe_file_history_class() -> Any:
+    """``SafeFileHistory``, built on first use so prompt_toolkit loads lazily."""
+    global _SAFE_FILE_HISTORY
+    if _SAFE_FILE_HISTORY is None:
+        from prompt_toolkit.history import FileHistory
+
+        class SafeFileHistory(FileHistory):
+            """FileHistory subclass that sanitizes surrogate characters on write.
+
+            On Windows, special Unicode input (emoji, mixed-script) can produce
+            surrogate characters that crash prompt_toolkit's file write.
+            See issue #2846.
+            """
+
+            def store_string(self, string: str) -> None:
+                super().store_string(_sanitize_surrogates(string))
+
+        SafeFileHistory.__module__ = __name__
+        _SAFE_FILE_HISTORY = SafeFileHistory
+    return _SAFE_FILE_HISTORY
+
+
+_LAZY_ATTRIBUTES = {
+    "AgentLoop": ("navin.agent.loop", "AgentLoop"),
+    "DEFAULT_HOOK_FACTORIES": ("navin.agent.hooks", "DEFAULT_HOOK_FACTORIES"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    # Module attributes kept for callers and tests (``commands.AgentLoop``).
+    if name == "SafeFileHistory":
+        return _safe_file_history_class()
+    target = _LAZY_ATTRIBUTES.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    return getattr(importlib.import_module(target[0]), target[1])
 
 
 app = typer.Typer(
@@ -280,8 +304,6 @@ app = typer.Typer(
 
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
-_REASONING_SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
-_REASONING_FLUSH_CHARS = 60
 
 _HEARTBEAT_PREAMBLE = (
     "[Your response will be delivered directly to the user's messaging app. "
@@ -317,6 +339,17 @@ def _heartbeat_has_active_tasks(content: str) -> bool:
     return False
 
 
+def _heartbeat_notification(response: str) -> tuple[str, str | None]:
+    """Split a heartbeat report into a notification title and detail."""
+    lines = [line.strip() for line in (response or "").strip().splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return "Heartbeat", None
+    title = lines[0].strip("*# ").strip()[:160] or "Heartbeat"
+    detail = "\n".join(lines[1:]).strip() or None
+    return title, detail
+
+
 def _pick_heartbeat_target_from_sessions(
     *,
     enabled_channels: Iterable[str],
@@ -343,7 +376,7 @@ def _pick_heartbeat_target_from_sessions(
 # CLI input: prompt_toolkit for editing, paste, history, and display
 # ---------------------------------------------------------------------------
 
-_PROMPT_SESSION: PromptSession | None = None
+_PROMPT_SESSION: Any = None  # prompt_toolkit PromptSession, once created
 _SAVED_TERM_ATTRS = None  # original termios settings, restored on exit
 
 
@@ -381,7 +414,7 @@ def _restore_terminal() -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _SAVED_TERM_ATTRS)
 
 
-def _build_cli_key_bindings() -> KeyBindings:
+def _build_cli_key_bindings() -> Any:
     """Key bindings for the interactive prompt.
 
     Behaviour:
@@ -392,6 +425,9 @@ def _build_cli_key_bindings() -> KeyBindings:
       * Shift+Enter -> insert a newline on terminals that emit the CSI-u
                        (kitty / fixterms) keyboard-protocol encoding for it.
     """
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
     # prompt_toolkit does not recognize CSI-u, so register its Shift+Enter
     # sequence as a best-effort addition without overriding existing mappings.
     with suppress(Exception):
@@ -431,13 +467,15 @@ def _init_prompt_session() -> None:
 
         _SAVED_TERM_ATTRS = termios.tcgetattr(sys.stdin.fileno())
 
+    from prompt_toolkit import PromptSession
+
     from navin.config.paths import get_cli_history_path
 
     history_file = get_cli_history_path()
     history_file.parent.mkdir(parents=True, exist_ok=True)
 
     _PROMPT_SESSION = PromptSession(
-        history=SafeFileHistory(str(history_file)),
+        history=_safe_file_history_class()(str(history_file)),
         enable_open_in_editor=False,
         # Multiline-capable buffer; Enter still submits via the custom key
         # bindings, while Alt+Enter adds a newline.
@@ -492,6 +530,10 @@ def _response_renderable(content: str, render_markdown: bool, metadata: dict | N
 
 async def _print_interactive_line(text: str) -> None:
     """Print async interactive updates with prompt_toolkit-safe Rich styling."""
+    from prompt_toolkit import print_formatted_text
+    from prompt_toolkit.application import run_in_terminal
+    from prompt_toolkit.formatted_text import ANSI
+
     def _write() -> None:
         ansi = _render_interactive_ansi(
             lambda c: c.print(f"  [dim]↳ {text}[/dim]")
@@ -507,6 +549,10 @@ async def _print_interactive_response(
     metadata: dict | None = None,
 ) -> None:
     """Print async interactive replies with prompt_toolkit-safe Rich styling."""
+    from prompt_toolkit import print_formatted_text
+    from prompt_toolkit.application import run_in_terminal
+    from prompt_toolkit.formatted_text import ANSI
+
     def _write() -> None:
         content = response or ""
         ansi = _render_interactive_ansi(
@@ -530,8 +576,10 @@ def _print_cli_progress_line(text: str, thinking: ThinkingSpinner | None, render
     pause = renderer.pause_spinner() if renderer else (thinking.pause() if thinking else nullcontext())
     with pause:
         if renderer:
-            renderer.ensure_header()
+            renderer.begin_output()
         target.print(f"  ↳ {text}", style="dim", markup=False)
+    if renderer:
+        renderer.resume_spinner()
 
 
 def _print_cli_activity(
@@ -543,38 +591,55 @@ def _print_cli_activity(
     pause = renderer.pause_spinner() if renderer else (thinking.pause() if thinking else nullcontext())
     with pause:
         if renderer:
-            renderer.ensure_header()
+            renderer.begin_output()
         printer = renderer.activity if renderer else ActivityPrinter(console)
         printer.consume(tool_events=tool_events, file_edit_events=file_edit_events)
+    if renderer:
+        # One live status while the turn goes on, naming the current step.
+        renderer.resume_spinner()
 
 
 class _ReasoningBuffer:
+    """Collects a thought and reports it as one short line when it ends.
+
+    The full reasoning is not replayed line by line: the live status says
+    "Working…" while it runs, then a single ``Thought for 4s`` stays.
+    """
+
     def __init__(self) -> None:
         self._text = ""
+        self._started: float | None = None
 
     def add(self, text: str) -> str | None:
         if not text:
             return None
+        if self._started is None:
+            self._started = time.monotonic()
         self._text += text
-        if self._should_flush(text):
-            return self.flush()
         return None
 
-    def flush(self) -> str | None:
+    def seconds(self, since: float | None = None) -> float | None:
+        """How long the model thought, then forget the thought.
+
+        ``since`` is when the model call started: reasoning that arrives in
+        one piece at the end of the call still took the whole call.
+        """
+        started = self._started
         text = self._text.strip()
-        self._text = ""
-        return text or None
+        self.clear()
+        if started is None or not text:
+            return None
+        if since is not None:
+            started = min(started, since)
+        return max(1.0, time.monotonic() - started)
+
+    def flush(self) -> str | None:
+        seconds = self.seconds()
+        return None if seconds is None else f"Thought for {round(seconds)}s"
 
     def clear(self) -> None:
         self._text = ""
-
-    def _should_flush(self, text: str) -> bool:
-        stripped = text.rstrip()
-        return (
-            "\n" in text
-            or stripped.endswith(_REASONING_SENTENCE_ENDINGS)
-            or len(self._text) >= _REASONING_FLUSH_CHARS
-        )
+        self._started = None
 
 
 def _print_cli_reasoning(text: str, thinking: ThinkingSpinner | None, renderer: StreamRenderer | None = None) -> None:
@@ -585,8 +650,10 @@ def _print_cli_reasoning(text: str, thinking: ThinkingSpinner | None, renderer: 
     pause = renderer.pause_spinner() if renderer else (thinking.pause() if thinking else nullcontext())
     with pause:
         if renderer:
-            renderer.ensure_header()
+            renderer.begin_output()
         target.print(f"✻ {text}", style="dim italic", markup=False)
+    if renderer:
+        renderer.resume_spinner()
 
 
 def _flush_cli_reasoning(
@@ -594,6 +661,12 @@ def _flush_cli_reasoning(
     thinking: ThinkingSpinner | None,
     renderer: StreamRenderer | None = None,
 ) -> None:
+    if renderer is not None:
+        # Held until the next output, so back-to-back thoughts read as one.
+        seconds = reasoning_buffer.seconds(since=renderer.llm_started)
+        if seconds is not None:
+            renderer.note_thought(seconds)
+        return
     text = reasoning_buffer.flush()
     if text:
         _print_cli_reasoning(text, thinking, renderer)
@@ -605,8 +678,9 @@ async def _print_interactive_progress_line(text: str, thinking: ThinkingSpinner 
         return
     if renderer:
         with renderer.pause_spinner():
-            renderer.ensure_header()
+            renderer.begin_output()
             renderer.console.print(f"  ↳ {text}", style="dim", markup=False)
+        renderer.resume_spinner()
     else:
         with thinking.pause() if thinking else nullcontext():
             await _print_interactive_line(text)
@@ -628,14 +702,30 @@ async def _maybe_print_interactive_progress(
         return False
 
     if event.tool_events or event.file_edit_events:
-        if not channels_config or channels_config.send_tool_hints:
-            _print_cli_activity(
-                tool_events=event.tool_events, file_edit_events=event.file_edit_events,
-                thinking=thinking, renderer=renderer,
-            )
+        if reasoning_buffer is not None:
+            _flush_cli_reasoning(reasoning_buffer, thinking, renderer)
+        # Structured rows always show (like the TUI); send_tool_hints only
+        # gates the plain tool-hint text below.
+        _print_cli_activity(
+            tool_events=event.tool_events, file_edit_events=event.file_edit_events,
+            thinking=thinking, renderer=renderer,
+        )
         return True
 
     reasoning_buffer = reasoning_buffer or _ReasoningBuffer()
+
+    agent_ui = (getattr(msg, "metadata", None) or {}).get("_agent_ui")
+    if (
+        not msg.content
+        and isinstance(agent_ui, dict)
+        and agent_ui.get("kind") == "task_progress"
+    ):
+        # "Compacting context…": say it next to the spinner instead of a
+        # silent "Working…" while the summary model runs.
+        label = str((agent_ui.get("data") or {}).get("label") or "").strip()
+        if label and renderer:
+            renderer.set_status(f"Working… {label}" if label.startswith("Compacting") else label)
+        return True
 
     if event.reasoning_end:
         if channels_config and not channels_config.show_reasoning:
@@ -650,9 +740,9 @@ async def _maybe_print_interactive_progress(
         if channels_config and not channels_config.show_reasoning:
             reasoning_buffer.clear()
             return True
-        text = reasoning_buffer.add(msg.content)
-        if text:
-            _print_cli_reasoning(text, thinking, renderer)
+        reasoning_buffer.add(msg.content)
+        if renderer:
+            renderer.set_status("Working…")
         return True
     if channels_config and is_tool_hint and not channels_config.send_tool_hints:
         return True
@@ -678,6 +768,9 @@ async def _read_interactive_input_async() -> str:
     """
     if _PROMPT_SESSION is None:
         raise RuntimeError("Call _init_prompt_session() first")
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.patch_stdout import patch_stdout
+
     try:
         with patch_stdout():
             return await _PROMPT_SESSION.prompt_async(
@@ -1104,6 +1197,28 @@ def _webui_display_url(url: str) -> str:
         return url
     prefix, _ = url.split(marker, 1)
     return f"{prefix}{marker}<redacted>"
+
+
+def _ports_clear_of_other_navins(
+    config: Config, config_path: Path, port: int | None, gateway_port: int | None,
+) -> tuple[int | None, int | None]:
+    """The WebUI and gateway ports to use, moved when another Navin holds them."""
+    from navin.channels.websocket import WebSocketConfig
+    from navin.instance import ports_for_this_navin
+
+    websocket = WebSocketConfig.model_validate(getattr(config.channels, "websocket", None) or {})
+    webui = port if port is not None else websocket.port
+    gateway = gateway_port if gateway_port is not None else config.gateway.port
+    new_webui, new_gateway, reason = ports_for_this_navin(webui, gateway, config_path)
+    if not reason:
+        return port, gateway_port
+    who = "another Navin (WSL or another install)" if reason == "another_navin" else "another program"
+    console.print(
+        f"[yellow]Ports {webui}/{gateway} are used by {who}: "
+        f"this Navin uses {new_webui}/{new_gateway} (saved).[/yellow]"
+    )
+    config.gateway.port = new_gateway
+    return new_webui, new_gateway
 
 
 def _ensure_local_webui_channel(config: Config, *, port: int | None, yes: bool) -> tuple[bool, bool]:
@@ -1672,6 +1787,9 @@ def serve(
     bus = MessageBus()
     set_notification_bus(bus)
     session_manager = SessionManager(runtime_config.workspace_path)
+    from navin.agent.hooks import DEFAULT_HOOK_FACTORIES
+    from navin.agent.loop import AgentLoop
+
     try:
         agent_loop = AgentLoop.from_config(
             runtime_config, bus,
@@ -1777,6 +1895,10 @@ def webui(
         # Persist explicit desktop/standalone ports so a second launch can
         # attach to the same instance instead of starting a duplicate.
         setup_config.gateway.port = gateway_port
+    # Another Navin may hold these ports (a WSL one, whose localhost Windows
+    # shares): take the next free pair instead of attaching to it with this
+    # installation's secret. Ports held by this installation stay as they are.
+    port, gateway_port = _ports_clear_of_other_navins(setup_config, config_path, port, gateway_port)
 
     provider_error = _provider_setup_error(setup_config)
     if provider_error:
@@ -1797,15 +1919,6 @@ def webui(
     except ValueError as exc:
         console.print(f"[red]Error: invalid WebUI channel config: {exc}[/red]")
         raise typer.Exit(1) from exc
-
-    from navin.config.security_profile import ensure_webui_assisted_profile
-
-    changed_security_profile = ensure_webui_assisted_profile(setup_config)
-    if changed_security_profile:
-        console.print(
-            "[dim]Security profile: assisted "
-            "(ask before destructive shell/file ops; allow-for-session).[/dim]"
-        )
 
     from navin.webui.mcp_presets_api import ensure_auto_enabled_mcp_presets
 
@@ -1829,7 +1942,6 @@ def webui(
     if (
         created_config
         or changed_webui
-        or changed_security_profile
         or added_mcp_presets
         or workspace
         or gateway_port is not None
@@ -2005,10 +2117,16 @@ def _run_gateway(
     # voit ni npx ni uvx : compléter AVANT de démarrer quoi que ce soit, pour
     # que les serveurs MCP stdio, les presets et les prérequis de skills
     # trouvent les outils installés en user.
-    from navin.utils.path_env import augment_path_for_user_tools
+    from navin.utils.path_env import augment_path_for_user_tools, ensure_git, ensure_ripgrep
 
     augment_path_for_user_tools()
+    # Windows: install ripgrep with winget in the background when it is
+    # missing, so code search never falls back to reading every file.
+    ensure_ripgrep()
+    # Windows: same for Git for Windows (git tool, Git panel, clones).
+    ensure_git()
 
+    from navin.agent.tools.cron import CronTool
     from navin.agent.tools.message import MessageTool
     from navin.bus.queue import MessageBus
     from navin.bus.runtime_events import RuntimeEventBus
@@ -2128,6 +2246,9 @@ def _run_gateway(
     )
     trigger_store = LocalTriggerStore(config.workspace_path)
 
+    from navin.agent.hooks import DEFAULT_HOOK_FACTORIES
+    from navin.agent.loop import AgentLoop
+
     # Create agent with cron service
     agent = AgentLoop.from_config(
         config, bus,
@@ -2244,7 +2365,8 @@ def _run_gateway(
                     runtime=_dream_runtime_override(agent, config),
                 )
                 # Ground truth: the real file delta, not the LLM's self-report.
-                diff_body = store.dream_content_diff()
+                # git status walk: off the event loop (36 s seen on big repos).
+                diff_body = await asyncio.to_thread(store.dream_content_diff)
                 productive = bool(diff_body) or (
                     not store.git.is_initialized()
                     and MemoryStore.dream_run_completed(resp)
@@ -2272,10 +2394,12 @@ def _run_gateway(
                     source="dream",
                     timezone_name=config.agents.defaults.timezone,
                 )
-                sha = _commit_dream_changes(store)
+                # git status walks the whole workspace (36 s seen on a big
+                # repo): never on the event loop, or the CLI/gateway freezes.
+                sha = await asyncio.to_thread(_commit_dream_changes, store)
                 if sha:
                     logger.info("Dream commit: {}", sha)
-                store.compact_history()
+                await asyncio.to_thread(store.compact_history)
                 prune_dream_sessions(agent.sessions.sessions_dir)
             return None
 
@@ -2341,6 +2465,11 @@ def _run_gateway(
             suppress_token = None
             if isinstance(message_tool, MessageTool):
                 suppress_token = message_tool.set_suppress_delivery(True)
+            # A heartbeat turn must not add cron jobs: one per tick would pile up.
+            hb_cron_tool = agent.tools.get("cron")
+            hb_cron_token = None
+            if isinstance(hb_cron_tool, CronTool):
+                hb_cron_token = hb_cron_tool.set_cron_context(True)
             try:
                 resp = await agent.process_direct(
                     prompt,
@@ -2352,6 +2481,8 @@ def _run_gateway(
             finally:
                 if isinstance(message_tool, MessageTool) and suppress_token is not None:
                     message_tool.reset_suppress_delivery(suppress_token)
+                if isinstance(hb_cron_tool, CronTool) and hb_cron_token is not None:
+                    hb_cron_tool.reset_cron_context(hb_cron_token)
 
             # Keep a small tail of heartbeat history so the loop stays bounded.
             session = agent.sessions.get_or_create("heartbeat")
@@ -2377,6 +2508,16 @@ def _run_gateway(
 
             if should_notify:
                 logger.info("Heartbeat: completed, delivering response")
+                if channel == "websocket":
+                    # Desktop/web chats are work sessions: a background report
+                    # must never land inside one. Show it as a notification.
+                    from navin.bus.notify import publish_notification
+
+                    title, detail = _heartbeat_notification(response)
+                    publish_notification(
+                        bus, title=title, detail=detail, source="heartbeat", key="heartbeat",
+                    )
+                    return response
                 await _deliver_to_channel(
                     OutboundMessage(channel=channel, chat_id=chat_id, content=response),
                     record=True,
@@ -2492,7 +2633,9 @@ def _run_gateway(
                         method, path = parts[0], parts[1]
 
                     if method == "GET" and path == "/health":
-                        body = _json.dumps({"status": "ok"})
+                        from navin.instance import health_payload
+
+                        body = _json.dumps(health_payload())
                         status = "200 OK"
                         content_type = "application/json"
                     else:
@@ -2535,6 +2678,8 @@ def _run_gateway(
         console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
     else:
         console.print("[yellow]○[/yellow] Dream: disabled")
+        # A job left in the store from an earlier run would keep firing.
+        cron.reschedule_system_job("dream", enabled=False)
         _advance_dream_cursor_if_behind(agent.context.memory)
 
     # Register Heartbeat system job (idempotent on restart)
@@ -2549,6 +2694,8 @@ def _run_gateway(
                 max_consecutive_failures=hb_cfg.max_consecutive_failures,
             ),
         ))
+    else:
+        cron.reschedule_system_job("heartbeat", enabled=False)
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
@@ -2612,15 +2759,22 @@ def _run_gateway(
             ).start()
 
             await cron.start()
+            from navin.desk_loops import campaigns_have_work, desk_loop_armed
+
             trading_tick_inflight = False
 
             async def _trading_loop_supervisor() -> None:
                 nonlocal trading_tick_inflight
                 while True:
                     try:
-                        from navin.trading.loop import guard_tick, maybe_tick
-
                         while True:
+                            # Isolated desk: nothing is imported or ticked
+                            # until the user starts this loop.
+                            if not await asyncio.to_thread(desk_loop_armed, "trading"):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.trading.loop import guard_tick, maybe_tick
+
                             if trading_tick_inflight:
                                 await asyncio.sleep(20)
                                 continue
@@ -2650,9 +2804,14 @@ def _run_gateway(
                 nonlocal career_tick_inflight
                 while True:
                     try:
-                        from navin.career.loop import maybe_tick as career_maybe_tick
-
                         while True:
+                            # Isolated desk: nothing is imported or ticked
+                            # until the user starts this loop.
+                            if not await asyncio.to_thread(desk_loop_armed, "career"):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.career.loop import maybe_tick as career_maybe_tick
+
                             if career_tick_inflight:
                                 await asyncio.sleep(20)
                                 continue
@@ -2679,9 +2838,14 @@ def _run_gateway(
                 nonlocal marketing_tick_inflight
                 while True:
                     try:
-                        from navin.marketing.loop import maybe_tick as marketing_maybe_tick
-
                         while True:
+                            # Isolated desk: nothing is imported or ticked
+                            # until the user starts this loop.
+                            if not await asyncio.to_thread(desk_loop_armed, "marketing"):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.marketing.loop import maybe_tick as marketing_maybe_tick
+
                             if marketing_tick_inflight:
                                 await asyncio.sleep(20)
                                 continue
@@ -2708,9 +2872,14 @@ def _run_gateway(
                 nonlocal tenders_tick_inflight
                 while True:
                     try:
-                        from navin.tenders.loop import maybe_tick as tenders_maybe_tick
-
                         while True:
+                            # Isolated desk: nothing is imported or ticked
+                            # until the user starts this loop.
+                            if not await asyncio.to_thread(desk_loop_armed, "tenders"):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.tenders.loop import maybe_tick as tenders_maybe_tick
+
                             if tenders_tick_inflight:
                                 await asyncio.sleep(20)
                                 continue
@@ -2737,9 +2906,14 @@ def _run_gateway(
                 nonlocal leads_tick_inflight
                 while True:
                     try:
-                        from navin.leads.loop import maybe_tick as leads_maybe_tick
-
                         while True:
+                            # Isolated desk: nothing is imported or ticked
+                            # until the user starts this loop.
+                            if not await asyncio.to_thread(desk_loop_armed, "leads"):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.leads.loop import maybe_tick as leads_maybe_tick
+
                             if leads_tick_inflight:
                                 await asyncio.sleep(20)
                                 continue
@@ -2760,6 +2934,44 @@ def _run_gateway(
                         leads_tick_inflight = False
                         await asyncio.sleep(5)
 
+            async def _campaigns_loop_supervisor() -> None:
+                """Campaigns: send what is due (throttled) and read replies, every 20 s."""
+                while True:
+                    try:
+                        while True:
+                            # Isolated module: stays unloaded until a campaign
+                            # is scheduled, sending or awaiting replies.
+                            if not await asyncio.to_thread(campaigns_have_work):
+                                await asyncio.sleep(20)
+                                continue
+                            from navin.campaigns.dispatcher import (
+                                maybe_tick as campaigns_maybe_tick,
+                            )
+                            from navin.campaigns.wa_webhook import (
+                                ensure_server as campaigns_wa_webhook,
+                            )
+
+                            try:
+                                # WhatsApp replies arrive by webhook: keep its
+                                # small server in step with Campaigns settings.
+                                await campaigns_wa_webhook()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Campaigns WhatsApp webhook failed")
+                            try:
+                                await asyncio.to_thread(campaigns_maybe_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Campaigns loop tick failed")
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Campaigns loop supervisor crashed - restarting in 5s")
+                        await asyncio.sleep(5)
+
             async def _run_isolated_desk_loops() -> None:
                 """Career / Leads / Marketing / Tenders / Trading must not cancel the WebUI."""
                 desk_loop_tasks = [
@@ -2768,6 +2980,7 @@ def _run_gateway(
                     asyncio.create_task(_marketing_loop_supervisor(), name="navin-marketing-loop"),
                     asyncio.create_task(_tenders_loop_supervisor(), name="navin-tenders-loop"),
                     asyncio.create_task(_leads_loop_supervisor(), name="navin-leads-loop"),
+                    asyncio.create_task(_campaigns_loop_supervisor(), name="navin-campaigns-loop"),
                 ]
                 try:
                     await asyncio.gather(*desk_loop_tasks, return_exceptions=True)
@@ -3025,6 +3238,8 @@ def agent(
     cron = CronService(cron_store_path)
 
     _set_navin_logs(logs)
+    from navin.agent.hooks import DEFAULT_HOOK_FACTORIES
+    from navin.agent.loop import AgentLoop
 
     try:
         agent_loop = AgentLoop.from_config(
@@ -3053,11 +3268,22 @@ def agent(
             ch = agent_loop.channels_config
 
             if _kwargs.get("tool_events") or _kwargs.get("file_edit_events"):
-                if not ch or ch.send_tool_hints:
-                    _print_cli_activity(
-                        tool_events=_kwargs.get("tool_events"), file_edit_events=_kwargs.get("file_edit_events"),
-                        thinking=_thinking, renderer=renderer,
-                    )
+                _flush_cli_reasoning(reasoning_buffer, _thinking, renderer)
+                # Structured rows always show (like the TUI); send_tool_hints
+                # only gates the plain tool-hint text below.
+                _print_cli_activity(
+                    tool_events=_kwargs.get("tool_events"), file_edit_events=_kwargs.get("file_edit_events"),
+                    thinking=_thinking, renderer=renderer,
+                )
+                return
+
+            agent_ui = _kwargs.get("agent_ui")
+            if isinstance(agent_ui, dict) and agent_ui.get("kind") == "task_progress" and not content:
+                # Live "what is happening now" line: update the spinner in
+                # place instead of printing a row per update.
+                label = str((agent_ui.get("data") or {}).get("label") or "").strip()
+                if label and renderer:
+                    renderer.set_status(label)
                 return
 
             if _kwargs.get("reasoning_end"):
@@ -3071,9 +3297,9 @@ def agent(
                 if ch and not ch.show_reasoning:
                     reasoning_buffer.clear()
                     return
-                text = reasoning_buffer.add(content)
-                if text:
-                    _print_cli_reasoning(text, _thinking, renderer)
+                reasoning_buffer.add(content)
+                if renderer:
+                    renderer.set_status("Working…")
                 return
             if ch and tool_hint and not ch.send_tool_hints:
                 return
@@ -3165,6 +3391,7 @@ def agent(
                             if renderer:
                                 await renderer.on_end(
                                     resuming=event.resuming,
+                                    discarded=event.discarded,
                                 )
                             continue
                         if isinstance(event, StreamedResponseEvent):
@@ -4075,9 +4302,9 @@ def license_activate(
 
     console.print(f"[green]✓ Device activated[/green]  plan: [bold]{result.get('plan', '?')}[/bold]")
     if uses_managed_key(config):
-        console.print("[green]✓ Managed models ready[/green] [dim](provisioned OpenRouter key installed)[/dim]")
+        console.print("[green]✓ Managed models ready[/green] [dim](Navin gateway key installed)[/dim]")
     elif result.get("managedKey"):
-        console.print("[yellow]Managed key received but not installed (your own OpenRouter key is kept).[/yellow]")
+        console.print("[yellow]Managed key received but not installed (your own Navin provider settings are kept).[/yellow]")
     else:
         console.print("[dim]No managed models on this plan (BYOK / local models).[/dim]")
 
@@ -4131,8 +4358,14 @@ def license_deactivate():
     config.license.activation_token = ""
     config.license.device = ""
     config.license.plan = ""
+    navin_slot = getattr(config.providers, "navin", None)
+    if navin_slot is not None and config.license.managed_api_base and (
+        (navin_slot.api_base or "").rstrip("/") == config.license.managed_api_base.rstrip("/")
+    ):
+        navin_slot.api_base = ""
     config.license.managed_api_key = ""
     config.license.managed_provider = ""
+    config.license.managed_api_base = ""
     save_config(config)
     console.print("[green]✓ License removed from this device.[/green]")
 

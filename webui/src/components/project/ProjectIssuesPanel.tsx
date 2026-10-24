@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -53,13 +54,13 @@ function TokenSetupCard({
   const { t } = useTranslation();
   const env = setup.env?.[0] || forgeEnvVar(setup.forge) || "";
   return (
-    <div className="mx-auto flex max-w-[28rem] flex-col items-stretch gap-3 text-left">
+    <div className="mx-auto flex max-w-[28rem] flex-col items-stretch gap-3 text-start">
       <div className="flex items-center gap-2 text-foreground">
         <KeyRound className="h-5 w-5 opacity-70" aria-hidden />
         <p className="text-sm font-semibold">
           {t("projectHome.issues.tokenMissing", {
             host: setup.host,
-            defaultValue: "No token for {{host}}. Add it in Settings > Git.",
+            defaultValue: "No token for {{host}}. Add it in Settings > Git & GitHub.",
           })}
         </p>
       </div>
@@ -79,7 +80,7 @@ function TokenSetupCard({
             type="button"
             onClick={() => void copyTextOrNotify(`export ${env}=<token>`)}
             title={tx("projectHome.issues.copyCommand", "Copy command")}
-            className="w-full truncate text-left font-mono text-[12px] text-foreground hover:underline"
+            className="w-full truncate text-start font-mono text-[12px] text-foreground hover:underline"
           >
             {`export ${env}=<token>`}
           </button>
@@ -101,7 +102,7 @@ function GhInstallCard({
     void copyTextOrNotify(text);
   }, []);
   return (
-    <div className="mx-auto flex max-w-[28rem] flex-col items-stretch gap-3 text-left">
+    <div className="mx-auto flex max-w-[28rem] flex-col items-stretch gap-3 text-start">
       <div className="flex items-center gap-2 text-foreground">
         <Github className="h-5 w-5 opacity-70" aria-hidden />
         <p className="text-sm font-semibold">
@@ -123,7 +124,7 @@ function GhInstallCard({
           type="button"
           onClick={() => copy(install.command)}
           title={tx("projectHome.issues.copyCommand", "Copy command")}
-          className="w-full truncate text-left font-mono text-[12px] text-foreground hover:underline"
+          className="w-full truncate text-start font-mono text-[12px] text-foreground hover:underline"
         >
           {install.command}
         </button>
@@ -136,7 +137,7 @@ function GhInstallCard({
           type="button"
           onClick={() => copy(install.auth_command)}
           title={tx("projectHome.issues.copyCommand", "Copy command")}
-          className="w-full truncate text-left font-mono text-[12px] text-foreground hover:underline"
+          className="w-full truncate text-start font-mono text-[12px] text-foreground hover:underline"
         >
           {install.auth_command}
         </button>
@@ -154,7 +155,7 @@ function GhInstallCard({
               <button
                 type="button"
                 onClick={() => copy(option.command)}
-                className="w-full truncate text-left font-mono text-[11.5px] text-foreground/90 hover:underline"
+                className="w-full truncate text-start font-mono text-[11.5px] text-foreground/90 hover:underline"
               >
                 {option.command}
               </button>
@@ -180,9 +181,9 @@ function relativeDay(iso: string | null): string {
   const ts = Date.parse(iso);
   if (!Number.isFinite(ts)) return "";
   const days = Math.max(0, Math.floor((Date.now() - ts) / 86_400_000));
-  if (days === 0) return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (days === 0) return new Date(ts).toLocaleTimeString(intlLocale(), { hour: "2-digit", minute: "2-digit" });
   if (days < 30) return `${days}d`;
-  return new Date(ts).toLocaleDateString();
+  return new Date(ts).toLocaleDateString(intlLocale());
 }
 
 /**
@@ -345,7 +346,7 @@ export function ProjectIssuesPanel({
         {payload ? (
           <span className="text-[11.5px] text-muted-foreground">{issues.length}</span>
         ) : null}
-        <div className="ml-1 flex items-center gap-0.5 rounded-md border border-border/60 p-0.5">
+        <div className="ms-1 flex items-center gap-0.5 rounded-md border border-border/60 p-0.5">
           {(["open", "closed", "all"] as IssueState[]).map((option) => (
             <button
               key={option}
@@ -469,7 +470,7 @@ export function ProjectIssuesPanel({
           <p className="w-full text-[11px] text-muted-foreground">
             {tx(
               "projectHome.issues.repoHelp",
-              "Paste owner/name (read on this project's own host) or a full URL to follow another server: GitHub, GitLab or Forgejo. Leave it empty to use this project's own remote. Reading a repository needs a token for that host in Settings > Git.",
+              "Paste owner/name (read on this project's own host) or a full URL to follow another server: GitHub, GitLab or Forgejo. Leave it empty to use this project's own remote. Reading a repository needs a token for that host in Settings > Git & GitHub.",
             )}
           </p>
         </form>
@@ -511,7 +512,7 @@ export function ProjectIssuesPanel({
                     ? payload.detail ||
                       tx(
                         "projectHome.issues.unavailable",
-                        "Issues unavailable: add a token for this host in Settings > Git, then use a repository with a GitHub, GitLab or Forgejo remote, or point this panel at another repository.",
+                        "Issues unavailable: add a token for this host in Settings > Git & GitHub, then use a repository with a GitHub, GitLab or Forgejo remote, or point this panel at another repository.",
                       )
                     : tx("projectHome.issues.empty", "No issue in this state.")}
                 </p>

@@ -167,7 +167,7 @@ export function ImageLightbox({
             </>
           ) : null}
 
-          <div className="absolute right-4 top-4 flex items-center gap-2">
+          <div className="absolute end-4 top-4 flex items-center gap-2">
             <button
               type="button"
               onClick={(e) => void handleDownload(e)}
@@ -232,7 +232,7 @@ function NavButton({ side, label, onClick }: NavButtonProps) {
         "bg-black/55 text-white/90 hover:bg-black/70 hover:text-white",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
         "transition-colors motion-reduce:transition-none",
-        side === "left" ? "left-4" : "right-4",
+        side === "left" ? "start-4" : "end-4",
       )}
     >
       <Icon className="h-5 w-5" aria-hidden />

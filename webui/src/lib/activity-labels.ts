@@ -42,7 +42,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   generate_speech: label("generateSpeech", "Generated speech"),
   db_query: label("dbQuery", "Queried database"),
   git: label("git", "Checked git"),
-  spawn: label("spawn", "Started sub-agent"),
+  spawn: label("spawnAgent", "Agent"),
   notify: label("notify", "Sent notification"),
   present_artifact: label("presentArtifact", "Presented artifact"),
   open_file_preview: label("openPreview", "Opened preview"),
@@ -62,7 +62,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   lsp: label("lsp", "Checked language server"),
   lint: label("lint", "Ran linter"),
   test_run: label("testRun", "Ran tests"),
-  ask_user: label("askUser", "Asked a question"),
+  ask_user: label("asked", "Asked"),
   verify: label("verify", "Verified project"),
   list_dir: label("listDir", "Listed folder"),
   find_files: label("findFiles", "Looked up files"),
@@ -79,6 +79,9 @@ const TOOL_ACTIVITY_LABELS: Record<string, ActivityLabel> = {
 };
 
 const TOOL_ACTION_LABELS: Record<string, Record<string, ActivityLabel>> = {
+  spawn: {
+    results: label("spawnResults", "Checked sub-agents"),
+  },
   skill: {
     graph: label("skillGraph", "Ranked skills for the task"),
     find: label("skillFind", "Searched the skill catalog"),
@@ -263,6 +266,43 @@ export function spawnTargetFromArgs(args: string): string {
   for (const key of ["label", "agent", "task"]) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+/** First non-empty line of a ``spawn`` task, the row's one-line summary. */
+export function spawnTaskLineFromArgs(args: string): string {
+  const compact = args.trim();
+  if (!compact) return "";
+  try {
+    const parsed = JSON.parse(compact) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+    const task = (parsed as Record<string, unknown>).task;
+    if (typeof task !== "string") return "";
+    return task
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Who a ``spawn`` started: its label, else its agent role. */
+export function spawnNameFromArgs(args: string): string {
+  const compact = args.trim();
+  if (!compact) return "";
+  try {
+    const parsed = JSON.parse(compact) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+    const record = parsed as Record<string, unknown>;
+    for (const key of ["label", "agent"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  } catch {
+    return "";
   }
   return "";
 }

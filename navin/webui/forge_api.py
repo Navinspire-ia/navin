@@ -641,7 +641,7 @@ def token_missing_error(remote: ForgeRemote) -> ForgeError:
     """The one error users actually hit, phrased so it can be fixed."""
     envs = " / ".join(env_var_names(remote.kind, remote.host)) or "a forge token"
     return ForgeError(
-        f"No API token for {remote.host}. Add one in Settings > Git "
+        f"No API token for {remote.host}. Add one in Settings > Git & GitHub "
         f"(forge tokens) or set {envs}.",
         status=401,
         code="forge_token_missing",
@@ -749,7 +749,7 @@ def _raise_for_status(
     if status == 401:
         raise ForgeError(
             f"{remote.host} rejected the token (401). Update it in "
-            f"Settings > Git{suffix}",
+            f"Settings > Git & GitHub{suffix}",
             status=401,
             code="forge_token_invalid",
             host=remote.host,
@@ -1287,6 +1287,403 @@ def close_request(remote: ForgeRemote, token: str, number: int) -> dict[str, Any
         )
     _raise_for_status(remote, status, payload, text, action=action)
     return {"ok": True, "number": int(number), "state": "closed"}
+
+
+_REQUEST_STATES = ("open", "closed", "merged", "all")
+# GitLab says "opened"; GitHub/Forgejo have no "merged" filter (merged
+# requests are closed ones, filtered on the payload below).
+_GITLAB_REQUEST_STATES = {"open": "opened", "closed": "closed", "merged": "merged", "all": "all"}
+
+
+def list_requests(
+    remote: ForgeRemote,
+    token: str,
+    *,
+    state: str = "open",
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Pull / merge requests of ``remote``, newest first."""
+    wanted = str(state or "open").strip().lower()
+    if wanted not in _REQUEST_STATES:
+        wanted = "open"
+    count = max(1, min(int(limit or 30), 100))
+    if remote.kind == GITLAB:
+        url = f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests"
+        params: dict[str, Any] = {
+            "state": _GITLAB_REQUEST_STATES[wanted],
+            "per_page": count,
+            "order_by": "updated_at",
+            "sort": "desc",
+        }
+    elif remote.kind == GITHUB:
+        url = f"{remote.api_base}/repos/{remote.slug}/pulls"
+        params = {
+            "state": "closed" if wanted == "merged" else wanted,
+            "per_page": count,
+            "sort": "updated",
+            "direction": "desc",
+        }
+    else:
+        url = f"{remote.api_base}/repos/{remote.slug}/pulls"
+        params = {"state": "closed" if wanted == "merged" else wanted, "limit": count}
+    status, payload, text = _request("GET", url, kind=remote.kind, token=token, params=params)
+    _raise_for_status(remote, status, payload, text, action="list pull requests")
+    rows = payload if isinstance(payload, list) else []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized = normalize_pr(remote.kind, row)
+        merged, merged_at = _merged_state(remote.kind, row)
+        if wanted == "merged" and not merged:
+            continue
+        normalized["merged"] = merged
+        normalized["merged_at"] = merged_at
+        out.append(normalized)
+    return out
+
+
+MERGE_METHODS: tuple[str, ...] = ("merge", "squash", "rebase")
+
+
+def merge_request(
+    remote: ForgeRemote,
+    token: str,
+    number: int,
+    *,
+    method: str,
+    title: str = "",
+    message: str = "",
+    sha: str = "",
+) -> dict[str, Any]:
+    """Merge a pull request (GitHub, Forgejo) or merge request (GitLab).
+
+    ``method`` is required and explicit (merge / squash / rebase): picking
+    one silently is how a history policy gets broken. ``sha`` pins the head
+    the caller reviewed, so a push in between makes the merge fail instead of
+    landing unreviewed commits.
+    """
+    wanted = str(method or "").strip().lower()
+    label = REQUEST_LABELS.get(remote.kind, "pull request")
+    if wanted not in MERGE_METHODS:
+        raise ForgeError(
+            f"merge method must be one of {', '.join(MERGE_METHODS)}",
+            status=400,
+            code="forge_bad_merge_method",
+            host=remote.host,
+            forge=remote.kind,
+        )
+    clean_title = (title or "").strip()[:_MAX_TITLE]
+    clean_message = (message or "").strip()[:_MAX_BODY]
+    clean_sha = (sha or "").strip()
+    action = f"merge the {label}"
+
+    if remote.kind == GITLAB:
+        if wanted == "rebase":
+            # GitLab merges with the project's own merge method; "rebase" is
+            # a separate asynchronous call, not a merge flavour.
+            raise ForgeError(
+                "GitLab merges with the project's configured merge method; "
+                "use method=merge or method=squash",
+                status=400,
+                code="forge_bad_merge_method",
+                host=remote.host,
+                forge=remote.kind,
+            )
+        body: dict[str, Any] = {}
+        if wanted == "squash":
+            body["squash"] = True
+            if clean_message:
+                body["squash_commit_message"] = clean_message
+        elif clean_message:
+            body["merge_commit_message"] = clean_message
+        if clean_sha:
+            body["sha"] = clean_sha
+        status, payload, text = _request(
+            "PUT",
+            f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests/{int(number)}/merge",
+            kind=remote.kind,
+            token=token,
+            json_body=body,
+        )
+    elif remote.kind == GITHUB:
+        body = {"merge_method": wanted}
+        if clean_title:
+            body["commit_title"] = clean_title
+        if clean_message:
+            body["commit_message"] = clean_message
+        if clean_sha:
+            body["sha"] = clean_sha
+        status, payload, text = _request(
+            "PUT",
+            f"{remote.api_base}/repos/{remote.slug}/pulls/{int(number)}/merge",
+            kind=remote.kind,
+            token=token,
+            json_body=body,
+        )
+    else:
+        body = {"Do": wanted}
+        if clean_title:
+            body["MergeTitleField"] = clean_title
+        if clean_message:
+            body["MergeMessageField"] = clean_message
+        if clean_sha:
+            body["head_commit_id"] = clean_sha
+        status, payload, text = _request(
+            "POST",
+            f"{remote.api_base}/repos/{remote.slug}/pulls/{int(number)}/merge",
+            kind=remote.kind,
+            token=token,
+            json_body=body,
+        )
+
+    if status in (405, 406):
+        # All three answer 405 (GitLab also 406) for "not mergeable": checks
+        # pending, conflicts, a required review missing, a draft.
+        detail = redact_url_credentials(_api_message(payload, text))[:300]
+        raise ForgeError(
+            f"{label} #{int(number)} cannot be merged right now"
+            f"{': ' + detail if detail else ''} (checks, conflicts, reviews or draft state)",
+            status=409,
+            code="forge_not_mergeable",
+            host=remote.host,
+            forge=remote.kind,
+        )
+    _raise_for_status(remote, status, payload, text, action=action)
+    data = payload if isinstance(payload, dict) else {}
+    merged_sha = data.get("sha") or data.get("merge_commit_sha") or data.get("squash_commit_sha")
+    return {
+        "ok": True,
+        "number": int(number),
+        "merged": True,
+        "method": wanted,
+        "sha": merged_sha or None,
+    }
+
+
+def current_user(remote: ForgeRemote, token: str) -> dict[str, Any]:
+    """``{login, scopes}`` of the account behind ``token``. Never echoes it.
+
+    ``scopes`` is a list for GitHub classic / OAuth tokens (``X-OAuth-Scopes``)
+    and GitLab tokens (``/personal_access_tokens/self``), ``None`` where the
+    forge does not say (fine-grained GitHub tokens, Forgejo).
+    """
+    url = f"{remote.api_base}/user"
+    try:
+        response = httpx.get(
+            url,
+            headers=_headers(remote.kind, token),
+            timeout=_HTTP_TIMEOUT_S,
+            follow_redirects=False,
+        )
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        raise ForgeError(
+            f"cannot reach {remote.host}: {redact_url_credentials(str(exc))[:200]}",
+            status=502,
+            code="forge_unreachable",
+            host=remote.host,
+            forge=remote.kind,
+        ) from exc
+    text = response.text or ""
+    try:
+        payload = response.json() if text.strip() else None
+    except ValueError:
+        payload = None
+    _raise_for_status(remote, response.status_code, payload, text, action="read the signed-in account")
+    data = payload if isinstance(payload, dict) else {}
+    login = data.get("login") or data.get("username") or None
+    scopes: list[str] | None = None
+    if remote.kind == GITHUB:
+        header = response.headers.get("x-oauth-scopes")
+        if header is not None:
+            scopes = [part.strip() for part in header.split(",") if part.strip()]
+    elif remote.kind == GITLAB:
+        status, self_payload, _text = _request(
+            "GET", f"{remote.api_base}/personal_access_tokens/self", kind=remote.kind, token=token
+        )
+        if 200 <= status < 300 and isinstance(self_payload, dict):
+            raw = self_payload.get("scopes")
+            if isinstance(raw, list):
+                scopes = [str(item) for item in raw]
+    result: dict[str, Any] = {"login": str(login) if login else None, "scopes": scopes}
+    profile = _account_profile(remote.kind, data)
+    if profile:
+        result["profile"] = profile
+    return result
+
+
+def _account_profile(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """``{id, name, email}`` the forge publishes for a commit identity.
+
+    Only addresses meant to appear in commits: GitHub's public ``email``,
+    GitLab's ``commit_email`` / ``public_email`` (never the private primary
+    address), the Forgejo/Gitea account email (the forge already swaps in a
+    no-reply address when the user keeps it private). Empty fields are left
+    out, so a forge that says nothing yields ``{}``.
+    """
+    name = data.get("name") or data.get("full_name") or ""
+    if kind == GITLAB:
+        email = data.get("commit_email") or data.get("public_email") or ""
+    else:
+        email = data.get("email") or ""
+    profile: dict[str, Any] = {}
+    raw_id = data.get("id")
+    if isinstance(raw_id, int | str) and str(raw_id).strip():
+        profile["id"] = str(raw_id).strip()
+    if isinstance(name, str) and name.strip():
+        profile["name"] = name.strip()
+    if isinstance(email, str) and "@" in email:
+        profile["email"] = email.strip()
+    return profile
+
+
+# ---------------------------------------------------------------------------
+# New repositories (publish a local project)
+# ---------------------------------------------------------------------------
+
+
+_REPO_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+_REPO_TAKEN_HINTS = ("already exist", "already been taken", "has already", "name exists")
+
+
+def _split_host(host: str) -> tuple[str, int | None]:
+    """``host`` or ``host:port`` (a bare URL is accepted too)."""
+    raw = (host or "").strip()
+    if "://" in raw:
+        raw = urlsplit(raw).netloc
+    raw = raw.strip("/").rsplit("@", 1)[-1].lower()
+    name, _, port = raw.partition(":")
+    return name, int(port) if port.isdigit() else None
+
+
+def _gitlab_namespace_id(remote: ForgeRemote, token: str, namespace: str) -> int:
+    status, payload, text = _request(
+        "GET",
+        f"{remote.api_base}/namespaces/{quote(namespace, safe='')}",
+        kind=remote.kind,
+        token=token,
+    )
+    _raise_for_status(remote, status, payload, text, action=f"find the namespace {namespace}")
+    if not isinstance(payload, dict) or payload.get("id") is None:
+        raise ForgeError(
+            f"GitLab did not return an id for the namespace {namespace}",
+            status=502,
+            code="forge_http_error",
+            host=remote.host,
+            forge=remote.kind,
+        )
+    return int(payload["id"])
+
+
+def create_repo(
+    host: str,
+    token: str,
+    name: str,
+    private: bool = True,
+    description: str = "",
+    org: str | None = None,
+    *,
+    kind: str = "",
+    scheme: str = "https",
+    config: Any | None = None,
+) -> dict[str, Any]:
+    """Create an empty repository on ``host`` for the token's account or ``org``.
+
+    Private unless ``private=False``; never initialised with a README so the
+    local history pushes cleanly. Returns the web URL and both clone URLs.
+    A name that is already taken raises ``ForgeError(code="forge_repo_exists")``
+    so the caller can try one close variant and then ask.
+    """
+    host_name, port = _split_host(host)
+    if not host_name:
+        raise ValueError("host is empty")
+    repo_name = (name or "").strip()
+    if not _REPO_NAME.match(repo_name) or repo_name in (".", ".."):
+        raise ValueError(
+            f"invalid repository name {repo_name!r}: use letters, digits, '.', '_' or '-' (max 100)"
+        )
+    if not token:
+        raise ValueError("a forge token is required to create a repository")
+    namespace = (org or "").strip().strip("/")
+    flavour = (kind or "").strip().lower() or kind_from_host(host_name, config=config)
+    remote = ForgeRemote(
+        kind=flavour, host=host_name, owner=namespace or "-", repo=repo_name, scheme=scheme, port=port
+    )
+    if flavour not in FORGE_KINDS:
+        flavour = probe_kind(remote)
+        remote = remote.with_kind(flavour)
+    if flavour not in FORGE_KINDS:
+        raise ForgeError(
+            f"cannot tell which forge {host_name} runs. Set its type in Settings > Git & GitHub.",
+            status=409,
+            code="forge_unknown_kind",
+            host=host_name,
+        )
+    desc = (description or "")[:_MAX_TITLE * 2]
+
+    if flavour == GITLAB:
+        body: dict[str, Any] = {
+            "name": repo_name,
+            "path": repo_name,
+            "visibility": "private" if private else "public",
+            "description": desc,
+            "initialize_with_readme": False,
+        }
+        if namespace:
+            body["namespace_id"] = _gitlab_namespace_id(remote, token, namespace)
+        url = f"{remote.api_base}/projects"
+    else:
+        body = {"name": repo_name, "private": bool(private), "description": desc, "auto_init": False}
+        url = (
+            f"{remote.api_base}/orgs/{quote(namespace, safe='')}/repos"
+            if namespace
+            else f"{remote.api_base}/user/repos"
+        )
+
+    status, payload, text = _request("POST", url, kind=flavour, token=token, json_body=body)
+    try:
+        _raise_for_status(remote, status, payload, text, action=f"create the repository {repo_name}")
+    except ForgeError as exc:
+        lowered = f"{exc.message} {text}".lower()
+        if exc.code == "forge_rejected" and any(hint in lowered for hint in _REPO_TAKEN_HINTS):
+            raise ForgeError(
+                f"a repository named {repo_name} already exists on {host_name}",
+                status=409,
+                code="forge_repo_exists",
+                host=host_name,
+                forge=flavour,
+            ) from exc
+        raise
+    data = payload if isinstance(payload, dict) else {}
+    if flavour == GITLAB:
+        full_name = str(data.get("path_with_namespace") or "")
+        web_url = str(data.get("web_url") or "")
+        clone_url = str(data.get("http_url_to_repo") or "")
+        ssh_url = str(data.get("ssh_url_to_repo") or "")
+        is_private = str(data.get("visibility") or ("private" if private else "public")) != "public"
+    else:
+        full_name = str(data.get("full_name") or "")
+        web_url = str(data.get("html_url") or "")
+        clone_url = str(data.get("clone_url") or "")
+        ssh_url = str(data.get("ssh_url") or "")
+        is_private = bool(data.get("private", private))
+    if not full_name:
+        full_name = f"{namespace}/{repo_name}" if namespace else repo_name
+    if not web_url and "/" in full_name:
+        web_url = f"{remote.base}/{full_name}"
+    if not clone_url and web_url:
+        clone_url = f"{web_url}.git"
+    return {
+        "forge": flavour,
+        "host": host_name,
+        "name": repo_name,
+        "full_name": full_name,
+        "private": is_private,
+        "web_url": web_url,
+        "clone_url": clone_url,
+        "ssh_url": ssh_url,
+        "default_branch": str(data.get("default_branch") or "") or None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1860,3 +2257,773 @@ def failed_log_excerpt(remote: ForgeRemote, token: str, *, branch: str) -> str:
         # A log excerpt is a bonus on top of the prompt, never a blocker.
         return ""
     return redact_url_credentials(trace or "")[-_MAX_LOG_CHARS:]
+
+
+# ---------------------------------------------------------------------------
+# Review threads (PR autopilot): list, reply, resolve
+# ---------------------------------------------------------------------------
+
+
+_THREAD_BODY_CHARS = 600
+_THREAD_LAST_CHARS = 300
+_MAX_THREADS = 200
+
+
+def _compact(text: Any, limit: int) -> str:
+    """One review comment, whitespace-folded and bounded for the model."""
+    folded = re.sub(r"\s+", " ", str(text or "")).strip()
+    return folded if len(folded) <= limit else folded[: limit - 3].rstrip() + "..."
+
+
+def _github_graphql_url(remote: ForgeRemote) -> str:
+    if remote.host in ("github.com", "www.github.com"):
+        return "https://api.github.com/graphql"
+    # GitHub Enterprise Server serves GraphQL beside /api/v3.
+    return f"{remote.base}/api/graphql"
+
+
+def _github_graphql(
+    remote: ForgeRemote,
+    token: str,
+    query: str,
+    variables: dict[str, Any],
+    *,
+    action: str,
+) -> dict[str, Any]:
+    """One GraphQL call. GitHub answers 200 with ``errors`` on a bad request."""
+    status, payload, text = _request(
+        "POST",
+        _github_graphql_url(remote),
+        kind=remote.kind,
+        token=token,
+        json_body={"query": query, "variables": variables},
+    )
+    _raise_for_status(remote, status, payload, text, action=action)
+    if not isinstance(payload, dict):
+        raise ForgeError(
+            f"GitHub returned no payload while trying to {action}",
+            status=502,
+            code="forge_empty_response",
+            host=remote.host,
+            forge=remote.kind,
+        )
+    errors = payload.get("errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0] if isinstance(errors[0], dict) else {}
+        kind = str(first.get("type") or "").upper()
+        detail = redact_url_credentials(_api_message(payload, text))[:300]
+        code = "forge_token_forbidden" if kind in ("FORBIDDEN", "INSUFFICIENT_SCOPES") else "forge_rejected"
+        raise ForgeError(
+            f"GitHub refused to {action}: {detail or 'GraphQL error'}",
+            status=403 if code == "forge_token_forbidden" else 409,
+            code=code,
+            host=remote.host,
+            forge=remote.kind,
+        )
+    data = payload.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+_GITHUB_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id isResolved isOutdated path line originalLine
+          comments(first: 30) {
+            totalCount
+            nodes { databaseId author { login } body url }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _thread_row(
+    *,
+    thread_id: Any,
+    resolved: bool,
+    outdated: bool | None,
+    path: Any,
+    line: Any,
+    comments: list[dict[str, Any]],
+    url: Any,
+    comment_id: Any = None,
+) -> dict[str, Any]:
+    first = comments[0] if comments else {}
+    last = comments[-1] if comments else {}
+    row: dict[str, Any] = {
+        "id": str(thread_id),
+        "resolved": bool(resolved),
+        "outdated": outdated,
+        "path": path or None,
+        "line": line or None,
+        "author": first.get("author") or "",
+        "body": _compact(first.get("body"), _THREAD_BODY_CHARS),
+        "replies": max(len(comments) - 1, 0),
+        "url": url or first.get("url") or "",
+    }
+    if comment_id is not None:
+        row["comment_id"] = comment_id
+    if len(comments) > 1:
+        row["last_author"] = last.get("author") or ""
+        row["last_body"] = _compact(last.get("body"), _THREAD_LAST_CHARS)
+    return row
+
+
+def _github_threads(remote: ForgeRemote, token: str, number: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    after: str | None = None
+    while len(rows) < _MAX_THREADS:
+        data = _github_graphql(
+            remote,
+            token,
+            _GITHUB_THREADS_QUERY,
+            {"owner": remote.owner, "name": remote.repo, "number": int(number), "after": after},
+            action="list review threads",
+        )
+        pull = ((data.get("repository") or {}).get("pullRequest")) or {}
+        threads = pull.get("reviewThreads") or {}
+        for node in threads.get("nodes") or []:
+            if not isinstance(node, dict) or not node.get("id"):
+                continue
+            comments = [
+                {
+                    "author": ((c.get("author") or {}).get("login")) or "",
+                    "body": c.get("body") or "",
+                    "url": c.get("url") or "",
+                    "id": c.get("databaseId"),
+                }
+                for c in ((node.get("comments") or {}).get("nodes") or [])
+                if isinstance(c, dict)
+            ]
+            rows.append(
+                _thread_row(
+                    thread_id=node["id"],
+                    resolved=bool(node.get("isResolved")),
+                    outdated=bool(node.get("isOutdated")),
+                    path=node.get("path"),
+                    line=node.get("line") or node.get("originalLine"),
+                    comments=comments,
+                    url=comments[0]["url"] if comments else "",
+                    comment_id=comments[0]["id"] if comments else None,
+                )
+            )
+        page = threads.get("pageInfo") or {}
+        if not page.get("hasNextPage") or not page.get("endCursor"):
+            break
+        after = str(page["endCursor"])
+    return rows
+
+
+def _gitlab_threads(remote: ForgeRemote, token: str, number: int) -> list[dict[str, Any]]:
+    base = f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests/{int(number)}"
+    rows: list[dict[str, Any]] = []
+    for page in range(1, 4):
+        status, payload, text = _request(
+            "GET",
+            f"{base}/discussions",
+            kind=remote.kind,
+            token=token,
+            params={"per_page": 100, "page": page},
+        )
+        _raise_for_status(remote, status, payload, text, action="list merge request discussions")
+        batch = payload if isinstance(payload, list) else []
+        for discussion in batch:
+            if not isinstance(discussion, dict) or not discussion.get("id"):
+                continue
+            notes = [
+                note
+                for note in discussion.get("notes") or []
+                if isinstance(note, dict) and not note.get("system")
+            ]
+            resolvable = [note for note in notes if note.get("resolvable")]
+            # Only resolvable discussions are review threads; plain
+            # comments and system notes cannot block a merge.
+            if not resolvable:
+                continue
+            first = notes[0]
+            position = first.get("position") if isinstance(first.get("position"), dict) else {}
+            rows.append(
+                _thread_row(
+                    thread_id=discussion["id"],
+                    resolved=all(bool(note.get("resolved")) for note in resolvable),
+                    # GitLab exposes no "outdated" flag on a discussion.
+                    outdated=None,
+                    path=position.get("new_path") or position.get("old_path"),
+                    line=position.get("new_line") or position.get("old_line"),
+                    comments=[
+                        {
+                            "author": ((note.get("author") or {}).get("username")) or "",
+                            "body": note.get("body") or "",
+                        }
+                        for note in notes
+                    ],
+                    url=f"{remote.url}/-/merge_requests/{int(number)}#note_{first.get('id')}",
+                )
+            )
+        if len(batch) < 100:
+            break
+    return rows
+
+
+def _forgejo_threads(remote: ForgeRemote, token: str, number: int) -> list[dict[str, Any]]:
+    """Best effort: Forgejo has review comments but no thread object.
+
+    Each inline comment is reported as its own thread; ``resolver`` tells
+    whether someone marked the conversation resolved.
+    """
+    base = f"{remote.api_base}/repos/{remote.slug}/pulls/{int(number)}/reviews"
+    status, payload, text = _request(
+        "GET", base, kind=remote.kind, token=token, params={"limit": 50}
+    )
+    _raise_for_status(remote, status, payload, text, action="list pull request reviews")
+    rows: list[dict[str, Any]] = []
+    for review in payload if isinstance(payload, list) else []:
+        if not isinstance(review, dict) or review.get("id") is None:
+            continue
+        if review.get("comments_count") == 0:
+            continue
+        status, comments, text = _request(
+            "GET", f"{base}/{review['id']}/comments", kind=remote.kind, token=token
+        )
+        if not (200 <= status < 300) or not isinstance(comments, list):
+            continue
+        for comment in comments:
+            if not isinstance(comment, dict) or comment.get("id") is None:
+                continue
+            rows.append(
+                _thread_row(
+                    thread_id=comment["id"],
+                    resolved=bool(comment.get("resolver")),
+                    outdated=None,
+                    path=comment.get("path"),
+                    line=comment.get("position") or comment.get("original_position"),
+                    comments=[
+                        {
+                            "author": ((comment.get("user") or {}).get("login")) or "",
+                            "body": comment.get("body") or "",
+                        }
+                    ],
+                    url=comment.get("html_url") or "",
+                    comment_id=comment["id"],
+                )
+            )
+            if len(rows) >= _MAX_THREADS:
+                return rows
+    return rows
+
+
+def list_review_threads(
+    remote: ForgeRemote,
+    token: str,
+    number: int,
+    *,
+    include_resolved: bool = False,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Review threads of a request, active (unresolved) ones only by default.
+
+    ``outdated`` is ``True``/``False`` on GitHub and ``None`` where the forge
+    does not say (GitLab, Forgejo). Bodies are compacted, never complete:
+    open the ``url`` for the full conversation.
+    """
+    if remote.kind == GITLAB:
+        rows = _gitlab_threads(remote, token, number)
+    elif remote.kind == GITHUB:
+        rows = _github_threads(remote, token, number)
+    else:
+        rows = _forgejo_threads(remote, token, number)
+    unresolved = sum(1 for row in rows if not row["resolved"])
+    shown = rows if include_resolved else [row for row in rows if not row["resolved"]]
+    cap = max(1, min(int(limit or 50), _MAX_THREADS))
+    return {
+        "number": int(number),
+        "total": len(rows),
+        "unresolved": unresolved,
+        "outdated_unresolved": sum(
+            1 for row in rows if not row["resolved"] and row.get("outdated") is True
+        ),
+        "threads": shown[:cap],
+        "truncated": len(shown) > cap,
+    }
+
+
+def _empty_body_error(remote: ForgeRemote) -> ForgeError:
+    return ForgeError(
+        "refusing to post an empty reply",
+        status=400,
+        code="forge_empty_comment",
+        host=remote.host,
+        forge=remote.kind,
+    )
+
+
+def reply_review_thread(
+    remote: ForgeRemote,
+    token: str,
+    number: int,
+    thread_id: str,
+    body: str,
+) -> dict[str, Any]:
+    """Answer inside a review thread (a discussion note on GitLab).
+
+    GitHub takes the GraphQL thread id from ``list_review_threads`` or a
+    numeric review comment id. Forgejo has no thread reply endpoint, so the
+    answer becomes a PR comment that quotes the review comment it answers.
+    """
+    text_body = (body or "").strip()[:_MAX_BODY]
+    if not text_body:
+        raise _empty_body_error(remote)
+    ref = str(thread_id or "").strip()
+    if not ref:
+        raise ValueError("thread_id is required (an id from pr_threads)")
+    if remote.kind == GITLAB:
+        status, payload, text = _request(
+            "POST",
+            f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests/{int(number)}"
+            f"/discussions/{quote(ref, safe='')}/notes",
+            kind=remote.kind,
+            token=token,
+            json_body={"body": text_body},
+        )
+        _raise_for_status(remote, status, payload, text, action="reply in the discussion")
+        data = payload if isinstance(payload, dict) else {}
+        note_id = data.get("id")
+        return {
+            "ok": True,
+            "thread_id": ref,
+            "url": f"{remote.url}/-/merge_requests/{int(number)}#note_{note_id}" if note_id else "",
+        }
+    if remote.kind == GITHUB:
+        if ref.isdigit():
+            status, payload, text = _request(
+                "POST",
+                f"{remote.api_base}/repos/{remote.slug}/pulls/{int(number)}/comments/{int(ref)}/replies",
+                kind=remote.kind,
+                token=token,
+                json_body={"body": text_body},
+            )
+            _raise_for_status(remote, status, payload, text, action="reply to the review comment")
+            data = payload if isinstance(payload, dict) else {}
+            return {"ok": True, "thread_id": ref, "url": data.get("html_url") or ""}
+        data = _github_graphql(
+            remote,
+            token,
+            "mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
+            "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { url } } }",
+            {"id": ref, "body": text_body},
+            action="reply in the review thread",
+        )
+        comment = ((data.get("addPullRequestReviewThreadReply") or {}).get("comment")) or {}
+        return {"ok": True, "thread_id": ref, "url": comment.get("url") or ""}
+    quoted = f"> Re: review comment #{ref}\n\n{text_body}"
+    posted = comment_issue(remote, token, number, quoted)
+    return {
+        "ok": True,
+        "thread_id": ref,
+        "url": posted.get("url") or "",
+        "mode": "pr_comment",
+        "note": "Forgejo has no review thread reply API; posted as a PR comment quoting the thread.",
+    }
+
+
+def resolve_review_thread(
+    remote: ForgeRemote,
+    token: str,
+    number: int,
+    thread_id: str,
+    *,
+    resolved: bool = True,
+) -> dict[str, Any]:
+    """Mark a review thread resolved (or unresolved again)."""
+    ref = str(thread_id or "").strip()
+    if not ref:
+        raise ValueError("thread_id is required (an id from pr_threads)")
+    if remote.kind == GITLAB:
+        status, payload, text = _request(
+            "PUT",
+            f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests/{int(number)}"
+            f"/discussions/{quote(ref, safe='')}",
+            kind=remote.kind,
+            token=token,
+            json_body={"resolved": bool(resolved)},
+        )
+        _raise_for_status(remote, status, payload, text, action="resolve the discussion")
+        return {"ok": True, "thread_id": ref, "resolved": bool(resolved)}
+    if remote.kind == GITHUB:
+        if ref.isdigit():
+            raise ValueError(
+                "GitHub resolves a thread by its GraphQL id (PRRT_...), not a comment "
+                "number: take the id from pr_threads"
+            )
+        mutation = "resolveReviewThread" if resolved else "unresolveReviewThread"
+        data = _github_graphql(
+            remote,
+            token,
+            f"mutation($id: ID!) {{ {mutation}(input: {{threadId: $id}}) "
+            "{ thread { id isResolved } } }",
+            {"id": ref},
+            action="resolve the review thread",
+        )
+        thread = ((data.get(mutation) or {}).get("thread")) or {}
+        return {"ok": True, "thread_id": ref, "resolved": bool(thread.get("isResolved", resolved))}
+    raise ForgeError(
+        "Forgejo has no API to resolve a review conversation. Reply in the "
+        "thread and resolve it in the web UI.",
+        status=409,
+        code="forge_unsupported",
+        host=remote.host,
+        forge=remote.kind,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Failed CI job logs (PR autopilot): bounded, redacted tails
+# ---------------------------------------------------------------------------
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_DEFAULT_LOG_TAIL = 6000
+_MAX_LOG_TAIL = 20000
+_MAX_LOG_JOBS = 5
+
+
+def redact_log(text: str, *, token: str = "") -> str:
+    """Strip colour codes and anything that looks like a credential."""
+    from navin.world_model.trajectory import scrub_secrets
+
+    cleaned = _ANSI_ESCAPE.sub("", text or "")
+    if token:
+        cleaned = cleaned.replace(token, "<redacted>")
+    return scrub_secrets(redact_url_credentials(cleaned))
+
+
+def log_tail(text: str, *, max_chars: int = _DEFAULT_LOG_TAIL, token: str = "") -> tuple[str, bool]:
+    """``(tail, truncated)``: the last ``max_chars`` of a job log, redacted.
+
+    The cut lands on a line boundary, so a secret split by the cut can never
+    survive as an unrecognisable half.
+    """
+    raw = text or ""
+    cap = max(500, min(int(max_chars or _DEFAULT_LOG_TAIL), _MAX_LOG_TAIL))
+    truncated = len(raw) > cap
+    if len(raw) > cap * 2:
+        raw = raw[-cap * 2 :]
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+    cleaned = redact_log(raw, token=token)
+    if len(cleaned) > cap:
+        truncated = True
+        cleaned = cleaned[-cap:]
+        if "\n" in cleaned:
+            cleaned = cleaned.split("\n", 1)[1]
+    return cleaned, truncated
+
+
+def _github_job_log(remote: ForgeRemote, token: str, job_id: int) -> str:
+    """Text of one Actions job log. GitHub answers 302 to a signed blob URL,
+    fetched without the token so it never leaves the API host."""
+    url = f"{remote.api_base}/repos/{remote.slug}/actions/jobs/{int(job_id)}/logs"
+    try:
+        response = httpx.request(
+            "GET",
+            url,
+            headers=_headers(remote.kind, token),
+            timeout=_HTTP_TIMEOUT_S,
+            follow_redirects=False,
+        )
+        status = response.status_code
+        if status in (301, 302, 303, 307, 308):
+            headers = getattr(response, "headers", None) or {}
+            location = str(headers.get("location") or headers.get("Location") or "")
+            if not location.startswith("https://"):
+                return ""
+            blob = httpx.request(
+                "GET",
+                location,
+                headers={"User-Agent": "navin-code"},
+                timeout=_HTTP_TIMEOUT_S,
+                follow_redirects=False,
+            )
+            return (blob.text or "") if 200 <= blob.status_code < 300 else ""
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        raise ForgeError(
+            f"cannot reach {remote.host}: {redact_url_credentials(str(exc))[:200]}",
+            status=502,
+            code="forge_unreachable",
+            host=remote.host,
+            forge=remote.kind,
+        ) from exc
+    if 200 <= status < 300:
+        return response.text or ""
+    if status in (404, 410):
+        # Logs expire (90 days by default) or the job never started.
+        return ""
+    _raise_for_status(remote, status, None, response.text or "", action="read the job log")
+    return ""
+
+
+def _name_matches(name: Any, wanted: str) -> bool:
+    return not wanted or wanted.lower() in str(name or "").lower()
+
+
+def _github_failed_logs(
+    remote: ForgeRemote, token: str, ref: str, check: str, limit: int, max_chars: int
+) -> list[dict[str, Any]]:
+    status, payload, text = _request(
+        "GET",
+        f"{remote.api_base}/repos/{remote.slug}/commits/{quote(ref, safe='')}/check-runs",
+        kind=remote.kind,
+        token=token,
+        params={"per_page": 100},
+    )
+    _raise_for_status(remote, status, payload, text, action="read CI checks")
+    runs = (payload or {}).get("check_runs") if isinstance(payload, dict) else None
+    jobs: list[dict[str, Any]] = []
+    for row in runs or []:
+        if not isinstance(row, dict):
+            continue
+        state = str(row.get("conclusion") or row.get("status") or "").lower()
+        if state not in _FAILING or not _name_matches(row.get("name"), check):
+            continue
+        app = str(((row.get("app") or {}).get("slug")) or "")
+        log = ""
+        source = "check_output"
+        if app == "github-actions" and row.get("id") is not None:
+            # An Actions check run id is the job id.
+            log = _github_job_log(remote, token, int(row["id"]))
+            source = "job_log"
+        if not log:
+            output = row.get("output") if isinstance(row.get("output"), dict) else {}
+            log = "\n\n".join(
+                str(output.get(key) or "") for key in ("title", "summary", "text") if output.get(key)
+            )
+            source = "check_output" if log else "none"
+        tail, truncated = log_tail(log, max_chars=max_chars, token=token)
+        jobs.append(
+            {
+                "name": row.get("name") or "check",
+                "state": state,
+                "url": row.get("html_url") or row.get("details_url"),
+                "source": source,
+                "log": tail,
+                "truncated": truncated,
+            }
+        )
+        if len(jobs) >= limit:
+            break
+    return jobs
+
+
+def _gitlab_failed_logs(
+    remote: ForgeRemote, token: str, ref: str, check: str, limit: int, max_chars: int
+) -> list[dict[str, Any]]:
+    project = f"{remote.api_base}/projects/{_project_id(remote)}"
+    status, payload, text = _request(
+        "GET",
+        f"{project}/pipelines",
+        kind=remote.kind,
+        token=token,
+        params={"ref": ref, "per_page": 1, "order_by": "id", "sort": "desc"},
+    )
+    _raise_for_status(remote, status, payload, text, action="read pipelines")
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+        return []
+    pipeline_id = payload[0].get("id")
+    if pipeline_id is None:
+        return []
+    status, rows, text = _request(
+        "GET",
+        f"{project}/pipelines/{pipeline_id}/jobs",
+        kind=remote.kind,
+        token=token,
+        params={"scope[]": "failed", "per_page": 50},
+    )
+    _raise_for_status(remote, status, rows, text, action="read pipeline jobs")
+    jobs: list[dict[str, Any]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("id") is None:
+            continue
+        state = str(row.get("status") or "").lower()
+        if state not in _FAILING or not _name_matches(row.get("name"), check):
+            continue
+        status, _payload, trace = _request(
+            "GET", f"{project}/jobs/{row['id']}/trace", kind=remote.kind, token=token
+        )
+        log = trace if 200 <= status < 300 else ""
+        tail, truncated = log_tail(log, max_chars=max_chars, token=token)
+        jobs.append(
+            {
+                "name": row.get("name") or "job",
+                "state": state,
+                "url": row.get("web_url"),
+                "source": "job_log" if log else "none",
+                "log": tail,
+                "truncated": truncated,
+            }
+        )
+        if len(jobs) >= limit:
+            break
+    return jobs
+
+
+def ci_failed_logs(
+    remote: ForgeRemote,
+    token: str,
+    *,
+    ref: str,
+    check: str = "",
+    limit: int = 2,
+    max_chars: int = _DEFAULT_LOG_TAIL,
+) -> dict[str, Any]:
+    """Tail of each failing CI job on ``ref`` (branch or sha), redacted.
+
+    ``check`` narrows to jobs whose name contains it. GitHub reads the
+    Actions job log (or the check run output for external CI); GitLab reads
+    the job trace; Forgejo lists the failing statuses only, its Actions logs
+    have no API.
+    """
+    cap = max(1, min(int(limit or 2), _MAX_LOG_JOBS))
+    wanted = (check or "").strip()
+    if remote.kind == GITLAB:
+        jobs = _gitlab_failed_logs(remote, token, ref, wanted, cap, max_chars)
+        note = ""
+    elif remote.kind == GITHUB:
+        jobs = _github_failed_logs(remote, token, ref, wanted, cap, max_chars)
+        note = ""
+    else:
+        jobs = [
+            {
+                "name": item.get("name") or "status",
+                "state": item.get("state"),
+                "url": item.get("url"),
+                "source": "none",
+                "log": "",
+                "truncated": False,
+            }
+            for item in _forgejo_checks(remote, token, ref)
+            if str(item.get("state") or "") in _FAILING and _name_matches(item.get("name"), wanted)
+        ][:cap]
+        note = "Forgejo exposes no job log API: open the url to read the failing log."
+    result: dict[str, Any] = {"ref": ref, "failing": len(jobs), "jobs": jobs}
+    if note:
+        result["note"] = note
+    elif not jobs:
+        result["note"] = "No failing job on this ref (CI may be pending or green)."
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Base sync / mergeability (PR autopilot). The merge itself is a git action.
+# ---------------------------------------------------------------------------
+
+
+def _compare_counts(
+    remote: ForgeRemote, token: str, base: str, head: str
+) -> tuple[int | None, int | None]:
+    """``(ahead, behind)`` of ``head`` against ``base``; ``None`` when unknown."""
+    try:
+        if remote.kind == GITLAB:
+            status, payload, text = _request(
+                "GET",
+                f"{remote.api_base}/projects/{_project_id(remote)}/repository/compare",
+                kind=remote.kind,
+                token=token,
+                params={"from": base, "to": head, "straight": "false"},
+            )
+            _raise_for_status(remote, status, payload, text, action="compare branches")
+            commits = (payload or {}).get("commits") if isinstance(payload, dict) else None
+            return (len(commits) if isinstance(commits, list) else None), None
+        status, payload, text = _request(
+            "GET",
+            f"{remote.api_base}/repos/{remote.slug}/compare/"
+            f"{quote(base, safe='')}...{quote(head, safe=':')}",
+            kind=remote.kind,
+            token=token,
+        )
+        _raise_for_status(remote, status, payload, text, action="compare branches")
+    except ForgeError:
+        return None, None
+    data = payload if isinstance(payload, dict) else {}
+    if remote.kind == GITHUB:
+        ahead, behind = data.get("ahead_by"), data.get("behind_by")
+        return (
+            int(ahead) if isinstance(ahead, int) else None,
+            int(behind) if isinstance(behind, int) else None,
+        )
+    total = data.get("total_commits")
+    return (int(total) if isinstance(total, int) else None), None
+
+
+def request_sync_state(remote: ForgeRemote, token: str, number: int) -> dict[str, Any]:
+    """Behind/ahead against the base branch and the forge's mergeability.
+
+    ``mergeable`` is ``None`` while the forge is still computing it; read
+    again on the next pass rather than guessing.
+    """
+    if remote.kind == GITLAB:
+        status, payload, text = _request(
+            "GET",
+            f"{remote.api_base}/projects/{_project_id(remote)}/merge_requests/{int(number)}",
+            kind=remote.kind,
+            token=token,
+            params={"include_diverged_commits_count": "true"},
+        )
+    else:
+        status, payload, text = _request(
+            "GET",
+            f"{remote.api_base}/repos/{remote.slug}/pulls/{int(number)}",
+            kind=remote.kind,
+            token=token,
+        )
+    _raise_for_status(
+        remote, status, payload, text,
+        action=f"read the {REQUEST_LABELS.get(remote.kind, 'pull request')}",
+    )
+    data = payload if isinstance(payload, dict) else {}
+    pr = normalize_pr(remote.kind, data)
+    base, head = str(pr.get("base") or ""), str(pr.get("head") or "")
+    mergeable: bool | None
+    if remote.kind == GITLAB:
+        merge_state = str(data.get("detailed_merge_status") or data.get("merge_status") or "unknown")
+        has_conflicts = bool(data.get("has_conflicts"))
+        if merge_state in ("checking", "unchecked", "preparing", "cannot_be_merged_recheck"):
+            mergeable = None
+        else:
+            mergeable = not has_conflicts and merge_state not in ("cannot_be_merged", "conflict")
+        behind_raw = data.get("diverged_commits_count")
+        ahead, _unused = _compare_counts(remote, token, base, head) if base and head else (None, None)
+        behind = int(behind_raw) if isinstance(behind_raw, int) else None
+        head_sha = data.get("sha") or ""
+    else:
+        raw_mergeable = data.get("mergeable")
+        mergeable = raw_mergeable if isinstance(raw_mergeable, bool) else None
+        merge_state = str(data.get("mergeable_state") or ("clean" if mergeable else "unknown"))
+        has_conflicts = mergeable is False or merge_state == "dirty"
+        head_info = data.get("head") if isinstance(data.get("head"), dict) else {}
+        head_sha = str(head_info.get("sha") or "")
+        # GitHub compares against the head sha, which also works for forks.
+        compare_head = (head_sha or head) if remote.kind == GITHUB else head
+        ahead, behind = (
+            _compare_counts(remote, token, base, compare_head) if base and compare_head else (None, None)
+        )
+    return {
+        "number": int(number),
+        "url": pr.get("url"),
+        "state": pr.get("state"),
+        "is_draft": pr.get("is_draft"),
+        "head": head,
+        "base": base,
+        "head_sha": head_sha,
+        "ahead_by": ahead,
+        "behind_by": behind,
+        "mergeable": mergeable,
+        "merge_state": merge_state,
+        "has_conflicts": has_conflicts,
+        "needs_base_merge": bool(has_conflicts or (behind or 0) > 0),
+    }

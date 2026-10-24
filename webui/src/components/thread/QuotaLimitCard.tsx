@@ -1,6 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatUsagePercent, usagePercent } from "@/lib/usage-percent";
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ExternalLink, Gauge, KeyRound, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -145,7 +147,7 @@ export function quotaCardVariant(
   if (!account || loading) return "checking";
   const budget = account.usage?.budget_micro_usd ?? 0;
   if (budget <= 0) return "no-budget";
-  const usedPercent = Math.min(100, Math.max(0, account.usage?.used_percent ?? 0));
+  const usedPercent = usagePercent(account.usage);
   return usedPercent < 85 ? "desync" : "limit";
 }
 
@@ -215,10 +217,8 @@ export function QuotaLimitCard({ compact = false }: QuotaLimitCardProps = {}) {
     );
   }
 
-  const usedPercent = Math.min(
-    100,
-    Math.max(0, account?.usage?.used_percent ?? 0),
-  );
+  const usedPercent = usagePercent(account?.usage);
+  const usedPercentLabel = formatUsagePercent(usedPercent);
   const variant = quotaCardVariant(account, loading);
   const hasManagedBudget = variant !== "no-budget";
   const planLabel =
@@ -227,7 +227,7 @@ export function QuotaLimitCard({ compact = false }: QuotaLimitCardProps = {}) {
   const periodEndSec =
     account?.usage?.period_end || account?.period_end || null;
   const renewalLabel = periodEndSec
-    ? new Date(periodEndSec * 1000).toLocaleDateString(i18n.language || undefined)
+    ? new Date(periodEndSec * 1000).toLocaleDateString(intlLocale())
     : null;
 
   const siteUrl = (account?.server_url || DEFAULT_SITE_URL).replace(/\/+$/, "");
@@ -282,7 +282,7 @@ export function QuotaLimitCard({ compact = false }: QuotaLimitCardProps = {}) {
         </p>
         <p className="mt-2 text-[11px]">
           {tx("quotaLimit.monthlyUsage", "Monthly usage")}
-          {planLabel ? ` · ${planLabel}` : ""} · {usedPercent}%
+          {planLabel ? ` · ${planLabel}` : ""} · {usedPercentLabel}%
           {renewalLabel
             ? ` · ${tx("quotaLimit.renewal", "Renewal")} ${renewalLabel}`
             : ""}
@@ -348,12 +348,12 @@ export function QuotaLimitCard({ compact = false }: QuotaLimitCardProps = {}) {
                 <span className="text-foreground/80"> · {planLabel}</span>
               ) : null}
             </span>
-            <span className="font-semibold text-foreground">{usedPercent}%</span>
+            <span className="font-semibold text-foreground">{usedPercentLabel}%</span>
           </div>
           <div
             className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
             role="progressbar"
-            aria-valuenow={usedPercent}
+            aria-valuenow={Math.round(usedPercent)}
             aria-valuemin={0}
             aria-valuemax={100}
           >
@@ -483,7 +483,7 @@ export function ProviderCreditCard({
           ) : null}
           {parsed.detail ? (
             <blockquote
-              className="mt-2 border-l-2 border-border/70 pl-3 text-[12.5px] leading-relaxed text-foreground/90"
+              className="mt-2 border-s-2 border-border/70 ps-3 text-[12.5px] leading-relaxed text-foreground/90"
               data-testid="provider-credit-detail"
             >
               {parsed.detail}

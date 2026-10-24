@@ -72,6 +72,32 @@ export function firstOutputLine(text: string): string {
     .find(Boolean) ?? "";
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/**
+ * The last few non-empty lines of a result, for the one or two muted lines
+ * under an activity row. ``total`` says how many lines there were, so the row
+ * knows whether "Show more" has anything more to show.
+ */
+/** Runtime bookkeeping the row already shows (status icon, Show more). */
+const PREVIEW_NOISE_RE =
+  /^(?:exit code:\s*0|\[compacted [^\]]*\]|\[truncated[^\]]*\]|\[sandboxed:[^\]]*\]|\[ran outside the os sandbox[^\]]*\]?|stderr:|\(no output\))$/i;
+
+export function outputPreviewLines(
+  text: string | undefined | null,
+  max = 2,
+): { lines: string[]; total: number } {
+  if (!text) return { lines: [], total: 0 };
+  const all = text
+    .replace(ANSI_RE, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .filter((line) => line.trim() && !PREVIEW_NOISE_RE.test(line.trim()));
+  return { lines: all.slice(-Math.max(1, max)), total: all.length };
+}
+
 export function tailToolOutput(text: string, maxChars: number): string {
   const normalized = text.replace(/\r\n/g, "\n").trimEnd();
   if (normalized.length <= maxChars) return normalized;

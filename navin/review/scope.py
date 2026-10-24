@@ -11,6 +11,7 @@ from typing import Any
 
 from navin.review.gates import apply_file_gates
 from navin.review.rules import load_review_rules, rules_for_path
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 _WALK_SKIP_DIRS = frozenset(
@@ -38,7 +39,7 @@ _WALK_SKIP_DIRS = frozenset(
 def _run_git(root: Path, *args: str) -> tuple[int, str]:
     try:
         completed = subprocess.run(  # noqa: S603
-            ["git", "-C", str(root), *args],
+            [*(git_argv(root) or ["git", "-C", str(root)]), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",

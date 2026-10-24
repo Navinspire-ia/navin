@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { phrase } from "@/i18n/phrases";
 import { useTranslation } from "react-i18next";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -140,7 +141,7 @@ export function SkillsCatalogSettings({
       })
       .filter((skill) => {
         if (!normalized) return true;
-        return `${skill.name} ${skill.description} ${skill.unavailable_reason ?? ""} ${skillCategory(skill)}`
+        return `${skill.name} ${skill.description} ${phrase(skill.description)} ${skill.unavailable_reason ?? ""} ${skillCategory(skill)}`
           .toLowerCase()
           .includes(normalized);
       });
@@ -236,7 +237,7 @@ export function SkillsCatalogSettings({
               className="h-10 rounded-xl px-4"
               onClick={() => setInstallOpen(true)}
             >
-              <PackagePlus className="mr-1.5 h-4 w-4" aria-hidden />
+              <PackagePlus className="me-1.5 h-4 w-4" aria-hidden />
               {t("settings.skills.install", { defaultValue: "Install skill" })}
             </Button>
             <Button
@@ -244,7 +245,7 @@ export function SkillsCatalogSettings({
               className="h-10 rounded-xl px-4"
               onClick={() => setCreateOpen(true)}
             >
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden />
+              <Plus className="me-1.5 h-4 w-4" aria-hidden />
               {t("settings.skills.addCustom", { defaultValue: "Add skill" })}
             </Button>
           </div>
@@ -263,7 +264,7 @@ export function SkillsCatalogSettings({
       <section className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative min-w-0 flex-1">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
           <Input
@@ -272,7 +273,7 @@ export function SkillsCatalogSettings({
             placeholder={t("settings.skills.searchPlaceholder", {
               defaultValue: "Search skills",
             })}
-            className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+            className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5 rounded-2xl bg-muted/55 p-1">
@@ -289,7 +290,7 @@ export function SkillsCatalogSettings({
               )}
             >
               {option.label}
-              <span className="ml-1 text-[11px] opacity-70">{option.count}</span>
+              <span className="ms-1 text-[11px] opacity-70">{option.count}</span>
             </button>
           ))}
         </div>
@@ -382,7 +383,7 @@ function SkillCatalogRow({
       })}
       onClick={() => onSelect(skill)}
       className={cn(
-        "group flex min-w-0 items-center gap-3 rounded-2xl border border-border/45 bg-card/80 px-3.5 py-3.5 text-left shadow-sm transition-colors",
+        "group flex min-w-0 items-center gap-3 rounded-2xl border border-border/45 bg-card/80 px-3.5 py-3.5 text-start shadow-sm transition-colors",
         "hover:border-primary/25 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         !skill.available && "opacity-85",
       )}
@@ -410,7 +411,7 @@ function SkillCatalogRow({
           ) : null}
         </div>
         <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">
-          {skill.description}
+          {phrase(skill.description)}
         </p>
         {!skill.available && skill.unavailable_reason ? (
           <p className="mt-1.5 truncate text-[12px] font-medium leading-4 text-amber-700 dark:text-amber-300">
@@ -694,7 +695,7 @@ function CreateSkillDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(92vh,52rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-2xl">
-        <DialogHeader className="shrink-0 border-b border-border/50 px-5 py-4 text-left">
+        <DialogHeader className="shrink-0 border-b border-border/50 px-5 py-4 text-start">
           <DialogTitle>
             {t("settings.skills.createTitle", { defaultValue: "Add custom skill" })}
           </DialogTitle>
@@ -754,7 +755,7 @@ function CreateSkillDialog({
                         else if (current === 2 && step1Valid) setStep(2);
                       }}
                       className={cn(
-                        "flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-colors",
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2.5 py-1.5 text-start transition-colors",
                         active ? "bg-primary/10" : done ? "hover:bg-muted/60" : "opacity-60",
                       )}
                     >
@@ -780,7 +781,7 @@ function CreateSkillDialog({
                       </span>
                     </button>
                     {index < stepLabels.length - 1 ? (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-hidden />
+                      <ChevronRight className="rtl:-scale-x-100 h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-hidden />
                     ) : null}
                   </div>
                 );
@@ -1066,7 +1067,7 @@ function CreateSkillDialog({
                 onClick={() => setStep((value) => (value - 1) as WizardStep)}
                 disabled={saving}
               >
-                <ChevronLeft className="mr-1 h-4 w-4" aria-hidden />
+                <ChevronLeft className="rtl:-scale-x-100 me-1 h-4 w-4" aria-hidden />
                 {t("settings.skills.wizardBack", { defaultValue: "Back" })}
               </Button>
             ) : (
@@ -1079,18 +1080,18 @@ function CreateSkillDialog({
             {mode === "guided" && step === 1 ? (
               <Button type="button" onClick={() => setStep(2)} disabled={!step1Valid}>
                 {t("settings.skills.wizardNext", { defaultValue: "Next" })}
-                <ChevronRight className="ml-1 h-4 w-4" aria-hidden />
+                <ChevronRight className="rtl:-scale-x-100 ms-1 h-4 w-4" aria-hidden />
               </Button>
             ) : null}
             {mode === "guided" && step === 2 ? (
               <Button type="button" onClick={goToPreview}>
                 {t("settings.skills.wizardPreview", { defaultValue: "Preview" })}
-                <ChevronRight className="ml-1 h-4 w-4" aria-hidden />
+                <ChevronRight className="rtl:-scale-x-100 ms-1 h-4 w-4" aria-hidden />
               </Button>
             ) : null}
             {mode === "guided" && step === 3 ? (
               <Button type="button" onClick={() => void submitGuided()} disabled={saving}>
-                {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
+                {saving ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
                 {t("settings.skills.createAction", { defaultValue: "Create skill" })}
               </Button>
             ) : null}
@@ -1100,7 +1101,7 @@ function CreateSkillDialog({
                 onClick={() => void submitPaste()}
                 disabled={saving || !pasteText.trim() || !pasteParsed.hasFrontmatter || !pasteSlug}
               >
-                {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
+                {saving ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
                 {t("settings.skills.createAction", { defaultValue: "Create skill" })}
               </Button>
             ) : null}
@@ -1253,7 +1254,7 @@ function SkillDetailSheet({
         className="flex w-[min(40rem,calc(100vw-0.75rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none"
       >
         <div className="shrink-0 border-b border-border/50 bg-gradient-to-br from-primary/[0.08] via-background to-teal/10 px-5 pb-4 pt-5">
-          <div className="flex items-start gap-3 pr-8">
+          <div className="flex items-start gap-3 pe-8">
             <div
               className={cn(
                 "flex h-12 w-12 shrink-0 items-center justify-center rounded-[15px]",
@@ -1295,7 +1296,7 @@ function SkillDetailSheet({
                     if (detail) setDraft(detail.raw_markdown);
                   }}
                 >
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Pencil className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   {editing
                     ? t("settings.skills.cancelEdit", { defaultValue: "Cancel edit" })
                     : t("settings.skills.editAction", { defaultValue: "Edit SKILL.md" })}
@@ -1311,9 +1312,9 @@ function SkillDetailSheet({
                   onClick={() => setConfirmingDelete(true)}
                 >
                   {deleting ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                    <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    <Trash2 className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   )}
                   {t("settings.skills.deleteAction", { defaultValue: "Delete" })}
                 </Button>
@@ -1355,7 +1356,7 @@ function SkillDetailSheet({
                   {t("deleteConfirm.cancel", { defaultValue: "Cancel" })}
                 </Button>
                 <Button type="button" onClick={() => void saveEdit()} disabled={saving || !draft.trim()}>
-                  {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
+                  {saving ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
                   {t("settings.skills.saveAction", { defaultValue: "Save skill" })}
                 </Button>
               </div>
@@ -1367,7 +1368,7 @@ function SkillDetailSheet({
                   {t("settings.skills.descriptionTitle", { defaultValue: "Description" })}
                 </h3>
                 <p className="mt-2 text-[14px] leading-6 text-foreground/90">
-                  {activeSkill.description}
+                  {phrase(activeSkill.description)}
                 </p>
               </section>
 
@@ -1402,9 +1403,9 @@ function SkillDetailSheet({
                         onClick={() => void runSetup()}
                       >
                         {settingUp ? (
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                          <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                         ) : (
-                          <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                          <Download className="me-1.5 h-3.5 w-3.5" aria-hidden />
                         )}
                         {settingUp
                           ? t("settings.skills.setupRunning", { defaultValue: "Installing…" })

@@ -16,7 +16,6 @@ heading cannot be matched to a known bucket.
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -27,6 +26,7 @@ from navin.utils.helpers import (
     estimate_message_tokens,
     estimate_prompt_tokens,
     estimate_text_tokens,
+    json_text_by_identity,
 )
 
 #: How :meth:`ContextBuilder.build_system_prompt` joins its blocks.
@@ -115,7 +115,10 @@ def _tools_tokens_split(tools: Sequence[Mapping[str, Any]] | None) -> tuple[int,
     mcp = 0
     for tool in tools:
         try:
-            tokens = estimate_text_tokens(json.dumps(tool, ensure_ascii=False))
+            # Schemas are memoized and never mutated (see filter_tool_definitions),
+            # and token counts are remembered by content: a steady turn neither
+            # re-serializes nor re-encodes the 70-odd schemas.
+            tokens = estimate_text_tokens(json_text_by_identity(tool))
         except (TypeError, ValueError):
             tokens = estimate_text_tokens(str(tool))
         if _tool_schema_name(tool).startswith("mcp_"):
@@ -378,9 +381,11 @@ def profile_request(
     if mcp_tools:
         sections["tools.mcp"] = mcp_tools
 
+    # Hand the registry's own tools list through when it already is one: the
+    # tool-token cache is keyed on that list, a per-call copy always missed.
     total = estimate_prompt_tokens(
         [dict(m) for m in messages],
-        [dict(t) for t in tools] if tools else None,
+        (tools if isinstance(tools, list) else [dict(t) for t in tools]) if tools else None,
     )
     framing = total - sum(sections.values())
     if framing > 0:

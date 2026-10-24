@@ -17,6 +17,8 @@ interface PromptRailProps {
   bottomOffset: number;
   messages: UIMessage[];
   scrollRef: RefObject<HTMLDivElement>;
+  /** Owner's jump (keeps the thread from snapping back while following). */
+  onJump?: (promptId: string) => void;
 }
 
 interface MeasuredPrompt extends PromptAnchor {
@@ -50,6 +52,7 @@ export function PromptRail({
   bottomOffset,
   messages,
   scrollRef,
+  onJump,
 }: PromptRailProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const promptAnchors = useMemo(() => userPromptAnchors(messages), [messages]);
@@ -145,13 +148,17 @@ export function PromptRail({
             key={marker.ids.join("|")}
             type="button"
             aria-label={`Jump to prompt: ${marker.label}`}
-            onClick={() => jumpToPrompt(scrollRef.current, marker.ids[marker.ids.length - 1])}
+            onClick={() => {
+              const promptId = marker.ids[marker.ids.length - 1];
+              if (onJump) onJump(promptId);
+              else jumpToPrompt(scrollRef.current, promptId);
+            }}
             onBlur={() => setFocusedMarkerIndex(null)}
             onFocus={() => setFocusedMarkerIndex(index)}
             onPointerEnter={() => setFocusedMarkerIndex(index)}
             onPointerLeave={() => setFocusedMarkerIndex(null)}
             className={cn(
-              "group/marker absolute left-0 h-4 w-9 -translate-y-1/2 overflow-visible rounded-sm",
+              "group/marker absolute start-0 h-4 w-9 -translate-y-1/2 overflow-visible rounded-sm",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
             )}
             style={{ top: `${marker.topPercent}%` }}
@@ -160,7 +167,7 @@ export function PromptRail({
               aria-hidden
               data-testid="prompt-rail-marker"
               className={cn(
-                "absolute left-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full",
+                "absolute start-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full",
                 "transition-[width,background-color,opacity,height] duration-150",
                 railMarkerTone(hoverDistance, active),
               )}
@@ -172,15 +179,15 @@ export function PromptRail({
             <span
               aria-hidden
               className={cn(
-                "pointer-events-none absolute left-10 top-1/2 z-30 w-[34rem] max-w-[calc(100vw-4rem)] -translate-y-1/2 rounded-[20px] px-4 py-3 text-left",
+                "pointer-events-none absolute start-10 top-1/2 z-30 w-[34rem] max-w-[calc(100vw-4rem)] -translate-y-1/2 rounded-[20px] px-4 py-3 text-start",
                 "border border-border/70 bg-popover text-popover-foreground shadow-[0_18px_45px_rgba(0,0,0,0.12)]",
                 "dark:border-white/10 dark:bg-[#2f2f2f]/95 dark:text-white dark:shadow-[0_18px_45px_rgba(0,0,0,0.45)]",
-                "-translate-x-2 scale-[0.98] opacity-0 transition-[opacity,transform] duration-150",
+                "-translate-x-2 rtl:translate-x-2 scale-[0.98] opacity-0 transition-[opacity,transform] duration-150",
                 "group-hover/marker:translate-x-0 group-hover/marker:scale-100 group-hover/marker:opacity-100",
                 "group-focus-visible/marker:translate-x-0 group-focus-visible/marker:scale-100 group-focus-visible/marker:opacity-100",
               )}
             >
-              <span className="line-clamp-2 whitespace-pre-wrap break-words text-[15px] font-semibold leading-6">
+              <span className="line-clamp-2 whitespace-pre-wrap break-words text-[14.5px] font-semibold leading-6">
                 {marker.preview}
               </span>
               {marker.answerPreview ? (

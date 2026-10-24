@@ -185,7 +185,7 @@ export function FollowUpButton({
                         setOpen(false);
                         onOpen(event.id);
                       }}
-                      className="grid w-full cursor-pointer gap-0.5 rounded-lg px-2 py-1.5 text-left transition-[background-color,transform] duration-150 hover:bg-black/5 active:scale-[0.99] dark:hover:bg-white/5"
+                      className="grid w-full cursor-pointer gap-0.5 rounded-lg px-2 py-1.5 text-start transition-[background-color,transform] duration-150 hover:bg-black/5 active:scale-[0.99] dark:hover:bg-white/5"
                     >
                       <span className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
                         {followLine(event, tx)}
@@ -245,7 +245,7 @@ export function ModelRouting({ desk, tx }: { desk: TenderDesk; tx: Tx }) {
         {routed
           ? tx("modelTitle", "Each task runs on the model you routed")
           : tx("modelTitleOff", "No model routed - the desk stays on templates")}
-        {names ? <span className="ml-2 tabular-nums text-foreground">{names}</span> : null}
+        {names ? <span className="ms-2 tabular-nums text-foreground">{names}</span> : null}
       </summary>
       <div className="grid gap-2 px-3 pb-3 pt-1">
         <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
@@ -273,7 +273,7 @@ export function ModelRouting({ desk, tx }: { desk: TenderDesk; tx: Tx }) {
               </span>
               <span className="font-medium tabular-nums text-foreground">
                 {row.model || row.preset || tx("modelUnrouted", "not routed")}
-                <span className="ml-2 text-[12px] font-normal uppercase tracking-wide">
+                <span className="ms-2 text-[12px] font-normal uppercase tracking-wide">
                   {row.role}
                 </span>
               </span>
@@ -1176,7 +1176,7 @@ function NoticeCard({
         </div>
         <button
           type="button"
-          className="mt-2 block w-full text-left"
+          className="mt-2 block w-full text-start"
           onClick={() => onAction("view", row.id)}
           data-testid="tenders-notice-open"
         >
@@ -1188,7 +1188,7 @@ function NoticeCard({
               {tag}
             </span>
           ))}
-          {published ? <span className="ml-auto text-xs tabular-nums text-muted-foreground">{published}</span> : null}
+          {published ? <span className="ms-auto text-xs tabular-nums text-muted-foreground">{published}</span> : null}
         </div>
         <div className="mt-3 flex gap-3">
           <div
@@ -1232,7 +1232,7 @@ function NoticeCard({
           </button>
         </div>
       </div>
-      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-s md:border-t-0">
         <dl className="grid gap-3" data-testid="tenders-facts-row">
           {side.map((fact) => (
             <div key={fact.key} data-testid={`tenders-fact-${fact.key}`}>

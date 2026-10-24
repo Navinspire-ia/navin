@@ -54,6 +54,7 @@ class WebUIBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict) -> None:  # noqa: D401
         self._include_template_masters(build_data)
+        self._include_public_docs(build_data)
         # Independent of the webui bundle: editable installs skip Vite but
         # still need the OS command jail on Linux and macOS.
         self._ensure_sandbox_binary(version)
@@ -140,6 +141,17 @@ class WebUIBuildHook(BuildHookInterface):
                 "[templates] masters absents, non embarqués (téléchargés à la "
                 "demande) : " + ", ".join(missing)
             )
+
+    def _include_public_docs(self, build_data: dict) -> None:
+        """Ship the public user docs as navin/resources/docs: the Live voice
+        searches them offline when the user asks how Navin works."""
+        if self.target_name != "wheel":
+            return
+        src = Path(self.root) / "site" / "front" / "content" / "docs"
+        if src.is_dir():
+            build_data.setdefault("force_include", {})[str(src)] = "navin/resources/docs"
+        else:
+            self.app.display_info("[docs] site/front/content/docs absent, docs non embarquées")
 
     def _ensure_sandbox_binary(self, version: str) -> None:
         """Compile navin-sandbox for an editable source install.

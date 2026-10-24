@@ -106,7 +106,7 @@ describe("tenders KPIs", () => {
     expect(KPI_GRID_CLASS).not.toContain("gap-x-10");
     expect(KPI_GRID_CLASS).not.toContain("xl:grid-cols-5");
     expect(KPI_CELL_CLASS).toContain("min-w-0");
-    expect(KPI_VALUE_CLASS).toContain("text-left");
+    expect(KPI_VALUE_CLASS).toContain("text-start");
     expect(KPI_VALUE_CLASS).not.toContain("truncate");
   });
 });

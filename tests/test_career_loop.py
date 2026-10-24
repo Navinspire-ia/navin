@@ -24,9 +24,9 @@ from navin.career.loop import (
     stop_loop,
     update_loop_schedule,
 )
-from navin.career.watch import run_watch
 from navin.career.store import CareerStore
-from navin.loop_schedule import LoopScheduleError, SCHEDULE_KINDS
+from navin.career.watch import run_watch
+from navin.loop_schedule import SCHEDULE_KINDS, LoopScheduleError
 from navin.webui.career_api import handle_career_action
 
 ROOT = Path(__file__).resolve().parents[1]

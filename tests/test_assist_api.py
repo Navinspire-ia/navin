@@ -367,35 +367,38 @@ class EditPayloadTest(unittest.IsolatedAsyncioTestCase):
 class ModelRouteTest(unittest.TestCase):
     def test_code_route_is_preferred_over_fast(self):
         class FakeConfig:
+            model_routing_enabled = True
             model_routes = {
                 "code": "code-preset",
                 "code-fast": "code-fast-preset",
                 "fast": "haiku-preset",
             }
 
-        with patch("navin.config.loader.load_config", return_value=FakeConfig()):
+        with patch("navin.config.loader.load_config_cached", return_value=FakeConfig()):
             self.assertEqual(assist_api._assist_preset(), "code-preset")
             self.assertEqual(assist_api._fast_preset(), "code-preset")
 
     def test_code_fast_preferred_when_code_missing(self):
         class FakeConfig:
+            model_routing_enabled = True
             model_routes = {"code-fast": "code-fast-preset", "fast": "haiku-preset"}
 
-        with patch("navin.config.loader.load_config", return_value=FakeConfig()):
+        with patch("navin.config.loader.load_config_cached", return_value=FakeConfig()):
             self.assertEqual(assist_api._assist_preset(), "code-fast-preset")
 
     def test_fast_route_is_used_when_code_routes_missing(self):
         class FakeConfig:
+            model_routing_enabled = True
             model_routes = {"fast": "haiku-preset"}
 
-        with patch("navin.config.loader.load_config", return_value=FakeConfig()):
+        with patch("navin.config.loader.load_config_cached", return_value=FakeConfig()):
             self.assertEqual(assist_api._fast_preset(), "haiku-preset")
 
     def test_no_route_falls_back_to_the_default_preset(self):
         class FakeConfig:
             model_routes: dict[str, str] = {}
 
-        with patch("navin.config.loader.load_config", return_value=FakeConfig()):
+        with patch("navin.config.loader.load_config_cached", return_value=FakeConfig()):
             self.assertIsNone(assist_api._fast_preset())
 
     def test_broken_config_does_not_raise(self):

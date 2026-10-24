@@ -117,12 +117,12 @@ export function FacetSearchChip({
         aria-label={label}
         onClick={() => setOpen((value) => !value)}
         className={cn(
-          "inline-flex h-[34px] min-w-[118px] max-w-[16rem] shrink-0 cursor-pointer items-center gap-2 rounded-full border bg-background pl-3.5 pr-3 text-[13px] transition-colors duration-150",
+          "inline-flex h-[34px] min-w-[118px] max-w-[16rem] shrink-0 cursor-pointer items-center gap-2 rounded-full border bg-background ps-3.5 pe-3 text-[13px] transition-colors duration-150",
           active ? cn("font-semibold", activeClass) : "border-black/20 font-medium hover:bg-muted/50 dark:border-white/20",
         )}
         data-testid={testId}
       >
-        <span className="min-w-0 flex-1 truncate text-left">{summary}</span>
+        <span className="min-w-0 flex-1 truncate text-start">{summary}</span>
         <Icon iconName="ChevronDown" className="text-[10px]" aria-hidden />
       </button>
       {open ? (
@@ -153,7 +153,7 @@ export function FacetSearchChip({
               id={listId}
               role="listbox"
               aria-multiselectable
-              className="mt-2 max-h-72 overflow-y-auto overscroll-contain pr-1.5 [scrollbar-gutter:stable]"
+              className="mt-2 max-h-72 overflow-y-auto overscroll-contain pe-1.5 [scrollbar-gutter:stable]"
               data-menu-scroll=""
             >
               {visible.length ? (

@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { HighlightedOutput, RunOutputFooter } from "@/components/thread/activity/HighlightedOutput";
 import { formatEta } from "@/components/thread/activity/TaskProgressBar";
+import { openInspector } from "@/lib/activity-inspector";
+import { hasRunOutputNote, tidyRunOutput } from "@/lib/ansi";
+import { parseTestReport } from "@/lib/test-report";
 import { cn } from "@/lib/utils";
 
 export type ShellRunStatus = "running" | "done" | "error";
@@ -72,8 +76,8 @@ export function SandboxBadge({
       data-testid="activity-sandbox-badge"
       data-sandbox={lifted ? "lifted" : sandbox}
       className={cn(
-        "inline-flex h-[17px] shrink-0 items-center gap-1 rounded-[5px] border px-1.5 align-middle",
-        "text-[10.5px] font-medium leading-none tracking-[0.01em] antialiased",
+        "inline-flex h-[19px] shrink-0 items-center gap-1 rounded-[5px] border px-1.5 align-middle",
+        "text-[12px] font-medium leading-none tracking-[0.01em] antialiased",
         lifted
           ? "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
           : "border-border/70 bg-muted/60 text-muted-foreground",
@@ -85,15 +89,6 @@ export function SandboxBadge({
       {compact ? null : <span>{label}</span>}
     </span>
   );
-}
-
-const OUTPUT_TAIL_CHARS = 16_000;
-
-function tailChars(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const tail = text.slice(-max);
-  const firstBreak = tail.indexOf("\n");
-  return `…${firstBreak >= 0 ? tail.slice(firstBreak) : tail}`;
 }
 
 function formatDuration(ms: number): string {
@@ -120,9 +115,13 @@ function commandPreview(command: string): { first: string; extraLines: number } 
 export function ShellRunCard({
   run,
   active,
+  hideCommand = false,
 }: {
   run: ShellRunSummary;
   active: boolean;
+  /** Under a journal row that already names the command: no header line,
+   *  only the full script (when it spans lines) and the output. */
+  hideCommand?: boolean;
 }) {
   const { t } = useTranslation();
   const running = active && run.status === "running";
@@ -146,10 +145,11 @@ export function ShellRunCard({
       : undefined;
 
   const rawOutput = (failed ? run.error || run.output : run.output) ?? "";
-  const output = useMemo(
-    () => tailChars(rawOutput.replace(/\r\n/g, "\n").trimEnd(), OUTPUT_TAIL_CHARS),
-    [rawOutput],
-  );
+  // What the command printed; the runtime's "Exit code" / "[compacted ...]"
+  // lines become the footer instead of reading as output.
+  const tidy = useMemo(() => tidyRunOutput(rawOutput), [rawOutput]);
+  const output = tidy.body;
+  const hasNote = hasRunOutputNote(tidy);
 
   useEffect(() => {
     const el = outputRef.current;
@@ -158,8 +158,47 @@ export function ShellRunCard({
   }, [output, expanded]);
 
   const { first, extraLines } = useMemo(() => commandPreview(run.command), [run.command]);
-  const hasBody = output.length > 0 || running;
+  const hasBody = output.length > 0 || running || hasNote;
   const etaLabel = formatEta(run.etaSeconds);
+
+  if (hideCommand) {
+    return (
+      <div
+        className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-[#101318] shadow-sm"
+        data-testid="activity-shell-run"
+        data-variant="body"
+      >
+        {extraLines > 0 ? (
+          <pre dir="ltr"
+            className="max-h-48 overflow-auto whitespace-pre-wrap break-words border-b border-white/10 px-2.5 py-2 font-mono text-[13px] leading-[1.55] text-slate-400/90"
+            data-testid="activity-shell-script"
+          >
+            {run.command}
+          </pre>
+        ) : null}
+        {output ? (
+          <pre dir="ltr"
+            ref={outputRef}
+            className="max-h-[26rem] overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[13px] leading-[1.55] text-slate-200/90 scrollbar-thin scrollbar-track-transparent"
+          >
+            <HighlightedOutput text={output} />
+          </pre>
+        ) : hasNote ? null : (
+          <p className="px-2.5 py-2 font-mono text-[13px] text-slate-400/80">
+            {running ? (
+              <span className="animate-pulse">
+                {t("message.shellOutputPending", { defaultValue: "Command running…" })}
+              </span>
+            ) : (
+              t("message.shellRunNoOutput", { defaultValue: "No output" })
+            )}
+          </p>
+        )}
+        <RunOutputFooter run={tidy} />
+        {!running ? <InspectButton run={run} durationMs={durationMs} /> : null}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -171,7 +210,7 @@ export function ShellRunCard({
       <button
         type="button"
         onClick={() => setExpanded((open) => !open)}
-        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
+        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-start transition-colors hover:bg-muted/40"
         title={run.command}
         aria-expanded={expanded}
       >
@@ -180,13 +219,13 @@ export function ShellRunCard({
           aria-hidden
         />
         <SandboxBadge sandbox={run.sandbox} lifted={run.sandboxLifted} />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground/90">
+        <span dir="ltr" className="min-w-0 flex-1 truncate text-start font-mono text-[14px] text-foreground/90">
           {first}
           {extraLines > 0 ? (
             <span className="text-muted-foreground/55"> +{extraLines}</span>
           ) : null}
         </span>
-        <span className="flex shrink-0 items-center gap-1.5 text-[10.5px] text-muted-foreground/70">
+        <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground/70">
           {running ? (
             <>
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -224,24 +263,58 @@ export function ShellRunCard({
       {hasBody ? (
         <div className="border-t border-border/50 bg-[#101318]">
           {output ? (
-            <pre
+            <pre dir="ltr"
               ref={outputRef}
               className={cn(
-                "overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[12px] leading-[1.55] text-slate-200/90 scrollbar-thin scrollbar-track-transparent",
+                "overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[14px] leading-[1.55] text-slate-200/90 scrollbar-thin scrollbar-track-transparent",
                 expanded ? "max-h-[26rem]" : "max-h-36",
               )}
             >
-              {output}
+              <HighlightedOutput text={output} />
             </pre>
-          ) : (
-            <p className="px-2.5 py-2 font-mono text-[12px] text-slate-400/80">
+          ) : running ? (
+            <p className="px-2.5 py-2 font-mono text-[14px] text-slate-400/80">
               <span className="animate-pulse">
                 {t("message.shellOutputPending", { defaultValue: "Command running…" })}
               </span>
             </p>
-          )}
+          ) : null}
+          <RunOutputFooter run={tidy} />
+          {!running ? <InspectButton run={run} durationMs={durationMs} /> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function InspectButton({ run, durationMs }: { run: ShellRunSummary; durationMs?: number }) {
+  const { t } = useTranslation();
+  const report = parseTestReport(run.output ?? run.error ?? "");
+  return (
+    <div className="flex justify-end border-t border-white/10 px-2 py-1">
+      <button
+        type="button"
+        data-testid="activity-shell-inspect"
+        onClick={() =>
+          openInspector({
+            kind: "command",
+            id: run.key,
+            command: run.command,
+            output: [run.output, run.error].filter(Boolean).join("\n"),
+            status: run.status === "error" ? "error" : run.status === "running" ? "running" : "done",
+            durationMs,
+          })
+        }
+        className="rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100"
+      >
+        {report
+          ? t("inspector.openTests", {
+              passed: report.passed,
+              failed: report.failed,
+              defaultValue: "Test report ({{passed}} ok, {{failed}} failed)",
+            })
+          : t("inspector.open", { defaultValue: "Inspect" })}
+      </button>
     </div>
   );
 }

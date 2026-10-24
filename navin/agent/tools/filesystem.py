@@ -20,8 +20,10 @@ from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.file_state import FileStates, _hash_content, current_file_states
 from navin.agent.tools.path_utils import closest_existing_match, resolve_workspace_path
 from navin.agent.tools.schema import (
+    ArraySchema,
     BooleanSchema,
     IntegerSchema,
+    ObjectSchema,
     StringSchema,
     tool_parameters_schema,
 )
@@ -230,6 +232,31 @@ class _FsTool(Tool):
             lint_after_edit=ctx.config.file.lint_after_edit,
         )
 
+    async def _with_verify(self, message: str, paths: list[Path]) -> str:
+        """Run ``verify action=check`` on what was just written, in the same call.
+
+        Writing then verifying used to be two model round trips (5-15s each);
+        a measured app build called verify 13 times. The verdict is recorded
+        exactly as a separate verify call records it, so completion gates see
+        the same evidence.
+        """
+        from navin.agent.tools.quality import VerifyTool
+
+        verifier = VerifyTool(workspace=self._workspace, allowed_dir=self._allowed_dir)
+        root = Path(self._workspace).expanduser().resolve(strict=False) if self._workspace else None
+        rel: list[str] = []
+        for path in paths:
+            try:
+                rel.append(str(path.resolve(strict=False).relative_to(root)) if root else str(path))
+            except ValueError:
+                rel.append(str(path))
+        try:
+            verdict = await verifier.execute(action="check", paths=rel)
+        except Exception as exc:  # the write succeeded; a failed check is reported, not raised
+            return f"{message}\n\nVerify: could not run ({exc})"
+        text = verdict if isinstance(verdict, str) else str(getattr(verdict, "content", verdict))
+        return f"{message}\n\nVerify:\n{text}"
+
     async def _with_diagnostics(self, message: str, paths: list[Path]) -> str:
         """Append what the linters say about ``paths``, when there is anything.
 
@@ -382,6 +409,11 @@ class _FsTool(Tool):
             except OSError:
                 names = []
             close = difflib.get_close_matches(resolved.name, names, n=3, cutoff=0.5)
+            # A wrong case ("sidebar" for "Sidebar.tsx") is the commonest miss
+            # on a case-sensitive disk: put the same-name entries first.
+            wanted = resolved.name.lower()
+            same = [n for n in names if n.lower() == wanted or n.lower().split(".", 1)[0] == wanted]
+            close = (same + [c for c in close if c not in same])[:3]
             if close:
                 parts.append(
                     "Did you mean: " + ", ".join(self._display(parent / c) for c in close) + "?",
@@ -501,7 +533,25 @@ def _builtin_skill_read_path(path: str) -> Path | None:
             description="Bypass same-file read deduplication and return content again.",
             default=False,
         ),
-        required=["path"],
+        files=ArraySchema(
+            ObjectSchema(
+                {
+                    "path": StringSchema("The file path to read"),
+                    "offset": IntegerSchema(1, description="First line, 1-indexed (default 1)", minimum=1),
+                    "limit": IntegerSchema(2000, description="Maximum number of lines", minimum=1),
+                },
+                required=["path"],
+                additional_properties=False,
+            ),
+            description=(
+                "Several files in ONE call (instead of path): each item is "
+                "{path, offset?, limit?}. Each file comes back under its own "
+                "heading. Text files only; read an image or a document on its own."
+            ),
+            min_items=1,
+            max_items=10,
+            nullable=True,
+        ),
     )
 )
 class ReadFileTool(_FsTool):
@@ -516,6 +566,12 @@ class ReadFileTool(_FsTool):
     # files are held in check by the per-line cap, not by a small window.
     _DEFAULT_LIMIT = 1000
     _LARGE_FILE_LINES = 1000
+    # A whole read of a file past this many lines, right after a search gave
+    # the lines that matter in it, gets a note pointing at those lines.
+    _BLIND_READ_LINES = 300
+    # A whole-file read past this size is re-sent on every later model call;
+    # most questions need one function of it, found with an outline or grep.
+    _LARGE_READ_CHARS = 40_000
     # A line longer than this is cut: it is a minified bundle, a data blob or
     # a base64 payload, never something the model needs whole.
     _MAX_LINE_CHARS = 2000
@@ -540,7 +596,9 @@ class ReadFileTool(_FsTool):
             "Default window is 1000 lines - pass offset and limit for larger files. "
             "Lines over 2000 chars are cut. "
             "Use force=true to re-read content even if unchanged. "
-            "Reads exceeding ~128K chars are truncated."
+            "Reads exceeding ~128K chars are truncated. "
+            "Several files to look at: pass them all in `files` in ONE call, "
+            "never one call per file."
         )
 
     @property
@@ -554,6 +612,9 @@ class ReadFileTool(_FsTool):
         omitted = len(line) - cls._MAX_LINE_CHARS
         return line[: cls._MAX_LINE_CHARS] + f" (line truncated, {omitted} chars omitted)"
 
+    _MAX_BATCH_FILES = 10
+    _MAX_BATCH_CHARS = 128_000
+
     async def execute(
         self,
         path: str | None = None,
@@ -561,7 +622,54 @@ class ReadFileTool(_FsTool):
         limit: int | None = None,
         pages: str | None = None,
         force: bool = False,
+        files: list[dict[str, Any]] | None = None,
         **kwargs: Any,
+    ) -> Any:
+        if files:
+            if path:
+                return ToolResult.error("Error: pass either path or files, not both.")
+            return await self._read_many(files, force)
+        return await self._read_once(path, offset, limit, pages, force)
+
+    async def _read_many(self, files: list[dict[str, Any]], force: bool) -> Any:
+        """Read several text files in one call, each under its own heading."""
+        if len(files) > self._MAX_BATCH_FILES:
+            return ToolResult.error(f"Error: at most {self._MAX_BATCH_FILES} files per call.")
+        sections: list[str] = []
+        total = 0
+        succeeded = 0
+        for number, item in enumerate(files, start=1):
+            target = item.get("path") if isinstance(item, dict) else None
+            if not target:
+                sections.append(f"=== file {number}: missing path ===")
+                continue
+            try:
+                first = int(item.get("offset") or 1)
+            except (TypeError, ValueError):
+                first = 1
+            result = await self._read_once(str(target), first, item.get("limit"), None, force)
+            if isinstance(result, str):
+                text = str(result)
+                failed = bool(getattr(result, "is_error", False))
+            else:
+                text = "(visual content is not shown in a batch: read this file on its own)"
+                failed = True
+            room = self._MAX_BATCH_CHARS - total
+            if len(text) > room:
+                text = text[: max(room, 0)] + "\n(batch size limit reached: read this file on its own)"
+            sections.append(f"=== {target} ===\n{text}")
+            total += len(text)
+            succeeded += 0 if failed else 1
+        body = "\n\n".join(sections)
+        return ToolResult(body) if succeeded else ToolResult.error(body)
+
+    async def _read_once(
+        self,
+        path: str | None = None,
+        offset: int = 1,
+        limit: int | None = None,
+        pages: str | None = None,
+        force: bool = False,
     ) -> Any:
         try:
             if not path:
@@ -706,6 +814,21 @@ class ReadFileTool(_FsTool):
                 result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
             else:
                 result += f"\n\n(End of file - {total} lines total)"
+            if limit is None and not large_hint and len(result) > self._LARGE_READ_CHARS:
+                result += (
+                    f"\n(Large read: about {len(result) // 1000}k characters, carried in every "
+                    "later call. For the next file of this size, locate the part you need with "
+                    "code_index action=outline or grep, then read only that range with "
+                    "offset and limit.)"
+                )
+            hit_lines = self._file_states.take_search_hits(fp)
+            if hit_lines and limit is None and offset <= 1 and total > self._BLIND_READ_LINES:
+                shown_lines = ", ".join(str(line) for line in hit_lines[:8])
+                result += (
+                    f"\n(A search in this session already located lines {shown_lines} of this "
+                    f"file. When a search gives the line, read around it, for example "
+                    f"offset={max(1, hit_lines[0] - 20)} limit=80, instead of the whole file.)"
+                )
             self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
             return result + scoped_project_instructions(self._display_workspace(), fp)
         except PermissionError as e:
@@ -842,9 +965,27 @@ class ReadFileTool(_FsTool):
 
 @tool_parameters(
     tool_parameters_schema(
-        path=StringSchema("The file path to write to"),
-        content=StringSchema("The content to write"),
-        required=["path", "content"],
+        path=StringSchema("The file path to write to (single file)"),
+        content=StringSchema("The content to write (single file)"),
+        files=ArraySchema(
+            ObjectSchema(
+                {
+                    "path": StringSchema("File path"),
+                    "content": StringSchema("Full file content"),
+                },
+                required=["path", "content"],
+            ),
+            description=(
+                "Several files in ONE call (new app, component + test + style): "
+                "each item is {path, content}. Prefer this to one call per file."
+            ),
+        ),
+        verify=BooleanSchema(
+            description=(
+                "Also run verify action=check on the written files and return its "
+                "verdict in this same call (saves a separate verify step)"
+            ),
+        ),
     )
 )
 class WriteFileTool(_FsTool):
@@ -862,7 +1003,41 @@ class WriteFileTool(_FsTool):
             "the provided content. Creates parent directories as needed. "
             "Available in every agent mode except Ask. For small/partial code "
             "edits prefer apply_patch; use edit_file for small exact "
-            "replacements. write_file is ideal for new docs and full rewrites."
+            "replacements. write_file is ideal for new docs and full rewrites. "
+            "Creating several files? Pass them all in `files` in ONE call."
+        )
+
+    def validate_params(self, params: dict[str, Any]) -> list[str]:
+        """Either ``files``, or ``path`` with ``content``: same as a required field.
+
+        The schema cannot mark both shapes required, and an empty call must
+        still fail as invalid parameters (so the loop guard counts it) rather
+        than reach execute() and look like an ordinary write error.
+        """
+        errors = super().validate_params(params)
+        if errors or not isinstance(params, dict):
+            return errors
+        if params.get("files"):
+            return []
+        missing = [key for key in ("path", "content") if params.get(key) is None]
+        return [f"missing required {key}" for key in missing]
+
+    def _stale_overwrite_refusal(self, fp: Path) -> str | None:
+        """Refuse to replace a file that changed on disk since this agent read it.
+
+        Parallel subagents share one working tree: a whole-file write built
+        from an old read silently erases the edit another agent made since.
+        apply_patch and edit_file anchor on the current text and fail loudly
+        instead, so only a whole-file write needs this guard.
+        """
+        if not fp.exists() or not self._file_states.changed_since_read(fp):
+            return None
+        return (
+            f"refused to overwrite {fp}: it changed on disk since you last read it "
+            "(a parallel subagent, another agent or the user edited it). Writing the "
+            "whole file now would erase that change. Re-read it with read_file, then "
+            "apply your change with apply_patch or edit_file, or write the full file "
+            "again from the fresh content."
         )
 
     def _overwrite_warnings(self, fp: Path) -> list[str]:
@@ -870,7 +1045,7 @@ class WriteFileTool(_FsTool):
         if not fp.exists():
             return []
         warnings: list[str] = []
-        stale = self._file_states.check_read(fp)
+        stale = self._file_states.check_full_read(fp)
         if stale:
             warnings.append(stale)
         root = self._display_workspace()
@@ -879,29 +1054,91 @@ class WriteFileTool(_FsTool):
             warnings.append(note)
         return warnings
 
-    async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        path: str | None = None,
+        content: str | None = None,
+        files: list[dict[str, Any]] | None = None,
+        verify: bool | None = None,
+        **kwargs: Any,
+    ) -> str:
+        if files:
+            return await self._write_many(files, path, content, verify=bool(verify))
         try:
             if not path:
                 raise ValueError("Unknown path")
             if content is None:
                 raise ValueError("Unknown content")
             fp = await self._bound_path(path, write=True)
+            refused = self._stale_overwrite_refusal(fp)
+            if refused:
+                return ToolResult.error(refused)
             # Replacing a whole file is the only edit with no anchor text to
             # fail against, so a stale or unread target is caught here or not
             # at all.
             warnings = self._overwrite_warnings(fp)
-            record_file_before(fp)
-            fp.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(record_file_before, fp)
+            await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
             layout = _existing_layout(fp)
-            fp.write_bytes(encode_for(_match_line_endings(content, layout), layout))
-            self._file_states.record_write(fp)
+            await asyncio.to_thread(fp.write_bytes, encode_for(_match_line_endings(content, layout), layout))
+            await asyncio.to_thread(self._file_states.record_write, fp)
             written = f"Successfully wrote {len(content)} characters to {fp}"
             summary = "\n".join([*warnings, written]) if warnings else written
+            if verify:
+                return await self._with_verify(summary, [fp])
             return await self._with_diagnostics(summary, [fp])
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error writing file: {e}")
+
+    async def _write_many(
+        self,
+        files: list[dict[str, Any]],
+        path: str | None,
+        content: str | None,
+        *,
+        verify: bool = False,
+    ) -> str:
+        """Write every file, then lint them together: one model round trip.
+
+        A measured app build spent 28 model steps on one write_file each
+        (5-15s per step); the writes themselves take milliseconds.
+        """
+        items = list(files)
+        if path and content is not None:
+            items.insert(0, {"path": path, "content": content})
+        written: list[Path] = []
+        lines: list[str] = []
+        errors: list[str] = []
+        for item in items:
+            if not isinstance(item, dict) or not item.get("path") or item.get("content") is None:
+                errors.append(f"skipped an item without path/content: {str(item)[:80]}")
+                continue
+            try:
+                fp = await self._bound_path(str(item["path"]), write=True)
+                refused = self._stale_overwrite_refusal(fp)
+                if refused:
+                    errors.append(refused)
+                    continue
+                text = str(item["content"])
+                warnings = self._overwrite_warnings(fp)
+                await asyncio.to_thread(record_file_before, fp)
+                await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
+                layout = _existing_layout(fp)
+                await asyncio.to_thread(fp.write_bytes, encode_for(_match_line_endings(text, layout), layout))
+                await asyncio.to_thread(self._file_states.record_write, fp)
+                written.append(fp)
+                lines.extend(warnings)
+                lines.append(f"Wrote {len(text)} characters to {fp}")
+            except Exception as e:  # one bad path must not lose the others
+                errors.append(f"{item.get('path')}: {e}")
+        if not written:
+            return ToolResult.error("Error writing files: " + "; ".join(errors or ["no files"]))
+        summary = "\n".join([*lines, *(f"Error: {err}" for err in errors)])
+        if verify:
+            return await self._with_verify(summary, written)
+        return await self._with_diagnostics(summary, written)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,7 +1441,38 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
             minimum=1,
             nullable=True,
         ),
-        required=["path", "old_text", "new_text"],
+        edits=ArraySchema(
+            ObjectSchema(
+                {
+                    "old_text": StringSchema("The text to find and replace"),
+                    "new_text": StringSchema("The text to replace with"),
+                    "replace_all": BooleanSchema(description="Replace all occurrences (default false)"),
+                    "occurrence": IntegerSchema(
+                        1, description="Optional 1-based occurrence when old_text appears multiple times.",
+                        minimum=1, nullable=True,
+                    ),
+                    "line_hint": IntegerSchema(
+                        1, description="Optional 1-based target line, as the file stands when this edit runs.",
+                        minimum=1, nullable=True,
+                    ),
+                    "expected_replacements": IntegerSchema(
+                        1, description="Optional guard for the number of replacements.",
+                        minimum=1, nullable=True,
+                    ),
+                },
+                required=["old_text", "new_text"],
+                additional_properties=False,
+            ),
+            description=(
+                "Several replacements in this one file, applied in order and all or "
+                "nothing. Use it instead of old_text/new_text when you have more "
+                "than one change to make to the same file, so they cost one call."
+            ),
+            min_items=1,
+            max_items=20,
+            nullable=True,
+        ),
+        required=["path"],
     )
 )
 class EditFileTool(_FsTool):
@@ -1221,8 +1489,12 @@ class EditFileTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "Perform a small, exact replacement in one file by replacing "
-            "old_text with new_text. Use this for narrow text substitutions "
+            "Perform small, exact replacements in one file. One change: pass "
+            "old_text and new_text. Several changes to the same file: pass "
+            "edits, a list of {old_text, new_text}, in ONE call (applied in "
+            "order, all or nothing; a later edit sees the earlier ones). The "
+            "reply shows the changed lines with their current line numbers, so "
+            "do not read the file back. Use this for narrow text substitutions "
             "with old_text copied from read_file. Keep old_text to the smallest "
             "unique span (a few lines, never a whole function): with line_hint "
             "set to the target line, one line is enough. For multi-file, "
@@ -1243,11 +1515,127 @@ class EditFileTool(_FsTool):
         """
         return "\n".join("" if not line.strip() else line for line in text.split("\n"))
 
+    _MAX_EDITS = 20
+
     async def execute(
         self, path: str | None = None, old_text: str | None = None,
         new_text: str | None = None,
         replace_all: bool = False, occurrence: int | None = None,
-        line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
+        line_hint: int | None = None, expected_replacements: int | None = None,
+        edits: list[dict[str, Any]] | None = None, **kwargs: Any,
+    ) -> str:
+        if edits:
+            if old_text is not None or new_text is not None:
+                return ToolResult.error(
+                    "Error: pass either old_text/new_text or edits, not both."
+                )
+            return await self._edit_many(path, edits)
+        return await self._edit_once(
+            path, old_text, new_text, replace_all, occurrence, line_hint,
+            expected_replacements,
+        )
+
+    async def _finish(self, msg: str, fp: Path, diagnostics: bool) -> str:
+        return await self._with_diagnostics(msg, [fp]) if diagnostics else msg
+
+    @staticmethod
+    def _changed_excerpt(before: str, after: str, *, context: int = 2, max_lines: int = 40) -> str:
+        """The lines around what changed, numbered as the file stands now.
+
+        The caller used to read the file back after every edit to see the
+        result; each of those reads is a model round trip.
+        """
+        try:
+            old_lines, new_lines = before.splitlines(), after.splitlines()
+            if len(old_lines) > 3000 or len(new_lines) > 3000:
+                return ""
+            matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+            shown: list[str] = []
+            last_end = 0
+            truncated = False
+            for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+                if tag == "equal":
+                    continue
+                start = max(last_end, j1 - context)
+                end = min(len(new_lines), max(j2, j1 + 1) + context)
+                if shown and start > last_end:
+                    shown.append("      ...")
+                for index in range(start, end):
+                    if len(shown) >= max_lines:
+                        truncated = True
+                        break
+                    shown.append(f"{index + 1:>6}| {new_lines[index]}")
+                last_end = max(last_end, end)
+                if truncated:
+                    break
+            if not shown:
+                return ""
+            note = "\n(more changes not shown)" if truncated else ""
+            return "\nChanged lines (current numbering):\n" + "\n".join(shown) + note
+        except Exception:  # noqa: BLE001 - a convenience must never fail an edit
+            return ""
+
+    async def _edit_many(self, path: str | None, edits: list[dict[str, Any]]) -> str:
+        """Apply several replacements to one file, all or nothing."""
+        try:
+            if not path:
+                raise ValueError("edit_file requires 'path'")
+            if len(edits) > self._MAX_EDITS:
+                return ToolResult.error(f"Error: at most {self._MAX_EDITS} edits per call.")
+            for number, edit in enumerate(edits, start=1):
+                if (
+                    not isinstance(edit, dict)
+                    or edit.get("old_text") is None
+                    or edit.get("new_text") is None
+                ):
+                    return ToolResult.error(f"Error: edit {number} needs 'old_text' and 'new_text'.")
+                if edit.get("old_text") == "":
+                    return ToolResult.error(
+                        f"Error: edit {number} has an empty old_text; edits change existing "
+                        "text (create a file with old_text/new_text instead)."
+                    )
+            fp = await self._bound_path(path, write=True)
+            if not fp.exists():
+                return self._file_not_found_msg(path, fp)
+            original = (await asyncio.to_thread(fp.read_bytes))
+            before = text_decode.decode(original)
+            if before is None:
+                return ToolResult.error(
+                    f"Error: Cannot edit binary file {path}. Only text files can be edited."
+                )
+            warning = await asyncio.to_thread(self._file_states.check_read, fp)
+            for number, edit in enumerate(edits, start=1):
+                result = await self._edit_once(
+                    path, edit["old_text"], edit["new_text"],
+                    bool(edit.get("replace_all", False)), edit.get("occurrence"),
+                    edit.get("line_hint"), edit.get("expected_replacements"),
+                    diagnostics=False, excerpt=False,
+                )
+                if getattr(result, "is_error", False):
+                    await asyncio.to_thread(fp.write_bytes, original)
+                    await asyncio.to_thread(self._file_states.record_write, fp)
+                    return ToolResult.error(
+                        f"Error: edit {number} of {len(edits)} failed, so none of them was "
+                        f"written.\n{result}"
+                    )
+            after = text_decode.decode((await asyncio.to_thread(fp.read_bytes)))
+            msg = f"Successfully applied {len(edits)} edits to {fp}"
+            if after is not None:
+                msg += self._changed_excerpt(before.text, after.text)
+            if warning:
+                msg = f"{warning}\n{msg}"
+            return await self._with_diagnostics(msg, [fp])
+        except PermissionError as e:
+            return ToolResult.error(f"Error: {e}")
+        except Exception as e:
+            return ToolResult.error(f"Error editing file: {e}")
+
+    async def _edit_once(
+        self, path: str | None = None, old_text: str | None = None,
+        new_text: str | None = None,
+        replace_all: bool = False, occurrence: int | None = None,
+        line_hint: int | None = None, expected_replacements: int | None = None,
+        *, diagnostics: bool = True, excerpt: bool = True,
     ) -> str:
         try:
             # Named explicitly: "Unknown old_text" reads as a rejected value
@@ -1277,15 +1665,15 @@ class EditFileTool(_FsTool):
                 return ToolResult.error(
                     "Error: use notebook_edit for Jupyter notebooks (cells are numbered by read_file)."
                 )
-            record_file_before(fp)
+            await asyncio.to_thread(record_file_before, fp)
 
             # Create-file semantics: old_text='' + file doesn't exist → create
             if not fp.exists():
                 if old_text == "":
-                    fp.parent.mkdir(parents=True, exist_ok=True)
-                    fp.write_text(new_text, encoding="utf-8")
-                    self._file_states.record_write(fp)
-                    return await self._with_diagnostics(f"Successfully created {fp}", [fp])
+                    await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
+                    await asyncio.to_thread(fp.write_text, new_text, encoding="utf-8")
+                    await asyncio.to_thread(self._file_states.record_write, fp)
+                    return await self._finish(f"Successfully created {fp}", fp, diagnostics)
                 return self._file_not_found_msg(path, fp)
 
             # File size protection
@@ -1298,19 +1686,19 @@ class EditFileTool(_FsTool):
 
             # Create-file: old_text='' but file exists and not empty → reject
             if old_text == "":
-                raw = fp.read_bytes()
+                raw = (await asyncio.to_thread(fp.read_bytes))
                 probe = text_decode.decode(raw)
                 content = probe.text if probe is not None else ""
                 if content.strip() or (probe is None and raw):
                     return ToolResult.error(f"Error: Cannot create file - {path} already exists and is not empty.")
-                fp.write_text(new_text, encoding="utf-8")
-                self._file_states.record_write(fp)
-                return await self._with_diagnostics(f"Successfully edited {fp}", [fp])
+                await asyncio.to_thread(fp.write_text, new_text, encoding="utf-8")
+                await asyncio.to_thread(self._file_states.record_write, fp)
+                return await self._finish(f"Successfully edited {fp}", fp, diagnostics)
 
             # Read-before-edit check
-            warning = self._file_states.check_read(fp)
+            warning = await asyncio.to_thread(self._file_states.check_read, fp)
 
-            raw = fp.read_bytes()
+            raw = (await asyncio.to_thread(fp.read_bytes))
             decoded = text_decode.decode(raw)
             if decoded is None:
                 return ToolResult.error(
@@ -1399,12 +1787,14 @@ class EditFileTool(_FsTool):
 
             # Re-encode the way the file was stored, so editing one line of a
             # cp1252 or BOM-prefixed file does not rewrite every other line.
-            fp.write_bytes(text_decode.encode(new_content, decoded))
-            self._file_states.record_write(fp)
+            await asyncio.to_thread(fp.write_bytes, text_decode.encode(new_content, decoded))
+            await asyncio.to_thread(self._file_states.record_write, fp)
             msg = f"Successfully edited {fp}"
+            if excerpt:
+                msg += self._changed_excerpt(content, new_content)
             if warning:
                 msg = f"{warning}\n{msg}"
-            return await self._with_diagnostics(msg, [fp])
+            return await self._finish(msg, fp, diagnostics)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1508,6 +1898,16 @@ class ListDirTool(_FsTool):
             dp = await self._bound_path(path, write=False)
             if not dp.exists():
                 return self._missing_path_msg("Directory", path, dp)
+            # Walking a tree is disk work; over \\wsl$ or /mnt/c it can take
+            # seconds, so it must never run on the event loop every chat shares.
+            return await asyncio.to_thread(self._list_sync, dp, path, recursive, max_entries)
+        except PermissionError as e:
+            return ToolResult.error(f"Error: {e}")
+        except Exception as e:
+            return ToolResult.error(f"Error listing directory: {e}")
+
+    def _list_sync(self, dp: Path, path: str, recursive: bool, max_entries: int | None) -> Any:
+        try:
             if not dp.is_dir():
                 return ToolResult.error(f"Error: Not a directory: {path}")
 

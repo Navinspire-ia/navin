@@ -311,3 +311,150 @@ class AskUserToolTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChoiceEchoTest(unittest.IsolatedAsyncioTestCase):
+    """An answered card is restated in the chat, live and after a reload."""
+
+    async def test_close_route_carries_question_and_turn(self) -> None:
+        routes: list[dict[str, Any]] = []
+        published: list[str] = []
+
+        async def publish(request_id: str, request: ChoiceRequest, route: dict[str, Any]) -> None:
+            published.append(request_id)
+
+        async def close(request_id: str, answer: ChoiceAnswer, route: dict[str, Any]) -> None:
+            routes.append(route)
+
+        token = bind_request_context(
+            RequestContext(
+                channel="websocket",
+                chat_id="c1",
+                session_key="websocket:c1",
+                metadata={"webui_turn_id": "turn-1"},
+            )
+        )
+        try:
+            broker = ChoiceBroker(publish=publish, close=close, timeout_s=2)
+            task = asyncio.ensure_future(broker.ask(_request()))
+            for _ in range(100):
+                if published:
+                    break
+                await asyncio.sleep(0)
+            broker.resolve(published[0], custom_text="Do both")
+            answer = await task
+        finally:
+            reset_request_context(token)
+        self.assertEqual(routes[0]["question"], "Where do we start?")
+        self.assertEqual(routes[0]["turn_metadata"], {"webui_turn_id": "turn-1"})
+        # The model still reads the same instruction as before.
+        self.assertIn("Do both", answer.as_text())
+
+    def test_closed_fields_describe_the_answer(self) -> None:
+        from navin.agent.choice import STOPPED, choice_closed_fields
+
+        picked = choice_closed_fields(ChoiceAnswer(option_id="b", label="Profiler only"))
+        self.assertEqual(picked["label"], "Profiler only")
+        self.assertFalse(picked["skipped"])
+        custom = choice_closed_fields(
+            ChoiceAnswer(option_id=OTHER_OPTION_ID, label="Other", detail="Do both", custom=True)
+        )
+        self.assertEqual((custom["label"], custom["custom_text"]), ("", "Do both"))
+        skipped = choice_closed_fields(ChoiceAnswer(option_id="a", label="Full phase", skipped=True))
+        self.assertTrue(skipped["skipped"])
+        timed_out = choice_closed_fields(ChoiceAnswer(option_id="a", label="Full", timed_out=True))
+        self.assertTrue(timed_out["skipped"] and timed_out["timed_out"])
+        stopped = choice_closed_fields(ChoiceAnswer(option_id="a", label="Full", reason=STOPPED))
+        self.assertTrue(stopped["stopped"])
+
+    async def test_websocket_records_the_exchange_in_the_transcript(self) -> None:
+        from types import SimpleNamespace
+
+        from navin.bus.outbound_events import ChoiceClosedEvent
+        from navin.channels.websocket import WebSocketChannel
+
+        appended: list[dict[str, Any]] = []
+        sent: list[str] = []
+
+        class _Transcripts:
+            def prepare_and_append(self, chat_id: str, event: dict[str, Any], **_: Any) -> None:
+                appended.append(dict(event))
+
+        async def safe_send(connection: Any, raw: str, label: str = "") -> None:
+            sent.append(raw)
+
+        fake = SimpleNamespace(
+            _subs={"c1": {"conn"}},
+            _transcripts=_Transcripts(),
+            _safe_send_to=safe_send,
+        )
+        await WebSocketChannel.send_choice_closed(
+            fake,  # type: ignore[arg-type]
+            "c1",
+            ChoiceClosedEvent(
+                request_id="r1",
+                option_id="b",
+                question="Where do we start?",
+                label="Profiler only",
+            ),
+        )
+        self.assertEqual(appended[0]["event"], "choice_closed")
+        self.assertEqual(appended[0]["question"], "Where do we start?")
+        self.assertEqual(appended[0]["label"], "Profiler only")
+        self.assertIn('"label": "Profiler only"', sent[0])
+
+    def test_replay_restates_the_answer_in_place(self) -> None:
+        from navin.webui.transcript import replay_transcript_to_ui_messages
+
+        rows = replay_transcript_to_ui_messages(
+            [
+                {"event": "user", "text": "Plan the work"},
+                {
+                    "event": "choice_closed",
+                    "request_id": "r1",
+                    "question": "Where do we start?",
+                    "label": "Full phase",
+                    "skipped": True,
+                },
+                {"event": "stream_end", "text": "Starting with the full phase."},
+                {"event": "turn_end"},
+            ]
+        )
+        echo = next(row for row in rows if row.get("kind") == "choice")
+        self.assertEqual(echo["id"], "choice-r1")
+        self.assertEqual(echo["interaction"]["question"], "Where do we start?")
+        self.assertTrue(echo["interaction"]["skipped"])
+        kinds = [row.get("kind") or row["role"] for row in rows]
+        self.assertLess(kinds.index("choice"), len(kinds) - 1)
+
+
+class ApprovalEchoReplayTest(unittest.TestCase):
+    """A settled approval is restated in the chat after a reload."""
+
+    def test_replay_restates_the_decision_with_the_wait(self) -> None:
+        from navin.webui.transcript import replay_transcript_to_ui_messages
+
+        rows = replay_transcript_to_ui_messages(
+            [
+                {"event": "user", "text": "Clean the build"},
+                {
+                    "event": "approval_closed",
+                    "request_id": "a1",
+                    "allowed": True,
+                    "action": "delete 12 files",
+                    "waited_ms": 4200,
+                },
+                {"event": "stream_end", "text": "Cleaned."},
+                {"event": "turn_end"},
+            ]
+        )
+        echo = next(row for row in rows if row.get("kind") == "approval")
+        self.assertEqual(echo["id"], "approval-a1")
+        self.assertEqual(echo["interaction"]["question"], "delete 12 files")
+        self.assertTrue(echo["interaction"]["allowed"])
+        self.assertEqual(echo["interaction"]["waitedMs"], 4200)
+
+    def test_a_decision_without_an_action_is_not_restated(self) -> None:
+        from navin.webui.transcript import approval_echo_row
+
+        self.assertIsNone(approval_echo_row({"event": "approval_closed", "request_id": "a1", "allowed": False}))

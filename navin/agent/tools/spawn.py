@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
@@ -21,14 +22,24 @@ from navin.security.workspace_access import current_workspace_scope
 if TYPE_CHECKING:
     from navin.agent.subagent import SubagentManager
 
+# Levels of delegation below the user's turn: 1 = the turn's own subagents,
+# 2 = those may spawn helpers, 3 = helpers of helpers. Beyond, spawn refuses.
+MAX_SPAWN_DEPTH = 3
+
+
+def _split(raw: str | None, sep: str) -> list[str]:
+    return [p.strip() for p in (raw or "").split(sep) if p.strip()]
+
 
 @tool_parameters(
     tool_parameters_schema(
         action=StringSchema(
             "'start' (default) launches a subagent and needs 'task'. "
             "'results' lists how recently finished subagents ended, for when a "
-            "result did not reach you.",
-            enum=["start", "results"],
+            "result did not reach you. "
+            "'worktrees' lists the isolated subagents still active: id, label, "
+            "checkout path, base commit, modified files and workspace policy.",
+            enum=["start", "results", "worktrees"],
         ),
         task=StringSchema("The task for the subagent to complete. Required to start one."),
         label=StringSchema("Optional short label for the task (for display)"),
@@ -59,6 +70,23 @@ if TYPE_CHECKING:
             "independent chapter of a large audit/review/build to keep each "
             "context small."
         ),
+        allowed_paths=StringSchema(
+            "Optional comma-separated globs (e.g. 'navin/agent/**, tests/test_x.py') "
+            "the subagent may modify. Requires isolate=true: without it the spawn is "
+            "refused, since the policy is enforced only before merging an isolated "
+            "checkout. A file changed outside these globs blocks the merge and the "
+            "checkout is kept for review."
+        ),
+        allowed_commands=StringSchema(
+            "Optional comma-separated command prefixes the subagent's exec tool may "
+            "run (e.g. 'pytest, git status'); any other shell command is refused. "
+            "Requires isolate=true."
+        ),
+        test_commands=StringSchema(
+            "Optional commands separated by ';;' run in the isolated checkout before "
+            "merging (e.g. 'python -m pytest -q tests/test_x.py'). A failure blocks "
+            "the merge. Requires isolate=true."
+        ),
         temperature=NumberSchema(
             description=(
                 "Optional sampling temperature for the subagent "
@@ -79,6 +107,10 @@ if TYPE_CHECKING:
 )
 class SpawnTool(Tool):
     """Tool to spawn a subagent for background task execution."""
+
+    # Subagents may delegate too, up to MAX_SPAWN_DEPTH levels below the
+    # parent turn. Every level shares the same admission queue and limits.
+    _scopes = {"core", "subagent"}
 
     def __init__(
         self,
@@ -103,8 +135,11 @@ class SpawnTool(Tool):
     def description(self) -> str:
         return (
             "Spawn a subagent to handle a task in the background, or review how "
-            "finished ones ended. Several can run at once, so start independent "
-            "tasks together. A queued reply means the task is waiting for a "
+            "finished ones ended. Several can run at once: as soon as a request has "
+            "two or more independent tasks (audit of several modules, backend and "
+            "frontend, a list of fixes), start one subagent per task in the same "
+            "reply instead of doing them in sequence; stay sequential only when "
+            "tasks depend on each other or are trivial. A queued reply means the task is waiting for a "
             "slot: report running and queued counts separately. Each reports back on its "
             "own when done. They share one working tree unless you set "
             "isolate=true, so give overlapping edits their own checkout. For "
@@ -136,6 +171,9 @@ class SpawnTool(Tool):
         isolate: bool = False,
         scope_paths: str | None = None,
         model_preset: str | None = None,
+        allowed_paths: str | None = None,
+        allowed_commands: str | None = None,
+        test_commands: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Spawn a subagent, or report what became of finished ones."""
@@ -150,6 +188,8 @@ class SpawnTool(Tool):
             # Reading history can wait for a durable write by another
             # subagent. Keep that disk/lock wait away from terminal input.
             return await asyncio.to_thread(self._render_outcomes, session_key)
+        if action == "worktrees":
+            return await asyncio.to_thread(self._render_worktrees)
         if not task or not task.strip():
             return ToolResult.error("Error: spawn needs a task to start a subagent")
 
@@ -161,11 +201,34 @@ class SpawnTool(Tool):
             for p in (scope_paths or "").split(",")
             if p.strip()
         ]
+        policy_spec = {
+            "allowed_paths": _split(allowed_paths, ","),
+            "allowed_commands": _split(allowed_commands, ","),
+            "test_commands": _split(test_commands, ";;"),
+        }
+        if not any(policy_spec.values()):
+            policy_spec = None
+        elif not isolate:
+            return ToolResult.error(
+                "Error: allowed_paths, allowed_commands and test_commands need "
+                "isolate=true: the workspace policy is checked before merging an "
+                "isolated checkout. Pass isolate=true or drop these parameters."
+            )
         # P2-3: role-specialised subagents. A named preset resolves to its own
         # runtime; everything else about the spawn (policy, scope, context)
         # still inherits from the parent.
         runtime = request_ctx.runtime
         preset_name = (model_preset or "").strip()
+        if not preset_name and agent:
+            preset_name = self._agent_model_preset(agent)
+            if preset_name:
+                try:
+                    runtime = self._resolve_model_preset(preset_name)  # type: ignore[misc]
+                except (KeyError, ValueError, TypeError):
+                    # A definition written for another harness may name a model
+                    # Navin has no preset for: keep the parent's model.
+                    runtime = request_ctx.runtime
+                preset_name = ""
         if preset_name:
             if self._resolve_model_preset is None:
                 return ToolResult.error(
@@ -183,6 +246,21 @@ class SpawnTool(Tool):
         # The parent turn's metadata (open files, file mentions) seeds the
         # subagent's context pack, so it inherits the parent's focus paths.
         metadata = getattr(request_ctx, "metadata", None)
+        parent_task_id = (
+            metadata.get("subagent_task_id") if isinstance(metadata, dict) else None
+        )
+        depth_of = getattr(self._manager, "spawn_depth", None)
+        depth = (depth_of(parent_task_id) + 1) if parent_task_id and depth_of else 1
+        if depth > MAX_SPAWN_DEPTH:
+            return ToolResult.error(
+                f"Error: delegation depth limit reached ({MAX_SPAWN_DEPTH} levels). "
+                "Do this part of the work yourself instead of spawning."
+            )
+        extra: dict[str, Any] = (
+            {"parent_task_id": parent_task_id, "depth": depth} if parent_task_id else {}
+        )
+        if policy_spec is not None:
+            extra["workspace_policy_spec"] = policy_spec
         return await self._manager.spawn(
             task=task,
             runtime=runtime,
@@ -197,7 +275,43 @@ class SpawnTool(Tool):
             isolate=bool(isolate),
             scope_paths=scopes or None,
             parent_metadata=dict(metadata) if isinstance(metadata, dict) else None,
+            **extra,
         )
+
+    def _agent_model_preset(self, agent: str) -> str:
+        """The ``model`` an agent definition asks for, when a resolver exists."""
+        workspace = getattr(self._manager, "workspace", None)
+        if self._resolve_model_preset is None or workspace is None:
+            return ""
+        try:
+            from navin.agent.project_agents import find_project_agent
+
+            definition = find_project_agent(Path(workspace), agent)
+        except Exception:  # noqa: BLE001 - a bad definition never blocks a spawn
+            return ""
+        model = (definition.model if definition else "").strip()
+        return "" if model.lower() in ("", "inherit", "default") else model
+
+    def _render_worktrees(self) -> str:
+        """List the isolated subagents still active, with their changes and policy."""
+        listing = getattr(self._manager, "active_worktrees", None)
+        if listing is None:
+            return "This runtime does not track isolated subagents."
+        entries = listing()
+        if not entries:
+            return "No isolated subagent is active."
+        lines = [f"{len(entries)} active isolated subagent(s):"]
+        for e in entries:
+            files = e["changed_files"]
+            changed = (
+                "unknown (git failed)" if files is None
+                else (", ".join(files) if files else "none")
+            )
+            lines.append(
+                f"- [{e['task_id']}] {e['label']} at {e['path']} (base {e['base']})\n"
+                f"  modified: {changed}\n  policy: {e['policy'] or 'none'}"
+            )
+        return "\n".join(lines)
 
     def _render_outcomes(self, session_key: str) -> str:
         """Summarise finished subagents for this conversation."""

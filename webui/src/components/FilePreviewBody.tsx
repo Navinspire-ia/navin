@@ -145,7 +145,7 @@ export function FilePreviewBody({
           <button
             type="button"
             onClick={onDownload}
-            className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted"
+            className="absolute end-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted"
             data-testid="file-preview-image-download"
           >
             <Download className="h-3.5 w-3.5" aria-hidden />
@@ -328,7 +328,7 @@ export function FilePreviewBody({
           <button
             type="button"
             onClick={onDownload}
-            className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted"
+            className="absolute end-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted"
             data-testid="file-preview-pdf-download"
           >
             <Download className="h-3.5 w-3.5" aria-hidden />
@@ -361,7 +361,7 @@ export function FilePreviewBody({
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
           <table
-            className="w-max min-w-full border-collapse text-left text-xs"
+            className="w-max min-w-full border-collapse text-start text-xs"
             data-testid="file-preview-csv"
           >
             <thead className="sticky top-0 bg-muted/90 backdrop-blur">

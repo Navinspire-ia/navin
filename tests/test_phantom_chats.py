@@ -11,12 +11,11 @@ chat" rows nobody created.
 
 from __future__ import annotations
 
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
-
-import os
-import time
 
 from navin.session.manager import SessionManager
 from navin.session.webui_turns import take_interrupted_turn_started_at

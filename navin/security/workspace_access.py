@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from navin.utils.resolve_cache import resolve_root
+
 WorkspaceAccessMode = Literal["restricted", "full"]
 WORKSPACE_SCOPE_METADATA_KEY = "workspace_scope"
 _ACCESS_MODES = {"restricted", "full"}
@@ -181,7 +183,7 @@ def workspace_sandbox_status(
 ) -> WorkspaceSandboxStatus:
     """Return how workspace restriction is enforced in the current host."""
 
-    workspace_root = str(Path(workspace).expanduser().resolve(strict=False))
+    workspace_root = str(resolve_root(workspace))
     provider = _env_system_provider(environ)
     if not restrict_to_workspace:
         return WorkspaceSandboxStatus(
@@ -228,7 +230,7 @@ def build_workspace_scope(
     source_channel: str | None = None,
 ) -> WorkspaceScope:
     mode = _normalize_access_mode(access_mode)
-    root = Path(project_path).expanduser().resolve(strict=False)
+    root = resolve_root(project_path)
     restrict = mode == "restricted"
     return WorkspaceScope(
         project_path=root,
@@ -255,6 +257,33 @@ def default_workspace_scope(
     )
 
 
+# resolve() + is_dir() hit the disk on every message; under WSL (/mnt/c) that
+# costs seconds and runs on the gateway event loop. A short TTL keeps a
+# deleted folder detected quickly while making the hot path free.
+_PROJECT_DIR_TTL_S = 5.0
+_PROJECT_DIR_CACHE: dict[str, tuple[float, Path]] = {}
+
+
+def _resolve_project_dir(raw_path: str) -> Path:
+    import time
+
+    now = time.monotonic()
+    hit = _PROJECT_DIR_CACHE.get(raw_path)
+    if hit is not None and now - hit[0] < _PROJECT_DIR_TTL_S:
+        return hit[1]
+    project = Path(raw_path).expanduser()
+    if not project.is_absolute():
+        raise WorkspaceScopeError("project_path must be absolute")
+    project = project.resolve(strict=False)
+    if not project.is_dir():
+        _PROJECT_DIR_CACHE.pop(raw_path, None)
+        raise WorkspaceScopeError("project_path must be an existing directory")
+    if len(_PROJECT_DIR_CACHE) > 512:
+        _PROJECT_DIR_CACHE.clear()
+    _PROJECT_DIR_CACHE[raw_path] = (now, project)
+    return project
+
+
 def validate_workspace_scope_payload(
     raw: Any,
     *,
@@ -274,18 +303,13 @@ def validate_workspace_scope_payload(
 
     raw_path = raw.get("project_path") or raw.get("path")
     if raw_path is None or raw_path == "":
-        raw_path = str(Path(default_workspace).expanduser().resolve(strict=False))
+        raw_path = str(resolve_root(default_workspace))
     if not isinstance(raw_path, str):
         raise WorkspaceScopeError("project_path must be a string")
     if "\0" in raw_path:
         raise WorkspaceScopeError("project_path contains invalid characters")
 
-    project = Path(raw_path).expanduser()
-    if not project.is_absolute():
-        raise WorkspaceScopeError("project_path must be absolute")
-    project = project.resolve(strict=False)
-    if not project.is_dir():
-        raise WorkspaceScopeError("project_path must be an existing directory")
+    project = _resolve_project_dir(raw_path)
 
     raw_mode = raw.get("access_mode")
     if raw_mode is None:

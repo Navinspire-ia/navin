@@ -4,6 +4,7 @@
 """Base LLM provider interface."""
 
 import asyncio
+import base64
 import contextvars
 import json
 import os
@@ -221,6 +222,17 @@ class GenerationSettings:
 _SYNTHETIC_USER_CONTENT = "(conversation continued)"
 
 
+
+# A key's concurrent-request cap (LiteLLM "max_parallel_requests"): the wait is
+# for another request on the same key to finish, not for a rate window.
+_PARALLEL_LIMIT_RE = re.compile(r"max_parallel_requests|parallel request limit|too many concurrent", re.I)
+_PARALLEL_LIMIT_MAX_DELAY = 8.0
+
+
+def _is_parallel_limit(content: str | None) -> bool:
+    return bool(content and _PARALLEL_LIMIT_RE.search(content))
+
+
 class LLMProvider(ABC):
     """Base class for LLM providers."""
 
@@ -234,6 +246,9 @@ class LLMProvider(ABC):
     _FREE_MAX_DELAY = 15
     _PERSISTENT_MAX_DELAY = 60
     _PERSISTENT_IDENTICAL_ERROR_LIMIT = 10
+    # Hard ceiling for persistent mode: errors that vary each time (rotating
+    # upstreams, new wording) must still end the step eventually.
+    _PERSISTENT_MAX_ATTEMPTS = 40
     _RETRY_HEARTBEAT_CHUNK = 30
     _TRANSIENT_ERROR_MARKERS = (
         "429",
@@ -931,6 +946,8 @@ class LLMProvider(ABC):
         on_stream_recover: Callable[[], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         ladder_token = _IN_RETRY_LADDER.set(True)
+        if ladder_token.old_value is not True:
+            call = _bounded_call(call)
         try:
             return await self._run_with_retry_inner(
                 call,
@@ -1007,13 +1024,27 @@ class LLMProvider(ABC):
                         "LLM stream failed after content was emitted; skipping retry"
                     )
                     return response
-            error_key = ((response.content or "").strip().lower() or None)
+            error_key = self._retry_error_key(response)
             if error_key and error_key == last_error_key:
                 identical_error_count += 1
             else:
                 last_error_key = error_key
                 identical_error_count = 1 if error_key else 0
 
+            if not self._is_transient_response(response) and is_thought_signature_error(response):
+                neutral = neutralize_thought_signatures(kw["messages"])
+                if neutral is not None:
+                    # The conversation moved to another Gemini backend (gateway
+                    # failover, AI Studio <-> Vertex): its signatures are not
+                    # valid there. Google's documented neutral signature lets
+                    # the turn go through once, like a fresh model would.
+                    logger.warning("Thought signatures refused by the backend, retrying with neutral ones")
+                    retry_kw = dict(kw)
+                    retry_kw["messages"] = neutral
+                    result = await call(**retry_kw)
+                    if result.finish_reason != "error":
+                        original_messages[:] = neutralize_thought_signatures(original_messages) or original_messages
+                    return result
             if not self._is_transient_response(response):
                 stripped = self._strip_image_content(original_messages)
                 if stripped is not None and stripped != kw["messages"]:
@@ -1028,6 +1059,18 @@ class LLMProvider(ABC):
                     if result.finish_reason != "error":
                         self._strip_image_content_inplace(original_messages)
                     return result
+                return response
+
+            if persistent and attempt >= self._PERSISTENT_MAX_ATTEMPTS:
+                logger.warning(
+                    "Stopping persistent retry after {} attempts: {}",
+                    attempt,
+                    (response.content or "")[:120].lower(),
+                )
+                if on_retry_wait:
+                    await on_retry_wait(
+                        f"Persistent retry stopped after {attempt} attempts."
+                    )
                 return response
 
             if persistent and identical_error_count >= self._PERSISTENT_IDENTICAL_ERROR_LIMIT:
@@ -1074,6 +1117,19 @@ class LLMProvider(ABC):
                 # A saturated free pool may advertise a long Retry-After; waiting
                 # that long is worse than retrying the failover chain sooner.
                 delay = min(delay, self._FREE_MAX_DELAY)
+            if _is_parallel_limit(
+                " ".join(
+                    str(part)
+                    for part in (
+                        getattr(response, name, None)
+                        for name in ("content", "error_detail", "error_type", "error_code")
+                    )
+                    if part
+                )
+            ):
+                # "max_parallel_requests" frees a slot as soon as another call
+                # on the key ends: seconds, not the gateway's blanket 60 s.
+                delay = min(delay, apply_jitter(min(2.0 * attempt, _PARALLEL_LIMIT_MAX_DELAY)))
 
             logger.warning(
                 "LLM transient error (attempt {}{}), retrying in {}s: {}",
@@ -1091,7 +1147,129 @@ class LLMProvider(ABC):
 
         return last_response if last_response is not None else await call(**kw)
 
+    @staticmethod
+    def _retry_error_key(response: LLMResponse) -> str | None:
+        """What makes two errors "the same" for the persistent-retry stop.
+
+        Structured metadata wins; raw text carries request ids and timestamps
+        that differ on every attempt, so tokens holding digits are masked.
+        """
+        if response.error_kind or response.error_status_code or response.error_code:
+            return "|".join(
+                str(part or "").lower()
+                for part in (response.error_kind, response.error_status_code, response.error_code)
+            )
+        text = (response.content or "").strip().lower()
+        return _ERROR_KEY_VOLATILE.sub("#", text) or None
+
     @abstractmethod
     def get_default_model(self) -> str:
         """Get the default model for this provider."""
         pass
+
+# -- Gemini thought signatures across backends ---------------------------------
+
+_ERROR_KEY_VOLATILE = re.compile(r"[\w-]*\d[\w-]*")
+
+_THOUGHT_SIGNATURE_ERROR = re.compile(r"thought[_ ]?signature", re.IGNORECASE)
+_THOUGHT_SIGNATURE_SEPARATOR = "__thought__"  # LiteLLM encodes the signature in the tool call id
+# Google's documented neutral signature (ai.google.dev/gemini-api/docs/thought-signatures#faqs).
+NEUTRAL_THOUGHT_SIGNATURE = base64.b64encode(b"skip_thought_signature_validator").decode("ascii")
+
+
+def is_thought_signature_error(response: LLMResponse) -> bool:
+    """Gemini refused the signatures replayed from another backend."""
+    text = " ".join(str(part or "") for part in (response.error_detail, response.error_code, response.content))
+    return bool(_THOUGHT_SIGNATURE_ERROR.search(text))
+
+
+def neutralize_thought_signatures(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """A copy of *messages* with every Gemini thought signature replaced by the
+    neutral one (tool call ids, provider_specific_fields, extra_content), or
+    None when the history carries no signature."""
+    changed = False
+
+    def neutral_call(call: dict[str, Any]) -> dict[str, Any]:
+        nonlocal changed
+        call = dict(call)
+        call_id = str(call.get("id") or "")
+        if _THOUGHT_SIGNATURE_SEPARATOR in call_id:
+            call["id"] = call_id.split(_THOUGHT_SIGNATURE_SEPARATOR, 1)[0] + _THOUGHT_SIGNATURE_SEPARATOR + NEUTRAL_THOUGHT_SIGNATURE
+            changed = True
+        for holder_key in ("provider_specific_fields",):
+            holder = call.get(holder_key)
+            if isinstance(holder, dict) and holder.get("thought_signature"):
+                call[holder_key] = {**holder, "thought_signature": NEUTRAL_THOUGHT_SIGNATURE}
+                changed = True
+        function = call.get("function")
+        if isinstance(function, dict):
+            fields = function.get("provider_specific_fields")
+            if isinstance(fields, dict) and fields.get("thought_signature"):
+                call["function"] = {**function, "provider_specific_fields": {**fields, "thought_signature": NEUTRAL_THOUGHT_SIGNATURE}}
+                changed = True
+        extra = call.get("extra_content")
+        google = extra.get("google") if isinstance(extra, dict) else None
+        if isinstance(google, dict) and google.get("thought_signature"):
+            call["extra_content"] = {**extra, "google": {**google, "thought_signature": NEUTRAL_THOUGHT_SIGNATURE}}
+            changed = True
+        return call
+
+    out: list[dict[str, Any]] = []
+    ids: dict[str, str] = {}
+    for message in messages:
+        if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
+            calls = []
+            for call in message["tool_calls"]:
+                if isinstance(call, dict):
+                    fixed = neutral_call(call)
+                    if fixed.get("id") != call.get("id"):
+                        ids[str(call.get("id"))] = str(fixed.get("id"))
+                    calls.append(fixed)
+                else:
+                    calls.append(call)
+            message = {**message, "tool_calls": calls}
+        elif message.get("role") == "tool" and str(message.get("tool_call_id")) in ids:
+            # Keep each tool result attached to its (renamed) call.
+            message = {**message, "tool_call_id": ids[str(message.get("tool_call_id"))]}
+        out.append(message)
+    return out if changed else None
+
+
+# Process-wide cap on model requests in flight. Hundreds of subagents share
+# one provider account: without a cap a full wave fires at once and the
+# provider answers with a burst of 429s. Only the outermost retry ladder
+# takes a slot (nested fallback ladders run inside it), and the slot is held
+# for one attempt, never across a backoff sleep.
+_INFLIGHT_LIMIT_ENV = "NAVIN_MAX_INFLIGHT_LLM"
+_DEFAULT_INFLIGHT_LIMIT = 64
+_inflight_sem: asyncio.Semaphore | None = None
+_inflight_loop: object | None = None
+
+
+def inflight_limit() -> int:
+    import os
+
+    try:
+        value = int(os.environ.get(_INFLIGHT_LIMIT_ENV, "") or _DEFAULT_INFLIGHT_LIMIT)
+    except ValueError:
+        value = _DEFAULT_INFLIGHT_LIMIT
+    return max(1, value)
+
+
+def _inflight_semaphore() -> asyncio.Semaphore:
+    global _inflight_sem, _inflight_loop
+    loop = asyncio.get_running_loop()
+    if _inflight_sem is None or _inflight_loop is not loop:
+        _inflight_sem = asyncio.Semaphore(inflight_limit())
+        _inflight_loop = loop
+    return _inflight_sem
+
+
+def _bounded_call(
+    call: Callable[..., Awaitable[LLMResponse]],
+) -> Callable[..., Awaitable[LLMResponse]]:
+    async def bounded(**kw: Any) -> LLMResponse:
+        async with _inflight_semaphore():
+            return await call(**kw)
+
+    return bounded

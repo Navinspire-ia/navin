@@ -146,3 +146,109 @@ class NoSuiteForTheChangeTest(unittest.TestCase):
         state = self._state_after_edit("web/styles.css")
         self._verify(state, VerificationEvidence(checks_ok=False, summary="Lint: 2 errors"))
         self.assertTrue(state.pending)
+
+
+class ChangedFilesTestsOnlyTest(unittest.TestCase):
+    """The end-of-task check runs the tests of the changed files, nothing else.
+
+    Measured: a CLI display task ran unrelated suites, one failed on slowness, and
+    the gate asked twice to "repair" it; JSON and TSX edits ran cargo and pytest.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _write(self, rel: str, text: str = "") -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_a_python_change_maps_to_its_own_tests(self) -> None:
+        self._write("pkg/widgets.py")
+        self._write("tests/test_widgets.py")
+        self._write("tests/test_clipboard.py", "from pkg import widgets\n")
+        self._write("tests/test_billing.py", "from pkg import billing\n")
+        self._write("tests/test_paste.py")
+        targets = testing.related_test_targets(self.root, ["tests/test_paste.py", "pkg/widgets.py"])
+        self.assertEqual(targets, ["tests/test_paste.py", "tests/test_widgets.py", "tests/test_clipboard.py"])
+
+    def test_a_hub_module_keeps_only_the_tests_named_after_it(self) -> None:
+        self._write("pkg/app.py")
+        self._write("tests/test_app.py")
+        for index in range(7):
+            self._write(f"tests/test_feature{index}.py", "import pkg.app\n")
+        self.assertEqual(testing.related_test_targets(self.root, ["pkg/app.py"]), ["tests/test_app.py"])
+
+    def test_a_typescript_change_maps_to_its_sibling_test(self) -> None:
+        self._write("site/front/src/lib/card.ts")
+        self._write("site/front/src/lib/card.test.ts")
+        self._write("site/front/src/lib/other.test.ts")
+        self.assertEqual(
+            testing.related_test_targets(self.root, ["site/front/src/lib/card.ts"]),
+            ["site/front/src/lib/card.test.ts"],
+        )
+
+    def test_json_and_tsx_edits_never_start_cargo_or_pytest(self) -> None:
+        self._write("site/front/messages/fr.json", "{}")
+        self._write("site/front/src/components/table.tsx")
+        self._write("site/back/src/lib/promo.test.ts")
+        with mock.patch.object(testing, "_primary_runners", return_value=["pytest", "cargo_test"]), \
+             mock.patch.object(testing, "_run_one") as run_one, \
+             mock.patch.object(testing, "run_tests") as run_suite:
+            outcomes, notes = testing.run_tests_for_changes(self.root, [
+                "site/front/messages/fr.json",
+                "site/front/src/components/table.tsx",
+                "site/back/src/lib/promo.test.ts",
+            ])
+        run_one.assert_not_called()
+        run_suite.assert_not_called()
+        self.assertEqual(outcomes, [])
+        self.assertIn("No installed test runner reaches site/back/src/lib/promo.test.ts", notes[0])
+
+    def test_files_no_test_covers_run_nothing_and_say_so(self) -> None:
+        self._write("pkg/lonely.py")
+        with mock.patch.object(testing, "_primary_runners", return_value=["pytest"]), \
+             mock.patch.object(testing, "run_tests") as run_suite:
+            outcomes, notes = testing.run_tests_for_changes(self.root, ["pkg/lonely.py", "README.md"])
+        run_suite.assert_not_called()
+        self.assertEqual(outcomes, [])
+        self.assertIn("No test file covers the changed files", notes[0])
+
+    def test_tests_of_one_runner_run_in_a_single_process(self) -> None:
+        self._write("tests/test_a.py")
+        self._write("tests/test_b.py")
+        outcome = testing.TestOutcome(runner="pytest", ran=True, passed=2, total=2, exit_code=0)
+        with mock.patch.object(testing, "_runner_for_target", return_value=("pytest", self.root)), \
+             mock.patch.object(testing, "_primary_runners", return_value=["pytest"]), \
+             mock.patch.object(testing, "_run_one", return_value=outcome) as run_one:
+            outcomes, notes = testing.run_tests_for_changes(self.root, ["tests/test_a.py", "tests/test_b.py"])
+        self.assertEqual(outcomes, [outcome])
+        self.assertEqual(notes, [])
+        self.assertEqual(run_one.call_args.args[3], ["tests/test_a.py", "tests/test_b.py"])
+
+    def test_every_target_reaches_the_runner_command_line(self) -> None:
+        import subprocess
+
+        self._write("tests/test_a.py")
+        spec = testing.runner_table()["pytest"]
+        done = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(testing, "_runner_argv", return_value=["pytest"]), \
+             mock.patch.object(testing, "_parse_junit_xml", return_value=(2, 0, 0, 2, [])), \
+             mock.patch.object(testing.subprocess, "run", return_value=done) as run:
+            outcome = testing._run_one("pytest", spec, self.root, ["tests/test_a.py", "tests/test_b.py"])
+        self.assertTrue(outcome.ok)
+        self.assertEqual(run.call_args.args[0][-2:], ["tests/test_a.py", "tests/test_b.py"])
+
+    def test_verify_of_a_json_edit_is_not_red(self) -> None:
+        from navin.quality.evidence import verify_evidence
+        from navin.quality.verify import verify_changes
+
+        self._write("messages/fr.json", '{"a": 1}')
+        report = verify_changes(self.root, ["messages/fr.json"])
+        self.assertEqual(report.test_outcomes, [])
+        self.assertIsNone(verify_evidence(report).tests_ok)
+        self.assertNotEqual(report.verdict, VERDICT_TEST_FAILURES)

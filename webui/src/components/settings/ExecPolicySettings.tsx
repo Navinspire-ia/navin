@@ -301,12 +301,12 @@ export function ExecPolicySettings() {
           <button
             type="button"
             onClick={() => setShowBuiltin((prev) => !prev)}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+            className="flex min-w-0 flex-1 items-center gap-2 text-start"
           >
             {showBuiltin ? (
               <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden />
             ) : (
-              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+              <ChevronRight className="rtl:-scale-x-100 h-4 w-4 text-muted-foreground" aria-hidden />
             )}
             <p className="text-[13.5px] font-medium text-foreground">
               {tx("settings.execPolicy.builtinTitle", "Built-in protections")}
@@ -336,7 +336,7 @@ export function ExecPolicySettings() {
                 <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
                   {tx(`settings.execPolicy.builtin.${rule.label}`, rule.label)}
                 </span>
-                <code className="min-w-0 flex-1 truncate text-right font-mono text-[11px] text-muted-foreground/80">
+                <code className="min-w-0 flex-1 truncate text-end font-mono text-[11px] text-muted-foreground/80">
                   {rule.pattern}
                 </code>
               </div>

@@ -50,6 +50,16 @@ class TitleSourceTest(unittest.TestCase):
         )
         self.assertEqual(title_source_from_user_text(brief), "")
 
+    def test_fenced_long_focus_titles_from_its_first_line(self):
+        from navin.command.builtin import format_workflow_focus
+
+        brief = (
+            "[Build mode] (/forge)\n"
+            "Skills for this mission (preloaded into Active Skills): forge.\n"
+            + format_workflow_focus("# Reverse studio\n\n" + "detail " * 100)
+        )
+        self.assertEqual(title_source_from_user_text(brief), "Reverse studio")
+
 
 class ProvisionalTitleTest(unittest.TestCase):
     def test_agent_mode_free_text_still_gets_a_title(self):

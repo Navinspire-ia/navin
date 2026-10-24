@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import io
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -343,3 +344,46 @@ def test_message_cli_routes_structured_activity_and_preserves_literal_progress(t
     assert "ignored duplicate hint" not in rendered
     assert "Activity complete." in rendered
     assert "\x1b" not in rendered
+
+
+def test_repeated_checks_on_a_running_command_fold_into_one_row():
+    stream = io.StringIO()
+    printer = ActivityPrinter(Console(file=stream, width=120, force_terminal=False))
+    waiting = (
+        "still building\nSTDERR:\nwarn\nProcess running. session_id: exec-1\n"
+        "You will be told when it finishes; keep working meanwhile, or write_stdin "
+        "with yield_time_ms to wait for it.\nElapsed: 3.0s"
+    )
+    finished = "\x1b[32m Tests  18 passed\x1b[39m (18)\nExit code: 0\nElapsed: 9.0s"
+    poll = {"session_id": "exec-1", "chars": "", "yield_time_ms": 5000}
+    for index, result in enumerate([waiting, waiting, waiting, finished]):
+        printer.consume(tool_events=[{"call_id": f"p{index}", "name": "write_stdin", "phase": "start", "arguments": poll}])
+        printer.consume(tool_events=[{
+            "call_id": f"p{index}", "name": "write_stdin", "phase": "end", "arguments": poll, "result": result,
+        }])
+    sent = {"session_id": "exec-1", "chars": "y\n"}
+    printer.consume(tool_events=[{"call_id": "w", "name": "write_stdin", "phase": "start", "arguments": sent}])
+    printer.consume(tool_events=[{
+        "call_id": "w", "name": "write_stdin", "phase": "end", "arguments": sent, "result": "ok\nExit code: 0",
+    }])
+    rendered = stream.getvalue()
+    assert rendered.count("Checked running command") == 1
+    assert "Finished, exit 0 · Tests 18 passed (18)" in rendered
+    assert "Sent input to running command" in rendered
+    for noise in ("stdin", "Stdin", "STDERR", "session_id", "Elapsed", "\x1b"):
+        assert noise not in rendered
+
+
+def test_display_file_edit_path_skips_resolve_inside_the_workspace(tmp_path, monkeypatch):
+    # resolve() crosses the 9P bridge on a WSL project seen from Windows.
+    from navin.utils import file_edit_events as fee
+
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    calls: list[Path] = []
+    real = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: calls.append(self) or real(self, *a, **k))
+    assert fee.display_file_edit_path(ws / "src" / "a.ts", ws) == "src/a.ts"
+    assert calls == []
+    assert fee.display_file_edit_path(ws / "src" / ".." / "b.ts", ws) == "b.ts"
+    assert calls

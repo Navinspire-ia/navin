@@ -91,11 +91,18 @@ class RefusalLogicTest(_LogTestBase):
         self.assertIn("min old", problem)
 
     def test_lint_only_pass_refuses_when_tests_required(self) -> None:
+        (self.root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        (self.root / "tests").mkdir()
         vlog.record_verification(self.root, source="verify", ok=True, tests_ran=False)
         self.assertIsNone(vlog.refusal_to_close_without_proof(self.root))
         problem = vlog.refusal_to_close_without_proof(self.root, require_tests=True)
         assert problem is not None
         self.assertIn("did not run any tests", problem)
+
+
+    def test_no_test_suite_means_a_green_verify_is_enough(self) -> None:
+        vlog.record_verification(self.root, source="verify", ok=True, tests_ran=False)
+        self.assertIsNone(vlog.refusal_to_close_without_proof(self.root, require_tests=True))
 
 
 class QualityToolHooksTest(_LogTestBase):

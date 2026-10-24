@@ -33,7 +33,14 @@ from navin.quality.linters import (
     lint_file,
     lint_project,
 )
-from navin.quality.testing import TestOutcome, _primary_runners, run_tests, runners_for_changes
+from navin.quality.testing import (
+    TestOutcome,
+    _primary_runners,
+    run_tests,
+    run_tests_for_changes,
+    runners_for_changes,
+)
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 _GIT_TIMEOUT_S = 20
@@ -237,12 +244,12 @@ def changed_files(root: Path) -> list[str]:
     Build artifacts are filtered out: they are never what a verification pass
     should lint or reason about.
     """
-    git = shutil.which("git")
+    git = git_argv(root)
     if git is None:
         return []
     try:
         completed = subprocess.run(  # noqa: S603
-            [git, "-C", str(root), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            [*git, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -358,7 +365,7 @@ def restore_from_git(root: Path, paths: list[str] | None = None) -> dict[str, An
     because git already holds the pre-change content. Untracked files are left
     alone - deleting them is not something a rollback should decide.
     """
-    git = shutil.which("git")
+    git = git_argv(root)
     if git is None:
         return {"restored": 0, "error": "git is not available"}
     targets = paths if paths is not None else changed_files(root)
@@ -370,7 +377,7 @@ def restore_from_git(root: Path, paths: list[str] | None = None) -> dict[str, An
     for rel in targets:
         try:
             probe = subprocess.run(  # noqa: S603
-                [git, "-C", str(root), "ls-files", "--error-unmatch", rel],
+                [*git, "ls-files", "--error-unmatch", rel],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -392,7 +399,7 @@ def restore_from_git(root: Path, paths: list[str] | None = None) -> dict[str, An
         }
     try:
         completed = subprocess.run(  # noqa: S603
-            [git, "-C", str(root), "checkout", "--", *tracked],
+            [*git, "checkout", "--", *tracked],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -523,11 +530,14 @@ def verify_changes(
         no_test_suite = not test_target and not (
             runners if runners is not None else _primary_runners(root)
         )
-        test_outcomes = run_tests(
-            root, target=test_target,
-            runners=runners,
-            **({"on_output": on_test_output} if on_test_output is not None else {}),
-        )
+        output = {"on_output": on_test_output} if on_test_output is not None else {}
+        if test_target:
+            test_outcomes = run_tests(root, target=test_target, **output)
+        else:
+            # Only the tests of what changed: a slow or broken test elsewhere
+            # must not turn this change red and start an unrequested repair.
+            test_outcomes, test_notes = run_tests_for_changes(root, changed, **output)
+            notes.extend(test_notes)
 
     report = VerificationReport(
         verdict=_verdict_for(lint_results, test_outcomes, changed),

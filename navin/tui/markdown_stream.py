@@ -9,11 +9,13 @@ import asyncio
 
 from markdown_it import MarkdownIt
 from textual.await_complete import AwaitComplete
+from textual.containers import Horizontal
 from textual.strip import Strip
 from textual.widgets import Markdown
 from textual.widgets._markdown import (
     MarkdownBullet,
     MarkdownBulletList,
+    MarkdownFence,
     MarkdownHeader,
     MarkdownOrderedList,
     MarkdownParagraph,
@@ -22,7 +24,42 @@ from textual.widgets._markdown import (
     MarkdownTableContent,
 )
 
+from navin.tui.copy_chip import CopyChip
+
 _COLLECTIONS = (MarkdownBulletList, MarkdownOrderedList, MarkdownTable)
+
+
+class CopyableFence(MarkdownFence):
+    """A code block with a copy icon on its top row (commands to run, snippets).
+
+    The icon takes the row the label's top padding left blank, so the block
+    keeps its height and matches the settled renderer (navin.tui.settled).
+    """
+
+    DEFAULT_CSS = """
+    CopyableFence > .fence-copy-row {
+        width: 1fr;
+        height: 1;
+        padding: 0 1;
+        align-horizontal: right;
+        background: transparent;
+    }
+    CopyableFence > Label {
+        padding: 0 2 1 2;
+    }
+    """
+
+    def compose(self):
+        # Only the label is the click target: the rest of the row stays plain.
+        with Horizontal(classes="fence-copy-row"):
+            yield CopyChip(lambda: self.code, classes="fence-copy")
+        yield from super().compose()
+
+    def _copy_context(self, block) -> None:
+        super()._copy_context(block)
+        # A streamed block grows in place: copy the code it shows now.
+        if isinstance(block, MarkdownFence):
+            self.code = block.code
 
 
 def _token_key(token):
@@ -93,8 +130,27 @@ async def _patch_collection(existing, replacement, keep: int) -> None:
     existing._copy_context(replacement)
 
 
+def _set_paragraph(block: MarkdownParagraph, content) -> None:
+    """Show a grown paragraph; relayout the screen only if its height changed.
+
+    Most streamed words land on the paragraph's last line. A layout pass
+    reflows every widget on the screen, so with fifty live answers one per
+    word was most of the frame.
+    """
+    size = block.size
+    if not block.is_mounted or not size.width or block._layout_required:
+        block.set_content(content)
+        return
+    block._content = content
+    block.update(content, layout=False)
+    if block.get_content_height(size, size, size.width) != size.height:
+        block.refresh(layout=True)
+
+
 class TranscriptMarkdown(Markdown):
     """Parse the unfinished block; reuse earlier blocks and collection rows."""
+
+    BLOCKS = {**Markdown.BLOCKS, "fence": CopyableFence, "code_block": CopyableFence}
 
     def render_line(self, y: int) -> Strip:
         # outer_size is the last layout; size would rebuild the full map.
@@ -102,7 +158,14 @@ class TranscriptMarkdown(Markdown):
         return Strip.blank(max(0, width), self.visual_style.rich_style)
 
     def _parser(self):
-        return MarkdownIt("gfm-like") if self._parser_factory is None else self._parser_factory()
+        # Building a MarkdownIt compiles its rule chains: about as costly as
+        # parsing a streamed paragraph. One parser serves every append.
+        factory = self._parser_factory
+        cached = getattr(self, "_stream_parser", None)
+        if cached is None or cached[0] is not factory:
+            cached = (factory, MarkdownIt("gfm-like") if factory is None else factory())
+            self._stream_parser = cached
+        return cached[1]
 
     def _blocks_with_rows(self, tokens, offset=0):
         collections = {id(token): _collection(tokens[index:]) for index, token in enumerate(tokens)
@@ -169,7 +232,7 @@ class TranscriptMarkdown(Markdown):
                         last._stream_rows = collection
                     elif isinstance(last, MarkdownParagraph) and isinstance(replacement, MarkdownParagraph):
                         if not last._content.is_same(replacement._content):
-                            await last._update_from_block(replacement)
+                            _set_paragraph(last, replacement._content)
                         last.source_range = replacement.source_range
                         last._copy_context(replacement)
                     elif type(last) is type(replacement) and not isinstance(last, _COLLECTIONS):

@@ -16,13 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from navin.report.html_common import EXPERT_CSS, deliverables_table, esc
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 
 def _git(root: Path, *args: str) -> tuple[int, str, str]:
     try:
         completed = subprocess.run(  # noqa: S603
-            ["git", "-C", str(root), *args],
+            [*(git_argv(root) or ["git", "-C", str(root)]), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",

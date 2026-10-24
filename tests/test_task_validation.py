@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from navin.agent.code_validation import CodeValidationState
+from navin.agent.code_validation import CodeValidationState, exec_runs_only_tests
 from navin.agent.loop import AgentLoop
 from navin.agent.progress_hook import AgentProgressHook
 from navin.agent.runner import AgentLoopGuard, AgentRunner, AgentRunSpec, _is_test_command
@@ -156,7 +156,7 @@ def test_completion_report_distinguishes_missing_failed_running_and_stale_result
     report = state.completion_message(reason="ended")
     assert "| Tests | Still running |" in report
     assert "Wait for the running tests" in report
-    assert "Run meaningful tests" not in report
+    assert "Run the tests that cover the changed files" not in report
 
 
 def test_running_test_guidance_waits_for_the_current_revision_only():
@@ -164,9 +164,9 @@ def test_running_test_guidance_waits_for_the_current_revision_only():
     observe(state, "exec", {"command": "pytest"}, "Process running. session_id: checks-1")
     assert "write_stdin" in state.missing()
     assert "session_id: checks-1" in state.missing()
-    assert "Run meaningful tests" not in state.missing()
+    assert "Run the tests that cover the changed files" not in state.missing()
     observe(state, "edit_file", {"path": "src/service.py"}, "Edited again")
-    assert "Run meaningful tests" in state.missing()
+    assert "Run the tests that cover the changed files" in state.missing()
     observe(state, "write_stdin", {"session_id": "checks-1"}, "6 passed\nExit code: 0")
     assert state.pending
 
@@ -227,8 +227,12 @@ def test_filter_exit_zero_is_not_proof_of_passing_tests(summary, failed):
     "pytest | head -1",
     "pytest | grep passed",
     "pytest | tail -1 || true",
-    "pytest | tail -1; echo done",
+    "pytest | tail -1; cat other-results.txt",
+    "pytest; echo '6 passed in 4.66s'",
+    "pytest; echo $(cat old.log)",
     "pytest && false | tail -1",
+    "pytest; sed -i s/a/b/ src/service.py",
+    "go test ./...; echo done",
     "echo pytest | tail -1",
     "pytest --collect-only | tail -1",
 ])
@@ -236,6 +240,98 @@ def test_other_commands_cannot_supply_filtered_test_evidence(command):
     state = edited_state()
     observe(state, "exec", {"command": command}, "6 passed in 4.66s\nExit code: 0")
     assert state.pending
+
+
+_VITEST_PASS = " Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Duration  1.2s\n"
+
+
+@pytest.mark.parametrize("command, output", [
+    ("pytest | tail -1; echo done", "6 passed in 4.66s\ndone"),
+    # The financeIa session: backend and frontend tests in one chained call.
+    ("cd backend/finance && timeout 300 .venv/bin/python -m pytest tests -q ; echo '== vitest' ; "
+     "cd ../../frontend && npx vitest run src/perm.test.ts",
+     "19 passed in 3.21s\n== vitest\n" + _VITEST_PASS),
+    ("python -m pytest -q 2>&1 | tail -3 && npx vitest run 2>&1 | tail -8",
+     "19 passed, 2 warnings in 3.21s\n" + _VITEST_PASS),
+    ("source .venv/bin/activate; CI=1 npx jest", "Tests:       4 passed, 4 total\n"),
+])
+def test_chained_tests_count_when_every_run_prints_a_passing_summary(command, output):
+    state = edited_state()
+    observe(state, "exec", {"command": command}, output + "\nExit code: 0")
+    assert not state.pending
+    assert exec_runs_only_tests({"command": command}, _is_test_command)
+
+
+@pytest.mark.parametrize("output, failed", [
+    ("19 passed in 3.21s\n Test Files  1 failed (1)\n      Tests  1 failed | 2 passed (3)\n", True),
+    ("19 passed in 3.21s\n Test Files  1 failed (1)\n      Tests  3 passed (3)\n", True),
+    ("19 passed in 3.21s\n" + _VITEST_PASS + "     Errors  1 error\n", True),
+    ("1 failed, 18 passed in 3.21s\n" + _VITEST_PASS, True),
+    ("19 passed in 3.21s\n", False),  # vitest never printed its summary
+    ("19 passed in 3.21s\nError: EACCES: permission denied\n", False),
+])
+def test_a_chain_needs_every_summary_and_reports_any_failure(output, failed):
+    state = edited_state()
+    command = "pytest -q; echo '== vitest'; npx vitest run"
+    observe(state, "exec", {"command": command}, output + "\nExit code: 0")
+    assert state.pending
+    assert state.failed is failed
+    if not failed:
+        assert "complete passing summary for every test run" in state.missing()
+
+
+def test_chained_tests_need_a_zero_exit_and_wait_for_background_results():
+    state = edited_state()
+    observe(state, "exec", {"command": "pytest; cd missing"}, "6 passed in 4.66s\nExit code: 1")
+    assert state.pending and not state.failed
+    observe(state, "exec", {"command": "pytest; echo == done"}, "Process running. session_id: chain-1")
+    observe(state, "write_stdin", {"session_id": "chain-1"}, "6 passed in 4.66s\n")
+    assert state.pending
+    observe(state, "write_stdin", {"session_id": "chain-1"}, "== done\nExit code: 0")
+    assert not state.pending
+    assert not state.pending_chains and not state.pending_filtered_outputs
+
+
+@pytest.mark.parametrize("command", [
+    "pytest && sed -i s/a/b/ app.py",
+    "make check",
+    "pytest | tee app.log; npm run build",
+    "ls",
+])
+def test_only_pure_test_runs_are_treated_as_side_effect_free(command):
+    assert not exec_runs_only_tests({"command": command}, _is_test_command)
+
+
+@pytest.mark.parametrize("chained", [False, True])
+def test_green_tests_that_rewrite_generated_files_do_not_reopen_validation(tmp_path, chained):
+    """A green run must close the loop even when the tests rewrite a module."""
+    async def run():
+        (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
+        (tmp_path / "test_pricing.py").write_text(
+            _PRICING_TESTS + "\n\ndef test_regenerates_rates():\n    import pathlib, time\n"
+            "    pathlib.Path('generated_rates.py').write_text(f'STAMP = {time.time_ns()}\\n')\n"
+        )
+        python = shlex.quote(sys.executable)
+        command = (f"cd . && {python} -m pytest -q test_pricing.py 2>&1 | tail -5; echo '== backend ok'"
+                   if chained else f"{python} -m pytest -q test_pricing.py")
+        provider = ScriptedProvider([
+            tool_call("write_file", path="pricing.py", content=_PRICING),
+            tool_call("exec", command=command),
+            *(LLMResponse(content="Done: 6 tests passed.") for _ in range(3)),
+        ])
+        tools = registry(tmp_path)
+        tools.register(ExecTool(working_dir=str(tmp_path)))
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Fix the discount task."}],
+            tools=tools, runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            workspace=tmp_path, max_iterations=4, continue_on_max_iterations=True,
+            max_tool_result_chars=4_000, validate_code_changes=True,
+        ))
+        assert (tmp_path / "generated_rates.py").is_file()
+        assert result.stop_reason == "completed"
+        assert result.final_content == "Done: 6 tests passed."
+        assert provider.calls == 3, "no validation reminder after the green run"
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("edit_during_run", [False, True])
@@ -263,7 +359,8 @@ def test_real_pytest_tail_pipeline_observes_success_and_masked_failure(tmp_path,
         )
         command = f"cd supabase/audit && {shlex.quote(sys.executable)} -m pytest test_clean_dump.py 2>&1 | tail -1"
         result = await ExecTool(working_dir=str(tmp_path)).execute(command=command)
-        assert "Exit code: 0" in str(result), "The output filter masks the test runner's exit status"
+        # pipefail: a filter at the end of the pipeline no longer masks the runner's status.
+        assert ("Exit code: 0" if passing else "Exit code: 1") in str(result)
         assert ("6 passed" if passing else "1 failed, 5 passed") in str(result)
         state = edited_state()
         observe(state, "exec", {"command": command}, result)
@@ -416,7 +513,15 @@ def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path,
     asyncio.run(run())
 
 
+def _with_test_suite(root):
+    """A project that has tests: changed logic must be tested, not only checked."""
+    (root / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
+    (root / "test_smoke.py").write_text("def test_smoke():\n    assert True\n")
+
+
 def test_shell_edits_cannot_bypass_validation(tmp_path):
+    _with_test_suite(tmp_path)
+
     async def run():
         script = "from pathlib import Path; Path('pricing.py').write_text('def total(): return 42\\n')"
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
@@ -435,8 +540,79 @@ def test_shell_edits_cannot_bypass_validation(tmp_path):
         assert (tmp_path / "pricing.py").is_file()
         assert result.stop_reason == "validation_failed"
         assert "pricing.py" in result.final_content
-        assert "meaningful tests" in result.final_content
+        assert "tests that cover the changed files" in result.final_content
     asyncio.run(run())
+
+
+def test_a_parallel_session_edit_does_not_ask_a_read_only_turn_for_tests(tmp_path):
+    """A front-end audit ran the back end's tests: another session edited
+    backend files during the turn, and the end-of-turn tree check counted
+    them as this agent's edits."""
+    _with_test_suite(tmp_path)
+    (tmp_path / "backend.py").write_text("x = 1\n")
+
+    class ParallelEdit(ScriptedProvider):
+        async def chat(self, **kwargs):
+            if self.calls == 1:
+                (tmp_path / "backend.py").write_text("x = 2\n")
+            return await super().chat(**kwargs)
+
+    async def run():
+        # A test run first: it takes the tree snapshot the end of the turn
+        # compares with, as the audit's first project check did.
+        command = f"{shlex.quote(sys.executable)} -m pytest -q test_smoke.py"
+        provider = ParallelEdit([
+            tool_call("exec", command=command),
+            # Spare answers: a wrongly armed gate asks again instead of failing.
+            *(LLMResponse(content="Audit done.") for _ in range(3)),
+        ])
+        tools = registry(tmp_path)
+        tools.register(ExecTool(working_dir=str(tmp_path)))
+        return await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Audit the front end."}],
+            tools=tools,
+            runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            workspace=tmp_path, max_iterations=4, max_tool_result_chars=4_000,
+            validate_code_changes=True, loop_guard=AgentLoopGuard(),
+        ))
+
+    result = asyncio.run(run())
+    assert result.stop_reason != "validation_failed"
+    assert result.final_content == "Audit done."
+
+
+def test_a_subagent_lists_command_made_files_and_docs_without_validation(tmp_path):
+    from navin.agent.runner import AgentLoopGuard
+
+    (tmp_path / "keep.py").write_text("x = 1\n")
+
+    async def run():
+        script = "from pathlib import Path; Path('gen.py').write_text('y = 2\\n')"
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+        provider = ScriptedProvider([
+            tool_call("exec", command=command),
+            tool_call("write_file", path="audit/report.md", content="# Report\n"),
+            LLMResponse(content="Report written."),
+        ])
+        tools = registry(tmp_path)
+        tools.register(ExecTool(working_dir=str(tmp_path)))
+        guard = AgentLoopGuard()
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Write the audit report."}],
+            tools=tools, runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            workspace=tmp_path, max_iterations=4, max_tool_result_chars=4_000,
+            loop_guard=guard, user_hook_scope="subagent",
+        ))
+        return result, guard.validation
+
+    result, validation = asyncio.run(run())
+    assert result.final_content == "Report written."
+    assert (tmp_path / "gen.py").is_file()
+    assert "gen.py" in validation.touched
+    assert any(path.endswith("report.md") for path in validation.touched)
+    assert "keep.py" not in validation.touched
+    # The list arms nothing: a turn that validates nothing stays that way.
+    assert validation.revision == 0 and not validation.paths
 
 
 def test_real_repair_cycles_have_no_total_verification_retry_cap(tmp_path):
@@ -511,6 +687,8 @@ def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_p
 
 
 def test_repeated_board_closures_without_validation_stop_without_closing_the_task(tmp_path):
+    _with_test_suite(tmp_path)
+
     async def run():
         store = ProjectBoardStore(tmp_path)
         task = store.create_task(title="Fix discounts", status="in_progress", actor="agent", actor_type="agent")

@@ -286,10 +286,18 @@ class _ConnectionHandler:
     async def _connect_upstream(
         self,
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        return await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", self.target_port),
-            timeout=UPSTREAM_CONNECT_TIMEOUT_S,
-        )
+        # 127.0.0.1 first, then ::1: a default Vite / Next on Windows or
+        # recent macOS listens on IPv6 only.
+        try:
+            return await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", self.target_port),
+                timeout=UPSTREAM_CONNECT_TIMEOUT_S,
+            )
+        except (ConnectionRefusedError, asyncio.TimeoutError, OSError):
+            return await asyncio.wait_for(
+                asyncio.open_connection("::1", self.target_port),
+                timeout=UPSTREAM_CONNECT_TIMEOUT_S,
+            )
 
     async def _handle_websocket(
         self,

@@ -43,6 +43,16 @@ from navin.agent.tools.schema import (
             "timeline_get/timeline_list read them, timeline_render renders one "
             "with live progress, timeline_delete removes it; "
             "profiles lists sizes; "
+            "footage_polish turns a raw screen recording plus its actions.json "
+            "into polished footage (auto zoom/pan on clicks, drawn cursor with "
+            "click ripple, dead-time trim, smart 9:16 / 1:1 crop or framed "
+            "layout) and writes a remapped actions.json; "
+            "motion_templates lists the premium motion-design templates (3D "
+            "hero, kinetic type, feature callout, 3D device mockup, stats, "
+            "before/after, lower third, CTA end card, logo sting, gradient "
+            "stage) with props schemas and the storyboard contract; "
+            "motion_render renders a storyboard= (scenes + transitions + "
+            "audio) or one template= with props= to video, brand-styled; "
             "jobs/job/resume_job/cancel_job inspect, resume and stop durable "
             "Montage jobs.",
             enum=[
@@ -55,6 +65,7 @@ from navin.agent.tools.schema import (
                 "screenshot",
                 "demo_register",
                 "package",
+                "footage_polish",
                 "render",
                 "assemble",
                 "probe",
@@ -73,6 +84,8 @@ from navin.agent.tools.schema import (
                 "job",
                 "resume_job",
                 "cancel_job",
+                "motion_templates",
+                "motion_render",
             ],
         ),
         days=IntegerSchema(
@@ -268,12 +281,88 @@ from navin.agent.tools.schema import (
             "Job identifier for action=job, resume_job or cancel_job.",
             nullable=True,
         ),
+        actions=StringSchema(
+            "For action=footage_polish / package: the recorder's actions.json "
+            "(default: <clip>.actions.json next to the clip).",
+            nullable=True,
+        ),
+        intensity=StringSchema(
+            "For action=footage_polish / package: camera zoom intensity, "
+            "off|subtle|normal|strong or a number 0-1.5 (default normal: "
+            "1.6x-2.2x on clicks).",
+            nullable=True,
+        ),
+        trim=BooleanSchema(
+            description=(
+                "For action=footage_polish / package: speed up static dead time "
+                "longer than 1.2s (default true)."
+            ),
+            default=True,
+            nullable=True,
+        ),
+        cursor=StringSchema(
+            "For action=footage_polish / package: drawn cursor auto|light|dark|none.",
+            nullable=True,
+        ),
+        layout=StringSchema(
+            "For action=footage_polish / package: crop (smart crop following the "
+            "action, default) or framed (16:9 footage inside a branded background "
+            "with title above and captions below, for 9:16 / 1:1).",
+            nullable=True,
+        ),
+        motion_blur=BooleanSchema(
+            description="For action=footage_polish: blur fast camera moves.",
+            default=False,
+            nullable=True,
+        ),
+        footage_options=StringSchema(
+            "For action=footage_polish / package: optional JSON object of advanced "
+            "options: trim_threshold, trim_speed, trim_mode (speed|cut), "
+            "cursor_size (css px), accent, background (hex), captions "
+            "(srt path or 'actions'), crf, preset.",
+            nullable=True,
+        ),
+        storyboard=StringSchema(
+            "For action=motion_render: storyboard JSON (or a workspace path to "
+            "one): {version:1, format:'16:9'|'9:16'|'1:1', fps:30|60, brand?, "
+            "scenes:[{template, duration, props, transition:cut|fade|slide|zoom|"
+            "whip} or {type:'footage', path, duration, start?}], audio?:"
+            "{voiceover?, music?, sfx?}}. See action=motion_templates.",
+            nullable=True,
+        ),
+        template=StringSchema(
+            "For action=motion_render without a storyboard: one template name "
+            "(e.g. lower_third) rendered alone; size from width/height/fps.",
+            nullable=True,
+        ),
+        props=StringSchema(
+            "For action=motion_render with template=: JSON object of template "
+            "props (schema from action=motion_templates).",
+            nullable=True,
+        ),
+        brand=StringSchema(
+            "For action=motion_render: brand kit JSON or path {name, logo_path, "
+            "colors:{primary,secondary,accent,background,text}, fonts:{heading,"
+            "body}, font_files?, tagline?, url?}. Default: the marketing desk brand.",
+            nullable=True,
+        ),
+        codec=StringSchema(
+            "For action=motion_render with template=: h264 (default), "
+            "prores4444 or webm_alpha (transparent overlays).",
+            nullable=True,
+        ),
+        duration=NumberSchema(
+            description="For action=motion_render with template=: seconds (default: the template's).",
+            minimum=0.5,
+            maximum=120,
+            nullable=True,
+        ),
     )
 )
 class MontageTool(_QualityTool):
     """Project marketing analysis, live demo packaging, and HyperFrames tooling."""
 
-    _scopes = {"core", "subagent"}
+    _scopes = {"core", "subagent", "teammate"}
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
@@ -319,6 +408,7 @@ class MontageTool(_QualityTool):
             "timeline_get",
             "jobs",
             "job",
+            "motion_templates",
         }
 
     async def execute(
@@ -364,6 +454,13 @@ class MontageTool(_QualityTool):
 
             return render_profiles_help()
 
+        if action == "motion_templates":
+            import json
+
+            from navin.montage.motion.actions import templates_payload
+
+            return json.dumps(templates_payload(), indent=2, ensure_ascii=False)
+
         if action == "stock_search":
             import json
 
@@ -381,6 +478,9 @@ class MontageTool(_QualityTool):
         root, error = self._root_or_error()
         if root is None:
             return error
+
+        if action == "motion_render":
+            return await self._motion_render(root, output, width, height, fps, kwargs)
 
         if action == "detect":
             from navin.montage.detect import detect_toolchain
@@ -532,6 +632,8 @@ class MontageTool(_QualityTool):
             return render_register_result(result)
 
         if action == "package":
+            import asyncio
+
             from navin.montage.demo import package_social, render_package_result
 
             if not (path or "").strip():
@@ -539,14 +641,61 @@ class MontageTool(_QualityTool):
                     "package requires path= to a demo under marketing/montage/demos/ "
                     "(or any workspace video). Fix: browser record → demo_register first."
                 )
-            result = package_social(
+            footage_opts = self._footage_options(kwargs)
+            if isinstance(footage_opts, str):
+                return f"package error: {footage_opts}"
+            result = await asyncio.to_thread(
+                package_social,
                 root,
                 path or "",
                 title=(title or "Product demo").strip() or "Product demo",
                 burn_srt=srt,
                 profiles=profiles,
+                layout=kwargs.get("layout"),
+                actions=kwargs.get("actions"),
+                footage=footage_opts,
             )
             return render_package_result(result)
+
+        if action == "footage_polish":
+            import asyncio
+            import json
+
+            from navin.montage.assemble import AssembleError
+
+            if not (path or "").strip():
+                return (
+                    "footage_polish requires path= to a raw screen recording (MP4) "
+                    "and its actions.json (actions=, default <clip>.actions.json "
+                    "next to the clip)."
+                )
+            footage_opts = self._footage_options(kwargs)
+            if isinstance(footage_opts, str):
+                return f"footage_polish error: {footage_opts}"
+            actions_arg = str(kwargs.get("actions") or "").strip()
+            try:
+                resolved = self._resolve_media_input(root, path or "")
+                resolved_actions = (
+                    self._resolve_media_input(root, actions_arg) if actions_arg else None
+                )
+                resolved_srt = self._resolve_media_input(root, srt) if (srt or "").strip() else None
+            except AssembleError as exc:
+                return f"footage_polish error: {exc}"
+            result = await asyncio.to_thread(
+                self._footage_polish,
+                root,
+                resolved,
+                resolved_actions,
+                footage_opts,
+                output=output,
+                width=width,
+                height=height,
+                fps=fps,
+                profile=profile,
+                title=title,
+                srt=resolved_srt,
+            )
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         if action == "render":
             from navin.montage.render import render_composition, render_result_text
@@ -762,11 +911,65 @@ class MontageTool(_QualityTool):
 
         return (
             f"Unknown action={action!r}. Use detect|doctor|setup|stock_search|"
-            "analyze|calendar|screenshot|demo_register|package|render|assemble|probe|"
+            "analyze|calendar|screenshot|demo_register|package|footage_polish|render|"
+            "assemble|probe|"
             "timeline_list|timeline_get|timeline_save|timeline_render|timeline_delete|"
             "transcribe|voicetrack|voice_sample|dub|lipsync|profiles|jobs|job|"
-            "resume_job|cancel_job."
+            "resume_job|cancel_job|motion_templates|motion_render."
         )
+
+    async def _motion_render(
+        self,
+        root: Path,
+        output: str | None,
+        width: int | None,
+        height: int | None,
+        fps: int | None,
+        extra: dict[str, Any],
+    ) -> str:
+        """Storyboard or single-template motion render (navin.montage.motion)."""
+        import json
+
+        from navin.montage.assemble import AssembleError
+        from navin.montage.motion.actions import motion_render
+
+        def resolve(value: str) -> Path | None:
+            try:
+                return Path(self._resolve_media_input(root, value))
+            except AssembleError:
+                return None
+
+        def resolve_file(value: str) -> str:
+            try:
+                return self._resolve_media_input(root, value)
+            except AssembleError as exc:
+                raise ValueError(str(exc)) from exc
+
+        def text(key: str) -> str | None:
+            value = extra.get(key)
+            if value is None:
+                return None
+            if isinstance(value, (dict, list)):
+                return json.dumps(value)
+            return str(value)
+
+        duration = extra.get("duration")
+        result = await motion_render(
+            root,
+            resolve=resolve,
+            resolve_file=resolve_file,
+            storyboard=text("storyboard"),
+            template=text("template"),
+            props=text("props"),
+            brand=text("brand"),
+            output=output,
+            width=width,
+            height=height,
+            fps=fps,
+            duration=float(duration) if duration not in (None, "") else None,
+            codec=text("codec"),
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def _bus_or_none(self) -> Any:
         return getattr(self, "_bus", None)
@@ -1009,6 +1212,110 @@ class MontageTool(_QualityTool):
                 "to deliver the video to the user."
             )
         return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _footage_options(kwargs: dict[str, Any]) -> dict[str, Any] | str:
+        """Polish options from the flat tool arguments; an error string if invalid."""
+        import json
+
+        options: dict[str, Any] = {}
+        raw = kwargs.get("footage_options")
+        if isinstance(raw, dict):
+            options.update(raw)
+        elif isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                return "footage_options must be a JSON object"
+            if not isinstance(parsed, dict):
+                return "footage_options must be a JSON object"
+            options.update(parsed)
+        for key in ("intensity", "trim", "cursor", "layout", "motion_blur"):
+            if kwargs.get(key) is not None:
+                options[key] = kwargs[key]
+        return options
+
+    def _footage_polish(
+        self,
+        root: Path,
+        clip: str,
+        actions: str | None,
+        options: dict[str, Any],
+        *,
+        output: str | None,
+        width: int | None,
+        height: int | None,
+        fps: int | None,
+        profile: str | None,
+        title: str | None,
+        srt: str | None,
+    ) -> dict[str, Any]:
+        import json
+
+        from navin.montage.footage import (
+            FootageError,
+            FootageOptions,
+            prepare_footage,
+            remapped_actions_payload,
+            render_footage,
+        )
+        from navin.montage.profiles import get_profile
+
+        def show(value: str) -> str:
+            try:
+                return str(Path(value).resolve().relative_to(root.resolve())).replace("\\", "/")
+            except ValueError:
+                return value
+
+        opts = FootageOptions.from_mapping({**options, "fps": fps, "title": title})
+        target = (output or "").strip()
+        if target:
+            dest = Path(target).expanduser()
+            if not dest.is_absolute():
+                dest = root / dest
+        else:
+            dest = root / "marketing" / "montage" / "exports" / f"{Path(clip).stem}-polished.mp4"
+        try:
+            dest.resolve().relative_to(root.resolve())
+        except ValueError:
+            return {"ok": False, "error": "bad_output", "fix": "output must stay inside the workspace"}
+        try:
+            plan = prepare_footage(clip, actions, opts)
+            chosen = get_profile(profile) if profile else None
+            if chosen is not None:
+                out_w, out_h = chosen.width, chosen.height
+            elif width and height:
+                out_w, out_h = int(width), int(height)
+            else:
+                # Source aspect, 1080p-class long edge capped at 1920.
+                scale = min(1.0, 1920 / max(plan.src_w, plan.src_h))
+                out_w, out_h = round(plan.src_w * scale), round(plan.src_h * scale)
+            result = render_footage(plan, dest, width=out_w, height=out_h, subtitles=srt)
+        except FootageError as exc:
+            return {"ok": False, "error": "footage_failed", "fix": str(exc)}
+        actions_out = dest.with_name(f"{dest.stem}.actions.json")
+        actions_out.write_text(
+            json.dumps(remapped_actions_payload(plan, result), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        dead = plan.remap.to_dict()
+        return {
+            "ok": True,
+            "output": show(result["output"]),
+            "actions": show(str(actions_out)),
+            "width": result["width"],
+            "height": result["height"],
+            "fps": result["fps"],
+            "duration": result["duration"],
+            "source_duration": round(plan.src_duration, 3),
+            "dead_time_removed": dead["removed_seconds"],
+            "dead_segments": dead["segments"],
+            "layout": result["layout"],
+            "cursor": result["cursor"],
+            "camera": result["camera"],
+            "next": "Review it, then montage(action=package) for platform exports. "
+            "Never auto-publish.",
+        }
 
     def _resolve_media_input(self, root: Path, value: str) -> str:
         """Resolve a visual or audio input inside the workspace or the media dir."""

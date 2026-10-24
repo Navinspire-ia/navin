@@ -43,6 +43,7 @@ import {
   sameWorkspacePath,
   shortWorkspacePath,
 } from "@/lib/workspace";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 type ContinuityTab =
@@ -125,6 +126,10 @@ export function ProjectHomeView({
 }) {
   const { t } = useTranslation();
   const { client, token } = useClient();
+  // Reads take the token at call time: a rotation reloaded board, brain and
+  // resume seed every 270 s.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const [tab, setTab] = useState<ContinuityTab>("git");
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [loadingBoard, setLoadingBoard] = useState(false);
@@ -159,7 +164,7 @@ export function ProjectHomeView({
   }, [projectSessions, sessions]);
 
   const loadBoard = useCallback(async () => {
-    if (!token || !boardKey) {
+    if (!hasToken || !boardKey) {
       setBoard(null);
       setUsingDemo(true);
       setBoardError(null);
@@ -168,7 +173,7 @@ export function ProjectHomeView({
     setLoadingBoard(true);
     setBoardError(null);
     try {
-      const payload = await fetchBoard(token, boardKey);
+      const payload = await fetchBoard(tokenRef.current, boardKey);
       setBoard(payload);
       // Bound projects never fall back to marketing demo content.
       setUsingDemo(!projectPath);
@@ -185,7 +190,7 @@ export function ProjectHomeView({
     } finally {
       setLoadingBoard(false);
     }
-  }, [boardKey, projectPath, t, token]);
+  }, [boardKey, hasToken, projectPath, t, tokenRef]);
 
   useEffect(() => {
     void loadBoard();
@@ -197,20 +202,20 @@ export function ProjectHomeView({
   }, [client, loadBoard]);
 
   const loadBrain = useCallback(async () => {
-    if (!token || !boardKey || !projectPath) {
+    if (!hasToken || !boardKey || !projectPath) {
       setBrain(null);
       return;
     }
     setLoadingBrain(true);
     try {
-      const payload = await fetchProjectBrain(token, boardKey);
+      const payload = await fetchProjectBrain(tokenRef.current, boardKey);
       setBrain(payload);
     } catch {
       setBrain(null);
     } finally {
       setLoadingBrain(false);
     }
-  }, [boardKey, projectPath, token]);
+  }, [boardKey, hasToken, projectPath, tokenRef]);
 
   useEffect(() => {
     void loadBrain();
@@ -301,16 +306,16 @@ export function ProjectHomeView({
   const planItems = board?.session_plan?.items?.slice(0, 5) ?? [];
 
   const loadResumeSeed = useCallback(async () => {
-    if (!token || !boardKey || !projectPath) {
+    if (!hasToken || !boardKey || !projectPath) {
       setResumePayload(null);
       return;
     }
     try {
-      setResumePayload(await fetchResumeSeed(token, boardKey));
+      setResumePayload(await fetchResumeSeed(tokenRef.current, boardKey));
     } catch {
       setResumePayload(null);
     }
-  }, [boardKey, projectPath, token]);
+  }, [boardKey, hasToken, projectPath, tokenRef]);
 
   useEffect(() => {
     void loadResumeSeed();
@@ -657,7 +662,7 @@ export function ProjectHomeView({
                         key={session.key}
                         type="button"
                         onClick={() => onOpenChat(session.key)}
-                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-start transition-colors hover:bg-muted/70"
                       >
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">
@@ -667,7 +672,7 @@ export function ProjectHomeView({
                             {relativeLabel(session.updatedAt, "", t)}
                           </p>
                         </div>
-                        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <ArrowRight className="rtl:-scale-x-100 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       </button>
                     ))
                   )}
@@ -770,10 +775,10 @@ export function ProjectHomeView({
             <p className="mt-2 text-sm text-muted-foreground">
               {t("projectHome.timeline.blurb")}
             </p>
-            <ol className="relative mt-5 space-y-0 border-l border-border/70 pl-5">
+            <ol className="relative mt-5 space-y-0 border-s border-border/70 ps-5">
               {activity.map((item) => (
                 <li key={item.id} className="relative pb-5 last:pb-0">
-                  <span className="absolute -left-[1.41rem] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-foreground/70" />
+                  <span className="absolute -start-[1.41rem] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-foreground/70" />
                   <p className="text-sm font-medium">{item.title}</p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {item.when}
@@ -791,7 +796,7 @@ export function ProjectHomeView({
               <h2 className="text-sm font-semibold">
                 {t("projectHome.git.title", { defaultValue: "Timeline Git" })}
               </h2>
-              <p className="ml-2 hidden text-[12px] text-muted-foreground sm:block">
+              <p className="ms-2 hidden text-[12px] text-muted-foreground sm:block">
                 {t("projectHome.git.blurb", {
                   defaultValue:
                     "Branches, commits, merges et auteurs du projet, avec le graphe des relations.",

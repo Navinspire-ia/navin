@@ -83,6 +83,9 @@ describe("applyComposerTurnMode", () => {
 
   it("trims whitespace", () => {
     expect(applyComposerTurnMode("  hello  ", "debug")).toBe("/debug hello");
+    expect(applyComposerTurnMode("Analyse app.apk", "reverse")).toBe(
+      "/reverse Analyse app.apk",
+    );
   });
 
   it("starts a simple one-shot immediately instead of waiting for Build", () => {
@@ -141,6 +144,7 @@ describe("modeFromOutgoingContent", () => {
     expect(modeFromOutgoingContent("/inspect Review auth")).toBe("review");
     expect(modeFromOutgoingContent("/fortify Audit API")).toBe("security");
     expect(modeFromOutgoingContent("/debug Fix crash")).toBe("debug");
+    expect(modeFromOutgoingContent("/reverse app.apk")).toBe("reverse");
     expect(modeFromOutgoingContent("/probe OWASP")).toBe("security");
     expect(modeFromOutgoingContent("/xray sinks")).toBe("security");
     expect(modeFromOutgoingContent("/turbo perf")).toBe("review");
@@ -159,6 +163,7 @@ describe("isModeRoutingSlash", () => {
     expect(isModeRoutingSlash("/forge")).toBe(true);
     expect(isModeRoutingSlash("/blueprint")).toBe(true);
     expect(isModeRoutingSlash("/debug")).toBe(true);
+    expect(isModeRoutingSlash("/reverse")).toBe(true);
     expect(isModeRoutingSlash("/FORGE")).toBe(true);
   });
 
@@ -176,6 +181,7 @@ describe("composerModeAccent", () => {
     expect(composerModeAccent("review")).toBe("review");
     expect(composerModeAccent("security")).toBe("security");
     expect(composerModeAccent("debug")).toBe("debug");
+    expect(composerModeAccent("reverse")).toBe("reverse");
     expect(composerModeAccent("montage")).toBe("montage");
   });
 });
@@ -186,6 +192,7 @@ describe("isComposerTurnMode", () => {
     expect(isComposerTurnMode("review")).toBe(true);
     expect(isComposerTurnMode("agent")).toBe(true);
     expect(isComposerTurnMode("montage")).toBe(true);
+    expect(isComposerTurnMode("reverse")).toBe(true);
     expect(isComposerTurnMode("explore")).toBe(false);
     expect(isComposerTurnMode("")).toBe(false);
     expect(isComposerTurnMode(null)).toBe(false);

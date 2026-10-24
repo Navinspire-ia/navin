@@ -56,7 +56,7 @@ export function ContextUsagePopover({
           </p>
         </div>
         <div className="flex items-start gap-2">
-          <p className="text-right text-[11px] tabular-nums text-muted-foreground">
+          <p className="text-end text-[11px] tabular-nums text-muted-foreground">
             {t("dev.status.contextTokens", {
               defaultValue: "~{{tokens}} / {{window}} tokens",
               tokens: formatContextTokens(usage.tokens ?? 0),

@@ -72,13 +72,21 @@ class TuiPrefs:
             prefs.sidebar = False
         return prefs
 
-    def save(self) -> None:
+    def snapshot(self) -> str:
+        """Serialized prefs, taken on the thread that mutates them.
+
+        ``asdict`` walks ``history``; running it in a worker while the UI
+        appends to that list could save a torn or failing copy.
+        """
+        return json.dumps(asdict(self), ensure_ascii=False, indent=2)
+
+    def save(self, snapshot: str | None = None) -> None:
+        """Write prefs. Pass a ``snapshot()`` taken earlier to write from a worker."""
         path = self.path()
         try:
+            text = self.snapshot() if snapshot is None else snapshot
             path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(path,
-                json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            atomic_write_text(path, text, encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
 

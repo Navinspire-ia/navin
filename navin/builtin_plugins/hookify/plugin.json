@@ -1,0 +1,18 @@
+{
+  "name": "hookify",
+  "version": "1.0.0",
+  "description": "Warn about or block unwanted agent behaviour with simple Markdown rules (.navin/hookify.<name>.local.md), created from an instruction or from the conversation, checked natively on every action.",
+  "category": "productivity",
+  "commands": ["hookify", "hookify-list", "hookify-configure", "hookify-help"],
+  "agents": ["conversation-analyzer"],
+  "skills": ["hookify-rules", "hook-development"],
+  "steps": [
+    {"step": "create a rule from an instruction or the conversation", "use": "/hookify"},
+    {"step": "find the behaviours the user corrected", "use": "agent:conversation-analyzer"},
+    {"step": "list the rules and their state", "use": "/hookify-list"},
+    {"step": "switch rules on or off", "use": "/hookify-configure"},
+    {"step": "explain how rules work", "use": "/hookify-help"},
+    {"step": "write or fix a rule by hand", "use": "skill:hookify-rules"},
+    {"step": "write a full shell hook instead of a rule", "use": "skill:hook-development"}
+  ]
+}

@@ -134,7 +134,8 @@ _MEDIA_NOUN = (
     r"illustration|illustrations|visuel|visuels|logo|logos|affiche|affiches|poster|posters|"
     r"avatar|avatars|picture|pictures|artwork|wallpaper|vignette|thumbnail|miniature|"
     r"banniere|bannieres|banner|banners|icone|icones|icon|icons|mockup|mockups|portrait|"
-    r"voix|voix off|narration|narrations|podcast|podcasts|doublage|audio|speech)"
+    r"voix|voix off|narration|narrations|podcast|podcasts|doublage|audio|speech|"
+    r"animation|animations|voiceover|voice over|montage)"
 )
 
 # A production verb that directly governs a medium noun ("genere la video",
@@ -190,6 +191,15 @@ def _references_existing_media(normalized: str) -> bool:
     # A production verb governing a medium keeps the normal routing even when a
     # reference also appears ("genere une musique pour la video du produit").
     return not _PRODUCTION_GOVERNS_MEDIUM.search(normalized)
+
+
+# An implicit request ("genere un chat qui mange une banane") opens with its
+# verb, after an optional slash command. A verb further in is ordinary prose:
+# "tu as termine arrete de faire des search" forced an image generation.
+_IMPERATIVE_START = re.compile(
+    r"^(?:/[a-z][\w-]*\s+)?(?:gener\w*|creer|cree\w*|fais|fabrique\w*|"
+    r"generate\w*|create\w*|make|produce\w*|compose\w*|dessine\w*|draw\w*)\b"
+)
 
 
 def _normalize(text: str | None) -> str:
@@ -248,6 +258,14 @@ def detect_media_intent(text: str | None) -> MediaIntent | None:
     if _references_existing_media(normalized):
         return None
 
+    # A named medium counts only when the verb produces it ("genere une video",
+    # "fais moi un logo"). Anywhere-in-the-text matching forced generate_video
+    # on "il faut corriger un par un et tester ... sql" and generate_image on
+    # memory consolidation prompts: a paid tool call on the very first step.
+    named = has_image or has_video or has_music or has_speech
+    if named and not (drawing or _PRODUCTION_GOVERNS_MEDIUM.search(normalized)):
+        return None
+
     # One deliverable that mixes footage with sound: the montage pipeline owns it.
     wants_full_video = bool(_FULL_VIDEO_PHRASES.search(normalized)) or (
         has_video and (has_music or has_speech)
@@ -286,6 +304,8 @@ def detect_media_intent(text: str | None) -> MediaIntent | None:
     if _TECHNICAL_NOUNS.search(normalized):
         return None
     if len(normalized.split()) > _IMPLICIT_MAX_WORDS:
+        return None
+    if not _IMPERATIVE_START.match(normalized):
         return None
     return MediaIntent(KIND_IMAGE, (IMAGE_TOOL,), False, (KIND_IMAGE,))
 

@@ -214,6 +214,16 @@ describe("api reads ride out a stalled engine", () => {
     expect(getGatewayPace().stall).toBe("timeout");
   });
 
+  it("clears the stall when the engine answers with an HTTP error", async () => {
+    noteGatewayStalled("timeout", 1_000);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{\"error\":\"nope\"}", { status: 404 })),
+    );
+    await fetchSkills("tok").catch(() => undefined);
+    expect(getGatewayPace().stalledSince).toBeNull();
+  });
+
   it("never retries a mutation, so a save that only looked lost is not replayed", async () => {
     let attempts = 0;
     vi.stubGlobal(

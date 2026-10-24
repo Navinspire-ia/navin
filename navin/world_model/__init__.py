@@ -25,25 +25,73 @@ entry points are the turn hook factory (``create_world_model_hook``), the
 tool the loader discovers, the HTTP routes and ``navin agi world``.
 """
 
-from navin.world_model.advisor import advice_gate, advice_open, run_ab
-from navin.world_model.hook import WorldModelHook, create_world_model_hook
-from navin.world_model.settings import (
-    SETTINGS_NAME,
-    WorldModelSettings,
-    read_settings,
-    settings_path,
-    update_settings,
-    world_enabled,
-    write_settings,
-)
-from navin.world_model.state import (
-    ACTIONS,
-    WorldActionError,
-    world_action,
-    world_state,
-    world_update,
-)
-from navin.world_model.train import TrainBudget, exam, freeze, rollback, train
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+# Public name -> submodule. Loaded on first access (PEP 562): importing the
+# package eagerly pulled every submodule in, and two threads importing it in
+# opposite orders (the CLI builds its engine in a worker while the UI thread
+# loads its own modules) aborted startup with "deadlock detected by
+# _ModuleLock('navin.world_model.settings')".
+_EXPORTS: dict[str, str] = {
+    "advice_gate": "advisor",
+    "advice_open": "advisor",
+    "run_ab": "advisor",
+    "WorldModelHook": "hook",
+    "create_world_model_hook": "hook",
+    "SETTINGS_NAME": "settings",
+    "WorldModelSettings": "settings",
+    "read_settings": "settings",
+    "settings_path": "settings",
+    "update_settings": "settings",
+    "world_enabled": "settings",
+    "write_settings": "settings",
+    "ACTIONS": "state",
+    "WorldActionError": "state",
+    "world_action": "state",
+    "world_state": "state",
+    "world_update": "state",
+    "TrainBudget": "train",
+    "exam": "train",
+    "freeze": "train",
+    "rollback": "train",
+    "train": "train",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f"{__name__}.{module}"), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_EXPORTS})
+
+
+if TYPE_CHECKING:
+    from navin.world_model.advisor import advice_gate, advice_open, run_ab
+    from navin.world_model.hook import WorldModelHook, create_world_model_hook
+    from navin.world_model.settings import (
+        SETTINGS_NAME,
+        WorldModelSettings,
+        read_settings,
+        settings_path,
+        update_settings,
+        world_enabled,
+        write_settings,
+    )
+    from navin.world_model.state import (
+        ACTIONS,
+        WorldActionError,
+        world_action,
+        world_state,
+        world_update,
+    )
+    from navin.world_model.train import TrainBudget, exam, freeze, rollback, train
 
 __all__ = [
     "ACTIONS",

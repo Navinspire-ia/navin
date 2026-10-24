@@ -14,6 +14,7 @@ export const CHAT_MODULE_VIEWS = [
   "ads",
   "seo",
   "leads",
+  "campaigns",
   "tenders",
   "career",
   "ops",
@@ -55,6 +56,7 @@ export function inferChatModuleFromPreview(
     case "cruise":
     case "mission":
     case "debug":
+    case "reverse":
     case "inspect":
     case "code":
     case "dev":
@@ -71,6 +73,9 @@ export function inferChatModuleFromPreview(
       return "ads";
     case "leads":
       return "leads";
+    case "campaigns":
+    case "campaign":
+      return "campaigns";
     case "tenders":
       return "tenders";
     case "career":
@@ -181,4 +186,46 @@ export function resolveProjectOpenView(
   const fallback = normalizeChatModuleView(fallbackView);
   if (fallback) return fallback;
   return "chat";
+}
+
+/** Modules that share the chat surface with plain chat and Code; every other module keeps its own sessions. */
+const SHARED_CHAT_MODULES = new Set<ChatModuleView>(["chat", "dev"]);
+
+/**
+ * The session a module view should show. Each desk (Tenders, Career, ...)
+ * is isolated: entering it with a chat that belongs to Code or another desk,
+ * or carrying the previous view's chat across, reopens the desk's own latest
+ * session, or a new chat when it has none. A brand-new session started from
+ * the desk is not carried and stays.
+ */
+export function moduleSessionKey({
+  module,
+  activeKey,
+  carried,
+  moduleByKey,
+  sessions,
+}: {
+  module: ChatModuleView | null;
+  activeKey: string | null;
+  /** The key is the one the previous view already showed. */
+  carried: boolean;
+  moduleByKey: Record<string, string | undefined>;
+  sessions: Array<{ key: string; updatedAt?: string | null; preview?: string | null }>;
+}): string | null {
+  if (!module || SHARED_CHAT_MODULES.has(module)) return activeKey;
+  const previews = new Map(sessions.map((session) => [session.key, session.preview]));
+  const owner = (key: string) =>
+    normalizeChatModuleView(moduleByKey[key]) ?? inferChatModuleFromPreview(previews.get(key));
+  if (activeKey) {
+    const current = owner(activeKey);
+    if (current === module) return activeKey;
+    if (!current && !carried) return activeKey;
+  }
+  let latest: { key: string; at: number } | null = null;
+  for (const session of sessions) {
+    if (owner(session.key) !== module) continue;
+    const at = session.updatedAt ? Date.parse(session.updatedAt) || 0 : 0;
+    if (!latest || at > latest.at) latest = { key: session.key, at };
+  }
+  return latest?.key ?? null;
 }

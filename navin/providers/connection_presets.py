@@ -111,6 +111,10 @@ CONNECTION_PRESETS: dict[str, ConnectionPreset] = {
             "for some audio and image calls."
         ),
         bases={
+            # Coding Plan: its own host, keys and models (qwen3-coder-plus, qwen3.7-plus,
+            # GLM, Kimi, MiniMax...); a Coding Plan key is refused on compatible-mode.
+            _key("china", "coding", "openai"): "https://coding.dashscope.aliyuncs.com/v1",
+            _key("singapore", "coding", "openai"): "https://coding-intl.dashscope.aliyuncs.com/v1",
             _key("china", "*", "openai"): "https://dashscope.aliyuncs.com/compatible-mode/v1",
             _key("singapore", "*", "openai"): "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             _key("us", "*", "openai"): "https://dashscope-us.aliyuncs.com/compatible-mode/v1",

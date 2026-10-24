@@ -81,6 +81,33 @@ TTS_PROVIDERS: tuple[TtsProviderSpec, ...] = (
         aliases=("google",),
     ),
     TtsProviderSpec(
+        name="bedrock",
+        default_model="polly-neural",
+        default_voice="Lea",
+        adapter="navin.providers.tts:BedrockPollyTtsProvider",
+        aliases=("aws", "polly"),
+    ),
+    TtsProviderSpec(
+        name="xai",
+        default_model="grok-voice-tts",
+        default_voice="eve",
+        adapter="navin.providers.tts:XaiTtsProvider",
+        aliases=("grok",),
+    ),
+    TtsProviderSpec(
+        name="qwen",
+        default_model="qwen3-tts-flash",
+        default_voice="Cherry",
+        adapter="navin.providers.qwen_media:QwenTtsProvider",
+        aliases=("dashscope", "alibaba"),
+    ),
+    TtsProviderSpec(
+        name="omniroute",
+        default_model="openai/tts-1",
+        default_voice="alloy",
+        adapter="navin.providers.tts:OmniRouteTtsProvider",
+    ),
+    TtsProviderSpec(
         name="ollama",
         default_model="tts",
         default_voice="alloy",

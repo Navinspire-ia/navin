@@ -28,14 +28,21 @@ import { useTranslation } from "react-i18next";
 import { DeleteConfirm } from "@/components/DeleteConfirm";
 import { RenameChatDialog } from "@/components/RenameChatDialog";
 import { SessionImportDialog } from "@/components/SessionImportDialog";
+import { ShareSessionDialog } from "@/components/ShareSessionDialog";
+import { setVisibleInterval } from "@/lib/visible-interval";
+import { SHARE_SITE_EVENT } from "@/lib/share-events";
+import { noteRunningSite } from "@/lib/running-site";
+import { TOUR_OPEN_EVENT } from "@/lib/ui-tour";
+import { AppShareDialog } from "@/components/AppShareDialog";
+import { UpdateOverlay } from "@/components/UpdateOverlay";
 import { Sidebar } from "@/components/Sidebar";
 import { SessionSearchDialog } from "@/components/SessionSearchDialog";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
+import { OPEN_SETTINGS_SECTION_EVENT } from "@/lib/settings-events";
 import type { StudioModule } from "@/components/studio/StudioWorkspace";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { FirstRunWizard } from "@/components/onboarding/FirstRunWizard";
-import { FreeSetupDialog } from "@/components/onboarding/FreeSetup";
 import { HeaderUsageIndicator } from "@/components/HeaderUsageIndicator";
 import { ZoomIndicator } from "@/components/ZoomIndicator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -66,6 +73,11 @@ const TendersWorkspace = lazyWithRetry(() =>
 const CareerWorkspace = lazyWithRetry(() =>
   import("@/components/studio/career/CareerWorkspace").then((m) => ({
     default: m.CareerWorkspace,
+  })),
+);
+const CampaignsWorkbench = lazyWithRetry(() =>
+  import("@/components/studio/campaigns/CampaignsWorkbench").then((m) => ({
+    default: m.CampaignsWorkbench,
   })),
 );
 const LeadsWorkspace = lazyWithRetry(() =>
@@ -110,7 +122,7 @@ import {
   loadSavedSecret,
   saveSecret,
 } from "@/lib/bootstrap";
-import { displayTitle, pinChatKey, placeChatKey, priorChatKeys, unpinChatKey } from "@/lib/chat-groups";
+import { displayTitle, removeProjectFromSidebarState, pinChatKey, placeChatKey, priorChatKeys, unpinChatKey } from "@/lib/chat-groups";
 import { deriveTitle } from "@/lib/format";
 import { NavinClient, type ProductModuleId } from "@/lib/navin-client";
 import {
@@ -174,11 +186,12 @@ import {
   rememberLastShellRoute,
   shellHashesEqual,
 } from "@/lib/last-shell-route";
-import { isDesktopShell, isInternalDesktopUrl } from "@/lib/desktop";
+import { isDesktopShell, isInternalDesktopUrl, openNavinWindow } from "@/lib/desktop";
 import {
   dismissUpdateToast,
   nextAvailableUpdate,
   readDismissedUpdateToast,
+  UPDATE_CHECK_INTERVAL_MS,
   UPDATE_RECHECK_AFTER_HIDDEN_MS,
 } from "@/lib/product-toasts";
 import { isTimeoutError, isTransportError, transportMessage } from "@/lib/http";
@@ -206,6 +219,7 @@ import {
   resolveChatOpenView,
   resolveProjectOpenView,
   viewForCreatedChat,
+  moduleSessionKey,
 } from "@/lib/chat-module";
 import { DESK_CHAT_COMMAND } from "@/lib/desk-chat-command";
 import { writeComposerTurnMode } from "@/components/thread/ComposerModeMenu";
@@ -240,9 +254,9 @@ const LEGACY_COMPLETED_RUNS_STORAGE_KEY = "navin-webui.sidebar.completed-runs.v1
 const RESTART_STARTED_KEY = "navin-webui.restartStartedAt";
 const RESTART_ROUTE_KEY = "navin-webui.restartRoute";
 const RESTART_ROUTE_TTL_MS = 5 * 60 * 1000;
-// Cursor's agents sidebar sits around 320px: wide enough for a title plus its
-// relative timestamp without truncating everything.
-const SIDEBAR_WIDTH = 320;
+// 312px (272px + 15%): room for a title, its timestamp and a project folder.
+// Wider only takes room from the thread.
+const SIDEBAR_WIDTH = 312;
 const SIDEBAR_RAIL_WIDTH = 56;
 const MOBILE_SIDEBAR_WIDTH = `min(${SIDEBAR_WIDTH}px, calc(100vw - 0.75rem))`;
 const TOKEN_REFRESH_MARGIN_MS = 30_000;
@@ -270,6 +284,7 @@ type ShellView =
   | "ads"
   | "seo"
   | "leads"
+  | "campaigns"
   | "tenders"
   | "career"
   | "trading"
@@ -286,6 +301,7 @@ const WORKBENCH_VIEWS: readonly ShellView[] = [
   "marketing",
   "montage",
   "leads",
+  "campaigns",
   "tenders",
   "career",
   "trading",
@@ -308,6 +324,7 @@ const DESK_CHAT_OFF_BY_DEFAULT: ReadonlySet<ShellView> = new Set([
   "career",
   "trading",
   "leads",
+  "campaigns",
   "marketing",
   "scraping",
   "meeting",
@@ -324,6 +341,7 @@ const VIEW_BY_PRODUCT_MODULE: Partial<Record<ProductModuleId, ShellView>> = {
   ads: "ads",
   seo: "seo",
   leads: "leads",
+  campaigns: "campaigns",
   tenders: "tenders",
   career: "career",
   trading: "trading",
@@ -421,6 +439,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "studio",
   "providers",
   "models",
+  "team",
   "image",
   "video",
   "voice",
@@ -433,6 +452,8 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "skills",
   "templates",
   "runtime",
+  "sites",
+  "git",
   "advanced",
   "about",
 ];
@@ -646,6 +667,9 @@ function readShellRoute(): ShellRoute {
   }
   if (path === "/seo") {
     return { view: "seo", activeKey, settingsSection: "overview" };
+  }
+  if (path === "/campaigns") {
+    return { view: "campaigns", activeKey, settingsSection: "overview" };
   }
   if (path === "/leads") {
     const leadsLead = (params.get("lead") || "").trim();
@@ -958,7 +982,7 @@ function HostChrome({
       )}
     >
       {rightAction ? (
-        <div className="host-no-drag pointer-events-auto absolute right-3 top-2">
+        <div className="host-no-drag pointer-events-auto absolute end-3 top-2">
           {rightAction}
         </div>
       ) : null}
@@ -1011,7 +1035,7 @@ function PairingCodePopup({
       aria-live="polite"
       aria-label={t("app.pairing.title", { defaultValue: "Pair a chat user" })}
       className={cn(
-        "fixed right-4 top-[calc(0.75rem+env(safe-area-inset-top))] z-[70]",
+        "fixed end-4 top-[calc(0.75rem+env(safe-area-inset-top))] z-[70]",
         "w-[min(calc(100vw-2rem),24rem)] rounded-[24px]",
         "border border-border/70 bg-popover/95 p-4 text-popover-foreground",
         "shadow-[0_24px_70px_rgba(15,23,42,0.20)] backdrop-blur-xl",
@@ -1632,6 +1656,20 @@ function Shell({
   } | null>(null);
   const [newProjectFolderOpen, setNewProjectFolderOpen] = useState(false);
   const [sessionImportOpen, setSessionImportOpen] = useState(false);
+  // A .navin-session dropped on the sidebar list, opened by the import dialog.
+  const [sessionImportFile, setSessionImportFile] = useState<File | null>(null);
+  // A shared session just rebuilt: open its chat as soon as the list has it.
+  const [pendingOpenChatId, setPendingOpenChatId] = useState<string | null>(null);
+  // Chat being shared from the sidebar menu (Share, under Fork chat).
+  const [shareTarget, setShareTarget] = useState<{
+    chatId: string;
+    title: string;
+    siteUrl?: string;
+    /** "export": the sidebar menu's Export session, file copy only. */
+    mode?: "share" | "export";
+  } | null>(null);
+  // The chat's running app alone (Browser panel's Share button, thread hint).
+  const [appShareTarget, setAppShareTarget] = useState<{ chatId: string; siteUrl: string } | null>(null);
   const restartSawDisconnectRef = useRef(false);
   const [restartToast, setRestartToast] = useState<string | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -1647,11 +1685,6 @@ function Shell({
   const { skills, refresh: refreshSkills } = useSkills(token);
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
   const [showFirstRunWizard, setShowFirstRunWizard] = useState(() => needsFirstRunWizard());
-  // Free onboarding path in progress: the navin account connects mid-flow,
-  // which must not trigger the "install already configured" auto-complete.
-  const [wizardFreeStage, setWizardFreeStage] = useState(false);
-  // Free plan setup reopened after onboarding (from the provider banner).
-  const [freeSetupOpen, setFreeSetupOpen] = useState(false);
   const { account, reload: reloadAccount } = useAccount();
   useExternalLinkOpener(token);
   // Fingerprint of account fields that should refresh models/providers when
@@ -1684,6 +1717,8 @@ function Shell({
   const [workspaceOverrides, setWorkspaceOverrides] =
     useState<Record<string, WorkspaceScopePayload>>({});
   const runningChatIdsRef = useRef<Set<string>>(new Set());
+  // When each chat's last run ended (epoch seconds, like runStartedAt).
+  const runEndedAtRef = useRef<Map<string, number>>(new Map());
   const activeChatIdRef = useRef<string | null>(null);
   // Dev view: resizable chat pane (always visible - never collapsed).
   // On narrow viewports the chat becomes a bottom sheet; it still stays open.
@@ -1816,7 +1851,9 @@ function Shell({
       const onMove = (ev: PointerEvent) => {
         const drag = devPanelDragRef.current;
         if (!drag) return;
-        const next = drag.startWidth - (ev.clientX - drag.startX);
+        // The column is on the inline-end side: the right in LTR, the left in RTL.
+        const sign = document.documentElement.dir === "rtl" ? -1 : 1;
+        const next = drag.startWidth - sign * (ev.clientX - drag.startX);
         setDevPanelWidth(Math.min(Math.max(DEV_PANEL_MIN_WIDTH, next), devPanelMax));
       };
       const onUp = () => {
@@ -1841,7 +1878,9 @@ function Shell({
       const onMove = (ev: PointerEvent) => {
         const drag = devChatDragRef.current;
         if (!drag) return;
-        const next = drag.startWidth - (ev.clientX - drag.startX);
+        // The column is on the inline-end side: the right in LTR, the left in RTL.
+        const sign = document.documentElement.dir === "rtl" ? -1 : 1;
+        const next = drag.startWidth - sign * (ev.clientX - drag.startX);
         setDevChatWidth(Math.min(Math.max(280, next), Math.max(320, window.innerWidth - 520)));
       };
       const onUp = () => {
@@ -1868,6 +1907,10 @@ function Shell({
   // Where "Back" from Settings / Account / Apps should land: the exact desk
   // the user left (Project, Code, …). localStorage last-route alone is too
   // easy to get wrong when the durable hash lags behind the live view.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const moduleByKeyRef = useRef<Record<string, string | undefined>>(sidebarState.module_by_key);
+  moduleByKeyRef.current = sidebarState.module_by_key;
   const currentShellRouteRef = useRef<ShellRoute>({
     view: initialRouteRef.current.view,
     activeKey: initialRouteRef.current.activeKey,
@@ -1886,8 +1929,22 @@ function Shell({
   };
 
   const navigate = useCallback(
-    (route: ShellRoute, options?: { replace?: boolean }) => {
+    (requested: ShellRoute, options?: { replace?: boolean }) => {
       const leaving = currentShellRouteRef.current;
+      // Each desk (Tenders, Career, ...) keeps its own chat: never the Code
+      // chat or the previous view's chat carried across.
+      const route: ShellRoute = {
+        ...requested,
+        activeKey: moduleSessionKey({
+          module: normalizeChatModuleView(requested.view),
+          activeKey: requested.activeKey,
+          carried: Boolean(requested.activeKey)
+            && requested.activeKey === leaving.activeKey
+            && requested.view !== leaving.view,
+          moduleByKey: moduleByKeyRef.current,
+          sessions: sessionsRef.current,
+        }),
+      };
       if (
         isEphemeralShellView(route.view)
         && !isEphemeralShellView(leaving.view)
@@ -2125,7 +2182,8 @@ function Shell({
     };
 
     check();
-    const interval = window.setInterval(() => check(true), 6 * 60 * 60 * 1_000);
+    // Every hour: a pending update comes back until it is installed.
+    const interval = window.setInterval(() => check(true), UPDATE_CHECK_INTERVAL_MS);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
@@ -2255,7 +2313,6 @@ function Shell({
 
   useEffect(() => {
     if (!showFirstRunWizard) return;
-    if (wizardFreeStage) return;
     if (!settingsSnapshot) return;
     const ready =
       (settingsSnapshot.providers ?? []).some((provider) => provider.configured)
@@ -2263,7 +2320,7 @@ function Shell({
     if (!ready) return;
     markOnboardingComplete({ path: "skip" }, token);
     setShowFirstRunWizard(false);
-  }, [account?.connected, settingsSnapshot, showFirstRunWizard, token, wizardFreeStage]);
+  }, [account?.connected, settingsSnapshot, showFirstRunWizard, token]);
 
   useEffect(() => {
     try {
@@ -2304,10 +2361,11 @@ function Shell({
 
   useEffect(() => {
     void refreshPairingRequests();
-    const timer = window.setInterval(() => {
+    // A pairing request only matters to someone looking at the window: no
+    // polling while it is hidden, one refresh when it shows again.
+    return setVisibleInterval(() => {
       void refreshPairingRequests();
     }, PAIRING_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
   }, [refreshPairingRequests]);
 
   const activeSession = useMemo<ChatSummary | null>(() => {
@@ -2376,7 +2434,8 @@ function Shell({
   ]);
 
   // Restore the last opened project when entering a workbench view, so the
-  // selected project survives page reloads.
+  // selected project survives page reloads. Not in Code: a new Code chat gets
+  // a folder of its own, named after the request, on its first message.
   //
   // The scope is never actually null here: it falls back to default_scope,
   // navin's internal ~/.navin/workspace. So the condition to restore is "no
@@ -2385,7 +2444,7 @@ function Shell({
   // user who deliberately opens the internal workspace where they asked to be.
   const restoredLastProjectRef = useRef(false);
   useEffect(() => {
-    if (!isWorkbenchView(view) || activeChatId || pendingCliProjectPath) return;
+    if (!isWorkbenchView(view) || view === "dev" || activeChatId || pendingCliProjectPath) return;
     if (restoredLastProjectRef.current) return;
     const base = workspaces?.default_scope;
     if (!base) return;
@@ -2549,6 +2608,19 @@ function Shell({
             : next;
         });
       }
+      if (scope === "title") {
+        // /rename-chat stored a new session title: a manual rename would hide it.
+        // Rare event (one per /rename-chat), so the extra persist is fine.
+        void updateSidebarState((current) => {
+          const stale = Object.keys(current.title_overrides).filter(
+            (key) => key === chatId || key.endsWith(`:${chatId}`),
+          );
+          if (!stale.length) return current;
+          const titleOverrides = { ...current.title_overrides };
+          for (const key of stale) delete titleOverrides[key];
+          return { ...current, title_overrides: titleOverrides };
+        });
+      }
       if (!workspaceScope) return;
       const next = normalizeWorkspaceScope(workspaceScope);
       setWorkspaceOverrides((current) => ({
@@ -2559,7 +2631,7 @@ function Shell({
       setWorkspaceError(null);
       void refreshWorkspaces();
     });
-  }, [client, refreshWorkspaces]);
+  }, [client, refreshWorkspaces, updateSidebarState]);
 
   useEffect(() => {
     return client.onError((error) => {
@@ -2571,8 +2643,11 @@ function Shell({
 
   useEffect(() => {
     if (loading) return;
+    // A run that started before the end we already received is the finished
+    // turn seen in a stale list, not a new one: it must not spin again.
     const activeRunIds = sessions
-      .filter((session) => typeof session.runStartedAt === "number")
+      .filter((session) => typeof session.runStartedAt === "number"
+        && session.runStartedAt > (runEndedAtRef.current.get(session.chatId) ?? 0))
       .map((session) => session.chatId);
     if (activeRunIds.length === 0) return;
 
@@ -2721,6 +2796,8 @@ function Shell({
   } | null>(null);
   useEffect(() => {
     return client.onPreviewOpenRequest((request) => {
+      // The thread offers to share this app (AppShareHint).
+      if (request.kind === "web" && request.url && request.chatId) noteRunningSite(request.chatId, request.url);
       const nextKey = request.chatId
         ? request.chatId.startsWith("websocket:")
           ? request.chatId
@@ -3375,17 +3452,26 @@ function Shell({
     (key: string) => {
       const hash = `#/chat/${encodeURIComponent(key)}`;
       const url = `${window.location.origin}${window.location.pathname}${hash}`;
+      const showHere = () =>
+        navigate({
+          view: isWorkbenchView(view) ? view : "dev",
+          activeKey: key,
+          settingsSection: "overview",
+        });
+      // Desktop app: a second Navin window, not a browser tab.
+      if (isDesktopShell()) {
+        void openNavinWindow(url).then((opened) => {
+          if (!opened) showHere();
+        });
+        return;
+      }
       // Never hand tauri.localhost to the OS browser: that host only exists
       // inside the WebView, and window.open there opened a blank Chrome tab.
       const opened = isInternalDesktopUrl(url)
         ? null
         : window.open(url, "_blank", "noopener,noreferrer");
       if (opened) return;
-      navigate({
-        view: isWorkbenchView(view) ? view : "dev",
-        activeKey: key,
-        settingsSection: "overview",
-      });
+      showHere();
     },
     [navigate, view],
   );
@@ -3660,6 +3746,16 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  // Panels without a settings callback (Import Git, for one) ask by event.
+  useEffect(() => {
+    const onOpenSection = (event: Event) => {
+      const section = (event as CustomEvent<{ section?: string }>).detail?.section ?? null;
+      onOpenSettings(isSettingsSectionKey(section) ? section : "overview");
+    };
+    window.addEventListener(OPEN_SETTINGS_SECTION_EVENT, onOpenSection);
+    return () => window.removeEventListener(OPEN_SETTINGS_SECTION_EVENT, onOpenSection);
+  }, [onOpenSettings]);
+
   const onOpenAccountSettings = useCallback(() => {
     onOpenSettings("account");
   }, [onOpenSettings]);
@@ -3844,6 +3940,12 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  const onOpenCampaignsStudio = useCallback(() => {
+    setSessionSearchOpen(false);
+    navigate({ view: "campaigns", activeKey, settingsSection: "overview" });
+    setMobileSidebarOpen(false);
+  }, [activeKey, navigate]);
+
   const onOpenTendersStudio = useCallback(() => {
     setSessionSearchOpen(false);
     navigate({ view: "tenders", activeKey, settingsSection: "overview" });
@@ -4006,6 +4108,7 @@ function Shell({
         return;
       }
 
+      runEndedAtRef.current.set(chatId, Date.now() / 1000);
       if (!runningChatIdsRef.current.has(chatId)) return;
       const nextRunning = new Set(runningChatIdsRef.current);
       nextRunning.delete(chatId);
@@ -4106,12 +4209,32 @@ function Shell({
       return path && normalizeWorkspacePath(path) === projectKey;
     });
     const deletingActive = targets.some((s) => s.key === activeKey);
+    const failed: string[] = [];
     for (const s of targets) {
       try {
-        await deleteChat(s.key, { deleteAutomations: true });
+        const result = await deleteChat(s.key, { deleteAutomations: true });
+        if (result?.blocked_by_automations) failed.push(s.key);
       } catch (e) {
         console.error("Failed to delete project session", s.key, e);
+        failed.push(s.key);
       }
+    }
+    // A folder row also comes from recent_projects: without dropping it here the
+    // folder stays in the sidebar after its chats are gone (or when it was empty).
+    if (failed.length === 0) {
+      void updateSidebarState((current) => removeProjectFromSidebarState(current, projectKey));
+    } else {
+      notify({
+        level: "error",
+        source: "request",
+        title: t("chat.deleteProjectFailed", {
+          defaultValue: "Could not delete the folder",
+        }),
+        detail: t("chat.deleteProjectFailedDetail", {
+          count: failed.length,
+          defaultValue: "{{count}} chat(s) could not be deleted. Stop running chats and try again.",
+        }),
+      });
     }
     if (deletingActive) {
       const remaining = sessions.find(
@@ -4123,7 +4246,7 @@ function Shell({
         settingsSection: "overview",
       }, { replace: true });
     }
-  }, [pendingProjectDelete, sessions, activeKey, deleteChat, navigate]);
+  }, [pendingProjectDelete, sessions, activeKey, deleteChat, navigate, updateSidebarState, t]);
 
   const visiblePairingRequests = useMemo(
     () => {
@@ -4186,6 +4309,7 @@ function Shell({
       || view === "ads"
       || view === "seo"
       || view === "leads"
+      || view === "campaigns"
       || view === "tenders"
       || view === "career"
       || view === "trading"
@@ -4271,6 +4395,41 @@ function Shell({
   }, [activeSession, headerTitle, i18n.resolvedLanguage, t, view]);
 
   const sidebarUtilityView = settingsOverlay ? deskView : view;
+  useEffect(() => {
+    if (!pendingOpenChatId) return;
+    const opened = sessions.find((session) => session.chatId === pendingOpenChatId);
+    if (!opened) return;
+    setPendingOpenChatId(null);
+    onSelectChat(opened.key);
+  }, [onSelectChat, pendingOpenChatId, sessions]);
+
+  // Live shows the user around (ui-tour): it opens a view or a Settings section.
+  useEffect(() => {
+    const onTourOpen = (event: Event) => {
+      const place = String((event as CustomEvent<{ place?: string }>).detail?.place ?? "");
+      if (!place) return;
+      const route = currentShellRouteRef.current;
+      if (place.startsWith("settings/")) {
+        navigate({ ...route, view: "settings", settingsSection: place.slice("settings/".length) as SettingsSectionKey });
+      } else {
+        navigate({ ...route, view: (place === "code" ? "dev" : place) as ShellView });
+      }
+    };
+    window.addEventListener(TOUR_OPEN_EVENT, onTourOpen);
+    return () => window.removeEventListener(TOUR_OPEN_EVENT, onTourOpen);
+  }, [navigate]);
+
+  // The Browser panel's Share button and the thread's hint: a link to the app alone.
+  useEffect(() => {
+    const onShareSite = (event: Event) => {
+      const detail = (event as CustomEvent<{ chatId?: string; url?: string }>).detail;
+      if (!detail?.chatId) return;
+      setAppShareTarget({ chatId: detail.chatId, siteUrl: detail.url ?? "" });
+    };
+    window.addEventListener(SHARE_SITE_EVENT, onShareSite);
+    return () => window.removeEventListener(SHARE_SITE_EVENT, onShareSite);
+  }, []);
+
   const sidebarProps = {
     sessions,
     activeKey,
@@ -4281,6 +4440,8 @@ function Shell({
     onTogglePin,
     onMoveChat,
     onForkChat: onForkChatFromSidebar,
+    onShareChat: (chatId: string, title: string) => setShareTarget({ chatId, title }),
+    onExportChat: (chatId: string, title: string) => setShareTarget({ chatId, title, mode: "export" }),
     onOpenInNewTab: onOpenChatInNewTab,
     onToggleUnread,
     onArchivePriorChats,
@@ -4294,6 +4455,10 @@ function Shell({
     onOpenProject,
     onCreateProjectFolder: () => setNewProjectFolderOpen(true),
     onImportSessions: () => setSessionImportOpen(true),
+    onDropSessionFile: (file: File) => {
+      setSessionImportFile(file);
+      setSessionImportOpen(true);
+    },
     onOpenSettings,
     onOpenAccount: () => onOpenSettings("account"),
     onOpenSearch: onOpenSessionSearch,
@@ -4309,6 +4474,7 @@ function Shell({
     onOpenCareerStudio,
     onOpenTradingStudio,
     onOpenLeadsStudio,
+    onOpenCampaignsStudio,
     onOpenCrmStudio,
     onOpenMeetingStudio,
     onOpenNotes,
@@ -4331,6 +4497,7 @@ function Shell({
       sidebarUtilityView === "ads" ||
       sidebarUtilityView === "seo" ||
       sidebarUtilityView === "leads" ||
+      sidebarUtilityView === "campaigns" ||
       sidebarUtilityView === "tenders" ||
       sidebarUtilityView === "career" ||
       sidebarUtilityView === "trading" ||
@@ -4463,7 +4630,7 @@ function Shell({
             >
               <div
                 className={cn(
-                  "absolute inset-y-0 left-0 h-full w-full overflow-hidden",
+                  "absolute inset-y-0 start-0 h-full w-full overflow-hidden",
                   showHostChrome
                     ? "host-sidebar-glass"
                     : "bg-sidebar shadow-inner-right",
@@ -4517,50 +4684,37 @@ function Shell({
         >
             {/* Workbench views have their own toolbar at the top and already
                 surface "Model not configured" in the composer badge. */}
-            {providerSetupNeeded && !showFirstRunWizard && view === "chat" ? (
+            {providerSetupNeeded && !showFirstRunWizard && (view === "chat" || view === "dev") ? (
               <div
                 className="pointer-events-none absolute inset-x-0 top-0 z-40 flex justify-center px-4 pt-3"
               >
                 <div
                   role="alert"
-                  className="pointer-events-auto flex w-full max-w-2xl flex-col gap-3 rounded-xl border border-border bg-background/95 px-4 py-3 shadow-lg backdrop-blur"
+                  data-testid="provider-setup-bar"
+                  className="pointer-events-auto flex w-full max-w-2xl flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 px-4 py-3 shadow-lg backdrop-blur"
                 >
-                  <div className="flex items-start gap-3">
-                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-foreground" aria-hidden />
-                    <p className="min-w-0 flex-1 text-[13px] leading-snug text-pretty text-foreground">
-                      {t("providerSetup.message", {
-                        defaultValue:
-                          "No model is ready yet. Start free with your own OpenRouter account, subscribe for managed models, or configure your own providers.",
-                      })}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 pl-7">
+                  <TriangleAlert className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
+                  <p className="min-w-0 flex-1 text-[13px] leading-snug text-pretty text-foreground">
+                    {t("providerSetup.message", {
+                      defaultValue: "No model is ready yet. Configure a provider or subscribe to Navin.",
+                    })}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setFreeSetupOpen(true)}
+                      onClick={onOpenProviderSettings}
+                      data-testid="provider-setup-configure"
                       className="rounded-lg border border-border bg-foreground px-3 py-1.5 text-[12px] font-medium text-background transition-opacity hover:opacity-85 active:scale-[0.96]"
                     >
-                      {t("providerSetup.freeAction", {
-                        defaultValue: "Start free (OpenRouter)",
-                      })}
+                      {t("providerSetup.action", { defaultValue: "Configure a provider" })}
                     </button>
                     <button
                       type="button"
                       onClick={onOpenAccountSettings}
+                      data-testid="provider-setup-subscribe"
                       className="rounded-lg border border-border bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.96]"
                     >
-                      {t("providerSetup.subscribeAction", {
-                        defaultValue: "Subscribe or sign in",
-                      })}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onOpenProviderSettings}
-                      className="rounded-lg border border-border bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.96]"
-                    >
-                      {t("providerSetup.action", {
-                        defaultValue: "Configure a provider",
-                      })}
+                      {t("providerSetup.subscribeNavin", { defaultValue: "Subscribe to Navin" })}
                     </button>
                   </div>
                 </div>
@@ -4574,13 +4728,13 @@ function Shell({
                     ? // Code: the workbench keeps the whole shell (explorer +
                       // status bar stay exactly in place, panel or rail on the
                       // right); the chat overlays the center it leaves empty.
-                      { left: 0, right: 0 }
+                      { insetInlineStart: 0, insetInlineEnd: 0 }
                     : {
                         // Narrow or focus mode: workbench is full-bleed; the
                         // chat overlays as a sheet or steps aside entirely.
                         // Wide: reserve the chat column on the right.
-                        left: 0,
-                        right: isNarrowWorkbench || hideSideChat ? 0 : devChatWidth,
+                        insetInlineStart: 0,
+                        insetInlineEnd: isNarrowWorkbench || hideSideChat ? 0 : devChatWidth,
                       }
                 }
               >
@@ -4723,6 +4877,16 @@ function Shell({
                       onSeedDevComposer(text, undefined, { replace: true });
                     }}
                   />
+                ) : deskView === "campaigns" ? (
+                  <CampaignsWorkbench
+                    sessionKey={activeKey}
+                    chatOpen={!hideSideChat}
+                    onToggleChat={onToggleDeskChat}
+                    onSeed={(text) => {
+                      onOpenDeskChat();
+                      onSeedDevComposer(text, undefined, { replace: true });
+                    }}
+                  />
                 ) : deskView === "leads" ? (
                   <LeadsWorkspace
                     chatOpen={!hideSideChat}
@@ -4820,12 +4984,16 @@ function Shell({
                     chatOpen={deskView === "scraping" ? !hideSideChat : true}
                     onToggleChat={deskView === "scraping" ? onToggleDeskChat : undefined}
                     onRun={onRunDevAction}
-                    onSeed={(text, files, options) =>
+                    onSeed={(text, files, options) => {
+                      // A card fills the composer: it must be on screen, or
+                      // the click looks like it did nothing (Scraping starts
+                      // with the chat closed).
+                      onOpenDeskChat();
                       onSeedDevComposer(text, files, {
                         replace: options?.replace ?? true,
                         ...options,
-                      })
-                    }
+                      });
+                    }}
                     projectPath={activeWorkspaceScope?.project_path ?? null}
                     projectName={activeWorkspaceScope?.project_name ?? null}
                     recentProjects={sidebarState.recent_projects ?? []}
@@ -4843,7 +5011,7 @@ function Shell({
                 <div
                   ref={setArtifactCanvasHost}
                   className={cn(
-                    "flex w-[46%] min-w-[320px] max-w-[900px] shrink-0 flex-col overflow-hidden border-l border-border/70 empty:hidden",
+                    "flex w-[46%] min-w-[320px] max-w-[900px] shrink-0 flex-col overflow-hidden border-s border-border/70 empty:hidden",
                     // Docked Code: the right column already owns that space.
                     // Artifacts render inline in the chat instead (host null).
                     devDocked && "hidden",
@@ -4863,7 +5031,7 @@ function Shell({
                 data-testid="dev-code-separator"
                 onPointerDown={startDevPanelDrag}
                 className="absolute inset-y-0 z-20 w-1.5 cursor-col-resize bg-border/70 transition-colors hover:bg-primary/50"
-                style={{ right: devPanelEffective, bottom: DEV_STATUS_HEIGHT }}
+                style={{ insetInlineEnd: devPanelEffective, bottom: DEV_STATUS_HEIGHT }}
               />
             )}
             {isWorkbenchView(deskView) &&
@@ -4875,7 +5043,7 @@ function Shell({
                 aria-orientation="vertical"
                 onPointerDown={startDevChatDrag}
                 className="absolute inset-y-0 z-20 w-1.5 cursor-col-resize transition-colors hover:bg-primary/40"
-                style={{ right: devChatWidth }}
+                style={{ insetInlineEnd: devChatWidth }}
               />
             )}
             <div
@@ -4888,7 +5056,7 @@ function Shell({
                         "inset-y-0 overflow-hidden",
                         // Undocked: chat is the right column. Docked display
                         // mode keeps the seam on the resize handle, not here.
-                        !chatDocked && "right-0 border-l border-border/55",
+                        !chatDocked && "end-0 border-s border-border/55",
                       )
                     : "inset-0",
                 view !== "chat" && !isWorkbenchView(view) && "invisible pointer-events-none",
@@ -4906,8 +5074,8 @@ function Shell({
                         const explorerOffset =
                           devExplorerWidth > 0 ? devExplorerWidth : 0;
                         return {
-                          left: explorerOffset,
-                          right: Math.max(0, devRightWidth),
+                          insetInlineStart: explorerOffset,
+                          insetInlineEnd: Math.max(0, devRightWidth),
                           width: "auto" as const,
                           bottom: DEV_STATUS_HEIGHT,
                         };
@@ -4992,6 +5160,7 @@ function Shell({
                   showSidebar={view === "settings"}
                   onToggleTheme={toggle}
                   onBackToChat={onBackToChat}
+                  onToggleSidebar={toggleSidebar}
                   onModelNameChange={onModelNameChange}
                   onSettingsChange={setSettingsSnapshot}
                   skills={skills}
@@ -5038,11 +5207,37 @@ function Shell({
           onCancel={() => setPendingProjectRename(null)}
           onConfirm={onConfirmProjectRename}
         />
+        <ShareSessionDialog
+          open={shareTarget !== null}
+          chatId={shareTarget?.chatId ?? null}
+          title={shareTarget?.title ?? ""}
+          siteUrl={shareTarget?.siteUrl ?? null}
+          mode={shareTarget?.mode ?? "share"}
+          onOpenChange={(open) => {
+            if (!open) setShareTarget(null);
+          }}
+        />
+        <AppShareDialog
+          open={appShareTarget !== null}
+          chatId={appShareTarget?.chatId ?? null}
+          siteUrl={appShareTarget?.siteUrl ?? ""}
+          onOpenChange={(open) => {
+            if (!open) setAppShareTarget(null);
+          }}
+        />
         <SessionImportDialog
           open={sessionImportOpen}
-          onOpenChange={setSessionImportOpen}
+          initialFile={sessionImportFile}
+          onOpenChange={(next) => {
+            setSessionImportOpen(next);
+            if (!next) setSessionImportFile(null);
+          }}
           onImported={() => {
             void refresh();
+          }}
+          onOpenedShared={(chatId) => {
+            setPendingOpenChatId(chatId);
+            setSessionImportOpen(false);
           }}
         />
         <RenameChatDialog
@@ -5062,6 +5257,7 @@ function Shell({
             {restartToast}
           </div>
         ) : null}
+        <UpdateOverlay status={updateStatus} />
         <ProductToastStack
           availableUpdate={availableUpdate}
           updateBusy={updateBusy}
@@ -5086,33 +5282,8 @@ function Shell({
           token={token}
           onComplete={() => {
             setShowFirstRunWizard(false);
-            // Providers / presets may have changed during the wizard (Free
-            // path stores the OpenRouter key): refresh so the banner and
-            // Settings reflect the new state without a reload.
-            refreshWorkspaceState();
-          }}
-          onFreeStageChange={setWizardFreeStage}
-          onWorkspaceSynced={refreshWorkspaceState}
-          onOpenAccount={() => onOpenSettings("account")}
-          onOpenProviders={() => onOpenSettings("providers")}
-          onOpenDemo={() => {
-            onSeedDevComposer(
-              "Open the bundled Navin demo workspace under navin/templates/demo and summarize what is in it.",
-            );
-          }}
-        />
-        <FreeSetupDialog
-          open={freeSetupOpen}
-          token={token}
-          onSynced={refreshWorkspaceState}
-          onClose={() => {
-            setFreeSetupOpen(false);
-            // The user may have finished a connection before dismissing:
-            // refresh so the "no model ready" banner reflects reality.
-            refreshWorkspaceState();
-          }}
-          onDone={() => {
-            setFreeSetupOpen(false);
+            // The language is set; getting a model happens from the
+            // provider bar, which reads fresh settings.
             refreshWorkspaceState();
           }}
         />

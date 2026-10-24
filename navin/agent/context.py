@@ -66,6 +66,12 @@ async def handle_runtime_control(state: Any, msg: InboundMessage, tools: ToolReg
         return True
     if await handle_choices_query(state, msg, tools):
         return True
+    from navin.agent.credentials import handle_credential_answer, handle_credentials_query
+
+    if await handle_credential_answer(state, msg, tools):
+        return True
+    if await handle_credentials_query(state, msg, tools):
+        return True
     if await handle_subagents_query(state, msg, tools):
         return True
     if await handle_multitask_spawn(state, msg, tools):
@@ -75,13 +81,39 @@ async def handle_runtime_control(state: Any, msg: InboundMessage, tools: ToolReg
     return await mcp_tools.handle_runtime_control(state, msg, tools)
 
 
+#: Memory is what the project and the user are, not a queue of work to pick up.
+MEMORY_SCOPE_NOTE = (
+    "Background gathered across earlier conversations: use it to understand the "
+    "project and the user. It is not a task list for this conversation."
+)
+
+#: A new conversation is a new task: earlier sessions only inform it.
+CONVERSATION_SCOPE_SECTION = (
+    "# Conversation Scope\n\n"
+    "This conversation has its own task: the user's messages here. Do not resume, "
+    "continue or bring up work from other conversations (tasks noted in memory, in "
+    ".navin/continuity/RESUME.md, on the board or in imported sessions) unless the "
+    "user asks to continue it or the current request clearly depends on it."
+)
+
+
+# Bundled plugins whose step-by-step routes stay in the prompt; the others
+# are listed by name, their details one read of the catalog away.
+_CORE_PLUGINS = frozenset({"feature-dev", "code-review", "commit-commands"})
+
+
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md"]
     _RUNTIME_CONTEXT_TAG = RUNTIME_CONTEXT_TAG
     _MAX_RECENT_HISTORY = 50
-    _MAX_HISTORY_TOKENS = 8_000  # hard cap on recent history section size (tokens)
+    _MAX_HISTORY_TOKENS = 5_000  # hard cap on recent history section size (tokens)
+    # "[ephemeral]" lines are task state ("Active task: ...", "Progress: 3 of 7").
+    # Older entries describe work that has moved on since, and re-injecting
+    # them every turn sent the agent back to finished tasks. Only the newest
+    # entries keep them; durable and permanent facts are always kept.
+    _EPHEMERAL_RECENT_ENTRIES = 2
     _MAX_PROJECT_RULES_TOKENS = 4_000  # hard cap on imported project rules section
     _RUNTIME_CONTEXT_END = RUNTIME_CONTEXT_END
 
@@ -193,6 +225,12 @@ class ContextBuilder:
                 "Follow them like AGENTS.md instructions.\n\n" + rules
             )
 
+        # Selected output style (/output-style): stable per project, so cache friendly.
+        from navin.agent.output_styles import prompt_section as _output_style_section
+
+        if style_section := _output_style_section(root):
+            parts.append(style_section)
+
         parts.append(
             render_template(
                 "agent/tool_contract_slim.md"
@@ -204,9 +242,18 @@ class ContextBuilder:
             # Review / Security / Debug: hard ban on invented findings.
             parts.append(render_template("agent/evidence_only.md"))
 
-        memory = memory_store.get_memory_context()
-        if memory and not self._is_template_content(memory_store.read_memory(), "memory/MEMORY.md"):
-            parts.append(f"# Memory\n\n{memory}")
+        # Every conversation, memory or not: the continuity pack and project
+        # notes describe other sessions, they are not this one's task.
+        parts.append(CONVERSATION_SCOPE_SECTION)
+
+        # Provider prompt caches match on an exact prefix, and the history
+        # follows this prompt. Sections are therefore ordered by how often
+        # they change: the ones above are fixed per project, the skills
+        # index and subagents next, then memory, recent history and the
+        # compaction summary, and last the playbooks picked for this
+        # message. A section that changes per message placed earlier would
+        # make every turn re-read the whole conversation uncached.
+        tail_parts: list[str] = []
 
         action_skills = action_skill_context or self._action_skill_context(
             session_metadata,
@@ -216,7 +263,7 @@ class ContextBuilder:
             extra_disabled_skills,
         )
         if action_skills and action_skills.prompt:
-            parts.append(action_skills.prompt)
+            tail_parts.append(action_skills.prompt)
 
         # always=true skills plus an optional per-turn preload list (workflow
         # briefs set this so "/studio" etc. actually inject SKILL.md bodies
@@ -225,7 +272,11 @@ class ContextBuilder:
         always_skills = skills.get_always_skills()
         owned = skills.owned_skills()
         owned_names = [entry["name"] for entry in owned[:MAX_OWNED_PRELOAD]]
-        mentioned = skills.mentioned_skill_names(current_message or "")
+        # Slim turns run a workflow whose brief names its skills in prose: only
+        # a $mention is the user asking for a playbook, the rest is read on demand.
+        mentioned = skills.mentioned_skill_names(
+            current_message or "", explicit_only=slim_skill_preload
+        )
         from navin.improvement.skills import applicable_skills
         try:
             learned = applicable_skills(root, current_message, session_metadata)
@@ -274,7 +325,7 @@ class ContextBuilder:
             bodies = skills.load_skills_for_context(body_names) if body_names else ""
             if bodies:
                 blocks.append(bodies)
-            parts.append("# Active Skills\n\n" + "\n\n".join(blocks))
+            tail_parts.append("# Active Skills\n\n" + "\n\n".join(blocks))
         else:
             active_skills = _take(list(always_skills) + list(skill_names or []) + learned)
             active_skills.extend(_take(owned_names))
@@ -314,11 +365,17 @@ class ContextBuilder:
                             f"{listed}\n\n"
                             f"{always_content}"
                         )
-                    parts.append(f"# Active Skills\n\n{always_content}")
+                    tail_parts.append(f"# Active Skills\n\n{always_content}")
 
         # Names only: the full per-skill descriptions cost ~10K tokens per
         # turn at catalog size; the `skill` tool serves them on demand.
-        skills_index = skills.build_skills_index(exclude=seen_active)
+        # Exclude only what is active on every turn: a skill picked for this
+        # message alone stays listed, so the index is byte-stable.
+        per_message = set(action_skills.requested if action_skills else ())
+        per_message.update(mentioned)
+        per_message.update(learned)
+        per_message.update(skill_names or ())
+        skills_index = skills.build_skills_index(exclude=seen_active - per_message)
         if skills_index:
             parts.append(render_template("agent/skills_section.md", skills_index=skills_index))
 
@@ -328,6 +385,9 @@ class ContextBuilder:
         from navin.agent.project_agents import project_agents_summary
 
         agents_summary = project_agents_summary(root)
+        extensions = self._extensions_section(root)
+        if extensions:
+            parts.append(extensions)
         if agents_summary:
             parts.append(
                 "# Project Subagents\n\n"
@@ -335,26 +395,40 @@ class ContextBuilder:
                 "task to one with the spawn tool and its name, e.g. "
                 'spawn(agent="<name>", task="..."). Their instructions come '
                 "from the project's config folders (.claude/agents, "
-                ".navin/agents, ...).\n\n"
+                ".navin/agents, ...); entries marked (personal) come from the "
+                "user's own ~/.navin/agents (or ~/.claude/agents, ...) and are "
+                "shared by every project.\n\n"
                 f"{agents_summary}"
             )
+
+        memory = memory_store.get_memory_context()
+        if memory and not self._is_template_content(memory_store.read_memory(), "memory/MEMORY.md"):
+            parts.append(f"# Memory\n\n{MEMORY_SCOPE_NOTE}\n\n{memory}")
 
         if include_memory_recent_history:
             # Recent history stays on the loop store: the Consolidator writes
             # its summaries there for every session, so a project-scoped read
             # would silently show nothing until Dream is re-scoped as well.
+            from navin.board.context import wants_project_history
+
             entries = self.memory.read_recent_history_for_prompt(
                 since_cursor=self.memory.get_last_dream_cursor(),
                 session_key=session_key,
                 unified_session=unified_session,
+                include_other_sessions=wants_project_history(current_message),
             )
             if entries:
                 capped = entries[-self._MAX_RECENT_HISTORY:]
                 history_text = "\n".join(
-                    f"- [{e['timestamp']}] {e['content']}" for e in capped
+                    f"- [{e['timestamp']}] {content}"
+                    for i, e in enumerate(capped)
+                    if (content := self._history_entry_for_prompt(
+                        e.get("content"), recent=i >= len(capped) - self._EPHEMERAL_RECENT_ENTRIES,
+                    ))
                 )
                 history_text = truncate_text_to_tokens(history_text, self._MAX_HISTORY_TOKENS)
-                parts.append("# Recent History\n\n" + history_text)
+                if history_text:
+                    parts.append("# Recent History\n\n" + history_text)
 
         if session_summary:
             # Earlier turns were dropped to free context. This is the only
@@ -368,10 +442,66 @@ class ContextBuilder:
                 f"{session_summary}"
             )
 
+        parts.extend(tail_parts)
         return "\n\n---\n\n".join(parts)
+
+    @staticmethod
+    def _history_entry_for_prompt(content: Any, *, recent: bool) -> str:
+        """An archived history entry as injected, without stale task state."""
+        text = str(content or "").strip()
+        if recent or "[ephemeral]" not in text:
+            return text
+        kept: list[str] = []
+        dropping = False
+        for line in text.splitlines():
+            # A top-level bullet opens an item; indented lines belong to it.
+            if line.startswith("- ") or not line.strip():
+                dropping = "[ephemeral]" in line
+            elif "[ephemeral]" in line:
+                dropping = True
+            if not dropping:
+                kept.append(line)
+        return "\n".join(kept).strip()
+
+    @staticmethod
+    def _extensions_section(root: Path | None) -> str:
+        """Slash commands and lifecycle hooks the user installed ('' on failure)."""
+        try:
+            from navin.agent.custom_commands import commands_summary
+            from navin.agent.marketplace import marketplace_summary
+            from navin.agent.user_hooks import hooks_summary
+
+            commands = commands_summary(root, include_builtin=False)
+            hooks = hooks_summary(root)
+            catalog = marketplace_summary(detailed=_CORE_PLUGINS)
+        except Exception:  # noqa: BLE001 - extensions never break the prompt
+            return ""
+        blocks = [
+            "# Extensions\n\n"
+            "Navin is extended by skills, subagents, slash commands, hooks and MCP "
+            "servers, at project (`.navin/`), personal (`~/.navin/`) and plugin "
+            "(`~/.navin/plugins/<name>/`) level. Before creating or changing one, "
+            "read the matching skill: plugin-structure, skill-development, "
+            "agent-development, command-development, hook-development, "
+            "mcp-integration, plugin-settings. `/create-plugin` runs the guided flow."
+        ]
+        if catalog:
+            blocks.append(catalog)
+        if commands:
+            blocks.append(
+                "Slash commands (the user types them; suggest one when it fits):\n" + commands
+            )
+        if hooks:
+            blocks.append(
+                "Active hooks (shell commands configured by the user). A result or "
+                "message tagged as coming from a hook states a rule: follow it, "
+                "never work around it.\n" + hooks
+            )
+        return "\n\n".join(blocks)
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
         """Get the core identity section."""
+        from navin.instance import navin_reserved_ports
         from navin.utils.wsl import is_unc
 
         root = workspace or self.workspace
@@ -386,6 +516,7 @@ class ContextBuilder:
             platform_policy=render_template(
                 "agent/platform_policy.md", system=system,
                 workspace_is_wsl=system == "Windows" and is_unc(workspace_path),
+                navin_ports=", ".join(str(port) for port in navin_reserved_ports()),
             ),
             channel=channel or "",
         )
@@ -462,6 +593,8 @@ class ContextBuilder:
                     content = f"Could not read {claude_md.as_posix()}. Inspect its permissions and encoding before editing the project."
                 parts.insert(0, f"## CLAUDE.md\n\n{content}")
 
+        from navin.agent import nested_instructions
+        parts = nested_instructions.apply_to_bootstrap(parts, root, self._resolve_at_imports)
         return "\n\n".join(parts) if parts else ""
 
     _AT_IMPORT = re.compile(r"^@(\S+)\s*$", re.MULTILINE)

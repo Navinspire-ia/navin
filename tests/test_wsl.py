@@ -12,11 +12,15 @@ ordinary network share that must not be mistaken for a distribution.
 
 from __future__ import annotations
 
+import io
+import tarfile
 import unittest
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from unittest import mock
+from unittest.mock import patch
 
-from navin.utils import wsl
+from navin.index import service
+from navin.utils import wsl, wsl_bulk
 
 
 class ParseTest(unittest.TestCase):
@@ -128,13 +132,15 @@ class CommandPrefixTest(unittest.TestCase):
     def test_a_command_is_directed_at_one_distribution(self) -> None:
         with mock.patch.object(wsl, "wsl_executable", return_value="wsl.exe"):
             argv = wsl.command_prefix("Ubuntu")
-        self.assertEqual(argv, ["wsl.exe", "-d", "Ubuntu", "--"])
+        self.assertEqual(argv, ["wsl.exe", "-d", "Ubuntu", "--exec"])
 
     def test_the_working_directory_travels_with_it(self) -> None:
         """Without --cd the build runs in the user's home, or in /mnt/c."""
         with mock.patch.object(wsl, "wsl_executable", return_value="wsl.exe"):
             argv = wsl.command_prefix("Ubuntu", PurePosixPath("/home/me/app"))
-        self.assertEqual(argv, ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/app", "--"])
+        # --exec, never --: after -- wsl.exe re-parses the line through the
+        # default shell, which expanded $(...) and broke quoted pipes.
+        self.assertEqual(argv, ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/app", "--exec"])
 
     def test_it_still_produces_a_command_when_wsl_is_not_on_the_path(self) -> None:
         with mock.patch.object(wsl, "wsl_executable", return_value=None):
@@ -205,7 +211,7 @@ class ExecRoutingTest(unittest.IsolatedAsyncioTestCase):
         wsl._distros_cached_at = float("inf")
         self.addCleanup(setattr, wsl, "_distros_cache", None)
 
-    async def _spawn_argv(self, cwd: str) -> list[str]:
+    async def _spawn_argv(self, cwd: str, command: str = "make build") -> list[str]:
         created: dict[str, tuple] = {}
 
         async def fake_exec(*argv, **kwargs):
@@ -216,7 +222,7 @@ class ExecRoutingTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch("navin.agent.tools.shell._IS_WINDOWS", True):
             with mock.patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
                 with mock.patch.object(wsl, "wsl_executable", return_value="wsl.exe"):
-                    await self.ExecTool._spawn("make build", cwd, {})
+                    await self.ExecTool._spawn(command, cwd, {})
         self.argv = list(created["argv"])
         self.kwargs = created["kwargs"]
         return self.argv
@@ -227,6 +233,19 @@ class ExecRoutingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--cd", argv)
         self.assertEqual(argv[argv.index("--cd") + 1], "/home/me/app")
         self.assertEqual(argv[-3:], ["bash", "-lc", "make build"])
+
+    async def test_the_command_is_parsed_once_by_the_shell_it_names(self) -> None:
+        # Regression: `wsl.exe ... -- bash -lc CMD` sent CMD through the default
+        # shell first, which ran $(...) itself and split the quoted "a|b" into
+        # a pipe ("scope_anchor: command not found"). --exec hands bash the
+        # command exactly as written, as one argument.
+        command = 'files=$(grep -l -E "AgentRunner|scope_anchor" tests/*.py) && echo "$files"'
+        argv = await self._spawn_argv(r"\\wsl.localhost\Ubuntu\home\me\app", command)
+        self.assertNotIn("--", argv)
+        exec_at = argv.index("--exec")
+        self.assertEqual(argv[exec_at + 1:exec_at + 3], ["bash", "-lc"])
+        self.assertTrue(argv[-1].endswith(command))
+        self.assertEqual(len(argv), exec_at + 4)
 
     async def test_it_runs_in_a_login_shell_so_the_toolchain_is_on_path(self) -> None:
         argv = await self._spawn_argv(r"\\wsl$\Ubuntu\srv\app")
@@ -376,6 +395,153 @@ class WindowsEnvTest(unittest.TestCase):
         with mock.patch.object(wsl.shutil, "which", return_value=None):
             with mock.patch("os.path.isfile", return_value=False):
                 self.assertIsNone(wsl.windows_env("LOCALAPPDATA"))
+
+# Bulk file work in one wsl.exe call (navin/utils/wsl_bulk.py).
+
+UNC = Path("\\\\wsl.localhost\\Ubuntu\\home\\me\\proj")
+
+
+class WslBulkTest(unittest.TestCase):
+    def test_stamps_parse_to_exact_nanoseconds(self):
+        raw = b"1700000000 2023-11-14 22:13:20.123456789 +0000 42 a/b.py\0"
+        self.assertEqual(wsl_bulk.parse_stamps(raw), {"a/b.py": (1700000000123456789, 42)})
+
+    def test_unparseable_stat_output_is_rejected(self):
+        self.assertIsNone(wsl_bulk.parse_stamps(b"garbage\0"))
+
+    def test_not_applicable_off_windows(self):
+        self.assertIsNone(wsl_bulk.location_for(UNC, platform="linux"))
+        self.assertIsNone(wsl_bulk.stat_files("/home/me/proj", ["a.py"]))
+
+    def test_read_files_unpacks_one_tar_stream(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            data = b"print(1)\n"
+            info = tarfile.TarInfo("src/a.py")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        loc = object()
+        with patch.object(wsl_bulk, "location_for", return_value=loc), \
+                patch.object(wsl_bulk, "_run", return_value=buf.getvalue()) as run:
+            out = wsl_bulk.read_files(UNC, ["src/a.py"])
+        self.assertEqual(out, {"src/a.py": b"print(1)\n"})
+        self.assertEqual(run.call_args.args[2], b"src/a.py\0")
+
+    def test_index_stats_a_bridged_root_in_one_call(self):
+        with patch.object(wsl_bulk, "stat_files", return_value={"a.py": (5, 7)}) as stat:
+            rows = list(service._iter_stats(UNC, ["a.py", "gone.py"], paced=True))
+        self.assertEqual(rows, [("a.py", 5, 7)])
+        self.assertEqual(stat.call_count, 1)
+
+
+class GeneratedScriptsRunForRealTest(unittest.TestCase):
+    """The shell scripts sent to wsl.exe, run here with wsl.exe left out."""
+
+    def setUp(self) -> None:
+        import subprocess
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+        def run_here(_location, script, payload):
+            return subprocess.run(
+                ["sh", "-c", script], input=payload, capture_output=True, cwd=self.dir,
+            ).stdout
+
+        for name, value in (("location_for", lambda *a, **k: object()), ("_run", run_here)):
+            patcher = patch.object(wsl_bulk, name, side_effect=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _write(self, rel: str, text: str = "x") -> None:
+        path = self.dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_stat_and_read_return_every_listed_file(self):
+        import os
+
+        self._write("src/a.py", "print(1)\n")
+        self._write("b c.py", "y = 2\n")
+        stamps = wsl_bulk.stat_files(UNC, ["src/a.py", "b c.py", "gone.py"])
+        st = os.stat(self.dir / "src" / "a.py")
+        self.assertEqual(stamps["src/a.py"], (st.st_mtime_ns, st.st_size))
+        self.assertNotIn("gone.py", stamps)
+        contents = wsl_bulk.read_files(UNC, ["src/a.py", "b c.py", "gone.py"])
+        self.assertEqual(contents, {"src/a.py": b"print(1)\n", "b c.py": b"y = 2\n"})
+
+    def _digest(self):
+        return wsl_bulk.layout_digest(
+            UNC, names={"package.json", "*.y*ml"}, watched_dirs={"node_modules"},
+            prune={".git", "dist"}, max_depth=3,
+        )
+
+    def test_layout_moves_with_manifests_and_folders_not_with_source(self):
+        import os
+
+        self._write("package.json", "{}")
+        self._write("src/app.ts")
+        self._write("dist/out.js")
+        first = self._digest()
+        self.assertIsNotNone(first)
+        self._write("src/app.ts", "changed")
+        self._write("dist/package.json", "{}")  # inside a pruned folder
+        self.assertEqual(self._digest(), first)
+        os.utime(self.dir / "package.json", ns=(1, 1))
+        second = self._digest()
+        self.assertNotEqual(second, first)
+        (self.dir / "web").mkdir()
+        self.assertNotEqual(self._digest(), second)
+
+    def test_watcher_signature_sees_any_file_change(self):
+        import os
+
+        self._write("src/app.ts")
+        first = wsl_bulk.tree_signature(UNC, {".git"}, max_entries=100)
+        os.utime(self.dir / "src" / "app.ts", ns=(1, 1))
+        self.assertNotEqual(wsl_bulk.tree_signature(UNC, {".git"}, max_entries=100), first)
+
+
+class RunbookLayoutMemoTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from navin.agent import project_runbook
+
+        self.rb = project_runbook
+        self.rb._BRIDGED_MEMO.clear()
+        self.addCleanup(self.rb._BRIDGED_MEMO.clear)
+        patcher = patch("navin.index.service.is_bridged_root", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.calls = 0
+
+    def _compute(self):
+        self.calls += 1
+        return self.calls
+
+    def test_kept_while_the_layout_holds_and_redone_when_it_moves(self):
+        clock = [100.0]
+        with patch.object(self.rb.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(wsl_bulk, "layout_digest", side_effect=[7, 7, 8]) as layout:
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 1)
+            clock[0] += 1  # same tool call: no second layout check
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 1)
+            clock[0] += 60
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 1)
+            clock[0] += 60
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 2)
+        self.assertEqual(layout.call_count, 3)
+
+    def test_without_a_layout_the_answer_expires(self):
+        clock = [100.0]
+        with patch.object(self.rb.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(wsl_bulk, "layout_digest", return_value=None):
+            self.rb.bridged_memo("p", UNC, self._compute)
+            clock[0] += 5
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 1)
+            clock[0] += self.rb.BRIDGED_TTL_S
+            self.assertEqual(self.rb.bridged_memo("p", UNC, self._compute), 2)
 
 
 if __name__ == "__main__":

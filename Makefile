@@ -213,6 +213,16 @@ desktop-exe: set-version
 		echo "powershell.exe not found - run packaging/windows/build-desktop.ps1 on Windows"; exit 1; \
 	fi
 
+# Même app Windows via build-offline_v2.ps1 : sources copiées sur disque local,
+# caches cargo/npm/pip/PyInstaller gardés entre deux builds.
+windows-2: set-version
+	@if command -v powershell.exe >/dev/null 2>&1; then \
+		WSLENV=$${WSLENV:+$$WSLENV:}AZURE_TENANT_ID/u:AZURE_CLIENT_ID/u:AZURE_CLIENT_SECRET/u \
+		powershell.exe -NoProfile -ExecutionPolicy Bypass -File "packaging\\windows\\build-offline_v2.ps1" -Desktop; \
+	else \
+		echo "powershell.exe not found - run packaging/windows/build-offline_v2.ps1 -Desktop on Windows"; exit 1; \
+	fi
+
 # macOS desktop app (.dmg), on a Mac of the target architecture.
 # Sidecars TOUJOURS reconstruits d'abord (dépendance `macos`), même garantie
 # de fraîcheur que Linux/Windows. Pour itérer sur la coque Tauri seule :

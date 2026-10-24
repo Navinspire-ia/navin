@@ -5,6 +5,7 @@ import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
 
+import { isOpeningGesture, noteMenuOpened } from "@/components/thread/menuChoice";
 import { bindMenuListWheel } from "@/lib/model-picker-scroll";
 import { cn } from "@/lib/utils";
 import { mergeRefs, useCssZoomFloatingLayer } from "./use-css-zoom-floating-layer";
@@ -17,9 +18,20 @@ import { mergeRefs, useCssZoomFloatingLayer } from "./use-css-zoom-floating-laye
  */
 function DropdownMenu({
   modal = false,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root modal={modal} {...props} />;
+  return (
+    <DropdownMenuPrimitive.Root
+      modal={modal}
+      onOpenChange={(open) => {
+        // The release of the click that opened it must not pick or close (menuChoice.ts).
+        if (open) noteMenuOpened();
+        onOpenChange?.(open);
+      }}
+      {...props}
+    />
+  );
 }
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
@@ -53,13 +65,13 @@ const DropdownMenuSubTrigger = React.forwardRef<
     className={cn(
       menuItemClassName,
       "data-[state=open]:bg-foreground/[0.055] dark:data-[state=open]:bg-white/[0.08]",
-      inset && "pl-8",
+      inset && "ps-8",
       className,
     )}
     {...props}
   >
     {children}
-    <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+    <ChevronRight className="rtl:-scale-x-100 ms-auto h-3.5 w-3.5 text-muted-foreground" />
   </DropdownMenuPrimitive.SubTrigger>
 ));
 DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName;
@@ -97,7 +109,7 @@ interface DropdownMenuContentProps
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   DropdownMenuContentProps
->(({ className, sideOffset = 4, portalContainer, onCloseAutoFocus, style, ...props }, ref) => {
+>(({ className, sideOffset = 4, portalContainer, onCloseAutoFocus, onInteractOutside, style, ...props }, ref) => {
   const layerRef = React.useRef<React.ElementRef<typeof DropdownMenuPrimitive.Content>>(null);
   useCssZoomFloatingLayer(layerRef);
   React.useLayoutEffect(() => {
@@ -117,6 +129,11 @@ const DropdownMenuContent = React.forwardRef<
           // and makes the Effort / model chips flicker after a pick.
           event.preventDefault();
           onCloseAutoFocus?.(event);
+        }}
+        onInteractOutside={(event) => {
+          // WebKit can report the opening click's release as outside the menu.
+          if (isOpeningGesture()) event.preventDefault();
+          onInteractOutside?.(event);
         }}
         className={cn(
           menuContentClassName,
@@ -139,14 +156,19 @@ const DropdownMenuItem = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
     inset?: boolean;
   }
->(({ className, inset, ...props }, ref) => (
+>(({ className, inset, onPointerUp, ...props }, ref) => (
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
       menuItemClassName,
-      inset && "pl-8",
+      inset && "ps-8",
       className,
     )}
+    onPointerUp={(event) => {
+      onPointerUp?.(event);
+      // The opening click released over a row is not a pick (menuChoice.ts).
+      if (isOpeningGesture()) event.preventDefault();
+    }}
     {...props}
   />
 ));
@@ -160,13 +182,13 @@ const DropdownMenuCheckboxItem = React.forwardRef<
     ref={ref}
     className={cn(
       menuItemClassName,
-      "pl-8 pr-2.5",
+      "ps-8 pe-2.5",
       className,
     )}
     checked={checked}
     {...props}
   >
-    <span className="absolute left-2.5 flex h-3.5 w-3.5 items-center justify-center">
+    <span className="absolute start-2.5 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
         <Check className="h-3.5 w-3.5" />
       </DropdownMenuPrimitive.ItemIndicator>
@@ -185,12 +207,12 @@ const DropdownMenuRadioItem = React.forwardRef<
     ref={ref}
     className={cn(
       menuItemClassName,
-      "pl-8 pr-2.5",
+      "ps-8 pe-2.5",
       className,
     )}
     {...props}
   >
-    <span className="absolute left-2.5 flex h-3.5 w-3.5 items-center justify-center">
+    <span className="absolute start-2.5 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
         <Circle className="h-2 w-2 fill-current" />
       </DropdownMenuPrimitive.ItemIndicator>
@@ -210,7 +232,7 @@ const DropdownMenuLabel = React.forwardRef<
     ref={ref}
     className={cn(
       "px-2.5 pb-1.5 pt-1 text-[12px] font-semibold text-muted-foreground",
-      inset && "pl-8",
+      inset && "ps-8",
       className,
     )}
     {...props}

@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import i18n, { currentLocale } from "@/i18n";
 
 const LOW_INFORMATION_TITLE_PREVIEWS = new Set([
@@ -63,7 +64,7 @@ function activeLocale(locale?: string): string {
 function relativeTimeFormatter(locale: string): Intl.RelativeTimeFormat {
   const existing = relativeTimeFormatters.get(locale);
   if (existing) return existing;
-  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat(intlLocale(locale), { numeric: "auto" });
   relativeTimeFormatters.set(locale, formatter);
   return formatter;
 }
@@ -71,7 +72,7 @@ function relativeTimeFormatter(locale: string): Intl.RelativeTimeFormat {
 function dateTimeFormatter(locale: string): Intl.DateTimeFormat {
   const existing = dateTimeFormatters.get(locale);
   if (existing) return existing;
-  const formatter = new Intl.DateTimeFormat(locale, {
+  const formatter = new Intl.DateTimeFormat(intlLocale(locale), {
     dateStyle: "medium",
     timeStyle: "short",
   });
@@ -135,7 +136,7 @@ export function formatTurnLatency(ms: number, locale?: string): string {
   const msClamped = Math.max(0, ms);
   const secTotal = msClamped / 1000;
   if (secTotal < 60) {
-    return new Intl.NumberFormat(loc, {
+    return new Intl.NumberFormat(intlLocale(loc), {
       style: "unit",
       unit: "second",
       unitDisplay: "narrow",
@@ -145,12 +146,12 @@ export function formatTurnLatency(ms: number, locale?: string): string {
   }
   const wholeMin = Math.floor(secTotal / 60);
   const remSec = Math.max(0, Math.round(secTotal - wholeMin * 60));
-  const minStr = new Intl.NumberFormat(loc, {
+  const minStr = new Intl.NumberFormat(intlLocale(loc), {
     style: "unit",
     unit: "minute",
     unitDisplay: "narrow",
   }).format(wholeMin);
-  const secStr = new Intl.NumberFormat(loc, {
+  const secStr = new Intl.NumberFormat(intlLocale(loc), {
     style: "unit",
     unit: "second",
     unitDisplay: "narrow",

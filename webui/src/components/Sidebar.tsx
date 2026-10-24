@@ -23,6 +23,7 @@ import {
   PanelLeftClose,
   Search,
   Settings,
+  Send,
   ShieldAlert,
   SquarePen,
   Sun,
@@ -61,10 +62,10 @@ type StudioApp = StudioModuleId;
  * hover / selected tints. No pills, no borders, no cards.
  */
 const ROW_BASE =
-  "flex min-w-0 shrink-0 items-center rounded-md text-[13px] leading-4 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring/50";
+  "flex min-w-0 shrink-0 items-center rounded-lg text-[13.5px] leading-4 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-ring/50";
 const ROW_IDLE =
   "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground";
-const ROW_ACTIVE = "bg-sidebar-accent text-sidebar-foreground";
+const ROW_ACTIVE = "bg-sidebar-accent font-medium text-sidebar-foreground";
 const ICON_BUTTON =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50";
 
@@ -85,6 +86,8 @@ interface SidebarProps {
   onRequestRename: (key: string, label: string) => void;
   onToggleArchive: (key: string) => void;
   onForkChat?: (key: string) => void;
+  onShareChat?: (chatId: string, title: string) => void;
+  onExportChat?: (chatId: string, title: string) => void;
   onOpenInNewTab?: (key: string) => void;
   onToggleUnread?: (chatId: string) => void;
   onArchivePriorChats?: (key: string) => void;
@@ -96,6 +99,7 @@ interface SidebarProps {
   onOpenProject: (projectPath: string, projectName: string) => void;
   onCreateProjectFolder?: () => void;
   onImportSessions?: () => void;
+  onDropSessionFile?: (file: File) => void;
   onOpenSettings: (section?: SettingsSectionKey) => void;
   onOpenAccount: () => void;
   settingsActive?: boolean;
@@ -113,6 +117,8 @@ interface SidebarProps {
   onOpenCareerStudio: () => void;
   onOpenTradingStudio: () => void;
   onOpenLeadsStudio: () => void;
+  /** Campaigns studio (email + WhatsApp campaigns). */
+  onOpenCampaignsStudio?: () => void;
   onOpenCrmStudio: () => void;
   onOpenMeetingStudio: () => void;
   theme?: "light" | "dark";
@@ -133,6 +139,7 @@ interface SidebarProps {
     | "ads"
     | "seo"
     | "leads"
+    | "campaigns"
     | "tenders"
     | "career"
     | "trading"
@@ -199,6 +206,11 @@ export function Sidebar(props: SidebarProps) {
       label: t("sidebar.leadsStudio", { defaultValue: "Leads" }),
       icon: Target,
       onClick: props.onOpenLeadsStudio,
+    },
+    campaigns: {
+      label: t("sidebar.campaignsStudio", { defaultValue: "Campaigns" }),
+      icon: Send,
+      onClick: props.onOpenCampaignsStudio ?? (() => undefined),
     },
     marketing: {
       label: t("sidebar.marketingStudio", { defaultValue: "Marketing" }),
@@ -291,10 +303,10 @@ export function Sidebar(props: SidebarProps) {
         "relative flex h-full w-full min-w-0 flex-col text-sidebar-foreground",
         props.hostChromeInset
           ? "bg-transparent"
-          : "border-r border-sidebar-border/60 bg-sidebar",
+          : "border-e border-sidebar-border/60 bg-sidebar",
       )}
     >
-      {/* Header: hide/open + Search on the same row. */}
+      {/* Header: hide/open, Search, then engine status and notifications. */}
       <div
         className={cn(
           "flex shrink-0 items-center gap-1 host-no-drag",
@@ -311,7 +323,7 @@ export function Sidebar(props: SidebarProps) {
               data-testid="host-sidebar-toggle"
               className={ICON_BUTTON}
             >
-              <PanelLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              <PanelLeft className="rtl:-scale-x-100 h-4 w-4" strokeWidth={1.75} aria-hidden />
             </button>
           ) : null
         ) : (
@@ -323,7 +335,7 @@ export function Sidebar(props: SidebarProps) {
             data-testid="host-sidebar-toggle"
             className={ICON_BUTTON}
           >
-            <PanelLeftClose className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            <PanelLeftClose className="rtl:-scale-x-100 h-4 w-4" strokeWidth={1.75} aria-hidden />
           </button>
         )}
         {props.onOpenSearch ? (
@@ -343,7 +355,7 @@ export function Sidebar(props: SidebarProps) {
               type="button"
               onClick={props.onOpenSearch}
               data-testid="sidebar-search"
-              className={cn(ROW_BASE, ROW_IDLE, "h-7 min-w-0 flex-1 gap-2 px-2 text-left")}
+              className={cn(ROW_BASE, ROW_IDLE, "h-8 min-w-0 flex-1 gap-2.5 px-2 text-start")}
             >
               <Search className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
               <span className="truncate">
@@ -352,9 +364,11 @@ export function Sidebar(props: SidebarProps) {
             </button>
           )
         ) : null}
+        <ConnectionBadge />
+        <NotificationCenter placement="sidebar" />
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-thin scrollbar-track-transparent">
+      <div className="sidebar-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain">
         <div
           className={cn(
             "shrink-0 space-y-1 pb-4",
@@ -399,7 +413,7 @@ export function Sidebar(props: SidebarProps) {
                 aria-expanded={otherAppsOpen}
                 aria-controls="sidebar-other-apps"
                 onClick={() => setOtherAppsOpen((open) => !open)}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
+                className="flex min-w-0 flex-1 items-center gap-2 text-start outline-none"
               >
                 <LayoutGrid className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{studioLabel}</span>
@@ -424,7 +438,7 @@ export function Sidebar(props: SidebarProps) {
               >
                 <ChevronRight
                   className={cn(
-                    "h-3.5 w-3.5 transition-transform duration-200",
+                    "rtl:[&:not(.rotate-90)]:rotate-180 h-3.5 w-3.5 transition-transform duration-200",
                     otherAppsOpen && "rotate-90",
                   )}
                   aria-hidden
@@ -507,6 +521,8 @@ export function Sidebar(props: SidebarProps) {
             onRequestRename={props.onRequestRename}
             onToggleArchive={props.onToggleArchive}
             onForkChat={props.onForkChat}
+            onShareChat={props.onShareChat}
+            onExportChat={props.onExportChat}
             onOpenInNewTab={props.onOpenInNewTab}
             onToggleUnread={props.onToggleUnread}
             onArchivePriorChats={props.onArchivePriorChats}
@@ -518,6 +534,7 @@ export function Sidebar(props: SidebarProps) {
             onOpenProject={props.onOpenProject}
             onCreateProjectFolder={props.onCreateProjectFolder}
             onImportSessions={props.onImportSessions}
+            onDropSessionFile={props.onDropSessionFile}
             onNewChat={props.onNewChat}
             pinnedKeys={props.pinnedKeys}
             chatOrder={props.chatOrder}
@@ -574,8 +591,6 @@ export function Sidebar(props: SidebarProps) {
             )}
           </button>
         ) : null}
-        <ConnectionBadge />
-        <NotificationCenter placement="sidebar" />
       </div>
     </nav>
   );
@@ -633,7 +648,7 @@ function StudioSidebarRow({
       }}
       className={cn(
         ROW_BASE,
-        "host-no-drag h-7 w-full cursor-grab touch-none select-none gap-1 pl-8 pr-1 outline-none active:cursor-grabbing focus-visible:ring-1 focus-visible:ring-ring/50",
+        "host-no-drag h-8 w-full cursor-grab touch-none select-none gap-1.5 ps-8 pe-1 outline-none active:cursor-grabbing focus-visible:ring-1 focus-visible:ring-ring/50",
         active ? ROW_ACTIVE : ROW_IDLE,
         over && "bg-sidebar-accent/80",
         dragging && "opacity-45",
@@ -693,8 +708,8 @@ function SidebarRow({
       onClick={() => onClick()}
       className={cn(
         ROW_BASE,
-        collapsed ? "h-8 w-8 justify-center" : "h-7 w-full gap-2 text-left",
-        !collapsed && (indent ? "pl-8 pr-2" : "px-2"),
+        collapsed ? "h-8 w-8 justify-center" : "h-8 w-full gap-2.5 text-start",
+        !collapsed && (indent ? "ps-8 pe-2" : "px-2"),
         active ? ROW_ACTIVE : ROW_IDLE,
       )}
     >

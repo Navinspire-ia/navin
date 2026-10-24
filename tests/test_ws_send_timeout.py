@@ -88,6 +88,56 @@ class SendTimeoutTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_control_event_send_is_bounded(self) -> None:
+        async def scenario() -> None:
+            channel, cleaned = _channel_with(timeout_s=0.05)
+            stalled = _StalledClient()
+            started = time.monotonic()
+            await channel._send_event(stalled, "error", detail="x")
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertIn(stalled, cleaned)
+
+        asyncio.run(scenario())
+
+    def test_stream_buffers_cleared_on_turn_end_and_idle(self) -> None:
+        from navin.bus.outbound_events import (
+            GoalStatusEvent,
+            TurnEndEvent,
+            outbound_message_for_event,
+        )
+
+        async def scenario() -> None:
+            channel, _cleaned = _channel_with(timeout_s=5.0)
+            channel._subs = {}  # type: ignore[attr-defined]
+            channel._invalidate_sessions_cache = lambda: None  # type: ignore[method-assign]
+            await channel.send_delta("chat-1", "a", stream_id="s1")
+            await channel.send_delta("chat-1", "b", stream_id="s2")
+            await channel.send_delta("chat-2", "c", stream_id="s1")
+            idle = outbound_message_for_event(
+                channel="websocket",
+                chat_id="chat-1",
+                event=GoalStatusEvent(status="idle"),
+            )
+            await channel.send(idle)
+            self.assertEqual(list(channel._stream_text_buffers), [("chat-2", "s1")])
+
+            channel._stream_text_buffers[("chat-1", "s3")] = ["z"]
+            channel.send_turn_end = MagicMock(side_effect=_async_noop)  # type: ignore[method-assign]
+            channel.send_session_updated = MagicMock(side_effect=_async_noop)  # type: ignore[method-assign]
+            end = outbound_message_for_event(
+                channel="websocket",
+                chat_id="chat-1",
+                event=TurnEndEvent(),
+            )
+            await channel.send(end)
+            self.assertEqual(list(channel._stream_text_buffers), [("chat-2", "s1")])
+
+        asyncio.run(scenario())
+
+
+async def _async_noop(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
 
 if __name__ == "__main__":
     unittest.main()

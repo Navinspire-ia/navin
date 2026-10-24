@@ -67,7 +67,7 @@ export function NotesSearchResults({
           initial={reduceMotion ? false : { opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           onClick={() => onOpen(result.id, result.matches[0]?.line)}
-          className="rounded-lg px-2.5 py-2 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-primary"
+          className="rounded-lg px-2.5 py-2 text-start outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-primary"
           role="option"
         >
           <span className="block truncate text-[13px] font-semibold">
@@ -222,7 +222,7 @@ export function AskNotesPane({
                   key={`${passage.note_id}:${passage.line}:${index}`}
                   type="button"
                   onClick={() => onOpen(passage.note_id, passage.line)}
-                  className="rounded-xl border border-border/70 p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary"
+                  className="rounded-xl border border-border/70 p-3 text-start outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <span className="flex items-center justify-between gap-2">
                     <strong className="truncate text-sm">{passage.title}</strong>

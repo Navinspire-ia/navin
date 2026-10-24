@@ -1,0 +1,27 @@
+{
+  "name": "learning-output-style",
+  "version": "1.0.0",
+  "description": "Learn by doing: the agent hands meaningful decisions to you with TODO(human) markers, does the boilerplate itself, and adds Insight blocks.",
+  "category": "learning",
+  "commands": [
+    "output-style"
+  ],
+  "agents": [],
+  "skills": [
+    "output-styles"
+  ],
+  "steps": [
+    {
+      "step": "switch the learning style on for this project",
+      "use": "/output-style"
+    },
+    {
+      "step": "switch back to plain answers",
+      "use": "/output-style"
+    },
+    {
+      "step": "learn how styles work and write a custom one",
+      "use": "skill:output-styles"
+    }
+  ]
+}

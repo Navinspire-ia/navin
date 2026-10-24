@@ -122,3 +122,34 @@ class HealthyTiktokenPathTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+def test_long_parts_are_encoded_once_across_steps(monkeypatch):
+    """The history is re-estimated every step: only new long texts get encoded."""
+    from navin.utils import helpers
+
+    enc = helpers._get_token_encoding()
+    encoded: list[int] = []
+
+    class Counting:
+        def encode(self, text, *args, **kwargs):
+            encoded.append(len(text))
+            return enc.encode(text, *args, **kwargs)
+
+    counting = Counting()
+    monkeypatch.setattr(helpers, "_get_token_encoding", lambda: counting)
+    long_text = "result line\n" * 400
+    history = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": long_text},
+    ]
+    first = helpers.estimate_prompt_tokens(history)
+    encoded.clear()
+    # Next step: the same messages, shallow-copied, plus a new short one.
+    again = helpers.estimate_prompt_tokens([dict(m) for m in history] + [{"role": "user", "content": "next"}])
+    assert again > first
+    assert all(n < len(long_text) for n in encoded)  # the long result was not encoded again
+    # Close to the exact joined count.
+    exact = len(enc.encode("\n".join(["build it", helpers._tool_calls_text(history[1]["tool_calls"]), "c1", long_text]))) + 3 * 4
+    assert abs(first - exact) <= 3

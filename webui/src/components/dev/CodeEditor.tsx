@@ -1876,7 +1876,7 @@ export default function CodeEditor({
                       disabled={editBusy}
                       onClick={() => toggleEditHunk(hunk.id)}
                       className={[
-                        "block w-full rounded border px-2 py-1 text-left font-mono text-[11px] leading-relaxed transition-colors",
+                        "block w-full rounded border px-2 py-1 text-start font-mono text-[11px] leading-relaxed transition-colors",
                         on
                           ? "border-emerald-500/35 bg-emerald-500/5"
                           : "border-border/50 bg-muted/20 opacity-60",
@@ -2075,7 +2075,7 @@ export default function CodeEditor({
             <button
               key={`${action.title}-${index}`}
               type="button"
-              className="block w-full truncate px-2 py-1.5 text-left text-[12px] hover:bg-accent"
+              className="block w-full truncate px-2 py-1.5 text-start text-[12px] hover:bg-accent"
               onClick={() => {
                 const view = viewRef.current;
                 if (view) {
@@ -2086,7 +2086,7 @@ export default function CodeEditor({
             >
               <span className="font-medium">{action.title}</span>
               {action.kind ? (
-                <span className="ml-2 text-muted-foreground">{action.kind}</span>
+                <span className="ms-2 text-muted-foreground">{action.kind}</span>
               ) : null}
             </button>
           ))}
@@ -2136,7 +2136,7 @@ export default function CodeEditor({
             {tx("dev.editor.vimLoading", "loading…")}
           </span>
         ) : null}
-        <span className="ml-auto tabular-nums">Ln {caretLine}</span>
+        <span className="ms-auto tabular-nums">Ln {caretLine}</span>
       </div>
     </div>
   );

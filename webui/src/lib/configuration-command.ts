@@ -7,13 +7,14 @@ import type { SlashCommand } from "@/lib/types";
 // These commands open the existing settings screens before chat routing.
 const sections: Record<string, SettingsSectionKey> = {
   overview: "overview", account: "account", appearance: "appearance",
-  providers: "providers", models: "models", image: "image", video: "video",
+  providers: "providers", models: "models", team: "team", collab: "team", image: "image", video: "video",
   voice: "voice", browser: "browser", computer: "computer", tools: "tools",
   channels: "channels", apps: "apps", automations: "automations",
   skills: "skills", templates: "templates", runtime: "runtime",
   advanced: "advanced", about: "about", studio: "studio",
   model: "models", mcp: "tools", system: "runtime", security: "advanced",
   guardrails: "advanced", theme: "appearance", web: "browser",
+  git: "git", github: "git", sites: "sites", logins: "sites",
 };
 
 const shortcuts = Object.keys(sections).filter((section) => !["overview", "studio"].includes(section));

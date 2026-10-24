@@ -16,6 +16,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from navin.optional_live import live_modules_available
+
 _DEFAULT_TIMEOUT_S = 180.0
 # Hard wall-clock cap for one generation (stream + fallback). Without it a
 # provider that keeps the SSE stream alive with keep-alives can hang forever,
@@ -327,7 +329,11 @@ class OpenRouterMusicGenerationClient(MusicGenerationProvider):
 
 
 class NavinMusicGenerationClient(OpenRouterMusicGenerationClient):
-    """Music generation via the managed Navin OpenRouter key (Lyria)."""
+    """Music generation via the managed Navin key on the Navin gateway.
+
+    The gateway serves music through ``/chat/completions`` with audio output,
+    the same request shape; only the base differs, and it is never OpenRouter.
+    """
 
     provider_name = "navin"
     missing_key_message = (
@@ -335,9 +341,13 @@ class NavinMusicGenerationClient(OpenRouterMusicGenerationClient):
         "or switch Music settings to your own provider."
     )
 
+    def __init__(self, *, api_base: str | None = None, **kwargs: Any) -> None:
+        from navin.providers.gateway import navin_managed_base
+
+        super().__init__(api_base=navin_managed_base(api_base), **kwargs)
+
 
 register_music_gen_provider(OpenRouterMusicGenerationClient)
-from navin.optional_live import live_modules_available
 
 if live_modules_available():
     register_music_gen_provider(NavinMusicGenerationClient)

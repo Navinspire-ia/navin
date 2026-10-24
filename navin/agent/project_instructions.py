@@ -21,6 +21,13 @@ def scoped_project_instructions(workspace: Path | None, target: Path, *, directo
     if workspace is None:
         return ""
     try:
+        from navin.agent.nested_instructions import mode as _instruction_mode
+
+        if _instruction_mode() != "agents-md":
+            return ""
+    except ImportError:
+        pass
+    try:
         root = workspace.expanduser().resolve()
         parent = (target if directory else target.parent).resolve()
         relative = parent.relative_to(root)

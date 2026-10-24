@@ -12,6 +12,9 @@ notified so the board refreshes live.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +33,8 @@ from navin.board.ledger import (
     LEDGER_STATUSES,
     MissionLedgerStore,
     action_fingerprint,
+    parse_criteria_evidence,
+    unproven_criteria,
 )
 from navin.board.notify import publish_board_update
 from navin.board.plan import milestone_progress, plan_summary
@@ -45,8 +50,35 @@ from navin.board.store import (
 from navin.bus.notify import publish_notification
 from navin.security.workspace_access import current_tool_workspace
 
+# Per (event loop, board directory): operations on one board stay serialized
+# once they run in threads, while boards of other projects (other sessions)
+# proceed in parallel. A single loop-wide lock made every board move in the
+# gateway queue behind whichever session was pushing a branch.
+_BOARD_DISPATCH_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+
+
+def _board_dispatch_lock(store: Any) -> asyncio.Lock:
+    board = getattr(store, "dir", None) or getattr(store, "project_path", None) or ""
+    key = (id(asyncio.get_running_loop()), os.path.normcase(os.path.abspath(str(board))))
+    return _BOARD_DISPATCH_LOCKS.setdefault(key, asyncio.Lock())
+
 _LIST_LIMIT = 60
 _NEXT_LIMIT = 12
+def _with_note(result: Any, note: str) -> Any:
+    """Append *note* to a tool result, keeping a ToolResult's flags."""
+    if isinstance(result, ToolResult):
+        return ToolResult(
+            f"{result}\n{note}",
+            is_error=result.is_error,
+            recovery_hint=result.recovery_hint,
+            verification=result.verification,
+            made_progress=result.made_progress,
+        )
+    if isinstance(result, str):
+        return f"{result}\n{note}"
+    return result
+
+
 _MUTATING_ACTIONS = {
     "create",
     "update",
@@ -72,6 +104,11 @@ _LIVE_LEDGER_STATUSES = frozenset({"draft", "running", "paused", "blocked"})
 _LEDGER_ACTIONS = frozenset(
     {
         "ledger_get",
+        "ledger_timeline",
+        "ledger_restore",
+        "ledger_diff",
+        "ledger_replay",
+        "ledger_compare",
         "ledger_init",
         "ledger_update",
         "ledger_progress",
@@ -150,8 +187,11 @@ class BoardTool(Tool):
             "Shared project task board (kanban + dependency-aware plan + "
             "milestones + mission ledger), also edited by humans in the Dev "
             "workbench. 'next' returns the ready queue (pick work there), "
-            "'plan' shows milestones/critical path/blockers, 'claim' before "
-            "starting, 'move'/'update'/'comment' to track, 'create' files new "
+            "'plan' shows milestones/critical path/blockers, 'claim' each step "
+            "before starting it and 'move' it done as soon as it is finished "
+            "(the chat plan panel advances on these; send them in the same reply "
+            "as the step's real work, never alone), 'update'/'comment' to "
+            "track, 'create' files new "
             "work (depends_on/acceptance/validation). Marking done with "
             "validation=test|lint|verify requires evidence AND a real passing "
             "verify/test_run recorded in the last 30 minutes - run "
@@ -197,6 +237,11 @@ class BoardTool(Tool):
                         "ledger_replan",
                         "ledger_pause",
                         "ledger_resume",
+                        "ledger_timeline",
+                        "ledger_restore",
+                        "ledger_diff",
+                        "ledger_replay",
+                        "ledger_compare",
                     ],
                     "description": "Board or mission-ledger operation to perform",
                 },
@@ -278,7 +323,36 @@ class BoardTool(Tool):
                     "type": "string",
                     "description": (
                         "How the acceptance/validation was verified (required "
-                        "for done; also used by ledger_progress)"
+                        "for done; also used by ledger_progress). ledger_update: "
+                        "one line per mission criterion, 'N: command -> result'; "
+                        "the mission cannot be closed until every criterion has one"
+                    ),
+                },
+                "tasks": {
+                    "type": "array",
+                    "description": (
+                        "create: file the whole plan in ONE call. Each item: title "
+                        "(required), description, priority, depends_on (ids, or "
+                        "titles of items earlier in this list), acceptance, validation"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "priority": {"type": "string"},
+                            "depends_on": {"type": "array", "items": {"type": "string"}},
+                            "acceptance": {"type": "string"},
+                            "validation": {"type": "string"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+                "claim_next": {
+                    "type": "boolean",
+                    "description": (
+                        "move to done: also claim the best ready task and return it, "
+                        "so closing one step and starting the next is one call"
                     ),
                 },
                 "goal": {
@@ -349,7 +423,10 @@ class BoardTool(Tool):
                     "type": "string",
                     "description": (
                         "Comment body (comment) or timeline note (log); "
-                        "REQUIRED for both"
+                        "REQUIRED for both. ledger_restore: version N or 'coherent' "
+                        "(reason= why); ledger_diff: 'A..B'; ledger_replay: optional "
+                        "version N to take the step (task_id=) from; ledger_compare: "
+                        "'A..B' to rank what two plans achieved"
                     ),
                 },
                 "target_date": {
@@ -483,43 +560,73 @@ class BoardTool(Tool):
                     text = alt.strip()
                     break
         touched: list[str] = []
+        call_index, in_subagent = self._begin_auto_advance_call()
         try:
             store = self._store()
-            result = self._dispatch(
-                store,
-                touched=touched,
-                action=action,
-                task_id=task_id,
-                milestone_id=milestone_id,
-                title=title,
-                description=description,
-                status=status,
-                priority=priority,
-                labels=labels,
-                depends_on=depends_on,
-                assignee=assignee,
-                text=text,
-                target_date=target_date,
-                filter_status=filter_status,
-                who=who,
-                who_type=who_type,
-                acceptance=acceptance,
-                validation=validation,
-                agent_hint=agent_hint,
-                evidence=evidence,
-                goal=goal,
-                constraints=constraints,
-                facts=facts,
-                missing_info=missing_info,
-                acceptance_criteria=acceptance_criteria,
-                step_ids=step_ids,
-                ok=ok,
-                progress=progress,
-                reason=reason,
-                fingerprint=fingerprint,
-                tokens=tokens,
-                replace=replace,
-            )
+            verified = ""
+            if action == "move" and status == "done" and task_id:
+                try:
+                    verified = await self._verify_before_done(store, store.get_task(task_id))
+                except BoardError:
+                    verified = ""  # unknown task: let _dispatch report it
+                if verified.startswith(("Error", "Validation pending")):
+                    return ToolResult.error(verified)
+            # The board lives on disk (tasks, activity, ledger): its reads and
+            # writes run off the event loop so the UI and the reply stream
+            # keep moving; notifications are handed back to the loop.
+            from navin.bus.notify import run_off_loop
+
+            # One operation per board at a time, as when it ran on the loop:
+            # parallel tool calls must not interleave read-modify-write cycles.
+            # Forge side effects (git push, PR/MR, issue close; up to minutes)
+            # are queued in ``deferred`` and run after the lock is released.
+            deferred: list[Any] = []
+            async with _board_dispatch_lock(store):
+                result = await run_off_loop(
+                    self._dispatch,
+                    store,
+                    touched=touched,
+                    deferred=deferred,
+                    action=action,
+                    task_id=task_id,
+                    milestone_id=milestone_id,
+                    title=title,
+                    description=description,
+                    status=status,
+                    priority=priority,
+                    labels=labels,
+                    depends_on=depends_on,
+                    assignee=assignee,
+                    text=text,
+                    target_date=target_date,
+                    filter_status=filter_status,
+                    who=who,
+                    who_type=who_type,
+                    acceptance=acceptance,
+                    validation=validation,
+                    agent_hint=agent_hint,
+                    evidence=evidence,
+                    goal=goal,
+                    constraints=constraints,
+                    facts=facts,
+                    missing_info=missing_info,
+                    acceptance_criteria=acceptance_criteria,
+                    step_ids=step_ids,
+                    ok=ok,
+                    progress=progress,
+                    reason=reason,
+                    fingerprint=fingerprint,
+                    tokens=tokens,
+                    replace=replace,
+                    tasks=kwargs.get("tasks") if isinstance(kwargs.get("tasks"), list) else None,
+                    claim_next=bool(kwargs.get("claim_next")),
+                )
+            for job in deferred:
+                # Each store write inside is atomic under the store's own
+                # per-board lock, so no dispatch lock is needed here.
+                extra = await run_off_loop(job)
+                if extra:
+                    result = _with_note(result, extra.lstrip("\n"))
         except BoardValidationPendingError as e:
             return ToolResult.error(
                 "Validation pending: task remains open.\n"
@@ -531,9 +638,74 @@ class BoardTool(Tool):
         except BoardError as e:
             return ToolResult.error(f"Error: {e.message}")
         if action in _MUTATING_ACTIONS and getattr(result, "made_progress", None) is not False:
-            session_focus.remember(current_request_session_key(), touched)
+            session_key = current_request_session_key()
+            session_focus.remember(session_key, touched)
+            notes = self._auto_advance(
+                store, session_key, action=action, task_id=task_id,
+                status=status, who_type=who_type, touched=touched,
+                call_index=call_index, in_subagent=in_subagent,
+            )
+            if notes:
+                result = _with_note(result, "Plan auto-advance: " + "; ".join(notes) + ".")
             publish_board_update(self._bus, str(store.project_path))
+        if verified:
+            result = _with_note(result, verified)
         return result
+
+    @staticmethod
+    def _begin_auto_advance_call() -> tuple[int | None, bool]:
+        """Count this call for :mod:`navin.board.auto_advance` (parent turns only)."""
+        try:
+            from navin.agent.tools.context import current_request_context
+            from navin.board.auto_advance import begin_board_call, is_subagent_context
+
+            ctx = current_request_context()
+            if ctx is None:
+                return None, False
+            if is_subagent_context(ctx.metadata, ctx.sender_id):
+                return None, True
+            return begin_board_call(ctx.session_key, turn_id=ctx.turn_id), False
+        except Exception:
+            logger.debug("board auto-advance call tracking failed", exc_info=True)
+            return None, False
+
+    @staticmethod
+    def _auto_advance(
+        store: ProjectBoardStore,
+        session_key: str | None,
+        *,
+        action: str,
+        task_id: str | None,
+        status: str | None,
+        who_type: str,
+        touched: list[str] | None = None,
+        call_index: int | None = None,
+        in_subagent: bool = False,
+    ) -> list[str]:
+        """Rules R1-R3 of :mod:`navin.board.auto_advance`; never fails the call."""
+        if action not in ("create", "claim", "move", "update", "delete"):
+            return []
+        try:
+            from navin.agent.tools.context import current_request_context
+            from navin.board.auto_advance import after_tool_mutation
+
+            ctx = current_request_context()
+            meta = ctx.metadata if ctx is not None and isinstance(ctx.metadata, dict) else {}
+            return after_tool_mutation(
+                store,
+                session_key,
+                action=action,
+                task_id=task_id,
+                status=status,
+                actor_type=who_type,
+                composer_mode=meta.get("composer_mode"),
+                touched=touched,
+                call_index=call_index,
+                subagent=in_subagent,
+            )
+        except Exception:
+            logger.debug("board auto-advance failed", exc_info=True)
+            return []
 
     def _dispatch(
         self,
@@ -571,6 +743,9 @@ class BoardTool(Tool):
         fingerprint: str | None = None,
         tokens: int | None = None,
         replace: bool | None = None,
+        tasks: list[dict[str, Any]] | None = None,
+        claim_next: bool | None = None,
+        deferred: list[Any] | None = None,
     ) -> str:
         if action in _LEDGER_ACTIONS:
             return self._dispatch_ledger(
@@ -711,6 +886,41 @@ class BoardTool(Tool):
             task = store.get_task(task_id)
             return _fmt_task(task, verbose=True)
 
+        if action == "create" and tasks:
+            # A plan filed one task per call cost one model round trip each
+            # (measured: 6 creates, 6 steps). One call files them all.
+            created: list[dict[str, Any]] = []
+            by_title: dict[str, str] = {}
+            for item in tasks:
+                if not isinstance(item, dict) or not str(item.get("title") or "").strip():
+                    raise BoardError("each item in tasks needs a title")
+                deps = [
+                    by_title.get(str(dep).strip().lower(), str(dep))
+                    for dep in (item.get("depends_on") or [])
+                ]
+                task = store.create_task(
+                    title=str(item["title"]),
+                    description=item.get("description"),
+                    status=status,
+                    priority=item.get("priority") or priority,
+                    labels=labels,
+                    depends_on=deps or None,
+                    assignee=self._parse_assignee(assignee),
+                    milestone_id=milestone_id,
+                    acceptance=item.get("acceptance"),
+                    validation=item.get("validation"),
+                    agent=agent_hint,
+                    evidence=None,
+                    actor=who,
+                    actor_type=who_type,
+                )
+                by_title[str(item["title"]).strip().lower()] = task["id"]
+                touched.append(task["id"])
+                created.append(task)
+            return f"{len(created)} tasks created:\n" + "\n".join(
+                f"  {_fmt_task(task)}" for task in created
+            )
+
         if action == "create":
             if not title:
                 raise BoardError("create requires title")
@@ -767,7 +977,9 @@ class BoardTool(Tool):
             touched.append(task["id"])
             extra = ""
             if "status" in fields:
-                extra = self._autonomy_after_status(store, task, who=who, who_type=who_type)
+                extra = self._autonomy_after_status(
+                    store, task, who=who, who_type=who_type, deferred=deferred,
+                )
             return f"Task updated: {_fmt_task(task)}{extra}"
 
         if action == "move":
@@ -790,7 +1002,15 @@ class BoardTool(Tool):
                 task_id, fields=move_fields, actor=who, actor_type=who_type,
             )
             touched.append(task["id"])
-            extra = self._autonomy_after_status(store, task, who=who, who_type=who_type)
+            extra = self._autonomy_after_status(
+                store, task, who=who, who_type=who_type, deferred=deferred,
+            )
+            if status == "done":
+                extra += self._record_ledger_done(store.project_path, task["id"], evidence, who)
+                if claim_next:
+                    extra += self._claim_next_ready(
+                        store, touched, who=who, who_type=who_type, closed_id=task["id"],
+                    )
             return f"Task moved: {_fmt_task(task)}{extra}"
 
         if action == "claim":
@@ -926,6 +1146,118 @@ class BoardTool(Tool):
             key=key,
         )
 
+    async def _verify_before_done(self, store: Any, task: dict[str, Any]) -> str:
+        """Run verify for a done that still lacks a fresh green run.
+
+        The store refuses an agent's done on a test/lint/verify step without a
+        recent passing run, so the model used to call lint, test_run and verify
+        (three round trips, 5-15s each) before every move. Running the check
+        here makes closing a step one call. Returns "" when no run was needed,
+        a short verdict when it passed, or "Error..." when it failed.
+        """
+        validation = task.get("validation")
+        if validation not in ("test", "lint", "verify"):
+            return ""
+        from navin.quality.verification_log import refusal_to_close_without_proof
+
+        if not refusal_to_close_without_proof(store.project_path, require_tests=(validation == "test")):
+            return ""
+        from navin.agent.tools.quality import VerifyTool
+
+        verdict = await VerifyTool(workspace=store.project_path).execute(
+            action="check", with_tests=True
+        )
+        text = verdict if isinstance(verdict, str) else str(getattr(verdict, "content", verdict))
+        problem = refusal_to_close_without_proof(store.project_path, require_tests=(validation == "test"))
+        if problem:
+            # The standard prerequisite wording, so the runner treats it as
+            # "validation pending" (no progress, retry allowed once fixed)
+            # rather than a hard tool failure.
+            return (
+                "Validation pending: task remains open.\n"
+                f"{problem}\n"
+                f"verify ran before closing {task.get('id')} and it is not green. Fix what it "
+                "reports, then move again. If the failure is unrelated to this step and "
+                "pre-existing, do not loop on it: record that in the evidence, lower the "
+                "step's validation (board update validation=lint) or report the blocker.\n"
+                f"{text[:2000]}"
+            )
+        return "Verified before closing: " + text.splitlines()[0][:200] if text else ""
+
+    @staticmethod
+    def _record_ledger_done(
+        project_path: Any, task_id: str, evidence: str | None, who: str | None
+    ) -> str:
+        """Record a finished step in the mission ledger, when there is one.
+
+        The model used to follow every move-to-done with its own
+        ledger_progress call: one model round trip (5-8s) for a write that
+        takes milliseconds. Done is the progress record.
+        """
+        from navin.board.ledger import action_fingerprint
+
+        try:
+            store = MissionLedgerStore(project_path)
+            ledger = store.load()
+            if not ledger:
+                return ""
+            from navin.board.plan import mission_step_ids
+
+            steps = mission_step_ids(ledger)
+            if steps and str(task_id) not in steps:
+                # A task from another chat's work is not this mission's
+                # progress: recording it moved the mission's current step
+                # onto unrelated tasks and kept the mission alive everywhere.
+                return ""
+            ledger = store.record_step_result(
+                ledger,
+                task_id,
+                ok=True,
+                evidence=evidence,
+                progress=True,
+                fingerprint=action_fingerprint(task_id, True, (evidence or "")[:80]),
+                actor=who or "agent",
+            )
+            store.save(ledger)
+        except Exception:
+            return ""
+        return " Ledger progress recorded."
+
+    def _claim_next_ready(
+        self,
+        store: Any,
+        touched: list[str],
+        *,
+        who: str | None,
+        who_type: str | None,
+        closed_id: str | None = None,
+    ) -> str:
+        """Claim the next ready step of the plan just worked on (claim_next=true).
+
+        The plan is the closed task's dependency group plus the tasks filed
+        with it. A ready task outside it (another mission, an old card) is
+        named but not claimed, so the turn stays on the work in hand.
+        """
+        from navin.board.plan import plan_members
+
+        tasks = store.read_tasks()
+        queue = plan_summary(tasks)["ready_queue"]
+        if not queue:
+            return " No ready task left."
+        if closed_id:
+            plan = plan_members(tasks, closed_id)
+            in_plan = [task_id for task_id in queue if task_id in plan]
+            if not in_plan:
+                return (
+                    " No ready step left in this plan. Next ready task on the board: "
+                    f"{queue[0]} (not claimed: it belongs to other work)."
+                )
+            queue = in_plan
+        task = store.claim_task(queue[0], actor=who, actor_type=who_type)
+        touched.append(task["id"])
+        extra = self._autonomy_after_claim(store, task, who=who, who_type=who_type)
+        return f"\nNext task claimed: {_fmt_task(task)}{extra}"
+
     def _autonomy_after_claim(
         self,
         store: ProjectBoardStore,
@@ -1046,11 +1378,16 @@ class BoardTool(Tool):
         *,
         who: str,
         who_type: str,
+        deferred: list[Any] | None = None,
     ) -> str:
-        """PR on done, issue close on done, warning on blocked; ledger sync."""
+        """PR on done, issue close on done, warning on blocked; ledger sync.
+
+        With *deferred* the forge work (push, PR, issue close) is queued there
+        instead of running inline, so the caller can run it outside the board
+        dispatch lock.
+        """
         self._sync_ledger_with_status(store, task, who=who)
         try:
-            project = store.project_path
             status = task.get("status")
             if status == "blocked":
                 self._notify(
@@ -1062,6 +1399,30 @@ class BoardTool(Tool):
                 return ""
             if status != "done":
                 return ""
+        except Exception:
+            logger.exception("board autonomy status hook failed")
+            return ""
+        if deferred is not None:
+            snapshot = dict(task)
+            deferred.append(
+                lambda: self._forge_after_done(
+                    store, snapshot, who=who, who_type=who_type,
+                )
+            )
+            return ""
+        return self._forge_after_done(store, task, who=who, who_type=who_type)
+
+    def _forge_after_done(
+        self,
+        store: ProjectBoardStore,
+        task: dict[str, Any],
+        *,
+        who: str,
+        who_type: str,
+    ) -> str:
+        """Open the task's PR/MR and close its linked issue; never raises."""
+        try:
+            project = store.project_path
             lines: list[str] = []
             # Without auto-branch the task has no branch of its own, and the
             # only thing a PR attempt can do is fail on a ref that was never
@@ -1149,6 +1510,58 @@ class BoardTool(Tool):
     ) -> str:
         ledger_store = MissionLedgerStore(store.project_path)
 
+        if action == "ledger_timeline":
+            from navin.board.timeline import build_timeline
+
+            return json.dumps(build_timeline(store.project_path), ensure_ascii=False)
+
+        if action in ("ledger_restore", "ledger_diff"):
+            # text carries the target: "N" or "coherent" for restore, "A..B" for diff.
+            from navin.board.timeline import diff_versions, restore_mission
+
+            target = (text or "").strip()
+            try:
+                if action == "ledger_restore":
+                    if not target:
+                        return "Error: ledger_restore needs text=<version> or text=coherent"
+                    out = restore_mission(
+                        store.project_path, target, reason=reason or "", actor=who or "agent"
+                    )
+                else:
+                    left, sep, right = target.partition("..")
+                    if not sep:
+                        return "Error: ledger_diff needs text=<A>..<B> (two versions)"
+                    out = diff_versions(store.project_path, int(left), int(right))
+            except (BoardError, ValueError) as exc:
+                return f"Error: {exc}"
+            return json.dumps(out, ensure_ascii=False)
+
+        if action in ("ledger_replay", "ledger_compare"):
+            # ledger_replay: task_id = step, text = optional source version.
+            # ledger_compare: text = "A..B".
+            from navin.board.timeline import compare_strategies, replay_step
+
+            target = (text or "").strip()
+            try:
+                if action == "ledger_replay":
+                    if not task_id:
+                        return "Error: ledger_replay needs task_id=<step id> (text=<version> optional)"
+                    out = replay_step(
+                        store.project_path,
+                        task_id,
+                        from_version=int(target.lstrip("v")) if target else None,
+                        reason=reason or "",
+                        actor=who or "agent",
+                    )
+                else:
+                    left, sep, right = target.partition("..")
+                    if not sep:
+                        return "Error: ledger_compare needs text=<A>..<B> (two versions)"
+                    out = compare_strategies(store.project_path, int(left), int(right))
+            except (BoardError, ValueError) as exc:
+                return f"Error: {exc}"
+            return json.dumps(out, ensure_ascii=False)
+
         if action == "ledger_get":
             ledger = ledger_store.load()
             if not ledger:
@@ -1214,6 +1627,19 @@ class BoardTool(Tool):
             ledger = ledger_store.load()
             if not ledger:
                 raise BoardError("no mission ledger; call ledger_init first")
+            proof_note = ""
+            if evidence:
+                proofs = parse_criteria_evidence(evidence)
+                if not proofs:
+                    raise BoardError(
+                        "ledger_update evidence must name the criterion it proves, "
+                        "one per line: '1: pytest tests/test_x.py -> 12 passed'"
+                    )
+                refused = ledger_store.record_criteria_evidence(ledger, proofs, actor=who)
+                if refused:
+                    raise BoardError("evidence refused: " + "; ".join(refused))
+                ledger_store.save(ledger)
+                proof_note = f" Proof recorded for criteria {', '.join(map(str, sorted(proofs)))}."
             if status == "done":
                 by_id = {task["id"]: task for task in store.read_tasks()}
                 unfinished = [
@@ -1229,6 +1655,14 @@ class BoardTool(Tool):
                         f"cannot mark mission done: unfinished steps: {pending}. "
                         "Continue the unfinished work and validate each step before closing it. "
                         "Repeating ledger_update status=done does not complete a step."
+                    )
+                missing = unproven_criteria(ledger)
+                if missing:
+                    pending = "; ".join(f"{n}. {text[:120]}" for n, text in missing[:10])
+                    raise BoardError(
+                        f"cannot mark mission done: acceptance criteria without proof: {pending}. "
+                        "Verify each one for real, then pass evidence='N: command -> result' "
+                        "(one line per criterion) with status=done."
                     )
             fields: dict[str, Any] = {}
             # How a mission is closed, which is what frees the project for the
@@ -1251,6 +1685,8 @@ class BoardTool(Tool):
             if acceptance_criteria is not None:
                 fields["acceptance_criteria"] = acceptance_criteria
             if not fields:
+                if proof_note:
+                    return f"Mission ledger v{ledger['version']}.{proof_note}"
                 raise BoardError("ledger_update requires at least one field")
             previous_version = ledger["version"]
             ledger = ledger_store.apply_manual_edit(ledger, fields, actor=who)
@@ -1263,7 +1699,7 @@ class BoardTool(Tool):
                     made_progress=False,
                 )
             ledger_store.save(ledger)
-            return f"Mission ledger updated to v{ledger['version']}"
+            return f"Mission ledger updated to v{ledger['version']}{proof_note}"
 
         if action == "ledger_progress":
             if not task_id:

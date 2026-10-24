@@ -38,8 +38,13 @@ from navin.providers.openai_responses import (
 from navin.providers.reasoning_control import (
     WIRE_RESPONSES,
     ReasoningOffNegotiator,
+    accepted_efforts,
     apply_shape,
+    learn_accepted_efforts,
+    nearest_effort,
+    non_anthropic_effort,
     off_shapes,
+    openai_rejects_reasoning,
 )
 
 _AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
@@ -176,10 +181,19 @@ class AzureOpenAIProvider(LLMProvider):
             "stream": False,
         }
 
+        reasoning_effort = non_anthropic_effort(reasoning_effort)
         if self._supports_temperature(deployment, reasoning_effort):
             body["temperature"] = temperature
 
         effort = reasoning_effort.lower() if isinstance(reasoning_effort, str) else ""
+        if openai_rejects_reasoning(deployment):
+            # A GPT-4o / 4.1 deployment named after its model takes no
+            # reasoning field at all.
+            effort = ""
+            reasoning_effort = None
+        elif effort and effort != "none":
+            effort = nearest_effort(effort, accepted_efforts(deployment, self._effort_key(deployment)))
+            reasoning_effort = effort
         if effort == "none":
             # GPT-5 deployments default to effort "medium" when the field is
             # missing; "none" has to be spelled out (or its floor, learned
@@ -201,10 +215,20 @@ class AzureOpenAIProvider(LLMProvider):
     def _off_shapes(deployment: str) -> list[dict[str, Any]]:
         return off_shapes(deployment, spec_name="azure_openai", wire=WIRE_RESPONSES)
 
+    @staticmethod
+    def _effort_key(deployment: str) -> str:
+        return f"azure_openai|{deployment.lower()}"
+
     def _register_reasoning_rejection(
         self, deployment: str, error: Exception, reasoning_effort: str | None
     ) -> bool:
-        if not isinstance(reasoning_effort, str) or reasoning_effort.lower() != "none":
+        effort = (non_anthropic_effort(reasoning_effort) or "") if isinstance(reasoning_effort, str) else ""
+        effort = effort.lower()
+        if effort and effort != "none":
+            # A refused level lists the accepted ones; the replay sends the
+            # nearest of them (False when that lesson is already known).
+            return learn_accepted_efforts(self._effort_key(deployment), effort, error)
+        if effort != "none":
             return False
         # Deployment names hide the model, so "unsupported parameter" is a
         # real signal here (a GPT-4o deployment): stop on it, do not walk floors.
@@ -265,7 +289,6 @@ class AzureOpenAIProvider(LLMProvider):
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        _ = on_thinking_delta
         body = self._build_body(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -275,7 +298,10 @@ class AzureOpenAIProvider(LLMProvider):
         try:
             stream = await self._client.responses.create(**body)
             content, tool_calls, finish_reason, usage, reasoning_content = (
-                await consume_sdk_stream(stream, on_content_delta, on_tool_call_delta)
+                await consume_sdk_stream(
+                    stream, on_content_delta, on_tool_call_delta,
+                    on_reasoning_delta=on_thinking_delta,
+                )
             )
             return LLMResponse(
                 content=content or None,

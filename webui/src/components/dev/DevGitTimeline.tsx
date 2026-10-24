@@ -421,20 +421,20 @@ export function DevGitTimeline({
         <div className="flex items-center gap-1">
           <div className="relative flex-1">
             <Search
-              className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/70"
+              className="pointer-events-none absolute start-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/70"
               aria-hidden
             />
             <input
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
               placeholder={tx("dev.git.historyFilter", "Filter by author, message, branch")}
-              className="w-full rounded-md border border-border/60 bg-background py-1 pl-6 pr-6 text-[11px] text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-border/60 bg-background py-1 ps-6 pe-6 text-[11px] text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-1 focus:ring-ring"
             />
             {filter ? (
               <button
                 type="button"
                 onClick={() => setFilter("")}
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                className="absolute end-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
                 aria-label={tx("dev.git.clearFilter", "Clear filter")}
               >
                 <X className="h-3 w-3" aria-hidden />
@@ -466,14 +466,14 @@ export function DevGitTimeline({
               })}
             </span>
             {contributors.length > 0 ? (
-              <span className="flex shrink-0 items-center -space-x-1.5">
+              <span className="flex shrink-0 items-center -space-x-1.5 rtl:space-x-reverse">
                 {contributors.slice(0, 5).map((person) => (
                   <span key={person.name} title={`${person.name} · ${person.count}`}>
                     <AuthorAvatar name={person.name} size={26} ringed />
                   </span>
                 ))}
                 {contributors.length > 5 ? (
-                  <span className="pl-2 text-[11px] font-medium text-muted-foreground">
+                  <span className="ps-2 text-[11px] font-medium text-muted-foreground">
                     +{contributors.length - 5}
                   </span>
                 ) : null}
@@ -581,13 +581,13 @@ export function DevGitTimeline({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ ...spring, delay: reducedMotion ? 0 : Math.min(index, 24) * 0.018 }}
                 className={cn(
-                  "flex w-full cursor-pointer items-stretch text-left transition-colors hover:bg-muted/50 active:scale-[0.995]",
+                  "flex w-full cursor-pointer items-stretch text-start transition-colors hover:bg-muted/50 active:scale-[0.995]",
                   isExpanded ? "bg-muted/40" : "",
                 )}
                 style={{ minHeight: ROW_H }}
               >
                 <GraphCell row={row} laneCount={laneCount} isHead={isHead} />
-                <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-1 pr-2">
+                <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-1 pe-2">
                   <span className="flex min-w-0 items-center gap-1">
                     {shownRefs.map((ref) => {
                       const isTag = ref.startsWith("tag: ");

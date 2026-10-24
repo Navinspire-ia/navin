@@ -173,7 +173,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
                 ? t("dev.tests.none", "no tests collected")
                 : t("dev.tests.collectUnsupported", "run as a whole suite")}
           </span>
-          <div className="ml-auto">
+          <div className="ms-auto">
             <Button
               size="sm"
               variant="ghost"
@@ -181,7 +181,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
               disabled={suiteStatus === "running"}
               onClick={() => void run(suite.runner)}
             >
-              <Play className="mr-1 h-3 w-3" aria-hidden />
+              <Play className="me-1 h-3 w-3" aria-hidden />
               {t("dev.tests.runSuite", "Run suite")}
             </Button>
           </div>
@@ -198,13 +198,13 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
             <div key={file}>
               <button
                 type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-[11px] hover:bg-accent/40"
+                className="flex w-full items-center gap-1.5 px-3 py-1 text-start text-[11px] hover:bg-accent/40"
                 onClick={() => toggleFile(file)}
               >
                 {open ? (
                   <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                 ) : (
-                  <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                  <ChevronRight className="rtl:-scale-x-100 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                 )}
                 {statusIcon(runStatus[fileKey])}
                 <span className="truncate font-mono">{file}</span>
@@ -212,7 +212,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
                 <span
                   role="button"
                   tabIndex={-1}
-                  className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground"
+                  className="ms-auto rounded p-0.5 text-muted-foreground hover:text-foreground"
                   title={t("dev.tests.runFile", "Run this file")}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -228,7 +228,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
                     return (
                       <div
                         key={test.id}
-                        className="group flex items-center gap-1.5 py-0.5 pl-9 pr-3 text-[11px] hover:bg-accent/30"
+                        className="group flex items-center gap-1.5 py-0.5 ps-9 pe-3 text-[11px] hover:bg-accent/30"
                       >
                         {statusIcon(runStatus[testKey])}
                         <span className="truncate" title={test.id}>
@@ -237,7 +237,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
                         </span>
                         <button
                           type="button"
-                          className="ml-auto rounded p-0.5 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                          className="ms-auto rounded p-0.5 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
                           title={t("dev.tests.runOne", "Run this test")}
                           onClick={() =>
                             void run(suite.runner, test.run_target, [testKey])
@@ -267,7 +267,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
           placeholder={t("dev.tests.filter", "Filter tests...")}
-          className="ml-2 h-6 min-w-0 flex-1 rounded border border-border/60 bg-transparent px-2 text-[11px] outline-none focus:border-border"
+          className="ms-2 h-6 min-w-0 flex-1 rounded border border-border/60 bg-transparent px-2 text-[11px] outline-none focus:border-border"
         />
         <Button
           size="sm"
@@ -277,9 +277,9 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
           onClick={() => void collect()}
         >
           {collecting ? (
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+            <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
           ) : (
-            <RefreshCw className="mr-1 h-3 w-3" aria-hidden />
+            <RefreshCw className="me-1 h-3 w-3" aria-hidden />
           )}
           {t("dev.tests.collect", "Collect")}
         </Button>
@@ -322,7 +322,7 @@ export default function TestExplorerPanel({ sessionKey }: Props) {
             {lastOutcome.runner}: {outcomeSummary(lastOutcome)}
           </div>
           {lastOutcome.failures.slice(0, 10).map((failure) => (
-            <div key={`${failure.file}:${failure.name}`} className="mt-1 pl-5">
+            <div key={`${failure.file}:${failure.name}`} className="mt-1 ps-5">
               <div className="font-mono text-red-500/90">
                 {failure.file}
                 {failure.line ? `:${failure.line}` : ""} {failure.name}

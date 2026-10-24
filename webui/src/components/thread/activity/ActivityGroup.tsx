@@ -32,7 +32,7 @@ export function ActivityGroup({
         className,
       )}
     >
-      <div className="mb-1 flex min-w-0 items-center gap-1.5 pl-0.5 text-[12px] font-medium text-muted-foreground/70">
+      <div className="mb-1 flex min-w-0 items-center gap-1.5 ps-0.5 text-[12px] font-medium text-muted-foreground/70">
         {Icon ? <Icon className="h-3 w-3 shrink-0" aria-hidden /> : null}
         <span className="min-w-0 truncate">{title}</span>
       </div>

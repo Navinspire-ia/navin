@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Respect explicit effort and apply mode defaults only to Auto."""
+"""Respect explicit effort; Auto runs at medium (high in Plan mode)."""
 
 from __future__ import annotations
 
@@ -31,4 +31,7 @@ def adaptive_reasoning_effort(
     # after_verify_failure used to bump the whole next turn into CoT. That
     # made the retry slower than the attempt that already failed.
     _ = after_verify_failure
-    return "none"
+    # Auto used to mean no thinking at all: requests were taken literally and
+    # the agent spent its time on wrong first steps. Medium for every model
+    # unless the user picks an effort.
+    return "medium"

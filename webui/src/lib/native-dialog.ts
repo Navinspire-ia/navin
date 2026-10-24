@@ -40,3 +40,24 @@ export async function pickNativeFolder(defaultPath?: string | null): Promise<str
   });
   return typeof selected === "string" ? selected : null;
 }
+
+/**
+ * Open the OS "Open File" dialog filtered on ``extensions`` (without dots).
+ * Same contract as `pickNativeFolder`: `null` on cancel, rejects when the
+ * desktop bridge is missing (fall back to typing a path).
+ */
+export async function pickNativeFile(
+  extensions: string[],
+  label: string,
+): Promise<string | null> {
+  if (!nativeFolderPickerAvailable()) {
+    throw new Error("native dialog unavailable");
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    filters: [{ name: label, extensions }],
+  });
+  return typeof selected === "string" ? selected : null;
+}

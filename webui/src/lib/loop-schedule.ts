@@ -9,6 +9,7 @@
  * preset that created it.
  */
 
+import { intlLocale } from "@/i18n/intl";
 import type { LoopRecurrence, LoopRecurrenceKind, SessionAutomationJob } from "@/lib/types";
 
 /** Only divisors of 60 keep every gap the same length. */
@@ -111,7 +112,7 @@ export function formatTimeOfDay(hour: number, minute: number): string {
 export function weekdayLabel(weekday: number, locale: string): string {
   // 2024-01-01 was a Monday, so ISO weekday 1 lands on the 1st.
   const date = new Date(Date.UTC(2024, 0, weekday));
-  return new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(date);
+  return new Intl.DateTimeFormat(intlLocale(locale), { weekday: "long", timeZone: "UTC" }).format(date);
 }
 
 /** Return a sentence describing when a preset fires. */
@@ -180,7 +181,7 @@ export function describeSchedule(
   }
   if (job.schedule.kind === "at" && job.schedule.at_ms) {
     return t("loops.schedule.once", "Once, at {{time}}", {
-      time: new Date(job.schedule.at_ms).toLocaleString(locale),
+      time: new Date(job.schedule.at_ms).toLocaleString(intlLocale(locale)),
     });
   }
   if (job.schedule.kind === "local") {

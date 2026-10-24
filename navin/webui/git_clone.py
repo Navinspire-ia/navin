@@ -14,11 +14,14 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from navin.config.paths import is_navin_internal_path
+from navin.utils import wsl
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 _GIT_CLONE_TIMEOUT_S = 300
@@ -34,10 +37,34 @@ _URL_RE = re.compile(
 
 
 class GitCloneError(Exception):
-    def __init__(self, message: str, status: int = 400) -> None:
+    """``code`` / ``host`` are set for failures the UI can act on
+    (``auth_required`` opens Settings > Git & GitHub for ``host``)."""
+
+    def __init__(
+        self,
+        message: str,
+        status: int = 400,
+        *,
+        code: str = "",
+        host: str = "",
+        detail: str = "",
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status = status
+        self.code = code
+        self.host = host
+        self.detail = detail
+
+    def payload(self) -> dict[str, Any]:
+        """JSON body for coded failures: ``{error, message, code, host, detail}``."""
+        return {
+            "error": self.message,
+            "message": self.message,
+            "code": self.code,
+            "host": self.host,
+            "detail": self.detail,
+        }
 
 
 def normalize_git_url(raw: str) -> str:
@@ -105,10 +132,86 @@ def _host_git_env() -> dict[str, str]:
     return env
 
 
+def _clone_failure(
+    raw: str,
+    *,
+    returncode: int,
+    host: str,
+    credential: Any | None,
+) -> GitCloneError:
+    """Map git's stderr to an actionable, coded error (like explain_push_failure)."""
+    from navin.utils.git_credentials import SETTINGS_POINTER, classify_git_failure
+    from navin.webui.forge_api import redact_url_credentials
+
+    raw = redact_url_credentials(raw or "")
+    # Keep the head (the first error, e.g. the OPENSSL symbol dump) and the
+    # tail (the final "fatal:" line): a plain [-400:] slice hid the beginning
+    # of the failure behind truncated middle lines.
+    if len(raw) <= 400:
+        detail = raw
+    else:
+        detail = f"{raw[:200]}\n...\n{raw[-200:]}"
+    where = host or "the server"
+    kind = classify_git_failure(detail)
+    if kind == "auth":
+        if credential is not None:
+            message = (
+                f"{where} rejected the saved token. Update it in "
+                f"{SETTINGS_POINTER}, then try again."
+            )
+        else:
+            message = (
+                f"{where} needs you to sign in to clone this repository. Connect "
+                f"your account or add a token for {where} in {SETTINGS_POINTER}, "
+                "then try again."
+            )
+        return GitCloneError(message, status=401, code="auth_required", host=host, detail=detail)
+    if kind == "ssh_auth":
+        return GitCloneError(
+            f"The SSH key on this machine is not accepted by {where}. Add your "
+            "public key to the account, or clone the HTTPS URL with a token "
+            f"from {SETTINGS_POINTER}.",
+            status=401,
+            code="auth_required",
+            host=host,
+            detail=detail,
+        )
+    if kind == "forbidden":
+        return GitCloneError(
+            f"Your {where} account cannot read this repository. Check the token "
+            f"scopes in {SETTINGS_POINTER}.",
+            status=403,
+            code="forbidden",
+            host=host,
+            detail=detail,
+        )
+    if kind == "not_found":
+        message = f"Repository not found on {where}."
+        if credential is None:
+            message += (
+                f" If it is private, add a token for {where} in {SETTINGS_POINTER}."
+            )
+        return GitCloneError(message, status=404, code="not_found", host=host, detail=detail)
+    if kind == "network":
+        return GitCloneError(
+            f"Cannot reach {where}. Check the network connection or proxy.",
+            status=502,
+            code="network",
+            host=host,
+            detail=detail,
+        )
+    return GitCloneError(
+        f"git clone failed: {detail or f'exit {returncode}'}",
+        status=502,
+        host=host,
+        detail=detail,
+    )
+
+
 def _existing_remote_url(path: Path) -> str | None:
     try:
         proc = subprocess.run(  # noqa: S603
-            ["git", "-C", str(path), "remote", "get-url", "origin"],
+            [*(git_argv(path) or ["git", "-C", str(path)]), "remote", "get-url", "origin"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -148,14 +251,17 @@ def clone_git_project(
     parent: str | None = None,
     name: str | None = None,
     default_parent: str | None = None,
+    config: Any | None = None,
 ) -> dict[str, Any]:
     """Shallow-clone *url* under *parent* and return ``{path, name, url}``.
 
     If the target folder already exists and points at the same remote, the
     existing folder is reused (idempotent open). A non-empty conflicting
-    folder raises :class:`GitCloneError`.
+    folder raises :class:`GitCloneError`. A forge token for the URL's host
+    (Settings > Git & GitHub, env, or a signed-in ``gh``) is handed to git
+    through the environment, never on the command line.
     """
-    if not shutil.which("git"):
+    if not shutil.which("git") and not (sys.platform == "win32" and wsl.wsl_executable()):
         raise GitCloneError("git is not installed on this machine", status=500)
 
     normalized = normalize_git_url(url)
@@ -217,16 +323,38 @@ def clone_git_project(
         except OSError as exc:
             raise GitCloneError(f"cannot prepare destination: {exc}") from exc
 
+    clone_argv = ["git", "clone", "--depth", "1", normalized, str(target)]
+    location = wsl.parse_unc(str(target)) if sys.platform == "win32" else None
+    via_wsl = False
+    if location is not None and wsl.wsl_executable():
+        # Clone into the WSL folder with the distro's git: Windows git over
+        # \\wsl.localhost is slow and leaves CRLF / permission noise.
+        distro = wsl.resolve_distro(location.distro) or location.distro
+        clone_argv = [*wsl.command_prefix(distro), "git", "clone", "--depth", "1", normalized, location.posix]
+        via_wsl = True
+    elif not shutil.which("git"):
+        raise GitCloneError("git is not installed on this machine", status=500)
+
+    from navin.utils import git_credentials
+
+    host = git_credentials.host_of(normalized)
+    try:
+        credential = git_credentials.credential_for_url(normalized, config=config)
+    except Exception:  # noqa: BLE001 - a token lookup must not block a public clone
+        credential = None
+    clone_env = git_credentials.git_env(
+        base=_host_git_env(), wsl=via_wsl, credentials=[credential]
+    )
     try:
         proc = subprocess.run(  # noqa: S603
-            ["git", "clone", "--depth", "1", normalized, str(target)],
+            clone_argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_CLONE_TIMEOUT_S,
             check=False,
-            env=_host_git_env(),
+            env=clone_env,
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
@@ -247,24 +375,12 @@ def clone_git_project(
     if proc.returncode != 0:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        raw = (proc.stderr or proc.stdout or "").strip()
-        # Keep the head (the first error, e.g. the OPENSSL symbol dump) and
-        # the tail (the final "fatal:" line): a plain [-400:] slice hid the
-        # beginning of the failure behind truncated middle lines.
-        if len(raw) <= 400:
-            detail = raw
-        else:
-            detail = f"{raw[:200]}\n...\n{raw[-200:]}"
         # Auth / network failures from git are client-facing, not opaque 500s.
-        status = 502
-        lower = detail.lower()
-        if "permission denied" in lower or "could not read from remote" in lower:
-            status = 403
-        elif "not found" in lower or "repository not found" in lower:
-            status = 404
-        raise GitCloneError(
-            f"git clone failed: {detail or f'exit {proc.returncode}'}",
-            status=status,
+        raise _clone_failure(
+            (proc.stderr or proc.stdout or "").strip(),
+            returncode=proc.returncode,
+            host=host,
+            credential=credential,
         )
 
     return {

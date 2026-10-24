@@ -50,7 +50,10 @@ Kind = Literal[
 _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\))")
 _PROGRESS_RE = re.compile(
     r"(?i)^\s*(?:"
-    r"[\|/-\\]\s+"  # spinner prefix
+    # Spinner glyph. The hyphen stays last: "/-\\" was a range from "/" to
+    # "\\" that took digits and capitals, so "2 passed in 0.01s" or
+    # "1 failed" vanished as a spinner and a green `pytest -q` read unverified.
+    r"[|/\\-]\s+"  # spinner prefix
     r"|(?:\d{1,3}%|\[[=#\s-]{3,}\])\s*"  # percent / bar
     r"|(?:downloading|extracting|resolving|fetching|enumerating|counting|"
     r"compressing|writing objects|delta compression|remote:\s|"

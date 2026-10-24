@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { phrase } from "@/i18n/phrases";
 import sourceCatalog from "./career-source-catalog.json";
 
 export const DEFAULT_MISSION_CATALOG = sourceCatalog.missions;
@@ -86,21 +87,21 @@ export interface ProspectingState {
 
 export function sourcingStatusText(source: NonNullable<ProspectingState["last_run"]["sources"]>[number], language: string): string {
   const fr = language.startsWith("fr");
-  if (source.status === "ok") return `${source.count} ${fr ? "résultat(s)" : "result(s)"}`;
+  if (source.status === "ok") return `${source.count} ${fr ? "résultat(s)" : phrase("result(s)")}`;
   if (source.status === "not_configured") return fr
     ? "Source non configurée : clé API manquante. Les recherches disponibles continuent."
-    : "Source not configured: missing API key. Available searches continue.";
+    : phrase("Source not configured: missing API key. Available searches continue.");
   if (source.status === "access_required") return fr
     ? (source.source.startsWith("missions:") ? "Compte plateforme requis. La collecte automatique n'est pas connectée." : "Accès à la base de candidats requis. La recherche publique de profils est indisponible.")
     : (source.source.startsWith("missions:") ? "Marketplace account required. Automatic collection is not connected." : "Candidate database access required. Public profile search is unavailable.");
   if (source.error_code === "rate_limited" || source.message?.includes("limited by the provider")) return fr
     ? "Le moteur de recherche a temporairement bloqué cette requête. Cela ne signifie pas qu'aucun profil n'existe."
-    : "The search engine temporarily blocked this query. This does not mean there are no candidates.";
+    : phrase("The search engine temporarily blocked this query. This does not mean there are no candidates.");
   if (source.status === "cooldown") return fr
     ? "Source temporairement en pause après un échec."
-    : "Source temporarily paused after a failure.";
+    : phrase("Source temporarily paused after a failure.");
   return fr ? "Source indisponible pendant cette recherche. Les autres sources continuent."
-    : "Source unavailable during this search. Other sources continue.";
+    : phrase("Source unavailable during this search. Other sources continue.");
 }
 
 export const emptyProspecting: ProspectingState = {

@@ -163,8 +163,41 @@
           fr: {
             boot: "Chargement de Navin…",
             description: "Interface web Navin - discutez avec votre espace de travail Navin."
+          },
+          ar: {
+            boot: "جارٍ تحميل Navin…",
+            description: "واجهة ويب Navin - تحدث مع مساحة عمل Navin."
+          },
+          tr: {
+            boot: "Navin yükleniyor…",
+            description: "Navin web arayüzü - Navin çalışma alanınızla sohbet edin."
+          },
+          it: {
+            boot: "Caricamento di Navin…",
+            description: "Interfaccia web di Navin - chatta con il tuo spazio di lavoro Navin."
+          },
+          sv: {
+            boot: "Laddar Navin…",
+            description: "Navins webbgränssnitt - chatta med din Navin-arbetsyta."
+          },
+          nb: {
+            boot: "Laster Navin…",
+            description: "Navin webgrensesnitt - chat med Navin-arbeidsområdet ditt."
+          },
+          ja: {
+            boot: "Navin を読み込んでいます…",
+            description: "Navin ウェブ UI - Navin ワークスペースとチャットします。"
+          },
+          ko: {
+            boot: "Navin 로드 중…",
+            description: "Navin 웹 UI - Navin 작업 공간과 대화하세요."
+          },
+          de: {
+            boot: "Navin wird geladen…",
+            description: "Navin Web-UI - chatte mit deinem Navin-Arbeitsbereich."
           }
         };
+        var localeAlias = { no: "nb" };
 
         function normalizeLocale(input) {
           if (!input) return "en";
@@ -172,7 +205,8 @@
           if (!raw) return "en";
           if (copy[raw]) return raw;
           var base = raw.toLowerCase().split("-")[0];
-          return copy[base] ? base : "en";
+          if (copy[base]) return base;
+          return localeAlias[base] || "en";
         }
 
         try {
@@ -185,6 +219,7 @@
           var locale = normalizeLocale(detected);
           var localized = copy[locale] || copy.en;
           document.documentElement.lang = locale;
+          document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
           var description = document.querySelector('[data-i18n-meta=\"description\"]');
           if (description) description.setAttribute("content", localized.description);
           var boot = document.querySelector("[data-boot-copy]");

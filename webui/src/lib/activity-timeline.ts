@@ -64,8 +64,17 @@ export function isReasoningOnlyAssistant(message: UIMessage): boolean {
   return !!(message.reasoning?.length || message.reasoningStreaming || message.isStreaming);
 }
 
+/**
+ * A settled ask_user card or approval restated in the chat. It happened in
+ * the middle of the work (the tool that asked returns right after it), so it
+ * belongs to the activity block around it instead of cutting it in two.
+ */
+export function isInteractionEcho(message: UIMessage): boolean {
+  return message.kind === "choice" || message.kind === "approval";
+}
+
 export function isAgentActivityMember(message: UIMessage): boolean {
-  return isReasoningOnlyAssistant(message) || message.kind === "trace";
+  return isReasoningOnlyAssistant(message) || message.kind === "trace" || isInteractionEcho(message);
 }
 
 export function hasPendingAgentActivity(messages: UIMessage[]): boolean {

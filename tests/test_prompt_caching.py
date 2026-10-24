@@ -274,5 +274,69 @@ class PurityTest(unittest.TestCase):
             self.assertNotIn("cache_control", tool)
 
 
+def _tool_call(index: int) -> dict:
+    """An assistant step that calls one tool."""
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": f"c{index}", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}],
+    }
+
+
+def _tool_loop() -> list[dict]:
+    """An OpenAI-shape turn two steps into a tool loop."""
+    call = _tool_call
+    return [
+        {"role": "system", "content": "You are navin."},
+        {"role": "user", "content": "read both files"},
+        call(1),
+        {"role": "tool", "tool_call_id": "c1", "content": "first file"},
+        call(2),
+        {"role": "tool", "tool_call_id": "c2", "content": "second file"},
+    ]
+
+
+def _marked_indices(messages: list[dict]) -> list[int]:
+    return [i for i, m in enumerate(messages) if "cache_control" in str(m.get("content"))]
+
+
+class GatewayToolLoopTest(unittest.TestCase):
+    """On the Navin gateway the tail marker must cover the tool loop so far.
+
+    Stopping at the user turn re-prefilled every tool result on every step;
+    on a live gateway that left 30k of 80k prompt tokens uncached per step.
+    """
+
+    def test_the_newest_tool_result_carries_the_tail_marker(self) -> None:
+        from navin.providers.openai_compat_provider import OpenAICompatProvider
+
+        out, _ = OpenAICompatProvider._apply_cache_control(_tool_loop(), None, mark_tool_results=True)
+        self.assertEqual(_marked_indices(out), [0, 5])
+        self.assertEqual(out[5]["content"][0]["text"], "second file")
+
+    def test_an_injected_user_turn_after_a_tool_result_is_never_marked(self) -> None:
+        from navin.providers.openai_compat_provider import OpenAICompatProvider
+
+        messages = [*_tool_loop(), {"role": "user", "content": "runtime context"}]
+        out, _ = OpenAICompatProvider._apply_cache_control(messages, None, mark_tool_results=True)
+        self.assertEqual(_marked_indices(out), [0, 5])
+
+    def test_other_providers_keep_the_user_turn_marker(self) -> None:
+        from navin.providers.openai_compat_provider import OpenAICompatProvider
+
+        out, _ = OpenAICompatProvider._apply_cache_control(_tool_loop(), None)
+        self.assertEqual(_marked_indices(out), [0, 1])
+
+    def test_the_gateway_path_marks_tool_results(self) -> None:
+        from navin.providers.openai_compat_provider import OpenAICompatProvider
+
+        messages = _tool_loop()
+        messages[3]["content"] = messages[5]["content"] = "x " * 5000
+        out, _ = OpenAICompatProvider._apply_gateway_cache_control(messages, None, "anthropic/claude-sonnet-5.5")
+        self.assertIn(5, _marked_indices(out))
+        # The caller's history is left untouched.
+        self.assertIsInstance(messages[5]["content"], str)
+
+
 if __name__ == "__main__":
     unittest.main()

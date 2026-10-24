@@ -1,3 +1,4 @@
+import { intlLocale } from "@/i18n/intl";
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -8,14 +9,14 @@ export function formatMoney(
 ): string {
   const amount = Number.isFinite(value) ? value : 0;
   try {
-    return new Intl.NumberFormat(locale || "fr-FR", {
+    return new Intl.NumberFormat(intlLocale(locale || "fr"), {
       style: "currency",
       currency: currency || "EUR",
       maximumFractionDigits: 2,
       minimumFractionDigits: 0,
     }).format(amount);
   } catch {
-    return `${new Intl.NumberFormat(locale || "fr-FR").format(amount)} ${currency || "EUR"}`;
+    return `${new Intl.NumberFormat(intlLocale(locale || "fr")).format(amount)} ${currency || "EUR"}`;
   }
 }
 

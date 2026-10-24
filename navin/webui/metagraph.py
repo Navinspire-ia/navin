@@ -242,14 +242,18 @@ def metagraph_payload(
 
 
 def _bump_generation(root: Path) -> int:
-    key = str(root.resolve(strict=False))
+    from navin.utils.resolve_cache import resolve_root
+
+    key = str(resolve_root(root))
     with _cache_lock:
         _generation[key] = _generation.get(key, 0) + 1
         return _generation[key]
 
 
 def _cache_key(root: Path, view: str) -> tuple[str, str]:
-    return (str(root.resolve(strict=False)), view)
+    from navin.utils.resolve_cache import resolve_root
+
+    return (str(resolve_root(root)), view)
 
 
 def _collect_snapshot(root: Path, *, max_nodes: int) -> dict[str, Any]:
@@ -267,13 +271,21 @@ def _collect_snapshot(root: Path, *, max_nodes: int) -> dict[str, Any]:
         (source, target) for source, target in index.edges()
     }
 
+    # On a WSL project seen from Windows a stat per config, doc and asset file
+    # crosses the 9P bridge on every Graph refresh; those nodes go without size.
+    bridged = bool(getattr(index, "bridged", False))
     files: list[dict[str, Any]] = []
     for rel in rel_paths:
         entry = index.entries.get(rel)
-        try:
-            size = entry.size if entry is not None else (root / rel).stat().st_size
-        except OSError:
+        if entry is not None:
+            size = entry.size
+        elif bridged:
             size = 0
+        else:
+            try:
+                size = (root / rel).stat().st_size
+            except OSError:
+                size = 0
         file_row: dict[str, Any] = {
             "id": rel,
             "kind": _classify(rel),

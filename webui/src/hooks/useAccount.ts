@@ -16,6 +16,9 @@ import {
   type AccountPayload,
 } from "@/lib/api";
 
+/** `refresh: true` waits for navin.live; "background" gets the known account now. */
+type AccountReloadOptions = { refresh?: boolean | "background" };
+
 /**
  * navin.live account state, shared between the sidebar card and the
  * settings section without prop drilling: every consumer subscribes to a
@@ -28,7 +31,36 @@ const listeners = new Set<(account: AccountPayload) => void>();
 
 function broadcast(account: AccountPayload) {
   lastPayload = account;
+  rememberAccountFirstName(account.connected ? account.name : "");
   listeners.forEach((listener) => listener(account));
+}
+
+const FIRST_NAME_STORAGE_KEY = "navin.account.firstName";
+
+/** "aymen ghad" or "aymen.ghad" (an email's local part) -> "Aymen". */
+export function firstName(name: string | null | undefined): string {
+  const first = String(name ?? "").trim().split(/[\s._-]+/)[0] ?? "";
+  if (!/^\p{L}{2,}$/u.test(first)) return "";
+  return first.charAt(0).toLocaleUpperCase() + first.slice(1);
+}
+
+/** Kept on this device so the Live can greet by name without any request; cleared on sign-out. */
+function rememberAccountFirstName(name: string | null | undefined): void {
+  try {
+    const first = firstName(name);
+    if (first) window.localStorage.setItem(FIRST_NAME_STORAGE_KEY, first);
+    else window.localStorage.removeItem(FIRST_NAME_STORAGE_KEY);
+  } catch {
+    // Storage unavailable (private mode): the greeting just skips the name.
+  }
+}
+
+export function storedAccountFirstName(): string {
+  try {
+    return window.localStorage.getItem(FIRST_NAME_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** Publish an account payload to every `useAccount` consumer (e.g. Free setup poll). */
@@ -40,10 +72,11 @@ export function publishAccount(account: AccountPayload) {
 // otherwise fan out into one forced validation per consumer. One forced
 // refresh per window is plenty, and the throttle survives a page reload.
 function forceRefreshThrottled(
-  reload: (options?: { refresh?: boolean }) => Promise<AccountPayload | null>,
+  reload: (options?: AccountReloadOptions) => Promise<AccountPayload | null>,
 ) {
   if (!claimForcedRefresh()) return;
-  void reload({ refresh: true });
+  // Nobody waits on it: the gateway answers at once and validates behind it.
+  void reload({ refresh: "background" });
 }
 
 // One gateway push fans out to every open window. Forcing a validation here
@@ -53,7 +86,7 @@ function forceRefreshThrottled(
 const PUSH_REFRESH_MIN_MS = 10_000;
 let lastPushRefreshAt = 0;
 function refreshOnAccountPush(
-  reload: (options?: { refresh?: boolean }) => Promise<AccountPayload | null>,
+  reload: (options?: AccountReloadOptions) => Promise<AccountPayload | null>,
 ) {
   const now = Date.now();
   if (now - lastPushRefreshAt < PUSH_REFRESH_MIN_MS) return;
@@ -68,7 +101,7 @@ export function useAccount(): {
   account: AccountPayload | null;
   loading: boolean;
   /** Re-read the account; `refresh` forces a validation against navin.live. */
-  reload: (options?: { refresh?: boolean }) => Promise<AccountPayload | null>;
+  reload: (options?: AccountReloadOptions) => Promise<AccountPayload | null>;
   /**
    * Mint a connect URL and ask the gateway to open it in the OS browser
    * (WebView ``window.open`` is unreliable in the desktop shell).
@@ -92,7 +125,7 @@ export function useAccount(): {
   }, []);
 
   const reload = useCallback(
-    async (options?: { refresh?: boolean }) => {
+    async (options?: AccountReloadOptions) => {
       const wantRefresh = Boolean(options?.refresh);
       // A cheap local read and a forced validation are not interchangeable.
       // Joining a cheap in-flight fetch when the caller asked for refresh=1
@@ -147,7 +180,7 @@ export function useAccount(): {
     if (!account?.connected) return;
     const POLL_MS = 10 * 60 * 1000;
     const id = window.setInterval(() => {
-      void reload({ refresh: true });
+      void reload({ refresh: "background" });
     }, POLL_MS);
     return () => window.clearInterval(id);
   }, [account?.connected, reload]);

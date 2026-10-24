@@ -33,8 +33,9 @@ const DOT: Record<ConnectionBadgeState, string> = {
 };
 
 /**
- * Engine indicator for the sidebar footer: the chat views have no status bar,
- * so this is where they learn that the engine is connected, slow or gone.
+ * Engine indicator next to the notification bell: the chat views have no status
+ * bar, so this is where they learn that the engine is slow or gone. Hidden while
+ * the engine answers normally.
  * Sized like the neighbouring icon buttons so the footer stays aligned.
  */
 export function ConnectionBadge({ className }: { className?: string } = {}) {
@@ -47,6 +48,9 @@ export function ConnectionBadge({ className }: { className?: string } = {}) {
   const stallSeconds = useGatewayStallSeconds(pace);
   const stalled = pace.stall !== null;
   const state = connectionBadgeState(status, stalled);
+
+  // All well: nothing to show. The dot only appears when the user is waiting.
+  if (state === "connected") return null;
 
   const label =
     state !== "down" && stalled

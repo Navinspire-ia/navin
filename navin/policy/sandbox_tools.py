@@ -43,16 +43,20 @@ def _safe_relative(root: Path, *parts: str) -> Path | None:
     return target
 
 
-_BROWSER_PARAMETERS = tool_parameters_schema(
+_WEB_FETCH_PARAMETERS = tool_parameters_schema(
     url=StringSchema("Page URL, e.g. https://example.test/pricing", min_length=8, max_length=2000),
-    action=StringSchema("fetch (default) reads the page", enum=("fetch",), nullable=True),
     required=["url"],
 )
 
 
-@tool_parameters(_BROWSER_PARAMETERS)
-class FixtureBrowserTool(Tool):
-    """Read a page of the fixture web (``_web/<host>/<path>``)."""
+@tool_parameters(_WEB_FETCH_PARAMETERS)
+class FixtureWebFetchTool(Tool):
+    """Read a page of the fixture web (``_web/<host>/<path>``).
+
+    Named like the real page reader: the runtime keeps the browser off unless
+    the user asks for it and points page reads to web_fetch, so an exam that
+    taught ``browser`` for reading taught a call the agent then gets refused.
+    """
 
     _plugin_discoverable = False
     _scopes: set[str] = set()
@@ -62,7 +66,7 @@ class FixtureBrowserTool(Tool):
 
     @property
     def name(self) -> str:
-        return "browser"
+        return "web_fetch"
 
     @property
     def description(self) -> str:
@@ -72,7 +76,7 @@ class FixtureBrowserTool(Tool):
     def read_only(self) -> bool:
         return True
 
-    async def execute(self, url: str, action: str | None = None, **kwargs: Any) -> Any:
+    async def execute(self, url: str, **kwargs: Any) -> Any:
         parts = urlsplit((url or "").strip())
         host = (parts.hostname or "").lower()
         if not host:
@@ -184,3 +188,7 @@ class FixtureDeskTool(Tool):
             self._save(kind, rows)
             return f"Added {kind} record {payload['id']}."
         return self.unknown_action(action)
+
+
+# Former name, kept for callers that still import it.
+FixtureBrowserTool = FixtureWebFetchTool

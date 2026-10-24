@@ -64,6 +64,41 @@ class GitStore:
         """Check if the git repo has been initialized."""
         return (self._workspace / ".git").is_dir()
 
+    def is_projects_container(self) -> bool:
+        """~/NavinProjects holds the user's and the agent's projects: it must never
+        be a git repo, or every project made inside it lands in that repo (git
+        finds the parent .git) and the agent runs git on a project that has none."""
+        try:
+            from navin.config.paths import get_default_workspace_path
+
+            return self._workspace.resolve() == get_default_workspace_path().resolve()
+        except OSError:
+            return False
+
+    def retire_from_projects_container(self) -> bool:
+        """Put away a memory repo made earlier at the root of ~/NavinProjects.
+
+        Moved into ``.navin/`` (history kept, inert there), never deleted. Only
+        the store's own repo moves: one whose .gitignore is store-generated.
+        Returns True when it moved.
+        """
+        if not self.is_projects_container() or not self.is_initialized() or not self.owns_gitignore():
+            return False
+        target = self._workspace / ".navin" / "memory-history.git"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                target = target.with_name(f"memory-history-{int(time.time())}.git")
+            (self._workspace / ".git").rename(target)
+            gitignore = self._workspace / ".gitignore"
+            if gitignore.is_file():
+                gitignore.rename(self._workspace / ".navin" / "memory-history.gitignore")
+        except OSError:
+            logger.exception("Could not move the memory repo out of {}", self._workspace)
+            return False
+        logger.info("Memory repo moved out of the projects folder to {}", target)
+        return True
+
     # -- init ------------------------------------------------------------------
 
     def init(self) -> bool:
@@ -73,6 +108,10 @@ class GitStore:
         Returns True if a new repo was created, False if already exists.
         """
         if self.is_initialized():
+            return False
+
+        if self.is_projects_container():
+            # Never a repo at the root of ~/NavinProjects (see is_projects_container).
             return False
 
         if self._is_inside_git_repo():
@@ -169,19 +208,21 @@ class GitStore:
         try:
             from dulwich import porcelain
 
-            # .gitignore excludes everything except tracked files, so any
-            # staged/unstaged/untracked change must be in our files. Untracked
-            # carries brand-new files (dulwich only lists tracked changes in
-            # unstaged): a new SKILL.md from Dream must still be committed.
-            st = porcelain.status(str(self._workspace))
+            # .gitignore excludes everything except tracked files. Untracked
+            # files are NOT listed through dulwich: its walk recurses the whole
+            # workspace (node_modules, build trees) in pure Python and held the
+            # GIL for ~37s, freezing every chat and CLI of the gateway. Only
+            # our own tracked spots can hold a new file (a new SKILL.md from
+            # Dream), so they are checked directly against the index.
+            st = porcelain.status(str(self._workspace), untracked_files="no")
             def in_scope(rel: str) -> bool:
                 return rel in self._tracked_files or any(
                     rel.startswith(d) for d in self._tracked_dirs
                 )
             relevant = [
                 path.decode("utf-8") if isinstance(path, bytes) else str(path)
-                for path in list(st.unstaged) + list(st.untracked)
-            ]
+                for path in st.unstaged
+            ] + self._untracked_in_scope()
             if not any(in_scope(rel) for rel in relevant) and not any(st.staged.values()):
                 return None
 
@@ -237,6 +278,25 @@ class GitStore:
             return None
 
     # -- internal helpers ------------------------------------------------------
+
+    def _untracked_in_scope(self) -> list[str]:
+        """Files present in our tracked spots but absent from the index."""
+        from dulwich.repo import Repo
+
+        with Repo(str(self._workspace)) as repo:
+            indexed = {
+                p.decode("utf-8", "replace") for p in repo.open_index().paths()
+            }
+        present = [rel for rel in self._tracked_files if (self._workspace / rel).is_file()]
+        for rel in self._tracked_dirs:
+            base = self._workspace / rel
+            if base.is_dir():
+                present.extend(
+                    rel + child.relative_to(base).as_posix()
+                    for child in base.rglob("*")
+                    if child.is_file()
+                )
+        return [rel for rel in present if rel not in indexed]
 
     def _resolve_sha(self, short_sha: str) -> bytes | None:
         """Resolve a short SHA prefix to the full SHA bytes."""

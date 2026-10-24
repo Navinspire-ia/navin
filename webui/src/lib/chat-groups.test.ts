@@ -8,6 +8,7 @@ import {
   groupSessions,
   placeChatKey,
   priorChatKeys,
+  runningSessionsFirst,
   visibleSessionsForLimit,
   type ChatGroupLabels,
 } from "./chat-groups";
@@ -288,11 +289,28 @@ describe("visibleSessionsForLimit", () => {
       "websocket:0",
       "websocket:1",
       "websocket:2",
-      "websocket:3",
-      "websocket:4",
       "websocket:9",
     ]);
-    expect(visibleSessionsForLimit(rows, INITIAL_GROUP_VISIBLE_COUNT, null)).toHaveLength(5);
+    expect(visibleSessionsForLimit(rows, INITIAL_GROUP_VISIBLE_COUNT, null)).toHaveLength(3);
+  });
+});
+
+describe("runningSessionsFirst", () => {
+  it("floats busy chats to the top and keeps the rest in order", () => {
+    const rows = Array.from({ length: 8 }, (_, index) =>
+      session({ key: `websocket:${index}`, chatId: String(index) }),
+    );
+    const ordered = runningSessionsFirst(rows, new Set(["6", "3"]));
+    expect(ordered.map((row) => row.chatId)).toEqual(["3", "6", "0", "1", "2", "4", "5", "7"]);
+    expect(
+      visibleSessionsForLimit(ordered, INITIAL_GROUP_VISIBLE_COUNT, null).map((row) => row.chatId),
+    ).toContain("6");
+  });
+
+  it("returns the same list when nothing runs", () => {
+    const rows = [session({ key: "websocket:a", chatId: "a" })];
+    expect(runningSessionsFirst(rows, new Set())).toBe(rows);
+    expect(runningSessionsFirst(rows, new Set(["zz"]))).toBe(rows);
   });
 });
 
@@ -338,5 +356,24 @@ describe("priorChatKeys", () => {
       { defaultWorkspacePath: "/home/me/NavinProjects" },
     );
     expect(keys).toEqual(["websocket:old"]);
+  });
+});
+
+import { removeProjectFromSidebarState as rmProject } from "./chat-groups";
+describe("removeProjectFromSidebarState", () => {
+  it("removes a folder so an empty folder disappears, matching Windows paths", () => {
+    const next = rmProject(
+      {
+        recent_projects: [{ path: "C:\\Users\\me\\proj" }, { path: "C:/other" }],
+        module_by_path: { "C:\\Users\\me\\proj": "dev", "C:/other": "dev" },
+      },
+      "C:/Users/me/proj",
+    );
+    expect(next.recent_projects).toEqual([{ path: "C:/other" }]);
+    expect(next.module_by_path).toEqual({ "C:/other": "dev" });
+  });
+  it("keeps state untouched for unknown folder", () => {
+    const next = rmProject({ recent_projects: [{ path: "/a" }] }, "/b");
+    expect(next.recent_projects).toEqual([{ path: "/a" }]);
   });
 });

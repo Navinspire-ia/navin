@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>split_compare</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .sp-title { position: absolute; left: 8%; right: 8%; top: 6.5%; text-align: center; font-size: calc(var(--u) * 64); text-wrap: balance; }
+  .nm-portrait .sp-title { top: 8%; font-size: calc(var(--u) * 76); }
+  .sp-frame {
+    position: absolute; overflow: hidden; border-radius: calc(var(--u) * 24);
+    border: 1px solid var(--c-line);
+    box-shadow: 0 calc(var(--u) * 50) calc(var(--u) * 120) rgba(0, 0, 0, 0.55);
+    background: #000;
+  }
+  .sp-layer { position: absolute; inset: 0; }
+  .sp-layer > img, .sp-layer > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .sp-divider { position: absolute; background: #fff; box-shadow: 0 0 calc(var(--u) * 24) rgba(0, 0, 0, 0.45); }
+  .sp-handle {
+    position: absolute; width: calc(var(--u) * 76); height: calc(var(--u) * 76); border-radius: 50%;
+    background: #fff; color: #0A0B14; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 40) rgba(0, 0, 0, 0.45);
+    transform: translate(-50%, -50%);
+  }
+  .sp-handle svg { width: 52%; height: 52%; }
+  .sp-tag {
+    position: absolute; top: calc(var(--u) * 24); padding: calc(var(--u) * 12) calc(var(--u) * 22);
+    border-radius: 999px; font-weight: 700; font-size: calc(var(--u) * 26); letter-spacing: 0.02em;
+    background: rgba(10, 11, 20, 0.62); color: #fff; border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+  .sp-tag.before { left: calc(var(--u) * 24); }
+  .sp-tag.after { right: calc(var(--u) * 24); background: var(--c-accent); color: var(--c-on-accent); border-color: transparent; }
+  .nm-portrait .sp-tag.after { top: auto; bottom: calc(var(--u) * 24); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop"></div>
+  <h1 class="nm-heading sp-title"></h1>
+  <div class="sp-frame">
+    <div class="sp-layer sp-before"></div>
+    <div class="sp-layer sp-after"></div>
+    <div class="sp-divider"></div>
+    <div class="sp-handle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l-6 6 6 6"/><path d="M15 6l6 6-6 6"/></svg></div>
+    <div class="sp-tag before"></div>
+    <div class="sp-tag after"></div>
+  </div>
+  <div class="nm-grain"></div>
+</div>
+<script>
+const NM = window.NavinMotion;
+
+NM.mount({
+  duration: 5,
+  async setup(nm) {
+    const { canvas, duration } = nm;
+    const W = canvas.width;
+    const H = canvas.height;
+    const u = nm.u;
+    const start = Number(nm.prop('video_start', 0));
+    const beforeUrl = nm.prop('before', '');
+    const afterUrl = nm.prop('after', '');
+    if (!beforeUrl || !afterUrl) throw new Error('split_compare needs props.before and props.after');
+    const [beforeEl, afterEl] = await Promise.all([nm.media(beforeUrl, { start }), nm.media(afterUrl, { start })]);
+    document.querySelector('.sp-before').appendChild(beforeEl);
+    document.querySelector('.sp-after').appendChild(afterEl);
+
+    const title = document.querySelector('.sp-title');
+    title.textContent = nm.prop('title', '');
+    const hasTitle = !!title.textContent;
+    if (!hasTitle) title.style.display = 'none';
+    document.querySelector('.sp-tag.before').textContent = nm.prop('before_label', 'Before');
+    document.querySelector('.sp-tag.after').textContent = nm.prop('after_label', 'After');
+
+    // Frame: media aspect of the "before" layer, fitted under the title.
+    const size = nm.mediaSize(beforeEl);
+    const aspect = size.w / size.h;
+    const top = hasTitle ? H * (canvas.portrait ? 0.22 : 0.19) : H * 0.08;
+    const availW = W * (canvas.portrait ? 0.9 : 0.84);
+    const availH = H * 0.92 - top;
+    let fw = availW;
+    let fh = fw / aspect;
+    if (fh > availH) { fh = availH; fw = fh * aspect; }
+    const frame = document.querySelector('.sp-frame');
+    Object.assign(frame.style, { left: (W - fw) / 2 + 'px', top: top + (availH - fh) / 2 + 'px', width: fw + 'px', height: fh + 'px' });
+
+    const vertical = canvas.portrait; // portrait: wipe top to bottom
+    const divider = document.querySelector('.sp-divider');
+    const handle = document.querySelector('.sp-handle');
+    const after = document.querySelector('.sp-after');
+    const line = Math.max(2, 4 * u);
+    if (vertical) Object.assign(divider.style, { left: 0, width: fw + 'px', height: line + 'px' });
+    else Object.assign(divider.style, { top: 0, height: fh + 'px', width: line + 'px' });
+
+    const st = { p: 1 };
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.nm-backdrop', { scale: 1.1 }, { scale: 1, duration, ease: 'sine.out' }, 0);
+    tl.from(frame, { y: 70 * u, scale: 0.94, opacity: 0, duration: 1.0, ease: 'expo.out' }, 0.05);
+    if (hasTitle) tl.from(nm.split(title, 'words'), { yPercent: 115, duration: 0.85, ease: 'expo.out', stagger: 0.06 }, 0.15);
+    tl.from('.sp-tag.before', { opacity: 0, y: -12 * u, duration: 0.5, ease: 'power3.out' }, 0.6);
+    tl.from([divider, handle], { opacity: 0, duration: 0.3 }, 0.85);
+    const sweep = Math.min(1.6, duration * 0.32);
+    tl.to(st, { p: 0.0, duration: sweep, ease: 'power3.inOut' }, 0.95);
+    tl.from('.sp-tag.after', { opacity: 0, y: -12 * u, duration: 0.5, ease: 'power3.out' }, 0.95 + sweep * 0.6);
+    tl.to(st, { p: 0.5, duration: Math.min(1.1, duration * 0.22), ease: 'expo.out' }, 0.95 + sweep + 0.15);
+    tl.set({}, {}, duration);
+
+    return {
+      timeline: tl,
+      render() {
+        const p = nm.clamp(st.p, 0, 1);
+        if (vertical) {
+          after.style.clipPath = `inset(${(p * 100).toFixed(3)}% 0 0 0)`;
+          divider.style.top = p * fh - line / 2 + 'px';
+          handle.style.left = fw / 2 + 'px';
+          handle.style.top = p * fh + 'px';
+          handle.style.rotate = '90deg';
+        } else {
+          after.style.clipPath = `inset(0 0 0 ${(p * 100).toFixed(3)}%)`;
+          divider.style.left = p * fw - line / 2 + 'px';
+          handle.style.left = p * fw + 'px';
+          handle.style.top = fh / 2 + 'px';
+        }
+      },
+    };
+  },
+});
+</script>
+</body>
+</html>

@@ -46,6 +46,11 @@ class TurnTiming:
     tools: dict[str, float] = field(default_factory=dict)
     tool_calls: dict[str, int] = field(default_factory=dict)
     slowest_model_call: float = 0.0
+    # Time to first streamed token, per step that streamed any. The first
+    # step's value is the wait the user feels after pressing Enter.
+    first_token_first: float | None = None
+    first_token_total: float = 0.0
+    first_token_steps: int = 0
     # Prefill is what a multi-step turn pays over and over. Without a cache
     # hit, step 20 re-reads the whole conversation at full price, which is
     # the difference between a two-minute turn and an hour.
@@ -63,6 +68,14 @@ class TurnTiming:
         self.phases[phase] = self.phases.get(phase, 0.0) + seconds
         if phase == PHASE_MODEL and seconds > self.slowest_model_call:
             self.slowest_model_call = seconds
+
+    def add_first_token(self, seconds: float | None) -> None:
+        if seconds is None:
+            return
+        if self.first_token_steps == 0 and self.iterations <= 1:
+            self.first_token_first = seconds
+        self.first_token_total += seconds
+        self.first_token_steps += 1
 
     def add_tool(self, name: str, seconds: float) -> None:
         self.tools[name] = self.tools.get(name, 0.0) + seconds
@@ -119,6 +132,10 @@ class TurnTiming:
             parts.append(f"model_avg={_ms(model / self.iterations)}ms")
         if self.slowest_model_call:
             parts.append(f"model_max={_ms(self.slowest_model_call)}ms")
+        if self.first_token_first is not None:
+            parts.append(f"ttft_first={_ms(self.first_token_first)}ms")
+        if self.first_token_steps:
+            parts.append(f"ttft_avg={_ms(self.first_token_total / self.first_token_steps)}ms")
         if self.prompt_tokens:
             parts.append(f"prefill={self.prompt_tokens}tok")
             ratio = self.cache_hit_ratio
@@ -158,7 +175,8 @@ class TurnTiming:
             logger.debug("turn timing log failed", exc_info=True)
 
 
-class measure:
+# Lowercase on purpose: call sites read like a function, ``with measure(timing, "tools"):``.
+class measure:  # noqa: N801
     """Context manager charging its wall time to one phase of the turn."""
 
     __slots__ = ("_timing", "_phase", "_started")

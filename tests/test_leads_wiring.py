@@ -76,7 +76,7 @@ class LeadsSurfaceWiringTest(unittest.TestCase):
         urls = (ROOT / "webui/src/lib/external-url.ts").read_text(encoding="utf-8")
         self.assertIn("#/leads", urls)
         rust = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
-        self.assertIn(".on_navigation({", rust)
+        self.assertIn(".on_navigation(move |url| {", rust)
         self.assertIn(".on_new_window(move |url, _features|", rust)
         self.assertIn("apply_in_app_navigation", rust)
         for sidecar in (

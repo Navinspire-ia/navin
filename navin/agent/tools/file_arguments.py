@@ -192,7 +192,11 @@ def file_argument_guidance(name: str) -> str:
             "use write_file(path, content) for new files and manage_files for delete/move/copy/mkdir."
         ),
         "edit_file": 'Shape: {"path":"FILE","old_text":"EXACT ORIGINAL","new_text":"REPLACEMENT"}.',
-        "write_file": 'Shape: {"path":"FILE","content":"COMPLETE CONTENT"}.',
+        "write_file": (
+            'Required fields: path (string), content (string). Shape: '
+            '{"path":"FILE","content":"COMPLETE CONTENT"}; several files: '
+            '{"files":[{"path":"A","content":"..."},{"path":"B","content":"..."}]}.'
+        ),
         "manage_files": (
             'Shapes: {"action":"delete","paths":["FILE"]}, '
             '{"action":"move","path":"SOURCE","destination":"TARGET"}, '

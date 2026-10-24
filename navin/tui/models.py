@@ -38,8 +38,23 @@ def provider_label(provider: str, model: str = "") -> str:
     return spec.display_name if spec else (provider or "Auto")
 
 
-def model_pick_items(rows: list[dict[str, Any]]) -> list[PickItem]:
-    visible = [row for row in rows if row.get("enabled", True)]
+def _same_model(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return bool(a.get("model")) and (a.get("model"), a.get("provider")) == (b.get("model"), b.get("provider"))
+
+
+def model_pick_items(rows: list[dict[str, Any]], current: str = "") -> list[PickItem]:
+    from navin.providers.managed_catalog import TIERS
+
+    # Router aliases (main / expert / ...) are for task routing, not for chat.
+    visible = [row for row in rows if row.get("enabled", True) and row["name"] not in TIERS]
+    # "Default" is the resolved fallback: it shows once, as the configuration
+    # it points at, unless nothing else carries it or it is the active choice.
+    if current not in ("", "default"):
+        visible = [
+            row for row in visible
+            if row["name"] != "default"
+            or not any(_same_model(row, other) for other in visible if other["name"] != "default")
+        ]
     visible.sort(key=lambda r: (
         MODALITY_ORDER.get(r.get("modality", "text"), 6),
         provider_label(r.get("provider", ""), r.get("model", "")).lower(),

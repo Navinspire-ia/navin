@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21", "${NAVIN_PLUGIN_ROOT}/data"],
+      "toolTimeout": 30
+    },
+    "local-index": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["${NAVIN_PLUGIN_ROOT}/servers/index_server.py"],
+      "env": {"INDEX_API_KEY": "${INDEX_API_KEY}"},
+      "cwd": "${NAVIN_PLUGIN_ROOT}",
+      "enabledTools": ["search", "get_document"]
+    }
+  }
+}

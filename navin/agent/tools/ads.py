@@ -14,9 +14,10 @@ from pydantic import Field
 
 from navin.ads.changes import ChangeStore, mcp_execution_plan
 from navin.ads.ingest import IngestResult, ingest_file, ingest_text, parse_records
-from navin.ads.models import AdRow, AdsAnalysis
+from navin.ads.models import AdsAnalysis
+from navin.ads.pipeline import analyze_ingested, compact_payload
 from navin.ads.report import report_payload, summary_lines, write_report
-from navin.ads.rules import AdsThresholds, analyze_rows
+from navin.ads.rules import AdsThresholds
 from navin.ads.scoring import health_score
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.path_utils import project_rooted_path, resolve_workspace_path
@@ -73,7 +74,8 @@ class AdsTool(Tool):
     """Grounded paid-media engine: exports in, metrics, findings, approval-gated changes out."""
 
     config_key = "ads"
-    _scopes = {"core"}
+    # "teammate": loaded for a Collaboration Mode teammate that lists it.
+    _scopes = {"core", "teammate"}
     product_module = "ads"
 
     @classmethod
@@ -189,19 +191,11 @@ class AdsTool(Tool):
         monthly_budget: float | None,
         currency: str | None,
     ) -> AdsAnalysis:
-        rows: list[AdRow] = [row for result in results for row in result.rows]
-        gaps: list[dict[str, str]] = []
-        for result in results:
-            gaps.extend(result.data_gaps)
-            gaps.extend({"service": f"export:{result.source}", "reason": warning} for warning in result.warnings)
-        return analyze_rows(
-            rows,
+        return analyze_ingested(
+            results,
             thresholds=self.config.thresholds,
             monthly_budget=monthly_budget,
-            currency=(currency or self.config.currency or "").upper(),
-            sources=[result.source for result in results],
-            columns={result.source: result.columns for result in results},
-            data_gaps=gaps,
+            currency=currency or self.config.currency or "",
         )
 
     @staticmethod
@@ -300,7 +294,9 @@ class AdsTool(Tool):
         wanted = [item.strip() for item in (ids or "").split(",") if item.strip()]
         chosen = None if not platform or platform == "auto" else platform
         if wanted and status:
-            result = store.set_status(wanted, status, note=note or "")  # type: ignore[arg-type]
+            result = store.set_status(  # type: ignore[arg-type]
+                wanted, status, note=note or "", proof=(note or "") if status == "applied" else "",
+            )
             rows = store.list(ids=wanted)
             out: dict[str, Any] = {**result, "changes": rows}
             if status == "approved":
@@ -357,15 +353,7 @@ class AdsTool(Tool):
     @staticmethod
     def _compact(payload: dict[str, Any]) -> dict[str, Any]:
         """Keep tool output readable: top entities per level, no raw row dump."""
-        entities = payload.get("entities") or {}
-        trimmed: dict[str, Any] = {}
-        for level, items in entities.items():
-            trimmed[level] = {
-                "count": len(items),
-                "top_by_spend": items[:_ENTITY_LIMIT],
-            }
-        payload["entities"] = trimmed
-        return payload
+        return compact_payload(payload, limit=_ENTITY_LIMIT)
 
     @staticmethod
     def _json(payload: Any) -> str:

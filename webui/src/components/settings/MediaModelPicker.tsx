@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Customizer, DefaultButton, MessageBar, MessageBarType, Spinner, Stack, Text,
   createTheme,
@@ -9,7 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { useThemeValue } from "@/hooks/useTheme";
-import { fetchProviderModels, previewVoice } from "@/lib/api";
+import { fetchProviderModels } from "@/lib/api";
 import { filterMediaModels } from "@/lib/media-models";
 import type { MediaModelKind, ProviderModelInfo } from "@/lib/types";
 import { useClient } from "@/providers/ClientProvider";
@@ -30,7 +30,7 @@ export function MediaSettingsSurface({ children }: { children: ReactNode }) {
   return <Customizer settings={{ theme }}>{children}</Customizer>;
 }
 
-export function MediaModelPicker({ kind, provider, configured, model, onModelChange, voice, onVoiceChange }: {
+export function MediaModelPicker({ kind, provider, configured, model, onModelChange, voice, onVoiceChange, voiceOnly = false }: {
   kind: MediaModelKind;
   provider: string;
   configured: boolean;
@@ -38,6 +38,8 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
   onModelChange: (model: string) => void;
   voice?: string;
   onVoiceChange?: (voice: string) => void;
+  /** The model is chosen elsewhere (MediaModelChoice): only voices and preview. */
+  voiceOnly?: boolean;
 }) {
   const { token } = useClient();
   const { t } = useTranslation();
@@ -46,11 +48,7 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [revision, setRevision] = useState(0);
-  const [previewing, setPreviewing] = useState(false);
-  const [preview, setPreview] = useState<{ url: string; voice: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
-  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     let current = true;
@@ -68,21 +66,11 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
     return () => { current = false; };
   }, [configured, kind, provider, revision, token]);
 
+  useEffect(() => { setError(null); }, [model, provider, voice]);
+
   useEffect(() => {
     if (!model && catalog[0]) onModelChange(catalog[0].id);
   }, [catalog, model, onModelChange]);
-
-  useEffect(() => {
-    generation.current += 1;
-    setPreview(null);
-    setPreviewing(false);
-    setError(null);
-    return () => { generation.current += 1; };
-  }, [model, provider, voice]);
-
-  useEffect(() => {
-    if (preview) void audioRef.current?.play().catch(() => undefined);
-  }, [preview]);
 
   const selected = catalog.find((row) => row.id === model);
   const voices = selected?.voices ?? [];
@@ -93,27 +81,10 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
   const manual = unavailable && provider !== "navin";
   const modelUnavailable = configured && !loading && model && !selected && !unavailable;
 
-  const audition = async () => {
-    const request = ++generation.current;
-    setPreview(null);
-    setError(null);
-    setPreviewing(true);
-    try {
-      const result = await previewVoice(token, {
-        provider, model, voice: voice || "auto", text: tx("previewText"),
-      });
-      if (request !== generation.current) return;
-      setPreview({ url: `data:${result.mime};base64,${result.audio_base64}`, voice: result.voice });
-    } catch {
-      if (request === generation.current) setError(tx("previewFailed"));
-    } finally {
-      if (request === generation.current) setPreviewing(false);
-    }
-  };
-
   return (
     <MediaSettingsSurface>
       <Stack tokens={{ childrenGap: 10 }} styles={{ root: { width: 360, maxWidth: "100%" } }}>
+        {voiceOnly ? null : (<>
         <SettingsPicker
           ariaLabel={tx(`${kind}Model`)}
           value={model}
@@ -133,6 +104,7 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
         {modelUnavailable ? <MessageBar messageBarType={MessageBarType.warning}>{tx("modelUnavailable")}: {model}</MessageBar> : null}
         <DefaultButton text={tx("refreshModels")} iconProps={{ iconName: "Refresh" }}
           disabled={!configured || loading} onClick={() => setRevision((value) => value + 1)} />
+        </>)}
         {kind === "tts" ? (
           <>
             <SettingsPicker label={tx("voice")} ariaLabel={tx("voice")} value={voice || "auto"}
@@ -140,17 +112,6 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
                 ...voices.map((name) => ({ value: name, label: name }))]}
               allowCustomValue={!voices.length} searchable disabled={!model}
               onChange={(value) => onVoiceChange?.(value)} />
-            <Text variant="small">{tx("voiceIndependent")}</Text>
-            <Stack horizontal wrap tokens={{ childrenGap: 8 }}>
-              <DefaultButton text={tx(previewing ? "previewLoading" : "preview")}
-                iconProps={{ iconName: "Volume2" }} disabled={!configured || !model || Boolean(modelUnavailable) || previewing}
-                onClick={() => { void audition(); }} />
-            </Stack>
-            {preview ? <>
-              <Text variant="small">{tx("previewVoice")}: {preview.voice}</Text>
-              <audio ref={audioRef} controls src={preview.url} aria-label={tx("preview")}
-                style={{ width: "100%" }} onError={() => setError(tx("previewFailed"))} />
-            </> : null}
           </>
         ) : null}
         {error ? <MessageBar messageBarType={MessageBarType.error}>{error}</MessageBar> : null}

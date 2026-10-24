@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "Runtime libraries the motion templates load from disk (never a CDN).",
+    "They ship in the wheel / PyInstaller bundle. If a stripped install lacks",
+    "them, navin.montage.motion.vendor fetches the npm tarballs below ONCE into",
+    "~/.navin/montage/motion-assets/ and verifies every sha256 before use."
+  ],
+  "packages": {
+    "three": {
+      "version": "0.185.1",
+      "license": "MIT",
+      "license_file": "LICENSE-three.txt",
+      "tarball": "https://registry.npmjs.org/three/-/three-0.185.1.tgz",
+      "files": {
+        "three.module.min.js": {
+          "from": "package/build/three.module.min.js",
+          "sha256": "86bcee248b64f44bcfc23c331ae74619061957d59cab040171dcb6fb5900beb6"
+        },
+        "three.core.min.js": {
+          "from": "package/build/three.core.min.js",
+          "sha256": "05b2609338c76cd65daf74f3ac515bc9a5045e1b3b33edc07d8c9bd55250fa90"
+        },
+        "addons/RoomEnvironment.js": {
+          "from": "package/examples/jsm/environments/RoomEnvironment.js",
+          "sha256": "55f466192cc84298755a424c5e040345006b2ee1455589b3b54126c2ea4123f4"
+        },
+        "addons/RoundedBoxGeometry.js": {
+          "from": "package/examples/jsm/geometries/RoundedBoxGeometry.js",
+          "sha256": "c1b7c9bd2cddff2e3f3a0723f618a3d364a47450e3d25771d21faed88410bec8"
+        },
+        "LICENSE-three.txt": {
+          "from": "package/LICENSE",
+          "sha256": null
+        }
+      }
+    },
+    "gsap": {
+      "version": "3.15.0",
+      "license": "GSAP Standard No Charge License (https://gsap.com/standard-license)",
+      "license_file": "LICENSE-gsap.txt",
+      "tarball": "https://registry.npmjs.org/gsap/-/gsap-3.15.0.tgz",
+      "files": {
+        "gsap.min.js": {
+          "from": "package/dist/gsap.min.js",
+          "sha256": "92bb9a96476f983d212a2bc4f54c889039c1696dd4461d40a736860938570fbb"
+        }
+      }
+    }
+  }
+}

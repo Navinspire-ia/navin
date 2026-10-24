@@ -178,7 +178,7 @@ class DeskTauriPackagingTest(unittest.TestCase):
         urls = (ROOT / "webui/src/lib/external-url.ts").read_text(encoding="utf-8")
         self.assertIn("is_desktop_app_url", rust)
         self.assertIn("is_navin_shell_url", rust)
-        self.assertIn(".on_navigation({", rust)
+        self.assertIn(".on_navigation(move |url| {", rust)
         self.assertIn(".on_new_window(move |url, _features|", rust)
         self.assertIn("apply_in_app_navigation", rust)
         self.assertIn("in_app_hash", rust)

@@ -11,7 +11,7 @@
         "id": "request-path",
         "label": "Request path",
         "focus": ["internet", "edge", "litellm", "bedrock"],
-        "note": "Navin installs hit llm.navin.ai with a virtual key. LiteLLM routes to the enabled provider."
+        "note": "Navin installs hit llm.navin.live with a virtual key. LiteLLM routes to the enabled provider."
       },
       {
         "id": "control-state",
@@ -29,7 +29,7 @@
   },
   "components": [
     { "id": "internet", "type": "external", "label": "Internet", "sublabel": "Navin installs", "tag": "openai-compat", "pos": [80, 300], "size": [140, 64] },
-    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.ai", "tag": "TLS", "pos": [340, 300], "size": [160, 64] },
+    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.live", "tag": "TLS", "pos": [340, 300], "size": [160, 64] },
     { "id": "litellm", "type": "backend", "label": "LiteLLM Proxy", "sublabel": "Private OpenRouter", "tag": "/v1", "pos": [620, 300], "size": [160, 64] },
     { "id": "postgres", "type": "database", "label": "Supabase Postgres", "sublabel": "keys, spend, logs", "pos": [900, 120], "size": [170, 64] },
     { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache + limits", "pos": [900, 300], "size": [170, 64] },

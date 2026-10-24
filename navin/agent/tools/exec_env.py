@@ -121,6 +121,72 @@ CERT_ENV_NAMES: tuple[str, ...] = (
     "NODE_EXTRA_CA_CERTS",
 )
 
+# Which account, cluster, project or region a cloud CLI targets. Pointers,
+# not secrets: credentials stay in the files these name (raw keys such as
+# AWS_SECRET_ACCESS_KEY still need allowedEnvKeys). Without them, kubectl /
+# aws / gcloud / az / helm / terraform ran against the default context while
+# the user's shell pointed elsewhere, and the agent looped on "wrong cluster"
+# or "unable to locate credentials".
+CLOUD_CONTEXT_ENV_NAMES: tuple[str, ...] = (
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_SDK_LOAD_CONFIG",
+    "AWS_CA_BUNDLE",
+    "KUBECONFIG",
+    "HELM_KUBECONTEXT",
+    "HELM_NAMESPACE",
+    "CLOUDSDK_CONFIG",
+    "CLOUDSDK_ACTIVE_CONFIG_NAME",
+    "CLOUDSDK_CORE_PROJECT",
+    "CLOUDSDK_COMPUTE_REGION",
+    "CLOUDSDK_COMPUTE_ZONE",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AZURE_CONFIG_DIR",
+    "AZURE_SUBSCRIPTION_ID",
+    "ARM_SUBSCRIPTION_ID",
+    "TF_WORKSPACE",
+    "TF_DATA_DIR",
+    "TF_CLI_CONFIG_FILE",
+    "PULUMI_HOME",
+)
+
+# exec has no terminal and no stdin: a pager or a confirmation prompt can
+# only stall until the timeout. Defaults only; the user's environment wins.
+NONINTERACTIVE_ENV_DEFAULTS: dict[str, str] = {
+    "AWS_PAGER": "",
+    "PAGER": "cat",
+    "GIT_PAGER": "cat",
+    "CLOUDSDK_CORE_DISABLE_PROMPTS": "1",
+    "TF_INPUT": "0",
+    "TF_IN_AUTOMATION": "1",
+    "DEBIAN_FRONTEND": "noninteractive",
+    "DOCKER_CLI_HINTS": "false",
+    # npm: no audit / funding / update-notifier round trips, no progress bar
+    # in captured output. Saves seconds per install and tokens per result.
+    "npm_config_audit": "false",
+    "npm_config_fund": "false",
+    "npm_config_update_notifier": "false",
+    "npm_config_progress": "false",
+    # Nothing may wait for a keypress: stdin is closed, so a prompt only hangs
+    # until the timeout and the agent retries the same command. git commit
+    # without -m, rebase -i, `npx create-*` "Ok to proceed?", pip and composer
+    # questions all take their default or fail at once instead.
+    "GIT_EDITOR": "true",
+    "GIT_SEQUENCE_EDITOR": "true",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GCM_INTERACTIVE": "never",
+    "npm_config_yes": "true",
+    "PIP_NO_INPUT": "1",
+    "COMPOSER_NO_INTERACTION": "1",
+    "HOMEBREW_NO_AUTO_UPDATE": "1",
+}
+
 RUNTIME_ENV_NAMES: tuple[str, ...] = (
     "USER",
     "LOGNAME",
@@ -192,6 +258,7 @@ def forwarded_host_env(environ: Mapping[str, str] | None = None) -> dict[str, st
             *PROXY_ENV_NAMES,
             *CERT_ENV_NAMES,
             *RUNTIME_ENV_NAMES,
+            *CLOUD_CONTEXT_ENV_NAMES,
         ),
     )
     for key, value in source.items():
@@ -263,6 +330,9 @@ def build_exec_env(
     env.update(forwarded_host_env(source))
     env.update(operator_allowed_env(allowed_env_keys, source))
     env.update(forge_tokens_from_config(forge_tokens, environ=source))
+    for key, value in NONINTERACTIVE_ENV_DEFAULTS.items():
+        if key not in source:
+            env.setdefault(key, value)
     return env
 
 

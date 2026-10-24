@@ -29,7 +29,7 @@ class PrCommentsTool(_QualityTool):
             "action=preview: resolve the request + list path:line payloads (no "
             "network write). action=post: create a real review with inline "
             "comments (asks approval). Findings need file_path + "
-            "start_line/line on the diff. Needs a forge token (Settings > Git) "
+            "start_line/line on the diff. Needs a forge token (Settings > Git & GitHub) "
             "or a signed-in gh on github.com."
         )
 

@@ -66,7 +66,7 @@ export function CrmMembers({
         showCloseButton
         className="max-h-[90vh] max-w-md overflow-y-auto rounded-[22px] border-border/70 bg-popover p-5 shadow-2xl"
       >
-        <DialogHeader className="text-left">
+        <DialogHeader className="text-start">
           <DialogTitle style={{ textWrap: "balance" } as never}>
             {tx("crm.membersTitle", "Membres CRM")}
           </DialogTitle>
@@ -172,7 +172,7 @@ export function CrmMembers({
           </div>
         ) : null}
 
-        <DialogFooter className="gap-2 sm:space-x-0">
+        <DialogFooter className="gap-2 sm:space-x-0 rtl:space-x-reverse">
           <Button type="button" variant="outline" className="cursor-pointer" onClick={onClose}>
             {tx("crm.close", "Fermer")}
           </Button>

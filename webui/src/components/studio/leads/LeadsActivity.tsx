@@ -68,7 +68,7 @@ export function LeadsActivity({
         <span className="tabular-nums" data-testid="leads-loop-status">
           · {status} · {tx("cycleN", "cycle {{n}}", { n: loop?.cycle || 0 })}
         </span>
-        <span className="ml-auto tabular-nums">{tx("home.providersReady", "{{n}} live sources", { n: readyProviders })}</span>
+        <span className="ms-auto tabular-nums">{tx("home.providersReady", "{{n}} live sources", { n: readyProviders })}</span>
       </summary>
       <div className="grid gap-4 pt-3">
         <div className={cn(SURFACE, "grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_10rem] lg:items-start")} data-testid="leads-loop-card">

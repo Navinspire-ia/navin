@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import io
 import json
 import re
@@ -21,6 +19,7 @@ from loguru import logger
 
 from navin.tenders.bid_pack import SECTION_KEYS, section_title
 from navin.tenders.profile import filed_documents
+from navin.utils.proc import no_window_kwargs
 
 _NAVY = (27, 54, 93)
 _SLATE = (51, 65, 85)

@@ -131,12 +131,12 @@ def _decision_headings(text: str) -> list[str]:
     return out[:_MAX_DECISION_LINES]
 
 
-def continuity_digest(project_path: Path | str) -> list[str]:
+def continuity_digest(project_path: Path | str, *, include_resume: bool = True) -> list[str]:
     """Build continuity lines for the runtime context. Never raises."""
     root = Path(project_path).expanduser()
     lines: list[str] = []
 
-    resume_raw = _read_text(root / ".navin" / "continuity" / "RESUME.md")
+    resume_raw = _read_text(root / ".navin" / "continuity" / "RESUME.md") if include_resume else ""
     manual_resume, auto_resume = _split_auto_handoff(resume_raw)
     resume_lines: list[str] = []
     if manual_resume and _resume_is_actionable(manual_resume):
@@ -166,6 +166,19 @@ def continuity_digest(project_path: Path | str) -> list[str]:
     return lines
 
 
+def _digest_for_request(request: "RequestContext", workspace: Path) -> list[str]:
+    # A new chat is new: the resume brief of earlier sessions only comes back
+    # when the user asks for it. Decisions and hard constraints always apply.
+    # The resume brief is project-wide (written by whichever chat ran last),
+    # so touching a board task is not enough: only an explicit ask brings it.
+    from navin.board.context import wants_project_history
+
+    return continuity_digest(
+        workspace,
+        include_resume=wants_project_history(getattr(request, "original_user_text", None)),
+    )
+
+
 async def continuity_context_provider(
     request: "RequestContext",
 ) -> RuntimeContextBlock | None:
@@ -173,7 +186,7 @@ async def continuity_context_provider(
     workspace = request.workspace
     if workspace is None:
         return None
-    lines = await asyncio.to_thread(continuity_digest, workspace)
+    lines = await asyncio.to_thread(_digest_for_request, request, workspace)
     content = wrap_runtime_context_lines(lines)
     if not content:
         return None

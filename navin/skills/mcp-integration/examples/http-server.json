@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "docs": {
+      "type": "streamableHttp",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${EXAMPLE_DOCS_TOKEN}",
+        "X-Workspace-Id": "${EXAMPLE_WORKSPACE_ID}"
+      },
+      "toolTimeout": 45,
+      "enabledTools": ["query", "get_page"]
+    }
+  }
+}

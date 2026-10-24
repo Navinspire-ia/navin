@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatUsagePercent, usagePercent } from "@/lib/usage-percent";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
@@ -18,7 +19,8 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { ModelTokenUsageTable } from "@/components/settings/ModelTokenUsageTable";
 import { useAccount } from "@/hooks/useAccount";
-import { localizedPlanName } from "@/lib/accountPlan";
+import { intlLocale } from "@/i18n/intl";
+import { bonusLine, localizedPlanName } from "@/lib/accountPlan";
 import { openExternalUrl } from "@/lib/api";
 import type { SettingsPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -65,6 +67,32 @@ export function AccountSettings({
   const pollStop = useRef<(() => void) | null>(null);
 
   useEffect(() => () => pollStop.current?.(), []);
+
+  const connectErrorText = useCallback(
+    (code: string) =>
+      tx(
+        `settings.account.connectErrors.${code}`,
+        tx("settings.account.connectErrors.default", "navin.live could not connect this device. Try again or check your account on navin.live."),
+      ),
+    [tx],
+  );
+  const stopWaiting = useCallback(
+    (code: string) => {
+      pollStop.current?.();
+      pollStop.current = null;
+      setWaitingForBrowser(false);
+      setManualConnectUrl(null);
+      setError(connectErrorText(code));
+    },
+    [connectErrorText],
+  );
+
+  // The gateway pushes the refusal over the websocket (account_updated):
+  // react to it at once, without waiting for the next poll.
+  useEffect(() => {
+    const code = account?.connect_error?.code;
+    if (waitingForBrowser && !account?.connected && code) stopWaiting(code);
+  }, [account?.connect_error?.code, account?.connected, stopWaiting, waitingForBrowser]);
 
   // Pull live usage from navin.live when opening Account (same source as dashboard).
   useEffect(() => {
@@ -117,6 +145,9 @@ export function AccountSettings({
       if (!native) {
         window.open(url, "_blank", "noopener");
       }
+      // A new connect URL cleared the previous refusal on the gateway: read
+      // it back first so a stale error cannot end this wait at once.
+      await reload();
       setWaitingForBrowser(true);
       // Activation runs in the gateway (poll navin.live) - no localhost tab.
       // The gateway also pushes ``account_updated`` over the websocket, so
@@ -138,6 +169,11 @@ export function AccountSettings({
           inFlight = false;
         }
         const timedOut = Date.now() - startedAt > CONNECT_POLL_TIMEOUT_MS;
+        if (!payload?.connected && payload?.connect_error) {
+          // navin.live answered and refused this device: say why, stop waiting.
+          stopWaiting(payload.connect_error.code);
+          return;
+        }
         if (payload?.connected || timedOut) {
           pollStop.current?.();
           pollStop.current = null;
@@ -173,7 +209,7 @@ export function AccountSettings({
     } finally {
       setBusy(null);
     }
-  }, [connectUrl, locale, reload, token, tx]);
+  }, [connectUrl, locale, reload, stopWaiting, token, tx]);
 
   const doLogout = useCallback(async () => {
     setBusy("logout");
@@ -207,10 +243,12 @@ export function AccountSettings({
   const planPrice = account?.plan_price_usd;
   const planName = localizedPlanName(t, account);
   const usage = account?.usage ?? null;
-  const usedPercent = Math.min(100, Math.max(0, usage?.used_percent ?? 0));
+  const usedPercent = usagePercent(usage);
+  const usedPercentLabel = formatUsagePercent(usedPercent);
+  const bonusText = bonusLine(t, account);
   const periodEndSec = usage?.period_end || account?.period_end || null;
   const renewalLabel = periodEndSec
-    ? new Date(periodEndSec * 1000).toLocaleDateString(i18n.language || undefined)
+    ? new Date(periodEndSec * 1000).toLocaleDateString(intlLocale())
     : null;
   const usageBarClass =
     usedPercent >= 95
@@ -255,8 +293,25 @@ export function AccountSettings({
     </section>
   );
 
+  const lapsedPlan = connected ? account?.lapsed_plan : null;
+  const lapsedCard = lapsedPlan ? (
+    <section role="status" className="rounded-2xl border border-amber-500/35 bg-amber-500/[0.06] p-4">
+      <p className="text-[13px] text-foreground">
+        {tx("settings.account.lapsedNotice",
+          "Your {{plan}} subscription has expired: this device is on Free (your own keys, no Navin models).",
+          { plan: lapsedPlan.charAt(0).toUpperCase() + lapsedPlan.slice(1) })}
+      </p>
+      <Button type="button" size="sm" className="mt-3" disabled={busy !== null}
+        onClick={() => void openSitePath("/pricing")}>
+        <ExternalLink className="h-4 w-4" aria-hidden />
+        {tx("settings.account.renew", "Renew on navin.live")}
+      </Button>
+    </section>
+  ) : null;
+
   return (
     <div className="space-y-4">
+      {lapsedCard}
       {!connected ? (
         <section className="rounded-2xl border border-border/55 bg-card/50 p-5">
           <div className="flex items-start gap-3">
@@ -433,7 +488,7 @@ export function AccountSettings({
               {busy === "logout" ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               ) : (
-                <LogOut className="h-4 w-4" aria-hidden />
+                <LogOut className="rtl:-scale-x-100 h-4 w-4" aria-hidden />
               )}
               {tx("settings.account.signOutButton", "Sign out")}
             </Button>
@@ -465,12 +520,12 @@ export function AccountSettings({
               <span className="text-muted-foreground">
                 {tx("settings.account.monthlyUsage", "Monthly usage")}
               </span>
-              <span className="font-semibold text-foreground">{usedPercent}%</span>
+              <span className="font-semibold text-foreground">{usedPercentLabel}%</span>
             </div>
             <div
               className="mt-2 h-2 overflow-hidden rounded-full bg-muted"
               role="progressbar"
-              aria-valuenow={usedPercent}
+              aria-valuenow={Math.round(usedPercent)}
               aria-valuemin={0}
               aria-valuemax={100}
             >
@@ -480,6 +535,10 @@ export function AccountSettings({
               />
             </div>
           </div>
+
+          {bonusText ? (
+            <p className="mt-3 text-[12.5px] text-muted-foreground">{bonusText}</p>
+          ) : null}
 
           {renewalLabel ? (
             <div className="mt-4 border-t border-border/55 pt-4">

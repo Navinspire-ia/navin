@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -170,7 +171,7 @@ function newId(): string {
 
 function defaultTitle(language: string): string {
   try {
-    return new Intl.DateTimeFormat(language, {
+    return new Intl.DateTimeFormat(intlLocale(language), {
       dateStyle: "medium",
       timeStyle: "short",
     }).format(new Date());
@@ -252,7 +253,7 @@ function toDatetimeLocal(iso: string): string {
 
 function formatDay(iso: string, language: string): string {
   try {
-    return new Intl.DateTimeFormat(language, {
+    return new Intl.DateTimeFormat(intlLocale(language), {
       day: "numeric",
       month: "short",
       hour: "2-digit",
@@ -284,7 +285,7 @@ const ICON_BUTTON_STYLES: IButtonStyles = {
 
 function formatEventWhen(iso: string, language: string): string {
   try {
-    return new Intl.DateTimeFormat(language, {
+    return new Intl.DateTimeFormat(intlLocale(language), {
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -2442,10 +2443,10 @@ export function MeetingWorkbench({
   // from wherever the user finished working, not only from one tab.
   const exportBar = (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/55 bg-muted/15 p-2.5">
-      <span className="mr-auto text-[11px] text-muted-foreground">
+      <span className="me-auto text-[11px] text-muted-foreground">
         {tx("meeting.exportTitle", "Exports")}
         {reportModel ? (
-          <span className="ml-1.5 tabular-nums">· {reportModel}</span>
+          <span className="ms-1.5 tabular-nums">· {reportModel}</span>
         ) : null}
       </span>
       <Button
@@ -2455,7 +2456,7 @@ export function MeetingWorkbench({
         className="h-7 rounded-lg px-2.5 text-[11.5px] active:scale-[0.96]"
         onClick={exportMarkdownPack}
       >
-        <Download className="mr-1.5 h-3 w-3" aria-hidden />
+        <Download className="me-1.5 h-3 w-3" aria-hidden />
         Markdown
       </Button>
       <Button
@@ -2474,7 +2475,7 @@ export function MeetingWorkbench({
         className="h-7 rounded-lg px-2.5 text-[11.5px] active:scale-[0.96]"
         onClick={printReport}
       >
-        <Printer className="mr-1.5 h-3 w-3" aria-hidden />
+        <Printer className="me-1.5 h-3 w-3" aria-hidden />
         PDF
       </Button>
       <Button
@@ -2500,9 +2501,9 @@ export function MeetingWorkbench({
         data-testid="meeting-save-to-notes"
       >
         {filingNote ? (
-          <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden />
+          <Loader2 className="me-1.5 h-3 w-3 animate-spin" aria-hidden />
         ) : (
-          <StickyNote className="mr-1.5 h-3 w-3" aria-hidden />
+          <StickyNote className="me-1.5 h-3 w-3" aria-hidden />
         )}
         {active?.noteId
           ? tx("meeting.noteLink.refresh", "Refresh note")
@@ -2610,7 +2611,7 @@ export function MeetingWorkbench({
             data-testid="meeting-new"
           />
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ms-auto flex shrink-0 items-center gap-2">
           {onToggleChat ? (
             <IconButton
               ariaLabel={
@@ -2647,7 +2648,7 @@ export function MeetingWorkbench({
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[14rem] shrink-0 flex-col border-r border-border/55 md:flex">
+        <aside className="hidden w-[14rem] shrink-0 flex-col border-e border-border/55 md:flex">
           <div className="shrink-0 border-b border-border/45 p-2">
             <SearchBox
               value={query}
@@ -2688,7 +2689,7 @@ export function MeetingWorkbench({
                         <button
                           type="button"
                           onClick={() => setActiveId(row.id)}
-                          className="min-w-0 flex-1 cursor-pointer rounded-lg px-2 py-1.5 text-left"
+                          className="min-w-0 flex-1 cursor-pointer rounded-lg px-2 py-1.5 text-start"
                         >
                           <span className="block truncate text-[12.5px] font-medium text-foreground">
                             {row.title}
@@ -2819,7 +2820,7 @@ export function MeetingWorkbench({
                   className="mt-3 h-8 rounded-full active:scale-[0.96]"
                   onClick={() => createMeeting()}
                 >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Plus className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   {tx("meeting.new", "New meeting")}
                 </Button>
               </div>
@@ -2964,12 +2965,12 @@ export function MeetingWorkbench({
                         >
                           {generating ? (
                             <Loader2
-                              className="mr-1.5 h-3.5 w-3.5 animate-spin"
+                              className="me-1.5 h-3.5 w-3.5 animate-spin"
                               aria-hidden
                             />
                           ) : (
                             <Sparkles
-                              className="mr-1.5 h-3.5 w-3.5"
+                              className="me-1.5 h-3.5 w-3.5"
                               aria-hidden
                             />
                           )}
@@ -2985,7 +2986,7 @@ export function MeetingWorkbench({
                           onClick={exportMarkdownPack}
                         >
                           <Download
-                            className="mr-1.5 h-3.5 w-3.5"
+                            className="me-1.5 h-3.5 w-3.5"
                             aria-hidden
                           />
                           Markdown
@@ -2997,7 +2998,7 @@ export function MeetingWorkbench({
                           className="h-8 rounded-lg active:scale-[0.96]"
                           onClick={printReport}
                         >
-                          <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                          <Printer className="me-1.5 h-3.5 w-3.5" aria-hidden />
                           {tx("meeting.report.print", "Print / PDF")}
                         </Button>
                         <DefaultButton
@@ -3019,7 +3020,7 @@ export function MeetingWorkbench({
                             {speaking ? (
                               <>
                                 <Square
-                                  className="mr-1.5 h-3.5 w-3.5"
+                                  className="me-1.5 h-3.5 w-3.5"
                                   aria-hidden
                                 />
                                 {tx("meeting.speakStop", "Stop reading")}
@@ -3027,7 +3028,7 @@ export function MeetingWorkbench({
                             ) : (
                               <>
                                 <Volume2
-                                  className="mr-1.5 h-3.5 w-3.5"
+                                  className="me-1.5 h-3.5 w-3.5"
                                   aria-hidden
                                 />
                                 {tx("meeting.speak", "Listen")}
@@ -3171,14 +3172,14 @@ export function MeetingWorkbench({
                           <div className="overflow-x-auto">
                             <table className="w-full border-collapse text-[12px]">
                               <thead>
-                                <tr className="text-left text-muted-foreground">
-                                  <th className="border-b border-border/50 pb-1.5 pr-2 font-medium">
+                                <tr className="text-start text-muted-foreground">
+                                  <th className="border-b border-border/50 pb-1.5 pe-2 font-medium">
                                     {reportLabels.kind}
                                   </th>
-                                  <th className="border-b border-border/50 pb-1.5 pr-2 font-medium">
+                                  <th className="border-b border-border/50 pb-1.5 pe-2 font-medium">
                                     {reportLabels.detail}
                                   </th>
-                                  <th className="border-b border-border/50 pb-1.5 pr-2 font-medium">
+                                  <th className="border-b border-border/50 pb-1.5 pe-2 font-medium">
                                     {reportLabels.owner}
                                   </th>
                                   <th className="border-b border-border/50 pb-1.5 font-medium">
@@ -3191,7 +3192,7 @@ export function MeetingWorkbench({
                                   .filter((row) => row.kind !== "question")
                                   .map((row) => (
                                     <tr key={row.id} className="align-top">
-                                      <td className="border-b border-border/30 py-1.5 pr-2 text-muted-foreground">
+                                      <td className="border-b border-border/30 py-1.5 pe-2 text-muted-foreground">
                                         {row.kind === "decision"
                                           ? reportLabels.decision
                                           : row.kind === "action"
@@ -3202,10 +3203,10 @@ export function MeetingWorkbench({
                                                 ? reportLabels.opinion
                                                 : reportLabels.risk}
                                       </td>
-                                      <td className="border-b border-border/30 py-1.5 pr-2 text-foreground">
+                                      <td className="border-b border-border/30 py-1.5 pe-2 text-foreground">
                                         {row.text}
                                       </td>
-                                      <td className="border-b border-border/30 py-1.5 pr-2 text-muted-foreground">
+                                      <td className="border-b border-border/30 py-1.5 pe-2 text-muted-foreground">
                                         {row.owner || reportLabels.unassigned}
                                       </td>
                                       <td className="border-b border-border/30 py-1.5 text-muted-foreground">
@@ -3338,7 +3339,7 @@ export function MeetingWorkbench({
                             disabled={busy || recording || !sttReady}
                             onClick={() => void startRecording("conference")}
                           >
-                            <Volume2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                            <Volume2 className="me-1.5 h-3.5 w-3.5" aria-hidden />
                             {tx("meeting.conference.capture", "Capture the call")}
                           </Button>
                           {botActive ? (
@@ -3349,7 +3350,7 @@ export function MeetingWorkbench({
                               className="h-8 rounded-lg px-2.5 text-[11.5px] active:scale-[0.96]"
                               onClick={() => void stopBot()}
                             >
-                              <Square className="mr-1.5 h-3 w-3" aria-hidden />
+                              <Square className="me-1.5 h-3 w-3" aria-hidden />
                               {tx("meeting.bot.stop", "Recall the bot")}
                             </Button>
                           ) : (
@@ -3363,7 +3364,7 @@ export function MeetingWorkbench({
                               }
                               onClick={() => void startBot()}
                             >
-                              <Bot className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                              <Bot className="me-1.5 h-3.5 w-3.5" aria-hidden />
                               {tx("meeting.bot.send", "Send the bot")}
                             </Button>
                           )}
@@ -3448,7 +3449,7 @@ export function MeetingWorkbench({
                                       "Capture from your browser",
                                     )}
                                   </div>
-                                  <ol className="ml-1 space-y-1">
+                                  <ol className="ms-1 space-y-1">
                                     {[
                                       tx(
                                         "meeting.conference.step1",
@@ -3474,7 +3475,7 @@ export function MeetingWorkbench({
                                       </li>
                                     ))}
                                   </ol>
-                                  <p className="ml-1 mt-1.5 text-[11px] italic text-muted-foreground">
+                                  <p className="ms-1 mt-1.5 text-[11px] italic text-muted-foreground">
                                     {tx(
                                       "meeting.conference.manualNote",
                                       "Everyone is transcribed live, plus your own microphone.",
@@ -3611,11 +3612,11 @@ export function MeetingWorkbench({
                         >
                           {labelling ? (
                             <Loader2
-                              className="mr-1.5 h-3 w-3 animate-spin"
+                              className="me-1.5 h-3 w-3 animate-spin"
                               aria-hidden
                             />
                           ) : (
-                            <Users className="mr-1.5 h-3 w-3" aria-hidden />
+                            <Users className="me-1.5 h-3 w-3" aria-hidden />
                           )}
                           {tx("meeting.speakersIdentify", "Identify speakers")}
                         </Button>
@@ -3761,13 +3762,13 @@ export function MeetingWorkbench({
                               type="button"
                               size="sm"
                               variant="outline"
-                              className="ml-auto h-7 rounded-lg px-2.5 text-[11.5px] active:scale-[0.96]"
+                              className="ms-auto h-7 rounded-lg px-2.5 text-[11.5px] active:scale-[0.96]"
                               onClick={() => void identifySpeakers()}
                               disabled={labelling || !active.transcript.trim()}
                             >
                               {labelling ? (
                                 <Loader2
-                                  className="mr-1.5 h-3 w-3 animate-spin"
+                                  className="me-1.5 h-3 w-3 animate-spin"
                                   aria-hidden
                                 />
                               ) : null}
@@ -3868,7 +3869,7 @@ export function MeetingWorkbench({
                               track("audit.exported");
                             }}
                           >
-                            <Download className="mr-1.5 h-3 w-3" aria-hidden />
+                            <Download className="me-1.5 h-3 w-3" aria-hidden />
                             {tx("meeting.auditExport", "Audit trail")}
                           </Button>
                         </div>
@@ -3967,7 +3968,7 @@ export function MeetingWorkbench({
                             >
                               {answering ? (
                                 <Loader2
-                                  className="mr-1.5 h-3.5 w-3.5 animate-spin"
+                                  className="me-1.5 h-3.5 w-3.5 animate-spin"
                                   aria-hidden
                                 />
                               ) : null}
@@ -4028,7 +4029,7 @@ export function MeetingWorkbench({
                                   ? undefined
                                   : { ...spring, delay: index * 0.03 }
                               }
-                              className="cursor-pointer rounded-xl border border-border/55 bg-card/40 px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-muted/30 active:scale-[0.96]"
+                              className="cursor-pointer rounded-xl border border-border/55 bg-card/40 px-3 py-2.5 text-start transition-colors hover:border-border hover:bg-muted/30 active:scale-[0.96]"
                             >
                               <div className="text-[12.5px] font-medium text-foreground">
                                 {action.label}
@@ -4061,7 +4062,7 @@ export function MeetingWorkbench({
                           className="h-8 rounded-lg active:scale-[0.96]"
                           onClick={() => icsInputRef.current?.click()}
                         >
-                          <Upload className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                          <Upload className="me-1.5 h-3.5 w-3.5" aria-hidden />
                           {tx("meeting.calendar.import", "Import .ics")}
                         </Button>
                         <input
@@ -4159,7 +4160,7 @@ export function MeetingWorkbench({
                                       }}
                                     >
                                       <Video
-                                        className="mr-1 h-3 w-3"
+                                        className="me-1 h-3 w-3"
                                         aria-hidden
                                       />
                                       {tx("meeting.calendar.join", "Join")}
@@ -4174,7 +4175,7 @@ export function MeetingWorkbench({
 
                       <div className="space-y-2 rounded-xl bg-muted/25 px-3 py-2.5 text-[11px] text-muted-foreground">
                         <p>
-                          <Bell className="mr-1 inline h-3 w-3" aria-hidden />
+                          <Bell className="me-1 inline h-3 w-3" aria-hidden />
                           {tx(
                             "meeting.calendar.detectNote",
                             "Auto-detect: desktop notification ~5 min before imported events.",
@@ -4220,7 +4221,7 @@ export function MeetingWorkbench({
                                 track("template.selected", row.id);
                               }}
                               className={cn(
-                                "h-full w-full cursor-pointer rounded-xl border p-3 text-left transition-colors active:scale-[0.96]",
+                                "h-full w-full cursor-pointer rounded-xl border p-3 text-start transition-colors active:scale-[0.96]",
                                 active.templateId === row.id
                                   ? "border-foreground/45 bg-muted/40"
                                   : "border-border/60 hover:border-foreground/40 hover:bg-muted/25",

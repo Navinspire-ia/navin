@@ -1,3 +1,4 @@
+import { intlLocale } from "@/i18n/intl";
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -36,7 +37,7 @@ export function formatSnapshotStamp(stamp: string, locale: string): string {
       milliseconds,
     ),
   );
-  return new Intl.DateTimeFormat(locale, {
+  return new Intl.DateTimeFormat(intlLocale(locale), {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(date);

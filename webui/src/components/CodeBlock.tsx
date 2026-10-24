@@ -155,7 +155,7 @@ function CodeTextBlock({
 }) {
   const lines = code.split("\n");
   return (
-    <pre
+    <pre dir="ltr"
       className={cn(
         "m-0 overflow-x-auto p-4 font-mono text-[13px] leading-[1.6] text-foreground/90",
         showLineNumbers || !wrapLongLines ? "whitespace-pre" : "whitespace-pre-wrap",
@@ -169,7 +169,7 @@ function CodeTextBlock({
         {showLineNumbers ? (
           lines.map((line, index) => (
             <span key={index} className="flex min-w-max">
-              <span className="w-10 shrink-0 select-none pr-4 text-right text-muted-foreground/60">
+              <span className="w-10 shrink-0 select-none pe-4 text-end text-muted-foreground/60">
                 {index + 1}
               </span>
               <span className="whitespace-pre">{renderText(line || " ")}</span>

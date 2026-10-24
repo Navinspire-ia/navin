@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   firstOutputLine,
+  outputPreviewLines,
   previewGenericArgsObject,
   previewGenericToolArgs,
   tailToolOutput,
@@ -70,5 +71,15 @@ describe("tailToolOutput", () => {
   it("keeps the end of a long log", () => {
     const text = `${"x".repeat(40)}\nFAILED`;
     expect(tailToolOutput(text, 10)).toContain("FAILED");
+  });
+});
+
+describe("outputPreviewLines", () => {
+  it("keeps the last non-empty lines and the total, without ANSI codes", () => {
+    const { lines, total } = outputPreviewLines("\u001b[32mok\u001b[0m 1\n\nok 2\r\nok 3\n  \n", 2);
+    expect(lines).toEqual(["ok 2", "ok 3"]);
+    expect(total).toBe(3);
+    expect(outputPreviewLines("", 2)).toEqual({ lines: [], total: 0 });
+    expect(outputPreviewLines(undefined)).toEqual({ lines: [], total: 0 });
   });
 });

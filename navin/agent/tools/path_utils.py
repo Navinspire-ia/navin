@@ -5,7 +5,6 @@
 
 import difflib
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from navin.security.workspace_policy import (
     project_rooted_path,
     resolve_allowed_path,
 )
+from navin.utils.git_argv import git_route
 from navin.utils.proc import no_window_kwargs
 
 __all__ = [
@@ -36,13 +36,13 @@ _GIT_LS_TIMEOUT_S = 2.0
 
 def _git_basename_matches(root: Path, name: str) -> list[Path] | None:
     """Tracked/unignored files with this basename, or None when git cannot answer."""
-    git = shutil.which("git")
-    if git is None:
+    route = git_route(root)
+    if route is None:
         return None
     try:
         completed = subprocess.run(  # noqa: S603
             [
-                git, "-C", str(root), "ls-files",
+                *route.argv, "ls-files",
                 "--cached", "--others", "--exclude-standard", "-z",
             ],
             capture_output=True,

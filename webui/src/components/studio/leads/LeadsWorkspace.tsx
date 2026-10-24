@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -427,17 +428,17 @@ export function LeadsWorkspace({
         ref={shellRef}
         className={cn(
           "flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background",
-          chatOpen ? "pr-0" : "",
+          chatOpen ? "pe-0" : "",
         )}
         style={{
-          paddingRight: chatOpen ? undefined : NOTIFICATION_GUTTER,
+          paddingInlineEnd: chatOpen ? undefined : NOTIFICATION_GUTTER,
           WebkitFontSmoothing: "antialiased",
         }}
         data-compact={compact ? "1" : "0"}
       >
         <header className="flex shrink-0 flex-nowrap items-center gap-x-3 px-5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="flex shrink-0 items-baseline gap-2 pr-1">
+            <div className="flex shrink-0 items-baseline gap-2 pe-1">
               <h1 className="whitespace-nowrap text-xl font-semibold tracking-tight" data-testid="leads-title">
                 {tx("title", "Leads")}
               </h1>
@@ -521,7 +522,7 @@ export function LeadsWorkspace({
               </>
             ) : null}
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ms-auto flex shrink-0 items-center gap-2">
             <DefaultButton text="Extensions" iconProps={{ iconName: "PlugConnected" }}
               styles={HEADER_BUTTON_STYLES} onClick={() => setExtensionsOpen(true)} data-testid="leads-extensions" />
             {onToggleChat ? (
@@ -712,6 +713,10 @@ export function LeadsWorkspace({
                       onFacet={setFacet}
                       onQuery={setQuery}
                       onExport={() => void exportCsv()}
+                      onNewSearch={() => {
+                        setProvidersOpen(false);
+                        setView("setup");
+                      }}
                       onOpen={(id) => goBook(id)}
                       onCrm={(id) => pushLeadToCrm(id)}
                       onEnrich={(id) => void run("enrich", { id }, tx("saved.enrich", "Enrichment applied."))}
@@ -870,6 +875,7 @@ function LeadBook({
   onFacet,
   onQuery,
   onExport,
+  onNewSearch,
   onOpen,
   onCrm,
   onEnrich,
@@ -892,6 +898,7 @@ function LeadBook({
   onFacet: (value: LeadFacetFilter) => void;
   onQuery: (value: string) => void;
   onExport: () => void;
+  onNewSearch: () => void;
   onOpen: (id: string) => void;
   onCrm: (id: string) => void;
   onEnrich: (id: string) => void;
@@ -958,6 +965,17 @@ function LeadBook({
         onQuery={onQuery}
         leading={listTabs}
         extra={
+          <div className="flex items-center gap-1.5">
+          <PrimaryButton
+            text={tx("newSearch", "New search")}
+            title={tx("newSearchTitle", "Hunt new companies with a new search")}
+            ariaLabel={tx("newSearchTitle", "Hunt new companies with a new search")}
+            iconProps={{ iconName: "Search" }}
+            disabled={busy}
+            onClick={onNewSearch}
+            styles={HEADER_BUTTON_STYLES}
+            data-testid="leads-new-search"
+          />
           <DefaultButton
             text={tx("exportCsv", "Export")}
             title={tx("exportCsvTitle", "Export CSV")}
@@ -968,6 +986,7 @@ function LeadBook({
             styles={HEADER_BUTTON_STYLES}
             data-testid="leads-export"
           />
+          </div>
         }
       />
       <p className="text-sm text-muted-foreground" data-testid="leads-result-count">
@@ -975,7 +994,7 @@ function LeadBook({
       </p>
       {shown.length === 0 ? (
         <p className={cn(SURFACE, "p-6 text-sm text-muted-foreground")}>
-          {tx("bookEmpty", "No leads in this view. Hunt companies or change the filter.")}
+          {tx("bookEmpty", "No leads in this view. Use New search to hunt companies, or change the filter.")}
         </p>
       ) : (
         <>
@@ -1066,7 +1085,7 @@ function addedLabel(row: LeadRow, locale: string): string {
   const stamp = Number(row.created_at || row.updated_at || 0);
   if (!stamp) return "";
   try {
-    return new Date(stamp * 1000).toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
+    return new Date(stamp * 1000).toLocaleDateString(intlLocale(locale), { year: "numeric", month: "short", day: "numeric" });
   } catch {
     return new Date(stamp * 1000).toISOString().slice(0, 10);
   }
@@ -1197,7 +1216,7 @@ function LeadCard({
         </div>
         <button
           type="button"
-          className="mt-2 block w-full cursor-pointer text-left"
+          className="mt-2 block w-full cursor-pointer text-start"
           onClick={() => onAction("view")}
           data-testid="leads-book-open"
         >
@@ -1211,7 +1230,7 @@ function LeadCard({
           ))}
           {row.source ? <SourceBadge source={row.source} /> : null}
           {addedLabel(row, locale) ? (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{addedLabel(row, locale)}</span>
+            <span className="ms-auto text-xs tabular-nums text-muted-foreground">{addedLabel(row, locale)}</span>
           ) : null}
         </div>
         <div className="mt-3 flex gap-3">
@@ -1257,7 +1276,7 @@ function LeadCard({
           </button>
         </div>
       </div>
-      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-s md:border-t-0">
         <dl className="grid gap-3" data-testid="leads-facts">
           {facts.map((fact) => (
             <div key={fact.key} data-testid={`leads-fact-${fact.key}`}>
@@ -1771,7 +1790,7 @@ function SequenceStepRow({
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-start"
           data-testid={`leads-step-${step.n}`}
         >
           <span className="font-medium">{step.label || `j${step.day}`}</span>

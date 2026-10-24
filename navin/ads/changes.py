@@ -118,7 +118,9 @@ class ChangeStore:
         ))
         return rows
 
-    def set_status(self, ids: Iterable[str], status: ChangeStatus, *, note: str = "") -> dict[str, Any]:
+    def set_status(
+        self, ids: Iterable[str], status: ChangeStatus, *, note: str = "", proof: str = "",
+    ) -> dict[str, Any]:
         wanted = [str(item).strip() for item in ids if str(item).strip()]
         if status not in {"proposed", "approved", "rejected", "applied"}:
             raise ValueError("status must be proposed, approved, rejected or applied")
@@ -139,6 +141,9 @@ class ChangeStore:
                 record[f"{status}_at"] = now
                 if note:
                     record["note"] = note
+                if status == "applied" and proof:
+                    # What the platform showed after the change (read-back).
+                    record["applied_proof"] = proof
                 updated.append(change_id)
             self._write(records)
         return {"updated": updated, "missing": missing, "status": status}

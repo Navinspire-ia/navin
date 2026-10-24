@@ -54,7 +54,7 @@ def stream_payload(payload: bytes):
 
 def test_bad_download_reports_error_instead_of_downloading_forever(update_home, monkeypatch):
     info = release(b"expected")
-    monkeypatch.setattr(service, "check_for_update", lambda: info)
+    monkeypatch.setattr(service, "check_for_update", lambda **_kw: info)
     monkeypatch.setattr(service.httpx, "stream", lambda *a, **kw: stream_payload(b"tampered"))
 
     with pytest.raises(service.UpdateError, match="checksum"):
@@ -69,7 +69,7 @@ def test_bad_download_reports_error_instead_of_downloading_forever(update_home, 
 def test_download_keeps_the_release_that_matches_its_bytes(update_home, monkeypatch):
     info = release()
     service._STATE["update"] = {**info, "latestVersion": "1.1.0"}
-    monkeypatch.setattr(service, "check_for_update", lambda: info)
+    monkeypatch.setattr(service, "check_for_update", lambda **_kw: info)
     monkeypatch.setattr(service.httpx, "stream", lambda *a, **kw: stream_payload(b"new application"))
 
     service.download_update()
@@ -172,7 +172,7 @@ def test_background_download_returns_before_the_file_is_ready(update_home, monke
         assert finish.wait(5)
         return stream_payload(b"new application")
 
-    monkeypatch.setattr(service, "check_for_update", lambda: info)
+    monkeypatch.setattr(service, "check_for_update", lambda **_kw: info)
     monkeypatch.setattr(service.httpx, "stream", slow_stream)
     try:
         status = service.start_update_download()

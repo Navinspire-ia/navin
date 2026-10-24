@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import {
@@ -13,6 +14,7 @@ import {
   Plus,
   RefreshCcw,
   Trash2,
+  Users,
 } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -66,6 +68,7 @@ interface SessionInfoPopoverProps {
   title: string;
   productModule?: string | null;
   onCreateLoop?: () => void;
+  onOpenSubagentHistory?: () => void;
   /** Match the compact workbench chat-bar icon buttons. */
   compact?: boolean;
   /** Show the planner name next to the icon (workbench tools row). */
@@ -80,6 +83,7 @@ export function SessionInfoPopover({
   title,
   productModule = null,
   onCreateLoop,
+  onOpenSubagentHistory,
   compact = false,
   showLabel = false,
   triggerClassName,
@@ -199,10 +203,10 @@ export function SessionInfoPopover({
                 className={cn(
                   "absolute rounded-full bg-emerald-500",
                   showLabel
-                    ? "right-1 top-1 h-1.5 w-1.5"
+                    ? "end-1 top-1 h-1.5 w-1.5"
                     : compact
-                      ? "right-1 top-1 h-1.5 w-1.5"
-                      : "right-1.5 top-1.5 h-1.5 w-1.5",
+                      ? "end-1 top-1 h-1.5 w-1.5"
+                      : "end-1.5 top-1.5 h-1.5 w-1.5",
                 )}
                 aria-hidden
               />
@@ -225,6 +229,7 @@ export function SessionInfoPopover({
             </div>
 
             <div className="h-px bg-border/45" />
+            {onOpenSubagentHistory ? <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onClick={() => { setOpen(false); onOpenSubagentHistory(); }}><Users className="h-4 w-4" />{t("thread.subagents.historyTitle", { defaultValue: "Subagent history" })}</Button> : null}
 
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
@@ -313,7 +318,7 @@ export function SessionInfoPopover({
               }}
             >
               {actionKey?.startsWith("delete:") ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden />
               ) : null}
               {t("thread.sessionInfo.deleteConfirm")}
             </AlertDialogAction>
@@ -529,7 +534,7 @@ function isLocalTriggerAutomation(job: SessionAutomationJob): boolean {
 
 function relativeTimeFrom(value: number, now: number, locale: string): string {
   let delta = (value - now) / 1000;
-  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat(intlLocale(locale), { numeric: "auto" });
   for (const [step, unit] of RELATIVE_THRESHOLDS) {
     if (Math.abs(delta) < step) {
       return formatter.format(Math.round(delta), unit);
@@ -548,7 +553,7 @@ function formatDuration(ms: number, locale: string): string {
   ];
   for (const [unit, size] of units) {
     if (ms >= size && ms % size === 0) {
-      return new Intl.NumberFormat(locale, {
+      return new Intl.NumberFormat(intlLocale(locale), {
         style: "unit",
         unit,
         unitDisplay: "long",
@@ -556,7 +561,7 @@ function formatDuration(ms: number, locale: string): string {
       }).format(ms / size);
     }
   }
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(intlLocale(locale), {
     style: "unit",
     unit: "minute",
     unitDisplay: "long",

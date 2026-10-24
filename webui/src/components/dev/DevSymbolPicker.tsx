@@ -200,7 +200,7 @@ export function DevSymbolPicker({
                             onClick={() => handleSelect(item)}
                             onMouseEnter={() => setHighlightedIndex(index)}
                             className={cn(
-                              "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+                              "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-start transition-colors",
                               highlighted
                                 ? "bg-muted text-foreground"
                                 : "text-foreground hover:bg-muted/70",

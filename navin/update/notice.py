@@ -10,7 +10,7 @@ version existed. This module answers one question, cheaply and safely: is
 there something newer for this install, and how does the user get it?
 
 It never raises, never blocks the caller (run it from a thread) and asks
-the update server at most once a day per machine: the answer is cached in
+the update server at most once an hour per machine: the answer is cached in
 ``~/.navin/update-check.json`` and reused by every navin process until it
 ages out or the running version changes (which means the update happened).
 """
@@ -26,7 +26,8 @@ from typing import Any
 
 from navin import __version__
 
-_CACHE_TTL_S = 24 * 60 * 60
+# One hour: a pending update is announced again every hour until installed.
+_CACHE_TTL_S = 60 * 60
 
 
 def _cache_path() -> Path:

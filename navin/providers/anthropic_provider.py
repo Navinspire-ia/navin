@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import re
@@ -34,6 +35,12 @@ def _gen_tool_id() -> str:
 
 _VALID_TOOL_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# Set while a request is replayed after a refusal taught a better shape: the
+# replay itself never learns again, so contradictory refusals cannot loop.
+_LEARN_RETRY: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "anthropic_learn_retry", default=False,
+)
+
 # Models supporting adaptive thinking (thinking: {"type": "adaptive"}):
 # Claude 4.6 and every later generation.
 _ADAPTIVE_THINKING_MODELS = (
@@ -54,6 +61,16 @@ _EFFORT_WITH_MAX = ("opus-4-6",)
 _EFFORT_BASE = ("sonnet-4-6", "opus-4-5")
 
 
+def _adaptive_thinking() -> dict[str, str]:
+    """Adaptive thinking that streams a summary of the reasoning.
+
+    From Claude 4.7 the API omits thinking text by default: the model then
+    thinks for minutes while the client receives nothing, which looks like a
+    hang on every effort above low. Asking for a summary keeps the stream alive.
+    """
+    return {"type": "adaptive", "display": "summarized"}
+
+
 def _effort_levels_for(model_lower: str) -> frozenset[str]:
     """Return the output_config.effort values this Claude model accepts."""
     if any(p in model_lower for p in _EFFORT_FULL_LADDER):
@@ -62,7 +79,24 @@ def _effort_levels_for(model_lower: str) -> frozenset[str]:
         return frozenset({"low", "medium", "high", "max"})
     if any(p in model_lower for p in _EFFORT_BASE):
         return frozenset({"low", "medium", "high"})
+    if _newer_than_known(model_lower):
+        return frozenset({"low", "medium", "high", "xhigh", "max"})
     return frozenset()
+
+
+def _newer_than_known(model_lower: str) -> bool:
+    """A Claude release the lists above predate (opus-6, an unknown name).
+
+    Such a model takes the current request surface (adaptive thinking and
+    the full effort ladder): budget_tokens is a 400 from 4.7 on, so falling
+    back to the oldest shape is the one choice certain to fail.
+    """
+    from navin.providers.claude_capabilities import claude_version
+
+    if "claude" not in model_lower:
+        return False
+    version = claude_version(model_lower)
+    return version is None or version >= (4, 7)
 
 
 def _sanitize_tool_id(tid: str) -> str:
@@ -316,12 +350,16 @@ class AnthropicProvider(LLMProvider):
         content = msg.get("content")
 
         for tb in msg.get("thinking_blocks") or []:
-            if isinstance(tb, dict) and tb.get("type") == "thinking":
+            if not isinstance(tb, dict):
+                continue
+            if tb.get("type") == "thinking":
                 blocks.append({
                     "type": "thinking",
                     "thinking": tb.get("thinking", ""),
                     "signature": tb.get("signature", ""),
                 })
+            elif tb.get("type") == "redacted_thinking" and tb.get("data"):
+                blocks.append({"type": "redacted_thinking", "data": tb["data"]})
 
         if isinstance(content, str) and content:
             blocks.append({"type": "text", "text": content})
@@ -636,21 +674,29 @@ class AnthropicProvider(LLMProvider):
                 system, anthropic_msgs, anthropic_tools,
             )
 
-        max_tokens = max(1, max_tokens)
-        effort = (reasoning_effort or "").lower()
-        # "minimal" has no Anthropic rung below "low"; it means no thinking.
-        thinking_off = bool(reasoning_effort) and effort in ("none", "minimal")
-        thinking_enabled = bool(reasoning_effort) and not thinking_off
-
         # Anthropic deprecated `temperature` from the Claude 4.7 generation
         # onwards - the API returns 400 if it is present. Version-based rule
         # so future models are covered without touching this file.
         from navin.providers.claude_capabilities import (
+            clamp_claude_max_tokens,
             claude_accepts_thinking_param,
+            claude_rejects_forced_tool_choice,
             claude_supports_temperature,
+            claude_thinking_budget,
+            fit_claude_effort,
         )
 
         _model_lower = model_name.lower()
+        max_tokens = clamp_claude_max_tokens(_model_lower, max_tokens)
+        effort = (reasoning_effort or "").lower()
+        if effort == "ultra":
+            effort = "max"  # deepest tier; clamped below when the model stops lower
+        # "minimal" has no Anthropic rung below "low"; it means no thinking.
+        thinking_off = bool(reasoning_effort) and effort in ("none", "minimal", "off")
+        thinking_enabled = bool(reasoning_effort) and not thinking_off
+        if thinking_enabled and effort != "adaptive":
+            # A level this model refused before goes out as the nearest it took.
+            effort = fit_claude_effort(_model_lower, effort)
         omit_temperature = not claude_supports_temperature(_model_lower)
 
         kwargs: dict[str, Any] = {
@@ -663,13 +709,15 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system
 
         supported_effort = _effort_levels_for(_model_lower)
-        adaptive_capable = any(p in _model_lower for p in _ADAPTIVE_THINKING_MODELS)
+        adaptive_capable = any(
+            p in _model_lower for p in _ADAPTIVE_THINKING_MODELS
+        ) or _newer_than_known(_model_lower)
 
         if effort == "adaptive" and adaptive_capable:
             # Adaptive thinking: model decides when and how much to think
             # (Sonnet 4.6, Opus 4.6 and later). Also auto-enables interleaved
             # thinking between tool calls.
-            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["thinking"] = _adaptive_thinking()
             if not omit_temperature:
                 kwargs["temperature"] = 1.0
         elif thinking_enabled and supported_effort:
@@ -682,39 +730,56 @@ class AnthropicProvider(LLMProvider):
             if adaptive_capable:
                 # On 4.6+ effort pairs with adaptive thinking (budget_tokens
                 # is deprecated there).
-                kwargs["thinking"] = {"type": "adaptive"}
+                kwargs["thinking"] = _adaptive_thinking()
             else:
                 # Opus 4.5: extended-thinking-only; effort requires the beta
                 # header and works alongside a thinking budget.
-                budget_map = {"low": 1024, "medium": 4096, "high": max(8192, max_tokens)}
-                budget = budget_map.get(clamped, 4096)
+                budget, kwargs["max_tokens"] = claude_thinking_budget(
+                    _model_lower, clamped, max_tokens,
+                )
                 kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
-                kwargs["max_tokens"] = max(max_tokens, budget + 4096)
                 kwargs["extra_headers"] = {
                     **(self.extra_headers or {}),
                     "anthropic-beta": "effort-2025-11-24",
                 }
             if not omit_temperature:
                 kwargs["temperature"] = 1.0
-        elif thinking_enabled:
-            budget_map = {"low": 1024, "medium": 4096, "high": max(8192, max_tokens)}
-            budget = budget_map.get(effort, 4096)
+        elif thinking_enabled and claude_accepts_thinking_param(_model_lower):
+            budget, kwargs["max_tokens"] = claude_thinking_budget(
+                _model_lower, effort, max_tokens,
+            )
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            kwargs["max_tokens"] = max(max_tokens, budget + 4096)
             if not omit_temperature:
                 kwargs["temperature"] = 1.0
         else:
             if thinking_off and claude_accepts_thinking_param(_model_lower):
                 # Anthropic's default is off today; saying so survives a model
                 # whose default changes. Omission is how "none" turned into a
-                # full chain of thought on other wires.
-                kwargs["thinking"] = {"type": "disabled"}
+                # full chain of thought on other wires. The word for "off"
+                # differs per generation (disabled, between_tools, or none at
+                # all on Opus 5.5): claude_thinking_fields knows each.
+                from navin.providers.claude_capabilities import claude_thinking_fields
+
+                off_fields, _ = claude_thinking_fields(_model_lower, "none", max_tokens=max_tokens)
+                if "thinking" in off_fields:
+                    kwargs["thinking"] = off_fields["thinking"]
+                if "output_config" in off_fields:
+                    kwargs["extra_body"] = {
+                        **kwargs.get("extra_body", {}),
+                        "output_config": off_fields["output_config"],
+                    }
             if not omit_temperature:
                 kwargs["temperature"] = temperature
 
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
-            tc = self._convert_tool_choice(tool_choice, thinking_enabled)
+            # Forced tool use is refused while thinking runs (adaptive "off"
+            # on Opus 5.5 included) and always on the newest models.
+            thinking_active = (kwargs.get("thinking") or {}).get("type") in ("enabled", "adaptive")
+            tc = self._convert_tool_choice(
+                tool_choice,
+                thinking_active or claude_rejects_forced_tool_choice(_model_lower),
+            )
             if tc:
                 kwargs["tool_choice"] = tc
 
@@ -773,6 +838,11 @@ class AnthropicProvider(LLMProvider):
                     "type": "thinking",
                     "thinking": block.thinking,
                     "signature": getattr(block, "signature", ""),
+                })
+            elif block.type == "redacted_thinking":
+                thinking_blocks.append({
+                    "type": "redacted_thinking",
+                    "data": getattr(block, "data", ""),
                 })
 
         stop_map = {"tool_use": "tool_calls", "end_turn": "stop", "max_tokens": "length"}
@@ -849,7 +919,40 @@ class AnthropicProvider(LLMProvider):
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
                 )
-            return self._handle_error(e)
+            result = self._handle_error(e)
+        if not _LEARN_RETRY.get() and self._learned_thinking_retry(model, reasoning_effort, result):
+            token = _LEARN_RETRY.set(True)
+            try:
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+                )
+            finally:
+                _LEARN_RETRY.reset(token)
+        return result
+
+    def _learned_thinking_retry(
+        self, model: str | None, reasoning_effort: str | None, result: LLMResponse
+    ) -> bool:
+        """True once a refusal taught the shape this model wants.
+
+        A refused "thinking off" names the word this generation uses; a refused
+        effort names the levels it takes. Either way the request is replayed
+        once with the corrected value, never with the same one.
+        """
+        if result.finish_reason != "error":
+            return False
+        from navin.providers.claude_capabilities import (
+            learn_claude_effort,
+            learn_claude_thinking_off,
+        )
+
+        model_name = self._strip_prefix(model or self.default_model)
+        effort = (reasoning_effort or "").lower()
+        if effort in ("none", "minimal", "off"):
+            return learn_claude_thinking_off(model_name, result.content)
+        if effort and effort != "adaptive":
+            return learn_claude_effort(model_name, "max" if effort == "ultra" else effort, result.content)
+        return False
 
     async def chat_stream(
         self,
@@ -871,67 +974,66 @@ class AnthropicProvider(LLMProvider):
         idle_timeout_s = resolve_stream_idle_timeout_s()
         try:
             async with self._client.messages.stream(**kwargs) as stream:
-                if on_content_delta or on_thinking_delta or on_tool_call_delta:
-                    # Idle timeout must track *any* SSE chunk (thinking_delta,
-                    # tool JSON deltas, etc.), not only text_stream tokens.
-                    # Otherwise extended thinking can stall text_stream for minutes
-                    # while the connection is healthy (e.g. MiniMax Anthropic).
-                    tool_blocks: dict[int, dict[str, str]] = {}
-                    while True:
-                        try:
-                            chunk = await asyncio.wait_for(
-                                stream.__anext__(),
-                                timeout=idle_timeout_s,
-                            )
-                        except StopAsyncIteration:
-                            break
-                        if chunk.type == "content_block_start":
-                            block = getattr(chunk, "content_block", None)
-                            if getattr(block, "type", None) == "tool_use":
-                                index = int(getattr(chunk, "index", 0) or 0)
-                                state = {
-                                    "call_id": str(getattr(block, "id", "") or ""),
-                                    "name": str(getattr(block, "name", "") or ""),
-                                }
-                                tool_blocks[index] = state
-                                if on_tool_call_delta:
-                                    await on_tool_call_delta({
-                                        "index": index,
-                                        **state,
-                                        "arguments_delta": "",
-                                    })
-                        elif (
-                            chunk.type == "content_block_delta"
-                            and getattr(chunk.delta, "type", None) == "thinking_delta"
-                        ):
-                            piece = getattr(chunk.delta, "thinking", None) or ""
-                            if piece and on_thinking_delta:
-                                await on_thinking_delta(piece)
-                        elif (
-                            chunk.type == "content_block_delta"
-                            and getattr(chunk.delta, "type", None) == "text_delta"
-                        ):
-                            text = getattr(chunk.delta, "text", None) or ""
-                            if text and on_content_delta:
-                                await on_content_delta(text)
-                        elif (
-                            chunk.type == "content_block_delta"
-                            and getattr(chunk.delta, "type", None) == "input_json_delta"
-                        ):
-                            partial = getattr(chunk.delta, "partial_json", None) or ""
-                            if partial and on_tool_call_delta:
-                                index = int(getattr(chunk, "index", 0) or 0)
-                                state = tool_blocks.get(index, {})
+                # Idle timeout must track *any* SSE chunk (thinking_delta,
+                # tool JSON deltas, etc.), not only text_stream tokens.
+                # Otherwise extended thinking can stall text_stream for minutes
+                # while the connection is healthy (e.g. MiniMax Anthropic).
+                tool_blocks: dict[int, dict[str, str]] = {}
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            stream.__anext__(),
+                            timeout=idle_timeout_s,
+                        )
+                    except StopAsyncIteration:
+                        break
+                    if chunk.type == "content_block_start":
+                        block = getattr(chunk, "content_block", None)
+                        if getattr(block, "type", None) == "tool_use":
+                            index = int(getattr(chunk, "index", 0) or 0)
+                            state = {
+                                "call_id": str(getattr(block, "id", "") or ""),
+                                "name": str(getattr(block, "name", "") or ""),
+                            }
+                            tool_blocks[index] = state
+                            if on_tool_call_delta:
                                 await on_tool_call_delta({
                                     "index": index,
-                                    "call_id": state.get("call_id", ""),
-                                    "name": state.get("name", ""),
-                                    "arguments_delta": partial,
+                                    **state,
+                                    "arguments_delta": "",
                                 })
-                response = await asyncio.wait_for(
-                    stream.get_final_message(),
-                    timeout=idle_timeout_s,
-                )
+                    elif (
+                        chunk.type == "content_block_delta"
+                        and getattr(chunk.delta, "type", None) == "thinking_delta"
+                    ):
+                        piece = getattr(chunk.delta, "thinking", None) or ""
+                        if piece and on_thinking_delta:
+                            await on_thinking_delta(piece)
+                    elif (
+                        chunk.type == "content_block_delta"
+                        and getattr(chunk.delta, "type", None) == "text_delta"
+                    ):
+                        text = getattr(chunk.delta, "text", None) or ""
+                        if text and on_content_delta:
+                            await on_content_delta(text)
+                    elif (
+                        chunk.type == "content_block_delta"
+                        and getattr(chunk.delta, "type", None) == "input_json_delta"
+                    ):
+                        partial = getattr(chunk.delta, "partial_json", None) or ""
+                        if partial and on_tool_call_delta:
+                            index = int(getattr(chunk, "index", 0) or 0)
+                            state = tool_blocks.get(index, {})
+                            await on_tool_call_delta({
+                                "index": index,
+                                "call_id": state.get("call_id", ""),
+                                "name": state.get("name", ""),
+                                "arguments_delta": partial,
+                            })
+                # Every chunk resets the idle timer above; once the stream is
+                # drained the final message is already assembled, so no
+                # whole-response timeout applies here.
+                response = await stream.get_final_message()
             return self._parse_response(response)
         except asyncio.TimeoutError:
             return LLMResponse(
@@ -943,7 +1045,19 @@ class AnthropicProvider(LLMProvider):
                 error_kind="timeout",
             )
         except Exception as e:
-            return self._handle_error(e)
+            result = self._handle_error(e)
+        if not _LEARN_RETRY.get() and self._learned_thinking_retry(model, reasoning_effort, result):
+            token = _LEARN_RETRY.set(True)
+            try:
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            finally:
+                _LEARN_RETRY.reset(token)
+        return result
 
     def get_default_model(self) -> str:
         return self.default_model

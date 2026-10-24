@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import type { CareerOpportunity, CareerProfile, CareerTrack } from "@/lib/career-api";
 
 /** Billable days a freelancer can realistically invoice in a month. */
@@ -96,7 +97,7 @@ export function currencySymbol(currency: string, locale = "fr"): string {
   const code = String(currency || "").trim().toUpperCase();
   if (!code) return "";
   try {
-    const parts = new Intl.NumberFormat(locale || "fr", {
+    const parts = new Intl.NumberFormat(intlLocale(locale || "fr"), {
       style: "currency",
       currency: code,
       currencyDisplay: "narrowSymbol",
@@ -146,7 +147,7 @@ export function formatPayRange(
 export function formatMoney(value: number, currency: string, locale: string): string {
   if (!Number.isFinite(value) || value <= 0) return "";
   try {
-    return new Intl.NumberFormat(locale || "fr", {
+    return new Intl.NumberFormat(intlLocale(locale || "fr"), {
       style: "currency",
       currency: currency || "EUR",
       maximumFractionDigits: 0,

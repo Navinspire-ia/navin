@@ -66,6 +66,7 @@ from navin.providers.model_capabilities import (
     supports_vision,
     vision_flag_for_row,
 )
+from navin.providers.model_names import bedrock_display_name, bedrock_region_scope
 from navin.providers.music_generation import (
     get_music_gen_provider,
     music_gen_provider_names,
@@ -178,8 +179,8 @@ _CONTEXT_WINDOW_TOKEN_OPTIONS = {
     200_000,
     262_144,
     400_000,
+    500_000,
     1_000_000,
-    2_000_000,
 }
 # Specialty presets that can never be the chat default / chat runtime.
 _MEDIA_MODALITIES = {"image", "video", "audio", "music", "stt"}
@@ -598,6 +599,8 @@ def _provider_settings_row(
         "configured": configured,
         "auth_type": "oauth" if spec.is_oauth else "api_key",
         "api_key_required": False if managed else _provider_requires_api_key(spec),
+        "aws_region": getattr(provider_config, "region", None) if spec.backend == "bedrock" else None,
+        "aws_profile": getattr(provider_config, "profile", None) if spec.backend == "bedrock" else None,
         "api_key_hint": (
             "Navin plan"
             if managed
@@ -812,6 +815,9 @@ def _model_row_payload(row: Any) -> dict[str, Any] | None:
         output_modalities = row.get("output_modalities", architecture.get("output_modalities"))
         if isinstance(output_modalities, list):
             payload["output_modalities"] = [m for m in output_modalities if isinstance(m, str)]
+        methods = row.get("supportedGenerationMethods")
+        if isinstance(methods, list):
+            payload["supportedGenerationMethods"] = [m for m in methods if isinstance(m, str)]
         from navin.audio.models import default_voice, known_voices
 
         declared_voices = row.get("supported_voices", row.get("voices"))
@@ -897,6 +903,161 @@ def _merge_builtin_model_rows(rows: list[dict[str, Any]], spec: Any) -> list[dic
     return injected + rows
 
 
+def _row_fits_use(row: dict[str, Any], kind: str) -> bool:
+    # Gemini declares how each model is called: the Live API (bidi) serves
+    # only Live, the other uses need a plain request.
+    methods = row.get("supportedGenerationMethods")
+    bidi_only = isinstance(methods, list) and methods and "bidiGenerateContent" in methods and not any(
+        m in methods for m in ("generateContent", "predict", "predictLongRunning"))
+    if kind == "live":
+        from navin.providers.media_models import is_realtime_voice_model
+
+        model_id = str(row.get("id") or "")
+        if "lyria" in model_id.lower():
+            return False  # realtime music, not a voice
+        if isinstance(methods, list) and methods and "bidiGenerateContent" not in methods:
+            return False
+        return is_realtime_voice_model(model_id)
+    if bidi_only:
+        return False
+    return supports_media_model(row["id"], kind, row)
+
+
+def bedrock_model_rows(provider_config: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Live Bedrock models for Settings: the inference profiles (eu.*, global.*,
+    us.*) and the on-demand models of the configured region, with the saved
+    Bedrock API key or AWS profile. Returns (rows, error message)."""
+    from navin.providers.bedrock_media import DEFAULT_REGION
+
+    region = (getattr(provider_config, "region", None) or os.environ.get("AWS_REGION")
+              or os.environ.get("AWS_DEFAULT_REGION") or DEFAULT_REGION)
+    try:
+        import boto3
+    except Exception:  # noqa: BLE001 - the optional `bedrock` capability
+        return [], "Bedrock support is not installed yet: save the provider (it installs it), then list the models again."
+    api_key = unlocked_secret(_resolve_env_placeholders(getattr(provider_config, "api_key", None) or ""))
+    previous_token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
+    try:
+        if api_key:
+            os.environ["AWS_BEARER_TOKEN_BEDROCK"] = api_key
+        profile = getattr(provider_config, "profile", None) or None
+        try:
+            session = boto3.Session(profile_name=profile)
+        except Exception:  # noqa: BLE001 - ProfileNotFound
+            if not api_key:
+                return [], f"AWS profile '{profile}' not found in ~/.aws/credentials (or add a Bedrock API key)."
+            session = boto3.Session()  # the Bedrock API key is enough; ignore the missing profile
+        client = session.client("bedrock", region_name=region)
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        token = None
+        for _ in range(10):
+            kwargs: dict[str, Any] = {"maxResults": 100, "typeEquals": "SYSTEM_DEFINED"}
+            if token:
+                kwargs["nextToken"] = token
+            page = client.list_inference_profiles(**kwargs)
+            for profile in page.get("inferenceProfileSummaries", []):
+                profile_id = str(profile.get("inferenceProfileId") or "")
+                if profile_id and profile.get("status", "ACTIVE") == "ACTIVE" and profile_id not in seen:
+                    seen.add(profile_id)
+                    scope = bedrock_region_scope(profile_id)
+                    row = _model_row_payload({
+                        "id": profile_id,
+                        "label": bedrock_display_name(profile_id, profile.get("inferenceProfileName") or None),
+                        "owned_by": f"AWS Bedrock · {scope}" if scope else "AWS Bedrock",
+                    })
+                    if row is not None:
+                        rows.append(row)
+            token = page.get("nextToken")
+            if not token:
+                break
+        models = client.list_foundation_models(byInferenceType="ON_DEMAND").get("modelSummaries", [])
+        for model in models:
+            model_id = str(model.get("modelId") or "")
+            if not model_id or model_id in seen or "TEXT" not in (model.get("outputModalities") or []):
+                continue
+            seen.add(model_id)
+            row = _model_row_payload({"id": model_id, "label": bedrock_display_name(model_id, model.get("modelName") or None),
+                                      "owned_by": f"AWS Bedrock · {region}"})
+            if row is not None:
+                rows.append(row)
+        return rows, None
+    except Exception as exc:  # noqa: BLE001 - shown to the user, never raised
+        text = str(exc)
+        if "AccessDenied" in text or "not authorized" in text:
+            return [], ("These credentials may call models but not list them (bedrock:ListInferenceProfiles / "
+                        "ListFoundationModels). Type a model ID, e.g. eu.anthropic.claude-sonnet-4-5-20250929-v1:0.")
+        return [], f"Could not list the Bedrock models: {text[:180]}"
+    finally:
+        if api_key:
+            if previous_token is None:
+                os.environ.pop("AWS_BEARER_TOKEN_BEDROCK", None)
+            else:
+                os.environ["AWS_BEARER_TOKEN_BEDROCK"] = previous_token
+
+
+_AZURE_DEPLOYMENTS_API_VERSION = "2022-12-01"
+_AZURE_SCOPE = "https://cognitiveservices.azure.com/.default"
+
+
+def azure_model_rows(provider_config: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Azure OpenAI for Settings: the resource's deployments (their names are
+    the model IDs Navin sends), else the models of the v1 API. Uses the API key,
+    or Microsoft Entra ID when there is none. Returns (rows, error message)."""
+    base = (_resolve_env_placeholders(getattr(provider_config, "api_base", None) or "") or "").strip().rstrip("/")
+    if base.endswith("/openai/v1"):
+        base = base[: -len("/openai/v1")]
+    if not base:
+        return [], "Set the Azure OpenAI endpoint (https://<resource>.openai.azure.com) to list the deployments."
+    api_key = unlocked_secret(_resolve_env_placeholders(getattr(provider_config, "api_key", None) or ""))
+    if api_key:
+        headers = {"api-key": api_key, "Accept": "application/json"}
+    else:
+        try:
+            from azure.identity import DefaultAzureCredential
+
+            token = DefaultAzureCredential().get_token(_AZURE_SCOPE).token
+        except Exception:  # noqa: BLE001 - optional `azure` capability or no Entra login
+            return [], "Add the API key (or sign in with Microsoft Entra ID) to list the deployments."
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    def fetch(url: str, params: dict[str, str] | None = None) -> tuple[int, Any]:
+        response = httpx.get(url, headers=headers, params=params, timeout=10.0, follow_redirects=False)
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, None
+
+    try:
+        status, body = fetch(f"{base}/openai/deployments", {"api-version": _AZURE_DEPLOYMENTS_API_VERSION})
+        if status == 200 and isinstance(body, dict):
+            rows = []
+            for item in body.get("data") or []:
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                model = str(item.get("model") or "")
+                row = _model_row_payload({"id": str(item["id"]), "owned_by": "Azure OpenAI",
+                                          "label": f"{item['id']} ({model})" if model and model != item["id"] else None})
+                if row is not None:
+                    rows.append(row)
+            if rows:
+                return rows, None
+        if status in {401, 403}:
+            return [], "Azure refused these credentials (check the key and the endpoint's resource)."
+        status, body = fetch(f"{base}/openai/v1/models")
+        if status == 200:
+            rows = [row for row in _extract_model_rows(body) if row]
+            if rows:
+                return rows, "No deployment list on this resource: these are its models; use your deployment name if it differs."
+        if status in {401, 403}:
+            return [], "Azure refused these credentials (check the key and the endpoint's resource)."
+        if status == 404:
+            return [], "No Azure OpenAI API at this endpoint: check https://<resource>.openai.azure.com."
+        return [], f"Azure returned HTTP {status}: type your deployment name."
+    except httpx.HTTPError as exc:
+        return [], f"Could not reach Azure OpenAI: {exc}"
+
+
 def provider_models_payload(query: QueryParams) -> dict[str, Any]:
     """Fetch an OpenAI-compatible provider's model list for Settings.
 
@@ -910,8 +1071,8 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
 
     config = load_config()
     media_kind = (_query_first(query, "modality") or "").strip()
-    if media_kind and media_kind not in MEDIA_MODEL_KINDS:
-        raise WebUISettingsError("modality must be stt, tts, image, video or music")
+    if media_kind and media_kind not in MEDIA_MODEL_KINDS and media_kind != "live":
+        raise WebUISettingsError("modality must be stt, tts, image, video, music or live")
     resolved_provider = _resolve_settings_provider(config, provider_name)
     if resolved_provider is None:
         raise WebUISettingsError("unknown provider")
@@ -927,6 +1088,33 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
         "message": None,
         "fetched_at": time.time(),
     }
+    if media_kind:
+        from navin.providers.media_catalog import static_media_rows
+
+        static_rows = static_media_rows(spec.name, media_kind)
+        if static_rows is not None:
+            # xAI and Alibaba do not list their voice / image / video models.
+            return {**base_payload, "catalog_kind": "official", "status": "available" if static_rows else "error",
+                    "models": static_rows, "model_count": len(static_rows),
+                    "message": None if static_rows else f"No {spec.label} model for this use."}
+    if catalog_kind == "unsupported" and spec.backend == "bedrock" and media_kind:
+        # Media models live in fixed AWS regions (Voxtral Ireland, Nova Sonic
+        # Stockholm, Polly): one table instead of the chat region's listing.
+        from navin.providers.bedrock_media import media_rows
+
+        rows = media_rows(media_kind)
+        message = None if rows else (
+            "No AWS Bedrock model for this use in Europe yet (image and video models are US-only)."
+        )
+        return {**base_payload, "catalog_kind": "official", "status": "available" if rows else "error",
+                "models": rows, "model_count": len(rows), "message": message}
+    if catalog_kind == "unsupported" and spec.backend in {"bedrock", "azure_openai"}:
+        lister = bedrock_model_rows if spec.backend == "bedrock" else azure_model_rows
+        rows, error = lister(provider_config)
+        if media_kind:
+            rows = [row for row in rows if _row_fits_use(row, media_kind)]
+        return {**base_payload, "catalog_kind": "official", "status": "available" if rows else "error",
+                "models": rows, "model_count": len(rows), "message": error}
     if catalog_kind == "unsupported":
         return {
             **base_payload,
@@ -936,13 +1124,22 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
 
     if catalog_kind == "builtin":
         rows = _builtin_catalog_rows(spec)
+        # Account subscriptions (Codex, Grok): once signed in, the plan's own
+        # list; the built-in one is only the fallback.
+        from navin.providers.subscription_models import LIVE_SUBSCRIPTION_LISTS
+
+        live_lister = LIVE_SUBSCRIPTION_LISTS.get(spec.name)
+        live = live_lister() if live_lister and not media_kind else None
+        if live:
+            rows = [row for raw in live if (row := _model_row_payload(raw)) is not None]
         if media_kind:
-            rows = [row for row in rows if supports_media_model(row["id"], media_kind)]
+            rows = [row for row in rows if _row_fits_use(row, media_kind)]
         return {
             **base_payload,
             "status": "available",
             "models": rows,
             "model_count": len(rows),
+            "live": bool(live),
         }
 
     api_base = (
@@ -1002,7 +1199,7 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
 
     # The Anthropic Models API paginates (default page size 20).
     params = {"limit": "1000"} if is_anthropic_backend else None
-    if media_kind and spec.name in {"navin", "openrouter"}:
+    if media_kind in OPENROUTER_OUTPUT_MODALITIES and spec.name in {"navin", "openrouter"}:
         params = {"output_modalities": OPENROUTER_OUTPUT_MODALITIES[media_kind]}
     native_google = bool(media_kind and spec.name == "gemini"
                          and urlsplit(normalized_base).hostname == "generativelanguage.googleapis.com")
@@ -1041,7 +1238,7 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
         if media_kind:
             from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 
-            rows = [row for row in rows if supports_media_model(row["id"], media_kind, row)]
+            rows = [row for row in rows if _row_fits_use(row, media_kind)]
             recommended = {"tts": NAVIN_TTS_MODEL, "stt": NAVIN_STT_MODEL}.get(media_kind, "")
             rows.sort(key=lambda row: (row["id"] != recommended,
                                       not row["id"].startswith("qwen/"),
@@ -1052,7 +1249,7 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
             keyless_rows = _omniroute_keyless_rows(spec, api_base, api_key)
             if keyless_rows is not None:
                 if media_kind:
-                    keyless_rows = [row for row in keyless_rows if supports_media_model(row["id"], media_kind, row)]
+                    keyless_rows = [row for row in keyless_rows if _row_fits_use(row, media_kind)]
                 return {
                     **base_payload,
                     "status": "available",
@@ -1197,6 +1394,8 @@ def test_provider_connection(query: QueryParams) -> dict[str, Any]:
         draft.access_plan = None if plan == "" else plan  # type: ignore[assignment]
     if protocol is not None:
         draft.wire_protocol = None if protocol == "" else protocol  # type: ignore[assignment]
+    if spec.backend == "bedrock":
+        _apply_aws_fields(draft, query)  # test what is typed, before saving
     if not draft.api_base:
         draft.api_base = lookup_connection_base(
             spec.name, draft.endpoint_region, draft.access_plan, draft.wire_protocol
@@ -1217,6 +1416,12 @@ def test_provider_connection(query: QueryParams) -> dict[str, Any]:
         "quota": None,
         "latency_ms": 0,
     }
+    if catalog_kind == "unsupported" and spec.backend in {"bedrock", "azure_openai"}:
+        rows, error = (bedrock_model_rows if spec.backend == "bedrock" else azure_model_rows)(draft)
+        result.update({"ok": bool(rows), "status": "available" if rows else "error", "models": rows,
+                       "model_count": len(rows), "message": error,
+                       "latency_ms": int((time.monotonic() - started) * 1000)})
+        return result
     if catalog_kind == "unsupported":
         result["status"] = "unsupported"
         result["message"] = "This provider has no live model list. Save the key and type a model ID."
@@ -1855,6 +2060,137 @@ def _tts_provider_rows(config: Any) -> list[dict[str, Any]]:
     return _visible_media_provider_rows(rows)
 
 
+MEDIA_CHOICE_KINDS = ("image", "video", "tts", "stt", "live")
+
+
+def _media_kind_of_preset(preset: Any) -> str | None:
+    from navin.providers.media_choice import media_kind_of_preset
+
+    return media_kind_of_preset(preset)
+
+
+def _provider_ready(config: Config, provider: str) -> bool:
+    from navin.providers.media_choice import provider_usable
+
+    return provider_usable(config, provider)
+
+
+def _provider_display(provider: str) -> str:
+    if provider == "navin":
+        return "Navin"
+    from navin.providers.registry import find_by_name
+
+    spec = find_by_name(provider)
+    return spec.label if spec is not None else provider.title()
+
+
+def _media_selected(config: Config, kind: str) -> tuple[str, str]:
+    from navin.providers.media_choice import media_selected
+
+    return media_selected(config, kind)
+
+
+def connected_media_providers(config: Config) -> list[dict[str, str]]:
+    """Providers whose model lists the media pickers can load: Navin when the
+    plan or a key is there, then every provider with its key (or local base)."""
+    out: list[dict[str, str]] = []
+    if _provider_ready(config, "navin"):
+        out.append({"provider": "navin", "label": "Navin"})
+    for spec in PROVIDERS:
+        if spec.name == "navin" or spec.is_oauth or is_retired_llm_provider(spec.name):
+            continue
+        provider_config = getattr(config.providers, spec.name, None)
+        if not isinstance(provider_config, ProviderConfig):
+            continue
+        try:
+            ready = _provider_configured_for_settings(spec, provider_config)
+        except Exception:  # noqa: BLE001 - one odd provider must not hide the others
+            ready = False
+        if ready:
+            out.append({"provider": spec.name, "label": spec.label})
+    for name, provider_config in _dynamic_provider_items(config):
+        if provider_config.api_key or provider_config.api_base:
+            out.append({"provider": name, "label": name})
+    return out
+
+
+def media_model_choices(config: Config) -> dict[str, Any]:
+    """One model list per use (image, video, listening, voice, Live): every
+    model already added in Settings > Models, Navin's included. Picking one
+    sets its provider too, so there is no separate provider choice."""
+    out: dict[str, Any] = {kind: {"selected": "", "options": []} for kind in MEDIA_CHOICE_KINDS}
+    seen: set[tuple[str, str, str]] = set()
+
+    # Signed out (no plan key), Navin's models are not offered at all.
+    navin_signed_in = _provider_ready(config, "navin")
+
+    from navin.providers.media_choice import normalize_media_model
+
+    def add(kind: str, provider: str, model: str, label: str) -> None:
+        model = normalize_media_model(kind, provider, model)
+        key = (kind, provider, model)
+        if not provider or not model or key in seen:
+            return
+        if provider == "navin" and not navin_signed_in:
+            return
+        seen.add(key)
+        out[kind]["options"].append({
+            "value": f"{provider}::{model}",
+            "provider": provider,
+            "provider_label": _provider_display(provider),
+            "model": model,
+            "label": bedrock_display_name(model, label) if provider == "bedrock" else (label or model),
+            "ready": _provider_ready(config, provider),
+        })
+
+    for preset in config.model_presets.values():
+        kind = _media_kind_of_preset(preset)
+        if kind:
+            add(kind, str(preset.provider or "").strip(), str(preset.model or "").strip(), str(preset.label or ""))
+    # The gateway's Live model (admin > LiteLLM > Live) comes from the catalog,
+    # offered even while another Live provider is chosen (a way back to the plan).
+    if config.voice.live_realtime_provider == "navin" and config.voice.live_realtime_model:
+        add("live", "navin", config.voice.live_realtime_model, config.voice.live_realtime_model)
+    navin_live = (getattr(config.voice, "live_navin_model", "") or "").strip()
+    if navin_live:
+        add("live", "navin", navin_live, navin_live)
+    for kind in MEDIA_CHOICE_KINDS:
+        provider, model = _media_selected(config, kind)
+        if provider and model:
+            add(kind, provider, model, model)
+            if provider != "navin" or navin_signed_in:
+                out[kind]["selected"] = f"{provider}::{normalize_media_model(kind, provider, model)}"
+        out[kind]["options"].sort(key=lambda row: (row["provider"] != "navin", row["provider_label"].lower(), row["label"].lower()))
+    return out
+
+
+def _apply_media_model_choice(config: Config, kind: str, raw: str) -> bool:
+    provider, _, model = raw.partition("::")
+    provider, model = provider.strip().lower(), model.strip()
+    if kind == "live" and not provider and not model:
+        changed = bool(config.voice.live_realtime_model)
+        config.voice.live_realtime_provider = ""
+        config.voice.live_realtime_model = ""
+        return changed
+    if not provider or not model or len(model) > 200:
+        raise WebUISettingsError(f"media_model_{kind} must be provider::model")
+    if provider != "navin" and getattr(config.providers, provider, None) is None:
+        raise WebUISettingsError(f"unknown provider {provider}")
+    from navin.providers.media_choice import LIVE_PROVIDERS, normalize_media_model, set_media
+
+    if kind == "live" and provider not in LIVE_PROVIDERS:
+        raise WebUISettingsError("the Live realtime engine supports Navin, OpenAI and Gemini models")
+    if _media_selected(config, kind) == (provider, normalize_media_model(kind, provider, model)):
+        return False
+    set_media(config, kind, provider, model)
+    if kind == "tts":
+        config.voice.selection_explicit = True
+    elif kind == "stt":
+        config.transcription.selection_explicit = True
+        config.transcription.enabled = True
+    return True
+
+
 def settings_payload(
     *,
     requires_restart: bool = False,
@@ -1874,6 +2210,16 @@ def settings_payload(
             config = load_config()
         except Exception:
             pass
+    # Providers disconnected before the cleanup existed (Gemini, Z.ai...): their
+    # models and picks leave now, the defaults move on.
+    try:
+        from navin.providers.provider_removal import prune_disconnected_providers
+
+        if prune_disconnected_providers(config):
+            save_config(config)
+            config = load_config()
+    except Exception:  # noqa: BLE001 - a cleanup must never break the Settings page
+        pass
     # Paid plan: Groq/whisper leftovers must not stick on Settings → Voice.
     # Runs offline so an open Voice page always shows Navin + managed STT/TTS.
     if live_account:
@@ -2105,7 +2451,11 @@ def settings_payload(
         model_presets.append(
             {
                 "name": name,
-                "label": preset.label or name,
+                "label": (
+                    bedrock_display_name(preset.model, preset.label)
+                    if (preset.provider or "").strip().lower() == "bedrock"
+                    else preset.label
+                ) or name,
                 "active": active_preset_name == name,
                 "is_default": False,
                 "model": preset.model,
@@ -2157,6 +2507,17 @@ def settings_payload(
         },
         "model_presets": model_presets,
         "model_routes": dict(config.model_routes),
+        "model_routing_enabled": bool(config.model_routing_enabled),
+        # Collaboration Mode switch (Settings > Team and the chat's model menu).
+        "collab_enabled": bool(config.collab.enabled),
+        "collab_members": [
+            {"id": m.id, "name": m.name, "title": m.title, "avatar": m.avatar, "color": m.color}
+            for m in config.collab.members if m.enabled
+        ],
+        "collab_teams": [
+            {"id": t.id, "name": t.name, "members": list(t.members)} for t in config.collab.teams
+        ],
+        "collab_default_team": config.collab.default_team,
         "providers": providers,
         "web_search": {
             "provider": search_provider,
@@ -2203,6 +2564,11 @@ def settings_payload(
             "live_view": config.tools.browser.live_view,
         },
         "computer": _computer_payload(config),
+        "execution": {
+            "target": config.tools.execution.target,
+            "aws_accepted": config.tools.execution.aws_accepted,
+            "licensed": bool(config.license.device),
+        },
         "observability": {
             "provider": "langfuse",
             "configured": bool(
@@ -2211,6 +2577,8 @@ def settings_payload(
             ),
             "base_url": os.environ.get("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com",
         },
+        "media_models": media_model_choices(config),
+        "media_providers": connected_media_providers(config),
         "image_generation": {
             "enabled": image_generation_enabled,
             "enabled_auto": image_config.enabled is None,
@@ -2320,7 +2688,12 @@ def settings_payload(
             "realtime_enabled": getattr(config.voice, "realtime_enabled", None),
             "realtime_allowed": voice_realtime_allowed(config),
             "realtime_required_plans": ["pro", "ultra", "team"],
-            "live": live_voice_status(config),
+            "live": live_voice_status(config, include_realtime=True),
+            # Live engine: realtime (voice-to-voice model) / pipeline / auto.
+            "live_engine": getattr(config.voice, "live_engine", "auto"),
+            "live_realtime_provider": getattr(config.voice, "live_realtime_provider", "") or "",
+            "live_realtime_model": getattr(config.voice, "live_realtime_model", "") or "",
+            "live_realtime_voice": getattr(config.voice, "live_realtime_voice", "") or "",
             "managed_defaults": {"stt_model": NAVIN_STT_MODEL, "tts_model": NAVIN_TTS_MODEL, "voice": "auto"},
             "providers": _tts_provider_rows(config),
             "managed_models": [
@@ -2571,9 +2944,69 @@ def update_agent_settings(query: QueryParams) -> dict[str, Any]:
     changed = changed or computer_changed
     restart_required = restart_required or computer_restart
 
+    # One model per use; its provider follows (no separate provider choice).
+    for kind in MEDIA_CHOICE_KINDS:
+        raw = _query_first_alias(query, f"media_model_{kind}", f"mediaModel{kind.capitalize()}")
+        if raw is not None and _apply_media_model_choice(config, kind, raw):
+            changed = True
+            restart_required = restart_required or kind in {"image", "video"}
+
+    # Settings > Voice > Live engine.
+    live_engine = _query_first_alias(query, "voice_live_engine", "voiceLiveEngine")
+    if live_engine is not None:
+        value = live_engine.strip().lower()
+        if value not in {"auto", "realtime", "pipeline"}:
+            raise WebUISettingsError("voice_live_engine must be auto, realtime or pipeline")
+        if config.voice.live_engine != value:
+            config.voice.live_engine = value  # type: ignore[assignment]
+            changed = True
+    live_voice = _query_first_alias(query, "voice_live_realtime_voice", "voiceLiveRealtimeVoice")
+    if live_voice is not None:
+        value = live_voice.strip()[:64]
+        if config.voice.live_realtime_voice != value:
+            config.voice.live_realtime_voice = value
+            changed = True
+
+    # Settings > Execution: local (default) or the AWS cloud sandbox.
+    execution_changed, execution_restart = _apply_execution_settings(config, query)
+    changed = changed or execution_changed
+    restart_required = restart_required or execution_restart
+
     if changed:
         save_config(config)
     return settings_payload(requires_restart=restart_required)
+
+
+_EXECUTION_TARGETS = ("local", "aws")
+
+
+def _apply_execution_settings(config: Config, query: dict[str, list[str]]) -> tuple[bool, bool]:
+    """exec and the browser reread the target on each call; the sandbox_files
+    tool is registered at startup, hence the restart when the target moves."""
+    execution = config.tools.execution
+    changed = restart = False
+    accepted = _query_first_alias(query, "execution_aws_accepted", "executionAwsAccepted")
+    if accepted is not None:
+        flag = _parse_bool(accepted, "execution_aws_accepted")
+        if execution.aws_accepted != flag:
+            execution.aws_accepted = flag
+            changed = True
+            if not flag and execution.target == "aws":
+                execution.target = "local"
+                restart = True
+    target = _query_first_alias(query, "execution_target", "executionTarget")
+    if target is not None:
+        value = target.strip().lower()
+        if value not in _EXECUTION_TARGETS:
+            raise WebUISettingsError("execution_target must be local or aws")
+        if value == "aws" and not execution.aws_accepted:
+            raise WebUISettingsError("accept the cloud execution terms before choosing AWS")
+        if value == "aws" and not config.license.device:
+            raise WebUISettingsError("cloud execution needs this device signed in to a paid Navin plan")
+        if execution.target != value:
+            execution.target = value  # type: ignore[assignment]
+            changed = restart = True
+    return changed, restart
 
 
 _COMPUTER_ASK_VALUES = ("never", "destructive", "always")
@@ -3068,6 +3501,15 @@ def update_model_route(query: QueryParams) -> dict[str, Any]:
     the model preset name to route that role to; an empty ``preset`` clears
     the route.
     """
+    raw_enabled = (_query_first(query, "enabled") or "").strip().lower()
+    if raw_enabled:
+        # The routing switch (Settings > Models > Task routing, and the chat).
+        config = load_config()
+        enabled = raw_enabled in {"1", "true", "yes", "on"}
+        if config.model_routing_enabled != enabled:
+            config.model_routing_enabled = enabled
+            save_config(config)
+        return settings_payload()
     role = (_query_first(query, "role") or "").strip().lower()
     if not role or not _MODEL_ROUTE_ROLE_RE.match(role):
         raise WebUISettingsError("invalid role")
@@ -3099,6 +3541,28 @@ def update_model_route(query: QueryParams) -> dict[str, Any]:
     return settings_payload()
 
 
+_AWS_REGION = re.compile(r"^[a-z]{2}(?:-gov)?-[a-z]+-\d$")
+_AWS_PROFILE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
+
+
+def _apply_aws_fields(provider_config: Any, query: QueryParams) -> bool:
+    """AWS region / profile of the Bedrock provider; True when one changed."""
+    changed = False
+    for snake, camel, attr, pattern, label in (
+        ("aws_region", "awsRegion", "region", _AWS_REGION, "AWS region (e.g. us-east-2)"),
+        ("aws_profile", "awsProfile", "profile", _AWS_PROFILE, "AWS profile name"),
+    ):
+        if snake not in query and camel not in query:
+            continue
+        value = (_query_first_alias(query, snake, camel) or "").strip() or None
+        if value is not None and not pattern.match(value):
+            raise WebUISettingsError(f"invalid {label}")
+        if getattr(provider_config, attr, None) != value:
+            setattr(provider_config, attr, value)
+            changed = True
+    return changed
+
+
 def update_provider_settings(query: QueryParams) -> dict[str, Any]:
     provider_name = (_query_first(query, "provider") or "").strip()
     if not provider_name:
@@ -3119,6 +3583,7 @@ def update_provider_settings(query: QueryParams) -> dict[str, Any]:
 
     changed = False
     supports_auth = provider_supports_auth_mode(provider_key)
+    was_configured = _provider_configured_for_settings(spec, provider_config)
 
     if "api_key" in query or "apiKey" in query:
         api_key = _query_first_alias(query, "api_key", "apiKey")
@@ -3157,6 +3622,12 @@ def update_provider_settings(query: QueryParams) -> dict[str, Any]:
             if provider_config.api_type != parsed_api_type:
                 provider_config.api_type = parsed_api_type
                 changed = True
+
+    if spec.backend == "bedrock":
+        # Bedrock: a Bedrock API key (bearer), the AWS region of the calls and
+        # an optional AWS profile (access key + secret in ~/.aws/credentials).
+        aws_changed = _apply_aws_fields(provider_config, query)
+        changed = changed or aws_changed
 
     connection_changed = False
     region = _optional_connection_field(
@@ -3197,6 +3668,11 @@ def update_provider_settings(query: QueryParams) -> dict[str, Any]:
             provider_config.api_base = filled
             changed = True
 
+    if changed and was_configured and not _provider_configured_for_settings(spec, provider_config):
+        # Disconnected: its models leave every list and pick, the defaults move on.
+        from navin.providers.provider_removal import forget_provider
+
+        forget_provider(config, provider_key)
     if changed:
         save_config(config)
     image_config = config.tools.image_generation
@@ -3972,9 +4448,31 @@ def update_live_voice_settings(query: QueryParams) -> dict[str, Any]:
     config = load_config()
     stt_changed = _apply_transcription_settings(config, query)
     tts_changed = _apply_voice_settings(config, query)
-    if stt_changed or tts_changed:
+    live_changed = _apply_live_engine_settings(config, query)
+    if stt_changed or tts_changed or live_changed:
         save_config(config)
     return settings_payload()
+
+
+def _apply_live_engine_settings(config: Config, query: QueryParams) -> bool:
+    """Live engine (auto / realtime / pipeline), realtime model and its voice."""
+    changed = False
+    engine = _query_first_alias(query, "live_engine", "liveEngine")
+    if engine is not None:
+        value = engine.strip().lower()
+        if value not in {"auto", "realtime", "pipeline"}:
+            raise WebUISettingsError("live_engine must be auto, realtime or pipeline")
+        if config.voice.live_engine != value:
+            config.voice.live_engine = value  # type: ignore[assignment]
+            changed = True
+    model = _query_first_alias(query, "live_realtime", "liveRealtime")
+    if model is not None and _apply_media_model_choice(config, "live", model):
+        changed = True
+    voice = _query_first_alias(query, "live_realtime_voice", "liveRealtimeVoice")
+    if voice is not None and config.voice.live_realtime_voice != voice.strip()[:64]:
+        config.voice.live_realtime_voice = voice.strip()[:64]
+        changed = True
+    return changed
 
 
 def _apply_voice_settings(config: Config, query: QueryParams) -> bool:

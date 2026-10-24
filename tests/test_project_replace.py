@@ -192,5 +192,75 @@ class SearchGlobTest(unittest.TestCase):
             self.assertFalse(path.startswith(("/", "./")), path)
 
 
+class WslSearchPanelTest(unittest.TestCase):
+    """The Search panel on a \\\\wsl.localhost project, seen from Windows.
+
+    The Windows ripgrep read every file over the 9P bridge (minutes on a large
+    project); the search now runs inside the distribution.
+    """
+
+    unc = Path("\\\\wsl.localhost\\Ubuntu\\home\\me\\shop")
+    hit = (
+        '{"type":"match","data":{"path":{"text":"./src/a.ts"},"lines":{"text":"needle\\n"},'
+        '"line_number":3,"submatches":[{"start":0}]}}\n'
+    )
+
+    def setUp(self) -> None:
+        from unittest import mock
+
+        from navin.utils import wsl
+
+        for name, value in (("wsl_executable", "wsl.exe"), ("resolve_distro", "Ubuntu")):
+            patcher = mock.patch.object(wsl, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _search(self, *results):
+        import subprocess
+        from unittest import mock
+
+        from navin.webui import project_search
+
+        done = [subprocess.CompletedProcess([], code, stdout=out, stderr="") for code, out in results]
+        with mock.patch.object(project_search, "_run_rg", side_effect=done) as run, \
+                mock.patch.object(project_search.shutil, "which", return_value="C:\\rg.exe"):
+            rows = project_search._rg_search(
+                self.unc, "needle", regex=False, case_sensitive=False, platform="win32",
+            )
+        return rows, [call.args[0] for call in run.call_args_list], run.call_args_list
+
+    def test_runs_the_distribution_ripgrep_from_the_project_root(self):
+        rows, argvs, calls = self._search((0, self.hit))
+        self.assertEqual(len(argvs), 1)
+        self.assertEqual(argvs[0][:6], ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/shop", "--exec"])
+        self.assertEqual(argvs[0][-3:], ["--", "needle", "."])
+        self.assertIsNone(calls[0].kwargs["cwd"])  # wsl.exe cannot start in a UNC folder
+        self.assertEqual(rows, [{"path": "src/a.ts", "line": 3, "col": 1, "text": "needle"}])
+
+    def test_no_ripgrep_in_the_distribution_falls_back_to_the_windows_one(self):
+        rows, argvs, calls = self._search((127, ""), (0, self.hit))
+        self.assertEqual(argvs[1][0], "C:\\rg.exe")
+        self.assertEqual(calls[1].kwargs["cwd"], str(self.unc))
+        self.assertEqual([row["path"] for row in rows], ["src/a.ts"])
+
+    def test_a_local_project_never_goes_through_wsl(self):
+        from navin.webui import project_search
+
+        self.assertIsNone(project_search._wsl_rg_prefix(Path("/home/me/shop"), platform="win32"))
+        self.assertIsNone(project_search._wsl_rg_prefix(self.unc, platform="linux"))
+
+    def test_reading_stops_once_the_kept_rows_are_in(self):
+        # --max-count is per file: "import" over a large repo printed 2 GB.
+        import sys
+
+        from navin.webui import project_search
+
+        line = '{"type":"match","data":{}}'
+        script = f"import sys\nfor _ in range(10**7): sys.stdout.write({line!r} + '\\n')"
+        out = project_search._run_rg([sys.executable, "-c", script], cwd=None)
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.count("\n"), project_search._MAX_RESULTS)
+
+
 if __name__ == "__main__":
     unittest.main()

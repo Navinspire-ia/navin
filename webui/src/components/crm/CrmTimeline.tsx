@@ -218,7 +218,7 @@ export function CrmTimeline({
           <li className="text-muted-foreground">{tx("crm.noTimeline", "Pas encore d'historique.")}</li>
         ) : (
           rows.slice(0, 80).map((row) => (
-            <li key={row.id} className="border-l-2 border-violet-400/50 pl-2">
+            <li key={row.id} className="border-s-2 border-violet-400/50 ps-2">
               <div className="font-medium">{row.title}</div>
               {row.kind ? (
                 <div className="text-[11px] uppercase text-muted-foreground">

@@ -75,11 +75,18 @@ def _progress_events(bus: _OutboundBus) -> list[SubagentProgressEvent]:
     return events
 
 
+def _progress_manager(bus: _OutboundBus) -> SubagentManager:
+    manager = SubagentManager.__new__(SubagentManager)
+    manager.bus = bus
+    manager._agent_sessions = {}
+    manager._journal_instance = None
+    return manager
+
+
 class SubagentProgressPublishTest(unittest.TestCase):
     def test_publish_progress_emits_websocket_event(self) -> None:
         bus = _OutboundBus()
-        mgr = SubagentManager.__new__(SubagentManager)
-        mgr.bus = bus
+        mgr = _progress_manager(bus)
         status = SubagentStatus(
             task_id="abcd1234",
             label="Build artifacts",
@@ -89,22 +96,30 @@ class SubagentProgressPublishTest(unittest.TestCase):
             model="test-model",
             origin_channel="websocket",
             origin_chat_id="chat-1",
-            tool_events=[{"name": "write_file", "status": "running"}],
+            tool_events=[{
+                "name": "write_file",
+                "status": "running",
+                "args": {"path": "src/locales/ar.json"},
+            }],
         )
         mgr._publish_progress(status, force=True)
         events = _progress_events(bus)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].task_id, "abcd1234")
         self.assertEqual(events[0].label, "Build artifacts")
-        self.assertIn("write_file", events[0].status_line)
+        self.assertEqual(events[0].status_line, "Writing ar.json")
+        self.assertEqual(
+            events[0].steps,
+            [{"kind": "write", "name": "write_file", "verb": "Writing",
+              "target": "ar.json", "status": "running"}],
+        )
         self.assertEqual(events[0].model, "test-model")
         self.assertFalse(events[0].done)
 
     def test_cli_origin_gets_live_rows_with_time_and_tokens(self) -> None:
         # The terminal UI draws one row per running agent under the chat.
         bus = _OutboundBus()
-        mgr = SubagentManager.__new__(SubagentManager)
-        mgr.bus = bus
+        mgr = _progress_manager(bus)
         status = SubagentStatus(
             task_id="x",
             label="tests-commerce",
@@ -123,8 +138,7 @@ class SubagentProgressPublishTest(unittest.TestCase):
 
     def test_chat_channels_get_no_progress_noise(self) -> None:
         bus = _OutboundBus()
-        mgr = SubagentManager.__new__(SubagentManager)
-        mgr.bus = bus
+        mgr = _progress_manager(bus)
         status = SubagentStatus(
             task_id="x",
             label="L",
@@ -138,8 +152,7 @@ class SubagentProgressPublishTest(unittest.TestCase):
 
     def test_throttle_skips_identical_status_line(self) -> None:
         bus = _OutboundBus()
-        mgr = SubagentManager.__new__(SubagentManager)
-        mgr.bus = bus
+        mgr = _progress_manager(bus)
         status = SubagentStatus(
             task_id="t",
             label="L",
@@ -157,8 +170,7 @@ class SubagentProgressPublishTest(unittest.TestCase):
 
     def test_force_and_done_bypass_throttle(self) -> None:
         bus = _OutboundBus()
-        mgr = SubagentManager.__new__(SubagentManager)
-        mgr.bus = bus
+        mgr = _progress_manager(bus)
         status = SubagentStatus(
             task_id="t",
             label="L",
@@ -184,7 +196,124 @@ class SubagentProgressPublishTest(unittest.TestCase):
             phase="error",
             error="disk full",
         )
-        self.assertEqual(SubagentManager._status_line(status), "disk full")
+        # Raw backend text (paths, class names, hosts) never reaches the card.
+        self.assertEqual(SubagentManager._status_line(status), "Stopped on an error")
+
+    def test_status_line_humanizes_llm_errors(self) -> None:
+        def line(error: str, kind: str | None = None) -> str:
+            return SubagentManager._status_line(SubagentStatus(
+                task_id="t", label="L", task_description="d", started_at=0.0,
+                phase="error", error=error, error_kind=kind,
+            ))
+
+        self.assertEqual(line("Error calling LLM: timed out after 300s"), "Model timed out")
+        self.assertEqual(line("Error calling LLM: request timed out after 120s"), "Model timed out")
+        self.assertEqual(line("Error calling LLM: stream stalled\n\nWork so far: ..."), "Model stream stalled")
+        # The runner tags a stall as a timeout too; the exact prefix wins.
+        self.assertEqual(line("Error calling LLM: stream stalled", "timeout"), "Model stream stalled")
+        self.assertEqual(line("Sorry, the model took too long.", "timeout"), "Model timed out")
+        self.assertEqual(line("cancelled"), "Cancelled")
+        self.assertEqual(line("anything", "limit"), "Reached its step limit")
+        self.assertEqual(
+            line("Error: connection refused by upstream gateway at 10.0.0.1. Retry later please"),
+            "Stopped on an error",
+        )
+
+    def test_error_kind_is_not_guessed_from_prose(self) -> None:
+        from navin.agent.subagent import _humanize_error
+
+        # Substrings anywhere in the text used to decide the kind, so a model
+        # explaining a "timeout" setting read as a timed-out model.
+        self.assertEqual(_humanize_error("I raised the timeout in config.py")[0], "other")
+        self.assertEqual(_humanize_error("The cancel button is broken")[0], "other")
+        self.assertEqual(_humanize_error("The stream stalled earlier")[0], "other")
+        self.assertEqual(_humanize_error("cancelled")[0], "cancelled")
+        self.assertEqual(_humanize_error("x", "connection")[0], "other")
+
+    def test_progress_frame_carries_no_raw_error_text(self) -> None:
+        bus = _OutboundBus()
+        mgr = _progress_manager(bus)
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="error", origin_channel="websocket", origin_chat_id="c",
+            error="Error: OSError at /home/a/x.py connecting to 10.0.0.1",
+        )
+        mgr._publish_progress(status, force=True, done=True)
+        (event,) = _progress_events(bus)
+        self.assertEqual(event.error_kind, "other")
+        self.assertEqual(event.error, "Stopped on an error")
+        self.assertNotIn("10.0.0.1", json.dumps(event.__dict__, default=str))
+
+    def test_same_line_is_throttled_longer_than_a_changed_one(self) -> None:
+        bus = _OutboundBus()
+        mgr = _progress_manager(bus)
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="responding", origin_channel="websocket", origin_chat_id="c",
+        )
+        with mock.patch("navin.agent.subagent.time.monotonic", return_value=100.0):
+            mgr._publish_progress(status)
+        with mock.patch("navin.agent.subagent.time.monotonic", return_value=101.0):
+            mgr._publish_progress(status)
+        self.assertEqual(len(_progress_events(bus)), 1)
+        with mock.patch("navin.agent.subagent.time.monotonic", return_value=101.2):
+            status.phase = "thinking"
+            mgr._publish_progress(status)
+        self.assertEqual([e.status_line for e in _progress_events(bus)], ["Thinking…"])
+        with mock.patch("navin.agent.subagent.time.monotonic", return_value=102.8):
+            mgr._publish_progress(status)
+        self.assertEqual(len(_progress_events(bus)), 1)
+
+    def test_running_tool_batch_survives_the_tools_completed_checkpoint(self) -> None:
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="tools_completed",
+            steps=[{"kind": "read", "name": "read_file", "verb": "Read",
+                    "target": "en.json", "status": "ok"}],
+            tool_events=[{"name": "write_file", "status": "running",
+                          "args": {"path": "fr.json"}}],
+        )
+        steps = SubagentManager._progress_steps(status)
+        self.assertEqual(steps[-1]["target"], "fr.json")
+        self.assertEqual(steps[-1]["status"], "running")
+
+    def test_apply_patch_without_a_path_names_files(self) -> None:
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="tools_completed",
+            tool_events=[{"name": "apply_patch", "status": "ok", "args": {}}],
+        )
+        self.assertEqual(SubagentManager._status_line(status), "Edited files")
+
+    def test_status_line_never_shows_raw_tool_output(self) -> None:
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="tools_completed",
+            tool_events=[{
+                "name": "write_file",
+                "status": "ok",
+                "detail": "Successfully wrote 2982 characters to \\\\wsl.localhost\\Ubuntu\\home\\a\\ar.json",
+                "args": {"path": "\\\\wsl.localhost\\Ubuntu\\home\\a\\ar.json"},
+            }],
+        )
+        self.assertEqual(SubagentManager._status_line(status), "Wrote ar.json")
+        status.tool_events = [{
+            "name": "exec", "status": "running",
+            "args": {"command": "python3 scripts/translate.py --lang ar"},
+        }]
+        status.phase = "awaiting_tools"
+        self.assertEqual(
+            SubagentManager._status_line(status),
+            "Running python3 scripts/translate.py --lang ar",
+        )
+        # A failed (and usually retried) call is not the live line: the last
+        # step that went right is.
+        status.steps = [{"kind": "read", "name": "read_file", "verb": "Read",
+                         "target": "en.json", "status": "ok"}]
+        status.tool_events = [{"name": "read_file", "status": "error",
+                               "args": {"path": "C:\\Users\\me\\common.json"}}]
+        status.phase = "tools_completed"
+        self.assertEqual(SubagentManager._status_line(status), "Read en.json")
 
 
 class SubagentHookProgressTest(unittest.IsolatedAsyncioTestCase):
@@ -219,6 +348,51 @@ class SubagentHookProgressTest(unittest.IsolatedAsyncioTestCase):
         await hook.after_iteration(ctx)
         self.assertEqual(status.phase, "tools_completed")
         self.assertIn("tools_completed", seen)
+        self.assertEqual(status.tool_events[0]["args"], {"path": "a.py"})
+        self.assertEqual(
+            status.steps,
+            [{"kind": "read", "name": "read_file", "verb": "Read",
+              "target": "a.py", "status": "ok"}],
+        )
+
+    async def test_hook_streams_so_slow_models_are_not_killed(self) -> None:
+        # A non-streamed call is capped at the raw LLM wall clock over all of
+        # its retries; a stream gets stall detection and the longer wall.
+        self.assertTrue(_SubagentHook("s1").wants_streaming())
+
+    async def test_error_is_cleared_once_the_subagent_moves_on(self) -> None:
+        status = SubagentStatus(
+            task_id="h2", label="L", task_description="t", started_at=0.0,
+        )
+        hook = _SubagentHook("h2", status)
+        ctx = AgentHookContext(iteration=1, messages=[], error="Error calling LLM: timed out")
+        await hook.after_iteration(ctx)
+        self.assertEqual(status.phase, "error")
+        ctx = AgentHookContext(
+            iteration=2,
+            messages=[],
+            tool_calls=[ToolCallRequest(id="2", name="write_file", arguments={"path": "b.json"})],
+        )
+        await hook.before_execute_tools(ctx)
+        self.assertIsNone(status.error)
+        self.assertEqual(SubagentManager._status_line(status), "Writing b.json")
+
+    async def test_steps_keep_only_the_most_recent(self) -> None:
+        status = SubagentStatus(
+            task_id="h3", label="L", task_description="t", started_at=0.0,
+        )
+        hook = _SubagentHook("h3", status)
+        for i in range(12):
+            ctx = AgentHookContext(
+                iteration=i,
+                messages=[],
+                tool_calls=[ToolCallRequest(id=str(i), name="read_file", arguments={"path": f"f{i}.py"})],
+                tool_events=[{"name": "read_file", "status": "error" if i == 11 else "ok"}],
+            )
+            await hook.after_iteration(ctx)
+        self.assertEqual(len(status.steps), 8)
+        self.assertEqual(status.steps[0]["target"], "f4.py")
+        self.assertEqual(status.steps[-1]["status"], "error")
 
 
 class ThreeWebsocketSubagentsLiveTest(unittest.IsolatedAsyncioTestCase):

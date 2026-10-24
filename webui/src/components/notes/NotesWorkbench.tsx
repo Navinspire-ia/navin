@@ -822,7 +822,7 @@ export function NotesWorkbench({
   if (!token) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+        <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden />
         {t("notes.connecting", { defaultValue: "Connecting…" })}
       </div>
     );
@@ -846,7 +846,7 @@ export function NotesWorkbench({
           </span>
           <div className="relative shrink-0">
             <Search
-              className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              className="pointer-events-none absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
             />
             <input
@@ -859,13 +859,13 @@ export function NotesWorkbench({
               placeholder={t("notes.searchPlaceholder", {
                 defaultValue: "Search notes… (Ctrl+K)",
               })}
-              className="h-10 w-36 rounded-lg border border-border/70 bg-background pl-7 pr-7 text-[12.5px] outline-none transition-colors focus:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary sm:w-56"
+              className="h-10 w-36 rounded-lg border border-border/70 bg-background ps-7 pe-7 text-[12.5px] outline-none transition-colors focus:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary sm:w-56"
             />
             {search ? (
               <button
                 type="button"
                 onClick={() => setSearch("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                className="absolute end-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
                 aria-label={t("notes.clearSearch", { defaultValue: "Clear search" })}
               >
                 <X className="h-3 w-3" aria-hidden />
@@ -882,7 +882,7 @@ export function NotesWorkbench({
             data-testid="notes-new"
           />
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ms-auto flex shrink-0 items-center gap-2">
           {onToggleChat ? (
             <IconButton
               ariaLabel={
@@ -908,7 +908,7 @@ export function NotesWorkbench({
 
       <div className="flex min-h-0 flex-1">
         {/* Sections rail */}
-        <div className="flex w-40 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border/60 bg-muted/10 p-2 sm:w-52">
+        <div className="flex w-40 shrink-0 flex-col gap-0.5 overflow-y-auto border-e border-border/60 bg-muted/10 p-2 sm:w-52">
           <RailButton
             icon={StickyNote}
             label={t("notes.sections.all", { defaultValue: "All notes" })}
@@ -1067,7 +1067,7 @@ export function NotesWorkbench({
 
         {/* Middle: list for the active section */}
         {section.kind === "notes" ? (
-          <div className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-border/60 sm:w-72">
+          <div className="flex w-52 shrink-0 flex-col overflow-y-auto border-e border-border/60 sm:w-72">
             {search.trim() ? (
               <NotesSearchResults
                 query={search.trim()}
@@ -1135,7 +1135,7 @@ export function NotesWorkbench({
                         }),
                       )
                     }
-                    className="mx-1 mb-1 flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-left text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
+                    className="mx-1 mb-1 flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-start text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
                   >
                     <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     <span className="min-w-0 truncate">
@@ -1153,7 +1153,7 @@ export function NotesWorkbench({
                     layout="position"
                     onClick={() => void openNote(note.id)}
                     className={cn(
-                      "flex flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+                      "flex flex-col gap-0.5 rounded-lg px-2.5 py-2 text-start transition-colors",
                       selectedId === note.id
                         ? "bg-muted/80"
                         : "hover:bg-muted/40",
@@ -1280,13 +1280,13 @@ export function NotesWorkbench({
               {/* Note toolbar */}
               <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-4 py-1.5">
                 <SaveBadge state={saveState} onReload={reloadAfterConflict} />
-                <div className="ml-auto flex items-center gap-0.5">
+                <div className="ms-auto flex items-center gap-0.5">
                   {onSeed || onRun ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
-                          className="mr-1 flex h-7 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-primary transition-colors hover:bg-primary/10"
+                          className="me-1 flex h-7 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-primary transition-colors hover:bg-primary/10"
                           title={t("notes.ask.menu", { defaultValue: "Navin IA" })}
                           aria-label={t("notes.ask.menu", {
                             defaultValue: "Navin IA",
@@ -1641,7 +1641,7 @@ function RailButton({
       )}
     >
       <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-start">{label}</span>
       {badge !== undefined ? (
         <span className="text-[10.5px] tabular-nums text-muted-foreground/70">
           {badge}
@@ -1671,7 +1671,7 @@ function FolderTree({
   return (
     <>
       {nodes.map((node) => (
-        <div key={node.path} style={{ paddingLeft: depth ? 12 : 0 }}>
+        <div key={node.path} style={{ paddingInlineStart: depth ? 12 : 0 }}>
           <div className="group/folder relative">
             <RailButton
               icon={Folder}
@@ -1686,7 +1686,7 @@ function FolderTree({
                 event.stopPropagation();
                 onDelete(node.path, node.count);
               }}
-              className="absolute right-1 top-1/2 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-[hsl(var(--card))] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive group-hover/folder:flex"
+              className="absolute end-1 top-1/2 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-[hsl(var(--card))] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive group-hover/folder:flex"
               aria-label={t("notes.folders.deleteAction", {
                 name: node.name,
                 defaultValue: "Delete folder {{name}}",
@@ -1879,7 +1879,7 @@ function TasksPane({
             >
               <FileText className="h-2.5 w-2.5" aria-hidden />
               {task.note_title}
-              <ChevronRight className="h-2.5 w-2.5" aria-hidden />
+              <ChevronRight className="rtl:-scale-x-100 h-2.5 w-2.5" aria-hidden />
             </button>
           </div>
           {task.due ? (
@@ -1972,7 +1972,7 @@ function FilesPane({
           key={file.path}
           type="button"
           onClick={() => onPreview(file)}
-          className="flex flex-col gap-1 rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-muted/40"
+          className="flex flex-col gap-1 rounded-xl border border-border/60 p-3 text-start transition-colors hover:bg-muted/40"
         >
           <Paperclip className="h-4 w-4 text-muted-foreground" aria-hidden />
           <span className="w-full truncate text-[12.5px] font-medium">{file.name}</span>

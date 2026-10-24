@@ -442,9 +442,12 @@ class CampaignTest(_Workspace):
             self.assertNotIn(forbidden, names)
         self.assertTrue({"read_file", "write_file", "edit_file", "list_dir", "grep", "find_files"} <= names, names)
         # The web and the desk are the file-backed fixtures, never the real browser or a live desk.
-        from navin.policy.sandbox_tools import FixtureBrowserTool, FixtureDeskTool
+        from navin.policy.sandbox_tools import FixtureDeskTool, FixtureWebFetchTool
 
-        self.assertIsInstance(registry.get("browser"), FixtureBrowserTool)
+        # Pages are read with web_fetch, the tool the runtime points to (the
+        # browser stays off unless the user asks for it).
+        self.assertIsInstance(registry.get("web_fetch"), FixtureWebFetchTool)
+        self.assertIsNone(registry.get("browser"))
         self.assertIsInstance(registry.get("desk"), FixtureDeskTool)
         outside = Path(self._tmp.name) / "outside.txt"
         outside.write_text("secret", encoding="utf-8")

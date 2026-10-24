@@ -147,12 +147,12 @@ Profil Ask/Agent/Debug, boucle stricte patch→verify, `apply_patch` only, conte
 - Mode **Ask** : metadata `read_only_tools` → runner refuse tout outil non lecture.
 - `/forge`, `/cruise`, `/debug` : clause `_CODE_STRICT_LOOP_CLAUSE`.
 - `CODE_DENIED_TOOLS = {"scrape"}`.
-- `APPLY_PATCH_ONLY_METADATA_KEY` : bloque write/edit fichier hors `apply_patch`.
+- `apply_patch_only` (retire le 2026-10-23) : ne bloquait plus aucun outil, write/edit/apply_patch sont tous autorises.
 
 **Fichiers / symboles**
-- `navin/command/modules.py` : `READ_ONLY_TOOLS_METADATA_KEY`, `APPLY_PATCH_ONLY_METADATA_KEY`, `CODE_DENIED_TOOLS`
+- `navin/command/modules.py` : `READ_ONLY_TOOLS_METADATA_KEY`, `CODE_DENIED_TOOLS`
 - `navin/command/builtin.py` : `_CODE_STRICT_LOOP_CLAUSE`, wiring Ask / forge
-- `navin/agent/loop.py` : `_requires_verify_before_done`, application deny-list + apply_patch only
+- `navin/agent/loop.py` : `_requires_verify_before_done`, application deny-list
 
 #### 2.2 Boucle verify
 - Nudges si verify manquant / echoue avant "j'ai fini".

@@ -14,6 +14,22 @@ from navin.session.import_sessions import ExternalSession, SourceReport
 from navin.session.manager import SessionManager
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep discovery inside tmp_path: never the real ~, its saved roots, or
+    the Windows profile under /mnt/c (a live Cursor DB of 100+ GB there made
+    discover() grind for minutes)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(import_sessions, "_windows_homes", lambda: [])
+    monkeypatch.setattr(import_sessions, "_wsl_homes", lambda: [])
+    monkeypatch.setattr(
+        import_sessions, "_EXTRA_ROOTS_FILE", tmp_path / "saved_roots.json"
+    )
+    return home
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -388,7 +404,7 @@ def test_imported_timestamps_are_naive(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     import_sessions.import_to_workspace([report], workspace)
 
-    path = next((workspace / "sessions").glob("*.jsonl"))
+    path = next((workspace / ".navin" / "sessions").glob("*.jsonl"))
     lines = path.read_text(encoding="utf-8").splitlines()
     metadata = json.loads(lines[0])
     message = json.loads(lines[1])
@@ -420,7 +436,7 @@ def test_import_without_title_gets_fallback(tmp_path: Path) -> None:
     )
     workspace = tmp_path / "ws"
     import_sessions.import_to_workspace([report], workspace)
-    path = next((workspace / "sessions").glob("*.jsonl"))
+    path = next((workspace / ".navin" / "sessions").glob("*.jsonl"))
     metadata = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     assert metadata["metadata"]["title"] == "Session importée"
 
@@ -443,7 +459,7 @@ def test_imported_keys_surface_in_webui_sidebar(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     import_sessions.import_to_workspace([report], workspace)
 
-    path = next((workspace / "sessions").glob("*.jsonl"))
+    path = next((workspace / ".navin" / "sessions").glob("*.jsonl"))
     metadata = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     assert metadata["key"].startswith("websocket:import-codex-")
     assert (
@@ -719,3 +735,50 @@ def test_discover_reports_missing_and_unsupported(
     assert by_name["oh-my-pi"].sessions == []
     assert by_name["claude-code"].status == "ready"
     assert by_name["claude-code"].sessions == []
+
+
+def _cursor_workspace_db(storage: Path, sid: str) -> Path:
+    ws = storage / "w1"
+    ws.mkdir(parents=True)
+    db = ws / "state.vscdb"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+    conn.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        (
+            f"composerData:{sid}",
+            json.dumps({"composerId": sid, "conversation": [{"type": 1, "text": "hi"}]}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_cursor_db_locked_by_a_live_cursor_does_not_block(tmp_path: Path) -> None:
+    """A writer holding an exclusive lock (Cursor running) must not stall the
+    read: the DB is opened read-only and immutable, taking no lock."""
+    storage = tmp_path / "workspaceStorage"
+    db = _cursor_workspace_db(storage, "comp-live")
+    writer = sqlite3.connect(db, isolation_level=None)
+    writer.execute("BEGIN EXCLUSIVE")
+    try:
+        sessions = import_sessions._parse_cursor(storage)
+        ids = import_sessions._cursor_ids(storage)
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+    assert [s.session_id for s in sessions] == ["comp-live"]
+    assert ids == {"comp-live"}
+
+
+def test_cursor_scan_stops_at_its_time_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exhausted budget ends the scan with what was read, never a hang."""
+    storage = tmp_path / "workspaceStorage"
+    _cursor_workspace_db(storage, "comp-late")
+    monkeypatch.setattr(import_sessions, "_CURSOR_SCAN_BUDGET_S", -1.0)
+    monkeypatch.setattr(import_sessions, "_CURSOR_COUNT_BUDGET_S", -1.0)
+    assert import_sessions._parse_cursor(storage) == []
+    assert import_sessions._cursor_ids(storage) == set()

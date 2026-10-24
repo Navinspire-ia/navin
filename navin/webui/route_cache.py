@@ -57,6 +57,24 @@ class CoalescingCache:
             if key.startswith(prefix):
                 self._values.pop(key, None)
 
+    def revalidate(
+        self,
+        key: str,
+        factory: Callable[[], Awaitable[Any]],
+        *,
+        ttl: float,
+    ) -> Any | None:
+        """The stored answer (even stale) now, and a fresh one in the background.
+
+        None when nothing is stored yet: the caller then waits with ``get``.
+        """
+        hit = self._values.get(key)
+        if hit is None:
+            return None
+        if self._inflight.get(key) is None:
+            self._spawn_refresh(key, factory, ttl)
+        return hit[1]
+
     async def get(
         self,
         key: str,

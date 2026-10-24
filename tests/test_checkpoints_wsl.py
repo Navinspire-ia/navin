@@ -62,7 +62,7 @@ while index < len(args):
     elif args[index] == "--cd":
         cwd = host(args[index + 1])
         index += 2
-    elif args[index] == "--":
+    elif args[index] in ("--", "--exec"):
         index += 1
         break
     else:
@@ -110,7 +110,7 @@ def distro(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeDistro:
             distro,
             "--cd",
             str(cwd),
-            "--",
+            "--exec",
         ],
     )
     monkeypatch.setattr(checkpoints_api, "_host_path", lambda _distro, path: fake.host(path))

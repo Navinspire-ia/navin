@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { CircleUserRound } from "lucide-react";
 
 import { useAccount } from "@/hooks/useAccount";
-import { compactAccountLine, localizedPlanLine, localizedPlanName } from "@/lib/accountPlan";
+import { bonusLine, compactAccountLine, localizedPlanLine, localizedPlanName } from "@/lib/accountPlan";
 
 /**
  * Cursor-style account chip: initial, name, plan line. Settings and the
@@ -28,6 +28,8 @@ export function SidebarAccountCard({
     compactAccountLine(t, account)
     || localizedPlanLine(t, account)
     || localizedPlanName(t, account);
+
+  const bonus = connected ? bonusLine(t, account) : "";
 
   const label = connected
     ? displayName
@@ -57,7 +59,7 @@ export function SidebarAccountCard({
     <button
       type="button"
       onClick={onClick}
-      className="group flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
+      className={`group flex ${bonus ? "min-h-[3.25rem] py-1" : "h-9"} w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-start transition-colors hover:bg-sidebar-accent/60`}
     >
       {connected && initial ? (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
@@ -79,6 +81,9 @@ export function SidebarAccountCard({
                 defaultValue: "Sync your navin.live plan",
               })}
         </span>
+        {bonus ? (
+          <span className="block truncate text-[11px] leading-4 text-primary/80">{bonus}</span>
+        ) : null}
       </span>
     </button>
   );

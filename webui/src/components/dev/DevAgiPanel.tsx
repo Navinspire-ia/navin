@@ -1153,7 +1153,7 @@ export function DevAgiPanel({
           type="button"
           variant="ghost"
           size="sm"
-          className="ml-auto h-7 gap-1.5 px-2 text-[12px]"
+          className="ms-auto h-7 gap-1.5 px-2 text-[12px]"
           onClick={() => void load()}
           disabled={loading}
           data-testid="dev-agi-refresh"
@@ -1193,7 +1193,7 @@ export function DevAgiPanel({
               <span className="truncate">{notice}</span>
               <button
                 type="button"
-                className="ml-auto text-[11px] underline-offset-2 hover:underline"
+                className="ms-auto text-[11px] underline-offset-2 hover:underline"
                 onClick={() => setNotice(null)}
               >
                 {tx("dev.agi.dismiss", "Dismiss")}
@@ -1374,7 +1374,7 @@ export function DevAgiPanel({
                     {t("dev.agi.pendingJobs", { defaultValue: "{{n}} draft job(s) pending", n: pending })}
                   </span>
                 ) : null}
-                <span className="ml-auto inline-flex items-center gap-1">
+                <span className="ms-auto inline-flex items-center gap-1">
                   {pending > 0 ? (
                     <ActionButton
                       icon={Play}
@@ -1865,7 +1865,7 @@ export function DevAgiPanel({
                       {world.beliefs_ignored.length ? (
                         <button
                           type="button"
-                          className="ml-auto text-[11px] font-normal normal-case tracking-normal underline-offset-2 hover:underline"
+                          className="ms-auto text-[11px] font-normal normal-case tracking-normal underline-offset-2 hover:underline"
                           onClick={() => void runWorldAction("restore_beliefs")}
                           disabled={busy !== null}
                           data-testid="dev-agi-world-action-restore_beliefs"
@@ -2233,7 +2233,7 @@ export function DevAgiPanel({
                             {item.source !== "trained" ? (
                               <span className="rounded-full bg-muted/70 px-1.5 text-[10.5px] text-muted-foreground">{item.source}</span>
                             ) : null}
-                            <span className="ml-auto text-[11px]">
+                            <span className="ms-auto text-[11px]">
                               {item.active ? (
                                 <span className={VERDICT_TONE.up}>
                                   {item.forced ? tx("dev.agi.policy.servingForced", "serving (forced)") : tx("dev.agi.policy.serving", "serving")}
@@ -2263,7 +2263,7 @@ export function DevAgiPanel({
                         >
                           <span className="min-w-0 flex-1 truncate" title={item.from}>
                             {item.name}
-                            <span className="ml-1 text-muted-foreground tabular-nums">{percentLabel(item.metrics?.accuracy)}</span>
+                            <span className="ms-1 text-muted-foreground tabular-nums">{percentLabel(item.metrics?.accuracy)}</span>
                           </span>
                           <button
                             type="button"

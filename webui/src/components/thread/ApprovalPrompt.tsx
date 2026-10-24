@@ -68,7 +68,7 @@ export function ApprovalPrompt({ request, queue = [], onRespond }: ApprovalPromp
       aria-labelledby={`approval-title-${request.requestId}`}
       className={cn(
         "mb-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.07]",
-        "px-3 py-2.5 text-[12px] leading-5",
+        "px-3 py-2.5 text-[14px] leading-6",
         "animate-in fade-in-0 slide-in-from-bottom-1",
       )}
     >
@@ -84,7 +84,7 @@ export function ApprovalPrompt({ request, queue = [], onRespond }: ApprovalPromp
             </p>
             {queue.length > 1 ? (
               <span
-                className="shrink-0 rounded-full border border-amber-500/35 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                className="shrink-0 rounded-full border border-amber-500/35 px-2 py-0.5 text-[12px] font-semibold text-amber-700 dark:text-amber-300"
                 aria-label={t("thread.approval.queuePosition", {
                   current: 1,
                   total: queue.length,
@@ -96,7 +96,7 @@ export function ApprovalPrompt({ request, queue = [], onRespond }: ApprovalPromp
           </div>
           <p className="mt-0.5 text-muted-foreground">{request.reason}</p>
           {request.detail ? (
-            <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 px-2 py-1.5 font-mono text-[11px] leading-[18px] text-foreground/90">
+            <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 px-2 py-1.5 font-mono text-[13px] leading-[20px] text-foreground/90">
               {request.detail}
             </pre>
           ) : null}
@@ -107,14 +107,14 @@ export function ApprovalPrompt({ request, queue = [], onRespond }: ApprovalPromp
           ) : null}
           {queue.length > 1 ? (
             <details className="mt-1.5 rounded-md border border-amber-500/20 bg-background/40 px-2 py-1">
-              <summary className="cursor-pointer select-none text-[11px] font-medium text-muted-foreground">
+              <summary className="cursor-pointer select-none text-[13px] font-medium text-muted-foreground">
                 {t("thread.approval.queuedCount", { count: queue.length - 1 })}
               </summary>
               <ul className="mt-1 space-y-1" aria-label={t("thread.approval.queuedList")}>
                 {queue.slice(1).map((queued) => (
                   <li
                     key={queued.requestId}
-                    className="flex min-w-0 items-center justify-between gap-2 text-[11px]"
+                    className="flex min-w-0 items-center justify-between gap-2 text-[13px]"
                   >
                     <span className="truncate text-foreground/85">{queued.action}</span>
                     <span className="shrink-0 font-mono text-muted-foreground">
@@ -145,7 +145,7 @@ export function ApprovalPrompt({ request, queue = [], onRespond }: ApprovalPromp
                 {t("thread.approval.allowAlways")}
               </Button>
             ) : null}
-            <span className="ml-auto text-[11px] text-muted-foreground">
+            <span className="ms-auto text-[13px] text-muted-foreground">
               {!connected
                 ? t("thread.approval.offline")
                 : remaining !== null

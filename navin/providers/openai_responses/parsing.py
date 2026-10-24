@@ -259,9 +259,13 @@ async def consume_sse_with_reasoning(
                     reasoning_content = summary
                     if on_reasoning_delta:
                         await on_reasoning_delta(summary)
-        elif event_type == "response.completed":
+        elif event_type in {"response.completed", "response.incomplete"}:
+            # ``response.incomplete`` is the terminal event of a reply cut by
+            # max_output_tokens: it must read as "length", not as a clean stop.
             response_obj = event.get("response") or {}
             status = response_obj.get("status")
+            if status is None and event_type == "response.incomplete":
+                status = "incomplete"
             finish_reason = map_finish_reason(status)
             usage = _usage_from_response_obj(response_obj) or usage
             if not reasoning_content:
@@ -354,6 +358,7 @@ async def consume_sdk_stream(
     stream: Any,
     on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    on_reasoning_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, list[ToolCallRequest], str, dict[str, int], str | None]:
     """Consume an SDK async stream from ``client.responses.create(stream=True)``."""
     content = ""
@@ -363,9 +368,20 @@ async def consume_sdk_stream(
     finish_reason = "stop"
     usage: dict[str, int] = {}
     reasoning_content: str | None = None
+    streamed_reasoning = False
 
     async for event in stream:
         event_type = getattr(event, "type", None)
+        if event_type == "response.reasoning_summary_text.delta":
+            # Live reasoning summary, same as the SSE path: the UI shows it
+            # while the model thinks instead of all at once at the end.
+            delta_text = getattr(event, "delta", "") or ""
+            if delta_text:
+                reasoning_content = (reasoning_content or "") + delta_text
+                streamed_reasoning = True
+                if on_reasoning_delta:
+                    await on_reasoning_delta(delta_text)
+            continue
         if event_type == "response.output_item.added":
             item = getattr(event, "item", None)
             if item and getattr(item, "type", None) == "function_call":
@@ -444,15 +460,19 @@ async def consume_sdk_stream(
                         arguments=args,
                     )
                 )
-        elif event_type == "response.completed":
+        elif event_type in {"response.completed", "response.incomplete"}:
+            # ``response.incomplete`` ends a reply cut by max_output_tokens:
+            # report "length" so the runner continues instead of accepting it.
             resp = getattr(event, "response", None)
             status = getattr(resp, "status", None) if resp else None
+            if status is None and event_type == "response.incomplete":
+                status = "incomplete"
             finish_reason = map_finish_reason(status)
             if resp:
                 usage_obj = getattr(resp, "usage", None)
                 if usage_obj:
                     usage = _usage_from_response_obj(resp)
-                for out_item in getattr(resp, "output", None) or []:
+                for out_item in [] if streamed_reasoning else (getattr(resp, "output", None) or []):
                     if getattr(out_item, "type", None) == "reasoning":
                         for s in getattr(out_item, "summary", None) or []:
                             if getattr(s, "type", None) == "summary_text":

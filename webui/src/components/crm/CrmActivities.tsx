@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useMemo } from "react";
 
 import { CrmAddCard } from "@/components/crm/CrmAddCard";
@@ -182,7 +183,7 @@ export function CrmActivities({
                 {tx("crm.prev", "Precedent")}
               </Button>
               <p className="text-[13px] font-semibold">
-                {month.toLocaleDateString(locale, { month: "long", year: "numeric" })}
+                {month.toLocaleDateString(intlLocale(locale), { month: "long", year: "numeric" })}
               </p>
               <Button type="button" size="sm" variant="outline" className="h-8 cursor-pointer" onClick={onNextMonth}>
                 {tx("crm.next", "Suivant")}
@@ -198,7 +199,7 @@ export function CrmActivities({
                     if (!cell.date || !canWrite) return;
                     onPickDay(dayStart(cell.date));
                   }}
-                  className="min-h-20 cursor-pointer rounded-lg border border-border/50 p-1 text-left hover:bg-muted/40 disabled:cursor-default disabled:opacity-40"
+                  className="min-h-20 cursor-pointer rounded-lg border border-border/50 p-1 text-start hover:bg-muted/40 disabled:cursor-default disabled:opacity-40"
                 >
                   <div className="tabular-nums text-muted-foreground">{cell.date ? cell.date.getDate() : ""}</div>
                   {cell.items.slice(0, 3).map((row) => (
@@ -250,7 +251,7 @@ export function CrmActivities({
                       type="button"
                       onClick={() => onOpen(row.id)}
                       className={cn(
-                        "flex min-h-10 w-full cursor-pointer items-start justify-between gap-2 rounded-lg border border-border/60 px-3 py-2 text-left text-[13px] hover:bg-muted/40",
+                        "flex min-h-10 w-full cursor-pointer items-start justify-between gap-2 rounded-lg border border-border/60 px-3 py-2 text-start text-[13px] hover:bg-muted/40",
                         openId === row.id && "border-violet-400/70 bg-muted/30",
                       )}
                     >

@@ -76,6 +76,8 @@ const GLOBAL_READS = new Set([
   "/api/webui/account",
   "/api/webui/app-templates",
   "/api/webui/automations",
+  "/api/webui/computer-audit",
+  "/api/webui/computer-permissions",
   "/api/webui/diagnostics",
   "/api/webui/diagnostics/workspace",
   "/api/webui/exec-policy",

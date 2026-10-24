@@ -325,11 +325,11 @@ export function InstallSkillDialog({
         }}
         disabled={!previewTarget || (!previewTarget.markdown && !previewTarget.description)}
       >
-        <Eye className="mr-1.5 h-4 w-4" aria-hidden />
+        <Eye className="me-1.5 h-4 w-4" aria-hidden />
         {t("settings.plugins.preview", { defaultValue: "Preview" })}
       </Button>
       <Button type="button" onClick={() => void submit()} disabled={installing || !canSubmit}>
-        {installing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
+        {installing ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden /> : null}
         {source === "workspace"
           ? t("settings.plugins.workspaceAdd", { defaultValue: "Add selected" })
           : t("settings.plugins.installConfirm", { defaultValue: "Install" })}
@@ -407,7 +407,7 @@ export function InstallSkillDialog({
               />
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="outline" className="h-10 rounded-xl" onClick={() => void pickLocalFolder()}>
-                  <FolderOpen className="mr-1.5 h-4 w-4" aria-hidden />
+                  <FolderOpen className="me-1.5 h-4 w-4" aria-hidden />
                   {t("settings.plugins.chooseFolder", { defaultValue: "Choose folder" })}
                 </Button>
                 <Button
@@ -416,7 +416,7 @@ export function InstallSkillDialog({
                   className="h-10 rounded-xl"
                   onClick={() => zipInputRef.current?.click()}
                 >
-                  <Upload className="mr-1.5 h-4 w-4" aria-hidden />
+                  <Upload className="me-1.5 h-4 w-4" aria-hidden />
                   {t("settings.plugins.chooseZip", { defaultValue: "Upload zip" })}
                 </Button>
               </div>
@@ -560,7 +560,7 @@ export function InstallSkillDialog({
                   className="h-8 rounded-lg px-2.5 text-[12px]"
                   onClick={() => setPreview(item)}
                 >
-                  <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  <Eye className="me-1 h-3.5 w-3.5" aria-hidden />
                   {item.name}
                 </Button>
               ))}

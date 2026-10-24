@@ -82,7 +82,7 @@ describe("rail pills in the workbench", () => {
 
   it("shows how many terminals, pages, files, rules and tasks are open", () => {
     expect(workbench).toContain("useRailCounts({");
-    expect(workbench).toContain("railCountBadge(\n                  terminals.length");
+    expect(workbench).toContain("railCountBadge(\n                  visibleTerminals.length");
     expect(workbench).toContain("railCountBadge(\n                  browserSrc ? 1 : 0");
     expect(workbench).toContain("railCountBadge(\n                  railCounts.rules");
     expect(workbench).toContain("railCountText(railCounts.tasks.open)");

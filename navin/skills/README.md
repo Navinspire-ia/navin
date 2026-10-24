@@ -28,7 +28,8 @@ same name and are included in the agent skills summary automatically.
 | `tmux` | Control tmux sessions |
 | `clawhub` | Install skills from ClawHub |
 | `skill-creator` | Create/package skills |
-| `cron` | Schedule reminders/tasks |
+| `agent-creator` | Create custom subagents (`.navin/agents`, `~/.navin/agents`) |
+| `cron` | Schedule reminders/tasks and `/loop` |
 | `memory` | Dream memory (always on) |
 | `image-generation` | Image generation |
 | `my` | Runtime introspection |
@@ -77,11 +78,14 @@ same name and are included in the agent skills summary automatically.
 | `fullstack-dev` | Dev mode: plan/investigate/code/run/verify |
 | `project-metadata` | `.navin/metadata` knowledge base + metagraph (`/atlas`) |
 | `code-reviewer` | Code/PR review (`/inspect`, OCR 5-gates + `pr_comments`) |
+| `new-repo` | Publish a local project to a new private repo (`/publish`) |
+| `split-to-prs` | Split work into reviewable PRs, backup ref first |
 | `test-generator` | Generate & run tests |
 | `docker-operator` | Docker / Compose |
 | `kubernetes-operator` | kubectl diagnostics |
 | `terraform-agent` | Terraform plan/apply discipline |
 | `cicd-agent` | Actions / CI pipelines |
+| `pr-autopilot` | Keep a PR merge-ready: conflicts, review threads, CI (`/autopilot`) |
 | `observability-agent` | Metrics/logs/traces |
 | `api-engineer` | OpenAPI & connectors |
 | `shell-sandbox` | Safe `exec` habits |

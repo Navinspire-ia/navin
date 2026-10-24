@@ -29,6 +29,7 @@ WORKFLOW_ROUTE_ROLES: dict[str, str] = {
     "/inspect": "review",
     "/fortify": "security",
     "/debug": "deep",
+    "/reverse": "deep",
     "/probe": "security",
     "/unmask": "security",
     "/lineage": "security",
@@ -101,17 +102,18 @@ def workflow_role_for_content(content: str) -> str | None:
 # (applyComposerTurnMode); Telegram / CLI / API clients send the mode alone,
 # and used to silently fall through to the dev/default route. Kept aligned
 # with the slash mapping above: /blueprint→plan, /inspect→review,
-# /fortify→security, /debug→deep.
+# /fortify→security, /debug→deep, /reverse→deep.
 COMPOSER_MODE_ROUTE_ROLES: dict[str, str] = {
     "plan": "plan",
     "review": "review",
     "security": "security",
     "debug": "deep",
+    "reverse": "deep",
 }
 
 
 def composer_mode_role(mode: str | None) -> str | None:
-    """Route role for a bare composer mode (plan/review/security/debug)."""
+    """Route role for a bare composer mode (plan/review/security/debug/reverse)."""
     if not isinstance(mode, str):
         return None
     return COMPOSER_MODE_ROUTE_ROLES.get(mode.strip().lower())
@@ -120,9 +122,11 @@ def composer_mode_role(mode: str | None) -> str | None:
 def load_model_routes() -> dict[str, str]:
     """Current role → preset map; empty dict when config is unavailable."""
     try:
-        from navin.config.loader import load_config
+        from navin.config.loader import load_config_cached
 
-        return dict(load_config().model_routes)
+        config = load_config_cached()
+        # Routing turned off in Settings or from the chat: no route applies.
+        return dict(config.model_routes) if config.model_routing_enabled else {}
     except Exception:
         return {}
 

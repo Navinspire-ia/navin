@@ -4,8 +4,11 @@
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
 import "./globals.css";
 import "./i18n";
+import { DirectionRoot } from "./i18n/DirectionRoot";
 import { registerUsagePwa } from "./pwa";
 import { installDesktopChromeGuard } from "./lib/desktop-chrome-guard";
 import { installDisableNativeAutocorrect } from "./lib/disable-native-autocorrect";
@@ -42,7 +45,11 @@ const root = document.getElementById("root");
 if (!root) throw new Error("root element missing");
 
 /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure - see useNavinStream. */
-ReactDOM.createRoot(root).render(<App />);
+ReactDOM.createRoot(root).render(
+  <DirectionRoot>
+    <App />
+  </DirectionRoot>,
+);
 
 registerUsagePwa();
 

@@ -40,6 +40,10 @@ _HELPERS = {"no_window_kwargs", "detached_no_window_kwargs"}
 # by "<path>::<qualified name>" so moving code around does not silently expand
 # the exemption the way a line number would.
 _EXEMPT: dict[str, str] = {
+    "navin/reverse/toolchain.py::main": (
+        "`toolchain exec -- <cmd>` runs the command the user typed in their "
+        "own terminal; hiding its console would hide its output"
+    ),
     "navin/cli/commands.py::_open_webui_browser": (
         "opens the browser window the user asked for, from a CLI that already "
         "owns a console"

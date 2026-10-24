@@ -359,6 +359,9 @@ def _brand_payload(app: dict[str, Any]) -> tuple[str | None, str | None]:
     return f"https://cdn.simpleicons.org/{slug}/{color.lstrip('#')}", color
 
 
+_INSTALLED_NAMES_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -455,11 +458,23 @@ class CliAppManager:
         return apps if isinstance(apps, dict) else {}
 
     def _save_installed(self, installed: dict[str, Any]) -> None:
+        _INSTALLED_NAMES_CACHE.pop(str(self.installed_path), None)
         _write_json(self.installed_path, {"schema_version": 1, "apps": installed})
 
     def installed_names(self) -> list[str]:
-        """Return registry names explicitly installed through CLI Apps."""
-        return sorted(str(name) for name in self._load_installed())
+        """Return registry names explicitly installed through CLI Apps.
+
+        Read by the run_cli_app tool description for every agent and
+        subagent prompt; a 5 s cache keeps that off the disk (slow on WSL).
+        """
+        key = str(self.installed_path)
+        now = time.monotonic()
+        hit = _INSTALLED_NAMES_CACHE.get(key)
+        if hit is not None and now - hit[0] < 5.0:
+            return list(hit[1])
+        names = sorted(str(name) for name in self._load_installed())
+        _INSTALLED_NAMES_CACHE[key] = (now, names)
+        return list(names)
 
     def _fetch_registry(
         self,

@@ -33,7 +33,7 @@ export function MetagraphSidePanel({
         "--metagraph-panel-slot-width": !entered || isClosing ? "0px" : `${PANEL_WIDTH}px`,
       } as CSSProperties}
       className={cn(
-        "absolute inset-y-0 right-0 z-30 w-[min(100vw,var(--metagraph-panel-slot-width))] overflow-hidden",
+        "absolute inset-y-0 end-0 z-30 w-[min(100vw,var(--metagraph-panel-slot-width))] overflow-hidden",
         "transition-[width] duration-300 ease-out will-change-[width]",
         "md:relative md:z-auto md:w-[var(--metagraph-panel-slot-width)] md:min-w-0 md:shrink-0",
         isClosing && "pointer-events-none",
@@ -42,10 +42,10 @@ export function MetagraphSidePanel({
     >
       <div
         className={cn(
-          "absolute inset-y-0 right-0 flex w-[min(100vw,var(--metagraph-panel-width))] flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:w-[var(--metagraph-panel-width)] md:pb-0",
-          "border-l border-border/70 bg-background shadow-2xl md:shadow-none",
+          "absolute inset-y-0 end-0 flex w-[min(100vw,var(--metagraph-panel-width))] flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:w-[var(--metagraph-panel-width)] md:pb-0",
+          "border-s border-border/70 bg-background shadow-2xl md:shadow-none",
           "transition-[opacity,transform] duration-300 ease-out will-change-transform",
-          !entered || isClosing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100",
+          !entered || isClosing ? "translate-x-full rtl:-translate-x-full opacity-0" : "translate-x-0 opacity-100",
           "motion-reduce:translate-x-0",
         )}
       >

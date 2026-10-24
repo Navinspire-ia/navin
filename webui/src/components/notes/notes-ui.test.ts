@@ -13,8 +13,8 @@ describe("notes header chrome", () => {
     expect(src.indexOf('data-testid="notes-new"')).toBeLessThan(
       src.indexOf('data-testid="notes-toggle-chat"'),
     );
-    expect(src.indexOf("ml-auto")).toBeGreaterThan(src.indexOf('data-testid="notes-new"'));
-    expect(src.indexOf("ml-auto")).toBeLessThan(src.indexOf('data-testid="notes-toggle-chat"'));
+    expect(src.indexOf("ms-auto")).toBeGreaterThan(src.indexOf('data-testid="notes-new"'));
+    expect(src.indexOf("ms-auto")).toBeLessThan(src.indexOf('data-testid="notes-toggle-chat"'));
     expect(src).toContain('t("notes.newAction"');
     expect(src).toContain("HEADER_BUTTON_STYLES");
     expect(src).toContain("PrimaryButton");

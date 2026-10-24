@@ -36,7 +36,7 @@ from navin.agent.tools.registry import ToolRegistry
 from navin.agent.tools.search import FindFilesTool, GrepTool
 from navin.evals.agent_loop import AgentLoopCase, ScriptedProvider, _check_case
 from navin.policy.battery import PolicyCase
-from navin.policy.sandbox_tools import FixtureBrowserTool, FixtureDeskTool
+from navin.policy.sandbox_tools import FixtureDeskTool, FixtureWebFetchTool
 from navin.policy.trajectory import StateKey, Step, build_step, final_action, intent_of
 from navin.providers.base import GenerationSettings, ToolCallRequest
 from navin.utils.llm_runtime import LLMRuntime
@@ -128,7 +128,7 @@ def sandbox_registry(workspace: Path) -> ToolRegistry:
         ListDirTool(workspace=workspace),
         GrepTool(workspace=workspace),
         FindFilesTool(workspace=workspace),
-        FixtureBrowserTool(workspace=workspace),
+        FixtureWebFetchTool(workspace=workspace),
         FixtureDeskTool(workspace=workspace),
     ):
         registry.register(tool)

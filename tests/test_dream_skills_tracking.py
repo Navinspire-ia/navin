@@ -17,9 +17,19 @@ from navin.agent.memory import MemoryStore
 from navin.utils.gitstore import GitStore
 
 
+def _isolated_tmp() -> tempfile.TemporaryDirectory:
+    """A temp dir with no enclosing git repo: GitStore.init refuses to nest
+    inside one, and a stray /tmp/.git on dev hosts made these tests fail."""
+    for base in (tempfile.gettempdir(), "/var/tmp", "/dev/shm"):
+        root = Path(base).resolve()
+        if root.is_dir() and not any((d / ".git").exists() for d in (root, *root.parents)):
+            return tempfile.TemporaryDirectory(dir=root)
+    return tempfile.TemporaryDirectory()
+
+
 class GitStoreTrackedDirectoryTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = _isolated_tmp()
         self.addCleanup(self._tmp.cleanup)
         self.workspace = Path(self._tmp.name).resolve()
         self.store = GitStore(
@@ -54,6 +64,27 @@ class GitStoreTrackedDirectoryTests(unittest.TestCase):
         # After the commit the working tree is clean again.
         self.assertEqual(self.store.summarize_working_tree([".navin/skills/"]), "")
 
+    def test_auto_commit_never_walks_the_rest_of_the_workspace(self) -> None:
+        # The gateway froze ~37s on every Dream commit: the untracked scan
+        # recursed node_modules. Huge untracked trees must not be listed.
+        from unittest import mock
+
+        from dulwich import porcelain
+
+        self.store.auto_commit("dream: seed")
+        seen: list[str] = []
+        real = porcelain.status
+
+        def spy(repo, *args, **kwargs):
+            seen.append(kwargs.get("untracked_files", "normal"))
+            return real(repo, *args, **kwargs)
+
+        with mock.patch.object(porcelain, "status", spy):
+            self.assertIsNone(self.store.auto_commit("dream: nothing"))
+            self._skill("# fresh\n")
+            self.assertIsNotNone(self.store.auto_commit("dream: fresh"))
+        self.assertEqual(seen, ["no", "no"])
+
     def test_deleted_skill_file_is_staged_not_dirtied_forever(self) -> None:
         self._skill("# demo\n")
         self.store.auto_commit("dream: seed")
@@ -65,7 +96,7 @@ class GitStoreTrackedDirectoryTests(unittest.TestCase):
 
 class MemoryStoreSkillsTrackingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = _isolated_tmp()
         self.addCleanup(self._tmp.cleanup)
         self.workspace = Path(self._tmp.name).resolve()
 

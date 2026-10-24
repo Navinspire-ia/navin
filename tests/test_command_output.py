@@ -142,6 +142,16 @@ Exit code: 1
         self.assertIn("Exit code: 1", result.text)
         self.assertLess(result.filtered_chars, result.original_chars)
 
+    def test_quiet_pytest_keeps_its_bare_summary_line(self) -> None:
+        # `pytest -q` prints "2 passed in 0.01s" with no "=" frame; the
+        # spinner pattern used to drop any line starting "<digit> ".
+        for summary in ("2 passed in 0.01s", "1 failed, 3 passed in 0.20s"):
+            raw = f"..F.                                                     [100%]\n{summary}\n\nExit code: 0\n"
+            result = filter_command_output("python -m pytest -q 2>&1 | tail -5", raw)
+            self.assertIn(summary, result.text)
+        spinner = filter_command_output("npm install", "| fetching\n- resolving\nadded 3 packages\n\nExit code: 0\n")
+        self.assertNotIn("fetching", spinner.text)
+
     def test_cargo_test_all_ok(self) -> None:
         raw = """running 2 tests
 test a ... ok

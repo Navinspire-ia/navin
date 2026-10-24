@@ -25,8 +25,6 @@ the panel and the CLI; tests run it inline with a scripted runtime.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import asyncio
 import hashlib
 import json
@@ -51,7 +49,7 @@ from navin.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool
 from navin.agent.tools.registry import ToolRegistry
 from navin.agent.tools.search import FindFilesTool, GrepTool
 from navin.evals.agent_loop import AgentLoopCase, _check_case
-from navin.policy.sandbox_tools import FixtureBrowserTool, FixtureDeskTool
+from navin.policy.sandbox_tools import FixtureDeskTool, FixtureWebFetchTool
 from navin.providers.base import ToolCallRequest
 from navin.transfer.journal import append_campaign, journal, now_stamp, read_campaigns
 from navin.transfer.prereqs import prereqs
@@ -77,6 +75,7 @@ from navin.transfer.suites import (
     verify,
 )
 from navin.utils.llm_runtime import LLMRuntime
+from navin.utils.proc import no_window_kwargs
 
 HUMAN = "human"
 _CHILD_GRACE_S = 120.0
@@ -163,7 +162,7 @@ def campaign_registry(workspace: Path) -> ToolRegistry:
         ListDirTool(**confined),
         GrepTool(**confined),
         FindFilesTool(**confined),
-        FixtureBrowserTool(workspace=workspace),
+        FixtureWebFetchTool(workspace=workspace),
         FixtureDeskTool(workspace=workspace),
     ):
         registry.register(tool)

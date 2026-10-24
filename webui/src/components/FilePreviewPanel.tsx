@@ -217,9 +217,9 @@ export function FilePreviewPanel({
       className={cn(
         isClosing && "pointer-events-none",
         previewFullscreen
-          ? "fixed inset-y-0 right-0 z-[80] w-auto left-0 overflow-visible lg:left-[var(--navin-host-sidebar,0px)]"
+          ? "fixed inset-y-0 end-0 z-[80] w-auto start-0 overflow-visible lg:start-[var(--navin-host-sidebar,0px)]"
           : cn(
-              "absolute inset-y-0 right-0 z-30 w-[min(100vw,var(--file-preview-slot-width))] overflow-hidden",
+              "absolute inset-y-0 end-0 z-30 w-[min(100vw,var(--file-preview-slot-width))] overflow-hidden",
               "transition-[width] duration-300 ease-out will-change-[width]",
               "md:relative md:z-auto md:w-[var(--file-preview-slot-width)] md:min-w-0 md:shrink-0",
             ),
@@ -233,10 +233,10 @@ export function FilePreviewPanel({
           previewFullscreen
             ? "h-full w-full"
             : cn(
-                "absolute inset-y-0 right-0 w-[min(100vw,var(--file-preview-width))] pb-[env(safe-area-inset-bottom)] md:w-[var(--file-preview-width)] md:pb-0",
-                "border-l border-border/70 shadow-2xl md:shadow-none",
+                "absolute inset-y-0 end-0 w-[min(100vw,var(--file-preview-width))] pb-[env(safe-area-inset-bottom)] md:w-[var(--file-preview-width)] md:pb-0",
+                "border-s border-border/70 shadow-2xl md:shadow-none",
                 "transition-[opacity,transform] duration-300 ease-out will-change-transform",
-                !entered || isClosing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100",
+                !entered || isClosing ? "translate-x-full rtl:-translate-x-full opacity-0" : "translate-x-0 opacity-100",
                 "motion-reduce:translate-x-0",
               ),
         )}
@@ -246,7 +246,7 @@ export function FilePreviewPanel({
             type="button"
             aria-label={t("filePreview.resize", { defaultValue: "Resize file preview" })}
             className={cn(
-              "group absolute inset-y-0 left-0 z-20 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none md:flex",
+              "group absolute inset-y-0 start-0 z-20 hidden w-3 -translate-x-1/2 rtl:translate-x-1/2 cursor-col-resize touch-none md:flex",
               "items-stretch justify-center focus-visible:outline-none",
             )}
             onPointerDown={onResizeStart}
@@ -263,7 +263,7 @@ export function FilePreviewPanel({
         <div className="flex min-h-0 flex-1 flex-col">
           <div
             className={cn(
-              "flex h-11 shrink-0 items-center gap-2 border-b border-border/60 pl-3",
+              "flex h-11 shrink-0 items-center gap-2 border-b border-border/60 ps-3",
               // Bell is fixed over the top-right corner; reserve room so Close
               // and Download do not sit underneath it.
               NOTIFICATION_GUTTER,

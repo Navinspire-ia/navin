@@ -9,10 +9,11 @@ import asyncio
 import dataclasses
 import hmac
 import json
+import logging
 import re
 import ssl
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -31,6 +32,7 @@ from navin.bus.events import (
     OUTBOUND_META_AGENT_UI,
     RUNTIME_CONTROL_APPROVAL_DECISION,
     RUNTIME_CONTROL_CHOICE_ANSWER,
+    RUNTIME_CONTROL_CREDENTIAL_ANSWER,
     InboundMessage,
     OutboundMessage,
 )
@@ -47,6 +49,8 @@ from navin.bus.outbound_events import (
     ChoiceRequestedEvent,
     ComposerModeRequestedEvent,
     ContextCompactedEvent,
+    CredentialClosedEvent,
+    CredentialRequestedEvent,
     EditorOpenRequestedEvent,
     FilePreviewOpenRequestedEvent,
     GoalStateSyncEvent,
@@ -61,8 +65,10 @@ from navin.bus.outbound_events import (
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
     SubagentProgressEvent,
+    TeamMessageEvent,
     TerminalOpenRequestedEvent,
     TurnEndEvent,
+    WorktreeMergeEvent,
     outbound_event_from_message,
     outbound_message_for_event,
 )
@@ -80,6 +86,7 @@ from navin.security.workspace_access import (
 )
 from navin.session.goal_state import goal_state_ws_blob
 from navin.session.webui_turns import websocket_turn_wall_started_at
+from navin.utils.activity_events import activity_events_from_tool_events
 from navin.utils.document_templates import normalize_document_template_mention
 from navin.utils.file_mentions import (
     FILE_MENTION_METADATA_KEY,
@@ -121,6 +128,7 @@ from navin.webui.terminal_ws import (
     decode_input,
     encode_output,
 )
+from navin.webui.transcript import compact_tool_events_for_ui
 from navin.webui.transcription_ws import webui_transcription_event
 from navin.webui.voice_session_ws import close_voice_sessions, webui_voice_session_events
 from navin.webui.websocket_logging import websockets_server_logger
@@ -418,6 +426,32 @@ def _is_websocket_upgrade(request: WsRequest) -> bool:
     return True
 
 
+async def _send_to_all(
+    send: Callable[..., Awaitable[None]],
+    conns: list[Any],
+    raw: str,
+    *,
+    label: str = "",
+) -> None:
+    """Send one frame to every connection at once through *send*.
+
+    Sequential sends made the slowest subscriber (up to ``_SEND_TIMEOUT_S``)
+    delay every other tab of the chat. Each connection still receives this
+    chat's frames in order: the caller awaits the whole fan-out before the
+    next frame. Every connection is tried; the first error is raised after.
+    """
+    if len(conns) == 1:
+        await send(conns[0], raw, label=label)
+        return
+    results = await asyncio.gather(
+        *(send(connection, raw, label=label) for connection in conns),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+
 class WebSocketChannel(BaseChannel):
     """Run a local WebSocket server; forward text/JSON messages to the message bus."""
 
@@ -429,6 +463,12 @@ class WebSocketChannel(BaseChannel):
     #: client on a slow link, short enough that one stalled tab cannot freeze
     #: streaming for every other chat.
     _SEND_TIMEOUT_S = 10.0
+
+    #: The channel manager coalesces a chat's stream deltas over this window
+    #: (one ``delta`` frame carrying the joined text instead of one frame per
+    #: token). The first token of a burst and every non-delta event still go
+    #: out immediately, in order. 50 ms stays below what reads as stutter.
+    stream_flush_interval_s = 0.05
 
     def __init__(
         self,
@@ -448,6 +488,8 @@ class WebSocketChannel(BaseChannel):
         # connection -> default chat_id for legacy frames that omit routing.
         self._conn_default: dict[Any, str] = {}
         self._stop_event: asyncio.Event | None = None
+        self._hydrate_tasks: set[asyncio.Task[None]] = set()
+        self._subagent_queries: dict[Any, set[asyncio.Task[None]]] = {}
         self._server_task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._blocking_pool: ThreadPoolExecutor | None = None
@@ -456,6 +498,9 @@ class WebSocketChannel(BaseChannel):
 
         self.gateway = gateway
         self._http_router = gateway.http
+        # Live shares of a chat with remote guests (navin/share/host.py).
+        self.share_manager = self._build_share_manager(gateway)
+        self._http_router.share_manager = self.share_manager
         self._tokens = gateway.tokens
         self._media = gateway.media
         self._ingress = gateway.ingress
@@ -552,10 +597,31 @@ class WebSocketChannel(BaseChannel):
         role = (self._identity_for(connection).get("role") or "").strip()
         if role and role != "host":
             return role
-        try:
-            from navin.config.loader import load_config
+        return self._license_role()
 
-            return role_from_license(load_config())
+    def _license_role(self) -> str | None:
+        """Org role from the config file, re-read only when the file changes.
+
+        Every inbound frame checks the role; parsing and validating the whole
+        config each time cost the shared loop ~2% under load. The cache key is
+        the file's (path, mtime, size), so a license change applies on the
+        next frame.
+        """
+        try:
+            from navin.config.loader import get_config_path, load_config
+
+            path = get_config_path()
+            try:
+                st = path.stat()
+                stamp: tuple[Any, ...] | None = (str(path), st.st_mtime_ns, st.st_size)
+            except OSError:
+                stamp = (str(path), None, None)
+            cached = getattr(self, "_license_role_cache", None)
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
+            role = role_from_license(load_config())
+            self._license_role_cache = (stamp, role)
+            return role
         except Exception:
             return None
 
@@ -565,6 +631,31 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(payload, ensure_ascii=False)
         for peer in list(self._subs.get(chat_id, ())):
             await self._safe_send_to(peer, raw, label=f" {event} ")
+
+    async def _broadcast_user_message(
+        self, connection: Any, chat_id: str, content: str, envelope: dict[str, Any],
+    ) -> None:
+        """Show a prompt in every other window on the chat: another tab, a guest, the host.
+
+        The sender already drew its own bubble; everyone else only saw the
+        agent's reply arrive, with no question above it, until a reload.
+        """
+        peers = [peer for peer in self._subs.get(chat_id, ()) if peer is not connection]
+        if not peers:
+            return
+        turn_id = envelope.get("turn_id")
+        raw = json.dumps(
+            {
+                "event": "user_message",
+                "chat_id": chat_id,
+                "content": content,
+                "turn_id": turn_id if isinstance(turn_id, str) else "",
+                "author": self._identity_for(connection).get("display_name") or "",
+            },
+            ensure_ascii=False,
+        )
+        for peer in peers:
+            await self._safe_send_to(peer, raw, label=" user_message ")
 
     async def _presence_join(self, connection: Any, chat_id: str) -> None:
         identity = self._identity_for(connection)
@@ -605,6 +696,12 @@ class WebSocketChannel(BaseChannel):
                 ).project_path,
             )
 
+    def _invalidate_sessions_cache(self) -> None:
+        cache = getattr(self._http_router, "route_cache", None)
+        invalidate = getattr(cache, "invalidate", None)
+        if callable(invalidate):
+            invalidate("webui:sessions")
+
     def _invalidate_file_tree_cache(self, project_path: str | Path | None = None) -> None:
         """Drop cached explorer listings so the next expand sees agent writes."""
         cache = getattr(self._http_router, "route_cache", None)
@@ -626,11 +723,12 @@ class WebSocketChannel(BaseChannel):
                 {"event": "fs_changed", "chat_id": chat_id, "root": root},
                 ensure_ascii=False,
             )
-            for connection in conns:
-                await self._safe_send_to(connection, raw, label=" fs_changed ")
+            await _send_to_all(self._safe_send_to, conns, raw, label=" fs_changed ")
 
     def _cleanup_connection(self, connection: Any) -> None:
         """Remove *connection* from every subscription set; safe to call multiple times."""
+        for query_task in self._subagent_queries.pop(connection, set()):
+            query_task.cancel()
         self._terminals.cleanup_connection(connection)
         for task in self._assist_tasks.pop(connection, {}).values():
             task.cancel()
@@ -683,8 +781,10 @@ class WebSocketChannel(BaseChannel):
         """
         if self.gateway.session_manager is None:
             return
-        row = self.gateway.session_manager.read_session_file(f"websocket:{chat_id}")
-        meta = row.get("metadata", {}) if isinstance(row, dict) else {}
+        # The cached session (peeked by _chat_exists) carries the same metadata;
+        # re-parsing the whole JSONL here blocked the loop on every chat switch.
+        session = self.gateway.session_manager.peek(f"websocket:{chat_id}")
+        meta = session.metadata if session is not None else {}
         if not isinstance(meta, dict):
             meta = {}
         blob = goal_state_ws_blob(meta)
@@ -715,6 +815,10 @@ class WebSocketChannel(BaseChannel):
             await self.send_goal_status(chat_id, "running", started_at=started_at)
             return
         if action != "interrupted":
+            # No turn runs: say so. A turn that ended while the page looked at
+            # another chat never reached it, and the chat stayed on "Working"
+            # until the next message.
+            await self.send_goal_status(chat_id, "idle")
             return
         await self.send_goal_status(chat_id, "idle")
         await self.send_notification(
@@ -751,10 +855,24 @@ class WebSocketChannel(BaseChannel):
             return
         await self._maybe_push_active_goal_state(chat_id)
         await self._maybe_push_turn_run_wall_clock(chat_id)
-        await self._maybe_push_open_approvals(chat_id)
-        await self._maybe_push_open_choices(chat_id)
-        await self._maybe_push_running_subagents(chat_id)
-        await self._maybe_push_artifacts(chat_id)
+        # Independent replays: run them together, not one bus round trip after
+        # the other (up to ~5 s per switch while other chats kept the loop busy).
+        await asyncio.gather(
+            self._maybe_push_open_approvals(chat_id),
+            self._maybe_push_open_choices(chat_id),
+            self._maybe_push_open_credentials(chat_id),
+            self._maybe_push_running_subagents(chat_id),
+            self._maybe_push_pending_merges(chat_id),
+            self._maybe_push_artifacts(chat_id),
+            return_exceptions=True,
+        )
+
+    def _hydrate_in_background(self, chat_id: str) -> None:
+        """Hydrate without holding the connection: the next frame (another
+        chat switch, a send) is read at once instead of queueing behind it."""
+        task = asyncio.create_task(self._hydrate_after_subscribe(chat_id))
+        self._hydrate_tasks.add(task)
+        task.add_done_callback(self._hydrate_tasks.discard)
 
     async def _maybe_push_running_subagents(self, chat_id: str) -> None:
         """Re-send the background subagents this chat still has in flight.
@@ -793,6 +911,9 @@ class WebSocketChannel(BaseChannel):
                     done=False,
                     task_description=payload.get("task_description") or None,
                     started_ms_ago=int(started) if isinstance(started, int) else None,
+                    tokens=int(payload["tokens"]) if isinstance(payload.get("tokens"), int) else None,
+                    steps=payload.get("steps") if isinstance(payload.get("steps"), list) else None,
+                    member=payload.get("member") if isinstance(payload.get("member"), dict) else None,
                 ),
             )
 
@@ -864,13 +985,41 @@ class WebSocketChannel(BaseChannel):
                 ),
             )
 
+    async def _maybe_push_open_credentials(self, chat_id: str) -> None:
+        """Re-send the credential cards this chat is still suspended on."""
+        from navin.agent.credentials import request_open_credentials
+
+        try:
+            open_requests = await request_open_credentials(self.bus, f"websocket:{chat_id}")
+        except Exception as exc:  # pragma: no cover - transport-level
+            self.logger.debug("could not reload open credential cards: {}", exc)
+            return
+        for payload in open_requests:
+            names = payload.get("names")
+            await self.send_credential_request(
+                chat_id,
+                CredentialRequestedEvent(
+                    request_id=str(payload.get("request_id") or ""),
+                    kind=str(payload.get("kind") or ""),
+                    host=str(payload.get("host") or ""),
+                    names=[str(n) for n in names] if isinstance(names, list) else [],
+                    reason=str(payload.get("reason") or ""),
+                    expires_at_ms=payload.get("expires_at_ms"),
+                ),
+            )
+
     async def _send_event(self, connection: Any, event: str, **fields: Any) -> None:
         """Send a control event (attached, error, ...) to a single connection."""
         payload: dict[str, Any] = {"event": event}
         payload.update(fields)
         raw = json.dumps(payload, ensure_ascii=False)
         try:
-            await connection.send(raw)
+            # Same bound as _safe_send_to: a stalled client must not park the
+            # caller (often the per-connection reader) forever.
+            await asyncio.wait_for(connection.send(raw), timeout=self._SEND_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            self._cleanup_connection(connection)
+            self.logger.warning("send of {} event timed out, dropping slow client", event)
         except ConnectionClosed:
             self._cleanup_connection(connection)
         except Exception as e:
@@ -902,6 +1051,16 @@ class WebSocketChannel(BaseChannel):
     async def _dispatch_http(self, connection: Any, request: WsRequest) -> Any:
         """Route an inbound HTTP request to the HTTP handler or WS upgrade."""
         got, query = _parse_request_path(request.path)
+
+        # Live realtime engine: the page's voice session, bridged to the
+        # realtime model with credentials that never reach the browser.
+        from navin.live.realtime import PATH as LIVE_REALTIME_PATH
+
+        if got == LIVE_REALTIME_PATH and _is_websocket_upgrade(request):
+            token = _query_first(query, "token")
+            if not self._http_router.tokens.check_api_token_value(token):
+                return connection.respond(401, "Unauthorized")
+            return None
 
         # WebSocket upgrade - channel handles this itself
         expected_ws = self._expected_path()
@@ -945,6 +1104,68 @@ class WebSocketChannel(BaseChannel):
 
     # -- Server lifecycle and connection ingress ---------------------------
 
+    def _build_share_manager(self, gateway: GatewayServices) -> Any:
+        from navin.config.paths import get_runtime_subdir
+        from navin.share.host import ShareManager
+
+        workspaces = gateway.workspaces
+
+        def project_root_for(chat_id: str) -> Path:
+            return Path(workspaces.scope_for_session_key(f"websocket:{chat_id}").project_path)
+
+        router = gateway.http
+
+        def thread_for(chat_id: str, limit: int, before: str | None) -> Any:
+            # Same payload as the webui's thread endpoint: media URLs signed.
+            from navin.webui.transcript import build_webui_thread_response
+
+            media = router.media
+            project = project_root_for(chat_id)
+            return build_webui_thread_response(
+                f"websocket:{chat_id}",
+                augment_user_media=media.augment_transcript_media,
+                augment_assistant_media=media.augment_transcript_media,
+                augment_assistant_text=lambda text: media.rewrite_local_markdown_images(text, workspace_path=project),
+                limit=limit,
+                direction=None if before else "latest",
+                before=before,
+            )
+
+        def media_fetch(url: str) -> tuple[bytes, str] | None:
+            parts = url.split("/")
+            if len(parts) != 5:
+                return None
+            response = router.media.serve_signed_media(parts[3], parts[4], request=None)
+            if response.status_code != 200 or not response.body:
+                return None
+            return bytes(response.body), response.headers.get("Content-Type", "application/octet-stream")
+
+        manager = ShareManager(
+            self,
+            store_path=get_runtime_subdir("shares") / "shares.json",
+            sessions_workspace=Path(getattr(gateway.session_manager, "workspace", None) or Path.home() / ".navin"),
+            project_root_for=project_root_for,
+            thread_for=thread_for,
+            media_fetch=media_fetch,
+        )
+        manager.listeners.append(self._on_share_update)
+        return manager
+
+    def _on_share_update(self, share_id: str, extra: dict[str, Any]) -> None:
+        """Tell the host's own connections of the shared chat (not the guests)."""
+        from navin.share.host import VirtualConnection
+
+        share = self.share_manager.shares.get(share_id)
+        if share is None or self._loop is None:
+            return
+        for conn in list(self._subs.get(share.chat_id, ())):
+            if isinstance(conn, VirtualConnection):
+                continue
+            self._loop.create_task(self._send_event(
+                conn, "share_update", chat_id=share.chat_id, share_id=share_id,
+                request=extra.get("request"),
+            ))
+
     async def start(self) -> None:
         from navin.utils.logging_bridge import redirect_lib_logging
 
@@ -956,6 +1177,7 @@ class WebSocketChannel(BaseChannel):
         self._loop = asyncio.get_running_loop()
         self._install_blocking_pool()
         self._fs_watcher.start()
+        self.share_manager.start()
         _install_http_method_compat()
 
         ssl_context = self._build_ssl_context()
@@ -968,6 +1190,12 @@ class WebSocketChannel(BaseChannel):
             return await self._dispatch_http(connection, request)
 
         async def handler(connection: ServerConnection) -> None:
+            from navin.live.realtime import PATH as LIVE_REALTIME_PATH
+
+            got, _ = _parse_request_path(connection.request.path if connection.request else "/")
+            if got == LIVE_REALTIME_PATH:
+                await self._live_realtime(connection)
+                return
             await self._connection_loop(connection)
 
         self.logger.info(
@@ -1035,6 +1263,19 @@ class WebSocketChannel(BaseChannel):
 
         self._server_task = asyncio.create_task(runner())
         await self._server_task
+
+    async def _live_realtime(self, connection: Any) -> None:
+        """One realtime Live session (navin/live/realtime.py)."""
+        from navin.config.loader import load_config
+        from navin.live.realtime import bridge
+
+        try:
+            config = await asyncio.to_thread(load_config)
+        except Exception as exc:  # noqa: BLE001 - the page falls back to the pipeline
+            self.logger.warning("live realtime: config unreadable: {}", exc)
+            await connection.close(1011, "config")
+            return
+        await bridge(connection, config)
 
     async def _connection_loop(self, connection: Any) -> None:
         request = connection.request
@@ -1118,6 +1359,27 @@ class WebSocketChannel(BaseChannel):
     ) -> None:
         """Route one typed inbound envelope (``new_chat`` / ``attach`` / ``message``)."""
         t = envelope.get("type")
+        if t in {"subagents_list", "subagent_history", "subagent_recover", "subagent_relaunch",
+                 "subagent_team_feed", "subagent_team_message", "subagent_team_assign",
+                 "subagent_team_select"}:
+            tasks = self._subagent_queries.setdefault(connection, set())
+            if len(tasks) >= 4:
+                await self._send_event(connection, "subagent_query_result",
+                                       chat_id=envelope.get("chat_id"),
+                                       request_id=str(envelope.get("request_id") or "")[:128],
+                                       error="Agent requests are busy. Retry in a moment.")
+                return
+
+            async def run_query() -> None:
+                try:
+                    await self._dispatch_subagent_query(connection, envelope)
+                except Exception as error:
+                    self.logger.debug("Agent inspection transport failed: {}", error)
+
+            task = asyncio.create_task(run_query())
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+            return
         if t == "new_chat":
             if not action_allowed(self._role_for(connection), "message"):
                 await self._send_event(
@@ -1137,7 +1399,7 @@ class WebSocketChannel(BaseChannel):
             )
             if scope is None:
                 return
-            self._workspaces.persist_scope(new_id, scope)
+            await self._workspaces.persist_scope_async(new_id, scope)
             schedule_index_warm(scope.project_path)
             self._attach(connection, new_id)
             await self._presence_join(connection, new_id)
@@ -1176,7 +1438,7 @@ class WebSocketChannel(BaseChannel):
                     self._workspaces.scope_for_session_key(f"websocket:{cid}").project_path
                 )
             await self._send_event(connection, "attached", chat_id=cid)
-            await self._hydrate_after_subscribe(cid)
+            self._hydrate_in_background(cid)
             return
         if t == "member_cursor":
             cid = envelope.get("chat_id")
@@ -1220,7 +1482,7 @@ class WebSocketChannel(BaseChannel):
             )
             if scope is None:
                 return
-            self._workspaces.persist_scope(cid, scope)
+            await self._workspaces.persist_scope_async(cid, scope)
             schedule_index_warm(scope.project_path)
             await self._send_event(
                 connection,
@@ -1275,6 +1537,20 @@ class WebSocketChannel(BaseChannel):
                 )
                 return
             await self._dispatch_choice_answer(connection, envelope)
+            return
+        if t == "worktree_merge_action":
+            await self._dispatch_worktree_merge_action(connection, envelope)
+            return
+        if t == "credential_answer":
+            if not action_allowed(self._role_for(connection), "choice_answer"):
+                await self._send_event(
+                    connection,
+                    "error",
+                    detail="forbidden_role",
+                    reason="viewer_cannot_approve",
+                )
+                return
+            await self._dispatch_credential_answer(connection, envelope)
             return
         if isinstance(t, str) and t.startswith("terminal_"):
             if t in {"terminal_open", "terminal_input"} and not action_allowed(
@@ -1457,8 +1733,25 @@ class WebSocketChannel(BaseChannel):
                 from navin.agent.voice_mode import VOICE_MODE_METADATA_KEY
 
                 metadata[VOICE_MODE_METADATA_KEY] = True
+            # A Code chat started without a project works in a folder of its own.
+            project_scope = (
+                self._workspaces.project_for_code_chat(cid, scope, content)
+                if product_module == "code"
+                else None
+            )
+            if project_scope is not None:
+                scope = project_scope
             metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
-            self._workspaces.persist_scope(cid, scope)
+            await self._workspaces.persist_scope_async(cid, scope)
+            if project_scope is not None:
+                schedule_index_warm(scope.project_path)
+                await self._send_event(
+                    connection,
+                    "session_updated",
+                    chat_id=cid,
+                    scope="metadata",
+                    workspace_scope=scope.payload(),
+                )
             if metadata.get("webui") is True and self.is_allowed(client_id):
                 self._transcripts.append_user_message(
                     cid,
@@ -1471,6 +1764,7 @@ class WebSocketChannel(BaseChannel):
                     media_template=media_template,
                     media_templates=media_templates or None,
                 )
+            await self._broadcast_user_message(connection, cid, content, envelope)
             await self._handle_message(
                 sender_id=client_id,
                 chat_id=cid,
@@ -1483,6 +1777,48 @@ class WebSocketChannel(BaseChannel):
         await self._send_event(connection, "error", detail=f"unknown type: {t!r}")
 
     # -- Approvals -----------------------------------------------------------
+
+    async def _dispatch_subagent_query(self, connection: Any, envelope: dict[str, Any]) -> None:
+        """Session-scoped agent inspection, with explicit rights for execution."""
+        from navin.agent.subagent import request_subagent_operation
+
+        chat_id = envelope.get("chat_id")
+        request_id = str(envelope.get("request_id") or "")[:128]
+        async def reply(*, result: Any = None, error: str | None = None) -> None:
+            await self._send_event(connection, "subagent_query_result", chat_id=chat_id,
+                                   request_id=request_id, result=result, error=error)
+
+        if not _is_valid_chat_id(chat_id):
+            await reply(error="Invalid conversation")
+            return
+        if chat_id not in self._conn_chats.get(connection, set()):
+            await reply(error="Attach to the conversation before inspecting its agents")
+            return
+        operation = str(envelope["type"]).removeprefix("subagent_")
+        if operation == "subagents_list":
+            operation = "list"
+        if operation in {"recover", "relaunch", "team_message", "team_assign", "team_select"} and not action_allowed(
+            self._role_for(connection), "message"
+        ):
+            await reply(error="This conversation is read only")
+            return
+        try:
+            result = await request_subagent_operation(
+                self.bus, f"websocket:{chat_id}", operation,
+                str(envelope.get("task_id") or "")[:128],
+                after=max(0, int(envelope.get("after") or 0)),
+                limit=min(200, max(1, int(envelope.get("limit") or 100))),
+                offset=max(0, int(envelope.get("offset") or 0)), timeout=12,
+                target=str(envelope.get("target") or "")[:80],
+                content=str(envelope.get("content") or "")[:8000],
+            )
+        except (ValueError, TypeError):
+            await reply(error="Invalid agent request")
+            return
+        if not result.get("ok"):
+            await reply(error=str(result.get("error") or "Agent request failed"))
+            return
+        await reply(result=result.get("agents", []) if operation == "list" else result)
 
     async def _dispatch_approval_decision(
         self,
@@ -1560,6 +1896,43 @@ class WebSocketChannel(BaseChannel):
                     "option_id": option_id if isinstance(option_id, str) else "",
                     "skipped": skipped,
                     "custom_text": custom_text,
+                },
+            )
+        )
+
+    async def _dispatch_credential_answer(
+        self,
+        connection: Any,
+        envelope: dict[str, Any],
+    ) -> None:
+        """Release a credential card's tool call with a status, never a value.
+
+        The card saves the values through the vault HTTP routes first; this
+        frame only says "saved" / "connected" / "declined". Anything else in
+        the envelope is dropped on purpose so a secret cannot ride along into
+        the agent turn.
+        """
+        request_id = envelope.get("request_id")
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 80:
+            await self._send_event(connection, "error", detail="invalid request_id")
+            return
+        status = envelope.get("status")
+        if status not in {"saved", "connected", "declined"}:
+            await self._send_event(connection, "error", detail="invalid status")
+            return
+        login_raw = envelope.get("login")
+        login = login_raw.strip()[:80] if isinstance(login_raw, str) else ""
+        await self.bus.publish_inbound(
+            InboundMessage(
+                channel="system",
+                sender_id="webui-credentials",
+                chat_id="runtime",
+                content=RUNTIME_CONTROL_CREDENTIAL_ANSWER,
+                metadata={
+                    INBOUND_META_RUNTIME_CONTROL: RUNTIME_CONTROL_CREDENTIAL_ANSWER,
+                    "request_id": request_id,
+                    "status": status,
+                    "login": login,
                 },
             )
         )
@@ -2233,6 +2606,7 @@ class WebSocketChannel(BaseChannel):
             return
         self._running = False
         await self._fs_watcher.stop()
+        await self.share_manager.stop()
         if self._stop_event:
             self._stop_event.set()
         if self._server_task:
@@ -2340,6 +2714,12 @@ class WebSocketChannel(BaseChannel):
         if isinstance(event, SubagentProgressEvent):
             await self.send_subagent_progress(msg.chat_id, event)
             return
+        if isinstance(event, TeamMessageEvent):
+            await self.send_team_message(msg.chat_id, event)
+            return
+        if isinstance(event, WorktreeMergeEvent):
+            await self.send_worktree_merge(msg.chat_id, event)
+            return
         if isinstance(event, PreviewOpenRequestedEvent):
             await self.send_preview_open_request(msg.chat_id, event)
             return
@@ -2371,7 +2751,13 @@ class WebSocketChannel(BaseChannel):
             await self.send_choice_request(msg.chat_id, event)
             return
         if isinstance(event, ChoiceClosedEvent):
-            await self.send_choice_closed(msg.chat_id, event)
+            await self.send_choice_closed(msg.chat_id, event, msg.metadata)
+            return
+        if isinstance(event, CredentialRequestedEvent):
+            await self.send_credential_request(msg.chat_id, event)
+            return
+        if isinstance(event, CredentialClosedEvent):
+            await self.send_credential_closed(msg.chat_id, event)
             return
         if isinstance(event, RetryWaitEvent):
             # A provider backing off is a status, not something the assistant
@@ -2408,6 +2794,13 @@ class WebSocketChannel(BaseChannel):
                 await self.send_goal_state(msg.chat_id, event.goal_state or {"active": False})
             return
         if isinstance(event, GoalStatusEvent):
+            # The sessions list carries run_started_at: a list cached while the
+            # turn ran must not turn the sidebar's "running" glyph back on.
+            self._invalidate_sessions_cache()
+            if event.status != "running":
+                # Turn finished, cancelled or failed: a stream cut short never
+                # sends stream_end, so drop its buffered text here.
+                self._clear_stream_buffers(msg.chat_id)
             if conns:
                 if event.status in ("running", "idle"):
                     await self.send_goal_status(
@@ -2418,6 +2811,7 @@ class WebSocketChannel(BaseChannel):
             return
         # Signal that the agent has fully finished processing the current turn.
         if isinstance(event, TurnEndEvent):
+            self._clear_stream_buffers(msg.chat_id)
             await self.send_turn_end(
                 msg.chat_id,
                 latency_ms=event.latency_ms,
@@ -2475,7 +2869,18 @@ class WebSocketChannel(BaseChannel):
         if isinstance(task_role, str) and task_role.strip():
             payload["task_role"] = task_role.strip()
         if progress_event and progress_event.tool_events:
-            payload["tool_events"] = progress_event.tool_events
+            # Oversized tool results (a studio tool returning megabytes of JSON)
+            # are cut down for the wire and the transcript; the agent keeps the
+            # full result in its own context and tool-results files.
+            payload["tool_events"] = compact_tool_events_for_ui(progress_event.tool_events)
+            # Additive v1 activity events; legacy tool_events stay the source of truth.
+            try:
+                activity = activity_events_from_tool_events(progress_event.tool_events)
+            except Exception:  # the additive layer must not break streaming: log it, keep tool_events
+                logging.getLogger(__name__).warning("activity_events mapping failed", exc_info=True)
+                activity = []
+            if activity:
+                payload["activity_events"] = activity
         agent_ui = msg.metadata.get(OUTBOUND_META_AGENT_UI)
         if agent_ui is not None:
             payload["agent_ui"] = agent_ui
@@ -2519,8 +2924,7 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" ")
 
     async def send_reasoning_delta(
         self,
@@ -2564,8 +2968,7 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(body, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" reasoning ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" reasoning ")
 
     async def send_reasoning_end(
         self,
@@ -2592,8 +2995,7 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(body, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" reasoning_end ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" reasoning_end ")
 
     async def send_file_edit_events(
         self,
@@ -2623,8 +3025,15 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" file_edit ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" file_edit ")
+
+    def _clear_stream_buffers(self, chat_id: str) -> None:
+        """Forget every buffered stream of *chat_id* (turn end / cancel)."""
+        buffers = getattr(self, "_stream_text_buffers", None)
+        if not buffers:
+            return
+        for key in [k for k in buffers if k[0] == chat_id]:
+            buffers.pop(key, None)
 
     async def send_delta(
         self,
@@ -2635,12 +3044,19 @@ class WebSocketChannel(BaseChannel):
         stream_id: str | None = None,
         stream_end: bool = False,
         resuming: bool = False,
+        discarded: bool = False,
     ) -> None:
         conns = list(self._subs.get(chat_id, ()))
         meta = metadata or {}
         stream_key = (chat_id, str(stream_id or ""))
-        if stream_end:
-            body: dict[str, Any] = {"event": "stream_end", "chat_id": chat_id}
+        body: dict[str, Any]
+        if stream_end and discarded:
+            # The retry streams the answer again in a new segment: tell the
+            # UI (and transcript replay) to drop this segment's partial text.
+            self._stream_text_buffers.pop(stream_key, None)
+            body = {"event": "stream_end", "chat_id": chat_id, "discarded": True}
+        elif stream_end:
+            body = {"event": "stream_end", "chat_id": chat_id}
             buffered = self._stream_text_buffers.pop(stream_key, [])
             if delta:
                 buffered.append(delta)
@@ -2666,8 +3082,7 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(body, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" stream ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" stream ")
 
     async def send_turn_end(
         self,
@@ -2709,8 +3124,7 @@ class WebSocketChannel(BaseChannel):
         raw = json.dumps(body, ensure_ascii=False)
         if not conns:
             return
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" turn_end ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" turn_end ")
 
     async def send_goal_state(self, chat_id: str, blob: dict[str, Any]) -> None:
         """Push persisted goal-state snapshot for *chat_id* (multi-chat isolation)."""
@@ -2719,8 +3133,7 @@ class WebSocketChannel(BaseChannel):
             return
         body = {"event": "goal_state", "chat_id": chat_id, "goal_state": blob}
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" goal_state ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" goal_state ")
 
     async def send_goal_status(
         self,
@@ -2729,8 +3142,12 @@ class WebSocketChannel(BaseChannel):
         *,
         started_at: float | None = None,
     ) -> None:
-        """Notify subscribed clients that a turn started or finished (wall-clock hint)."""
-        conns = list(self._subs.get(chat_id, ()))
+        """Notify every WebUI client that a turn started or finished.
+
+        Broadcast (like ``session_updated``) so the sidebar shows the running
+        indicator on chats of other project folders the client is not attached to.
+        """
+        conns = list(dict.fromkeys([*self._subs.get(chat_id, ()), *self._conn_chats]))
         if not conns:
             return
         body: dict[str, Any] = {
@@ -2741,8 +3158,7 @@ class WebSocketChannel(BaseChannel):
         if status == "running" and started_at is not None:
             body["started_at"] = started_at
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" goal_status ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" goal_status ")
 
     async def send_session_updated(self, chat_id: str, *, scope: str | None = None) -> None:
         """Notify WebUI clients that a session row should refresh."""
@@ -2753,8 +3169,7 @@ class WebSocketChannel(BaseChannel):
         if scope:
             body["scope"] = scope
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" session_updated ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" session_updated ")
 
     async def send_context_compacted(
         self,
@@ -2779,8 +3194,7 @@ class WebSocketChannel(BaseChannel):
         if isinstance(event.tokens_after, int):
             body["tokens_after"] = event.tokens_after
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" context_compacted ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" context_compacted ")
 
     async def send_checkpoint_saved(
         self,
@@ -2798,8 +3212,7 @@ class WebSocketChannel(BaseChannel):
             "auto": event.auto,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" checkpoint_saved ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" checkpoint_saved ")
 
     async def send_board_updated(self, *, project_path: str | None) -> None:
         """Broadcast a board change to every open connection.
@@ -2814,8 +3227,7 @@ class WebSocketChannel(BaseChannel):
         if isinstance(project_path, str) and project_path:
             body["project_path"] = project_path
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" board_updated ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" board_updated ")
 
     async def send_montage_updated(self, event: MontageUpdatedEvent) -> None:
         """Broadcast a Montage change (timeline, render job, assets) to every client."""
@@ -2830,8 +3242,7 @@ class WebSocketChannel(BaseChannel):
         if isinstance(event.job, dict):
             body["job"] = event.job
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" montage_updated ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" montage_updated ")
 
     async def send_metagraph_updated(
         self,
@@ -2855,8 +3266,7 @@ class WebSocketChannel(BaseChannel):
         if isinstance(diff, dict):
             body["diff"] = diff
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" metagraph_updated ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" metagraph_updated ")
 
     async def send_terminal_open_request(
         self,
@@ -2878,8 +3288,7 @@ class WebSocketChannel(BaseChannel):
         if event.cwd:
             body["cwd"] = event.cwd
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" terminal_open_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" terminal_open_request ")
 
     async def send_agent_exec(self, chat_id: str, event: AgentExecEvent) -> None:
         """Stream one agent exec command to the editor's read-only terminal tabs.
@@ -2917,8 +3326,7 @@ class WebSocketChannel(BaseChannel):
         if event.sandbox_lifted:
             body["sandbox_lifted"] = True
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" agent_exec ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" agent_exec ")
 
     async def send_agent_browser(self, chat_id: str, event: AgentBrowserEvent) -> None:
         """Stream the agent's live browser mirror to the Dev workbench.
@@ -2952,8 +3360,7 @@ class WebSocketChannel(BaseChannel):
         if event.user_control is not None:
             body["user_control"] = event.user_control
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" agent_browser ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" agent_browser ")
 
     async def send_editor_open_request(
         self,
@@ -2977,8 +3384,7 @@ class WebSocketChannel(BaseChannel):
         if event.line:
             body["line"] = event.line
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" editor_open_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" editor_open_request ")
 
     async def send_composer_mode_request(
         self,
@@ -2993,7 +3399,9 @@ class WebSocketChannel(BaseChannel):
         # "montage" was missing here, so the /montage brief's set_composer_mode
         # was dropped in transit and the composer never showed Montage. "ask" is
         # a real mode the agent can hand back to as well.
-        if mode not in {"ask", "plan", "agent", "review", "security", "debug", "montage"}:
+        if mode not in {
+            "ask", "plan", "agent", "review", "security", "debug", "reverse", "montage",
+        }:
             return
         body: dict[str, Any] = {
             "event": "composer_mode_request",
@@ -3001,8 +3409,7 @@ class WebSocketChannel(BaseChannel):
             "mode": mode,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" composer_mode_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" composer_mode_request ")
 
     async def send_product_module_request(
         self,
@@ -3024,8 +3431,7 @@ class WebSocketChannel(BaseChannel):
             "module": module,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" product_module_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" product_module_request ")
 
     async def send_subagent_progress(
         self,
@@ -3059,9 +3465,93 @@ class WebSocketChannel(BaseChannel):
             body["started_ms_ago"] = int(event.started_ms_ago)
         if event.tokens:
             body["tokens"] = int(event.tokens)
+        if event.steps:
+            body["steps"] = list(event.steps)
+        if event.error_kind:
+            body["error_kind"] = event.error_kind
+        if event.member:
+            body["member"] = dict(event.member)
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" subagent_progress ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" subagent_progress ")
+
+    async def send_team_message(self, chat_id: str, event: TeamMessageEvent, *, replay: bool = False) -> None:
+        """Push one Collaboration Mode team exchange to *chat_id* clients."""
+        conns = list(self._subs.get(chat_id, ()))
+        if not conns:
+            return
+        body: dict[str, Any] = {
+            "event": "team_message",
+            "chat_id": chat_id,
+            "entry_id": event.entry_id,
+            "kind": event.kind,
+            "sender": dict(event.sender),
+            "target": dict(event.target) if event.target else None,
+            "content": event.content,
+            "task_id": event.task_id,
+            "status": event.status,
+            "ts": event.ts,
+            "replay": replay,
+        }
+        await _send_to_all(self._safe_send_to, conns, json.dumps(body, ensure_ascii=False), label=" team_message ")
+
+    async def send_worktree_merge(self, chat_id: str, event: WorktreeMergeEvent) -> None:
+        """Push a Multitask merge outcome (merged / needs attention) to *chat_id*."""
+        conns = list(self._subs.get(chat_id, ()))
+        if not conns:
+            return
+        body: dict[str, Any] = {
+            "event": "worktree_merge",
+            "chat_id": chat_id,
+            "task_id": event.task_id,
+            "label": event.label,
+            "status": event.status,
+            "files": list(event.files),
+            "conflicts": list(event.conflicts),
+            "reason": event.reason,
+            "branch": event.branch,
+            "resolve_prompt": event.resolve_prompt,
+        }
+        await _send_to_all(self._safe_send_to, conns, json.dumps(body, ensure_ascii=False), label=" worktree_merge ")
+
+    async def _maybe_push_pending_merges(self, chat_id: str) -> None:
+        """Re-send the merge cards still waiting for this chat's decision."""
+        from navin.agent.worktree_merge import pending_for_session
+
+        for item in pending_for_session(f"websocket:{chat_id}"):
+            await self.send_worktree_merge(chat_id, WorktreeMergeEvent(**item))
+
+    async def _dispatch_worktree_merge_action(self, connection: Any, envelope: dict[str, Any]) -> None:
+        """Resolve / Keep separate / Discard on a Multitask merge card."""
+        from navin.agent.worktree_merge import apply_action
+
+        chat_id = envelope.get("chat_id")
+        task_id = envelope.get("task_id")
+        action = envelope.get("action")
+        if (
+            not _is_valid_chat_id(chat_id)
+            or chat_id not in self._conn_chats.get(connection, set())
+            or not isinstance(task_id, str) or not task_id or len(task_id) > 80
+            or action not in {"resolve", "keep", "discard"}
+        ):
+            await self._send_event(connection, "error", detail="invalid worktree_merge_action")
+            return
+        if not action_allowed(self._role_for(connection), "message"):
+            await self._send_event(connection, "error", detail="forbidden_role", reason="read_only")
+            return
+        result = await asyncio.to_thread(
+            apply_action, task_id, action, session_key=f"websocket:{chat_id}",
+        )
+        if not result.get("ok"):
+            await self._send_event(connection, "worktree_merge", chat_id=chat_id, task_id=task_id,
+                                   status="gone", error=str(result.get("error") or ""))
+            return
+        await self.send_worktree_merge(chat_id, WorktreeMergeEvent(
+            task_id=task_id,
+            label=str(result.get("label") or ""),
+            status=str(result.get("status") or ""),
+            branch=str(result.get("branch") or ""),
+            resolve_prompt=str(result.get("resolve_prompt") or ""),
+        ))
 
     async def send_file_preview_open_request(
         self,
@@ -3081,8 +3571,7 @@ class WebSocketChannel(BaseChannel):
             "path": path,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" file_preview_open_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" file_preview_open_request ")
 
     async def send_artifact_upsert(
         self,
@@ -3111,8 +3600,7 @@ class WebSocketChannel(BaseChannel):
             "restored": restored,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" artifact_upsert ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" artifact_upsert ")
 
     async def send_artifact_select(
         self,
@@ -3132,8 +3620,7 @@ class WebSocketChannel(BaseChannel):
             "artifact_id": artifact_id,
         }
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" artifact_select ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" artifact_select ")
 
     async def send_preview_open_request(
         self,
@@ -3157,8 +3644,7 @@ class WebSocketChannel(BaseChannel):
         if kind == "web" and event.url:
             body["url"] = event.url
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" preview_open_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" preview_open_request ")
 
     async def send_notification(
         self,
@@ -3194,8 +3680,7 @@ class WebSocketChannel(BaseChannel):
         if event.clear:
             body["clear"] = True
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" notification ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" notification ")
 
     async def send_approval_request(
         self,
@@ -3231,8 +3716,7 @@ class WebSocketChannel(BaseChannel):
         if event.expires_at_ms is not None:
             body["expires_at_ms"] = event.expires_at_ms
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" approval_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" approval_request ")
 
     async def send_approval_closed(
         self,
@@ -3241,8 +3725,6 @@ class WebSocketChannel(BaseChannel):
     ) -> None:
         """Tell the clients a pending request is settled, however it ended."""
         conns = list(self._subs.get(chat_id, ()))
-        if not conns:
-            return
         body: dict[str, Any] = {
             "event": "approval_closed",
             "chat_id": chat_id,
@@ -3251,9 +3733,17 @@ class WebSocketChannel(BaseChannel):
         }
         if event.reason:
             body["reason"] = event.reason
+        if event.waited_ms is not None:
+            body["waited_ms"] = event.waited_ms
+        if event.action:
+            body["action"] = event.action
+            # The decision stays in the chat after the card closes: record it
+            # so a reload restates "Allowed: ..." in place.
+            self._transcripts.prepare_and_append(chat_id, body, phase="activity")
+        if not conns:
+            return
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" approval_closed ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" approval_closed ")
 
     async def send_choice_request(
         self,
@@ -3275,27 +3765,85 @@ class WebSocketChannel(BaseChannel):
         if event.expires_at_ms is not None:
             body["expires_at_ms"] = event.expires_at_ms
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" choice_request ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" choice_request ")
+
+    async def send_credential_request(
+        self,
+        chat_id: str,
+        event: CredentialRequestedEvent,
+    ) -> None:
+        conns = list(self._subs.get(chat_id, ()))
+        if not conns:
+            return
+        body: dict[str, Any] = {
+            "event": "credential_request",
+            "chat_id": chat_id,
+            "request_id": event.request_id,
+            "kind": event.kind,
+            "host": event.host,
+            "names": list(event.names or []),
+            "reason": event.reason,
+        }
+        if event.expires_at_ms is not None:
+            body["expires_at_ms"] = event.expires_at_ms
+        raw = json.dumps(body, ensure_ascii=False)
+        await _send_to_all(self._safe_send_to, conns, raw, label=" credential_request ")
+
+    async def send_credential_closed(
+        self,
+        chat_id: str,
+        event: CredentialClosedEvent,
+    ) -> None:
+        conns = list(self._subs.get(chat_id, ()))
+        if not conns:
+            return
+        body: dict[str, Any] = {
+            "event": "credential_closed",
+            "chat_id": chat_id,
+            "request_id": event.request_id,
+            "kind": event.kind,
+            "host": event.host,
+            "status": event.status,
+            "refs": list(event.refs or []),
+            "login": event.login,
+        }
+        raw = json.dumps(body, ensure_ascii=False)
+        await _send_to_all(self._safe_send_to, conns, raw, label=" credential_closed ")
 
     async def send_choice_closed(
         self,
         chat_id: str,
         event: ChoiceClosedEvent,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         conns = list(self._subs.get(chat_id, ()))
-        if not conns:
-            return
         body: dict[str, Any] = {
             "event": "choice_closed",
             "chat_id": chat_id,
             "request_id": event.request_id,
             "option_id": event.option_id,
             "skipped": event.skipped,
+            "question": event.question,
+            "label": event.label,
+            "custom_text": event.custom_text,
+            "timed_out": event.timed_out,
+            "stopped": event.stopped,
         }
+        if event.waited_ms is not None:
+            body["waited_ms"] = event.waited_ms
+        # The exchange stays in the chat after the card closes: record it so
+        # a reload restates the question and the answer in place.
+        if event.question:
+            self._transcripts.prepare_and_append(
+                chat_id,
+                body,
+                metadata=metadata,
+                phase="activity",
+            )
+        if not conns:
+            return
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" choice_closed ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" choice_closed ")
 
     async def send_runtime_model_updated(
         self,
@@ -3332,5 +3880,4 @@ class WebSocketChannel(BaseChannel):
         if isinstance(used_percent, int) and used_percent >= 0:
             body["used_percent"] = used_percent
         raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" runtime_model_updated ")
+        await _send_to_all(self._safe_send_to, conns, raw, label=" runtime_model_updated ")

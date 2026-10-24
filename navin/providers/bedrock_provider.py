@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
+
+from loguru import logger
 
 from navin.providers.base import (
     LLMProvider,
@@ -21,11 +24,50 @@ from navin.providers.base import (
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
 )
+from navin.providers.claude_capabilities import claude_version
+from navin.providers.reasoning_control import non_anthropic_effort
 
 _IMAGE_DATA_URL = re.compile(r"^data:image/([a-zA-Z0-9.+-]+);base64,(.*)$", re.DOTALL)
 _TEXT_BLOCK_TYPES = {"text", "input_text", "output_text"}
-_ADAPTIVE_THINKING_ONLY_MODEL_TOKENS = ("claude-opus-4-7",)
 _NOOP_TOOL_NAME = "navin_noop"
+_CACHE_POINT = {"cachePoint": {"type": "default"}}
+# Models that refused temperature at runtime (a release the rules predate).
+_NO_TEMPERATURE_LEARNED: set[str] = set()
+# Models that refused every reasoning field we sent: they run on their default.
+_NO_REASONING_LEARNED: set[str] = set()
+# Models that refused ``thinking.display``: adaptive thinking goes out bare.
+_NO_DISPLAY_LEARNED: set[str] = set()
+_REASONING_WORDS = ("reasoning", "thinking", "effort", "output_config")
+# Replayed thinking blocks Bedrock refused because their signature is bound to
+# a context that has since changed ("Invalid signature in thinking block. The
+# block is bound to a different conversation"). Left in the history, one such
+# block failed every later request of the session, "hello" included. Keyed by
+# signature and shared by every instance: the runtime is rebuilt between turns.
+_REJECTED_THINKING: dict[str, None] = {}
+_MAX_REJECTED_THINKING = 2048
+_REFUSAL_WORDS = (
+    "unknown parameter", "not supported", "unsupported", "extra inputs",
+    "not permitted", "invalid", "unrecognized",
+)
+
+
+def _supports_cache_points(model_id: str) -> bool:
+    """Claude on Bedrock accepts cachePoint from 3.5 Haiku / 3.7 Sonnet on.
+
+    Older Claude models reject the block, so they are left untouched; an
+    unparseable (future) Claude name is treated as new.
+    """
+    name = model_id.lower()
+    if "claude" not in name:
+        return False
+    if "claude-3-5-haiku" in name:
+        return True
+    version = claude_version(name)
+    return version is None or version >= (3, 7)
+
+
+def _has_cache_point(blocks: list[dict[str, Any]] | None) -> bool:
+    return any(isinstance(block, dict) and "cachePoint" in block for block in blocks or ())
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -36,6 +78,40 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+def _thinking_key(block: dict[str, Any]) -> str | None:
+    if block.get("signature"):
+        return "s:" + str(block["signature"])
+    redacted = block.get("redactedContentBase64") or block.get("redactedContent")
+    if redacted:
+        raw = redacted if isinstance(redacted, bytes) else str(redacted).encode()
+        return "r:" + hashlib.sha256(raw).hexdigest()
+    return None
+
+
+def _is_thinking_binding_rejection(text: str) -> bool:
+    """A replayed thinking block was refused for its signature.
+
+    Not the "Expected thinking or redacted_thinking" refusal: that one asks
+    for a missing block, and removing more blocks cannot fix it.
+    """
+    text = text.lower()
+    if "thinking" not in text or "signature" not in text:
+        return False
+    return "bound to a different conversation" in text or "invalid signature" in text \
+        or "invalid `signature`" in text
+
+
+def _current_turn_index(messages: list[dict[str, Any]]) -> int:
+    """Index of the last user message: thinking before it is never replayed.
+
+    A thinking signature is bound to the exact system prompt and history it
+    was written under. The system prompt moves between turns (date, memory,
+    skills), so a previous turn's block came back as "bound to a different
+    conversation" and every new message of the session failed.
+    """
+    return max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
 
 
 def _next_or_none(iterator: Iterator[dict[str, Any]]) -> dict[str, Any] | None:
@@ -57,6 +133,7 @@ class BedrockProvider(LLMProvider):
         *,
         region: str | None = None,
         profile: str | None = None,
+        role_arn: str | None = None,
         extra_body: dict[str, Any] | None = None,
         client: Any | None = None,
     ):
@@ -64,27 +141,35 @@ class BedrockProvider(LLMProvider):
         self.default_model = default_model
         self.region = region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         self.profile = profile
+        self.role_arn = role_arn
         self._extra_body = extra_body or {}
         self._client = client if client is not None else self._make_client()
 
     def _make_client(self) -> Any:
         if self.api_key:
             os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.api_key
-        try:
-            import boto3
-        except ImportError as exc:  # pragma: no cover - exercised only without boto3 installed
-            raise RuntimeError(
-                "AWS Bedrock provider requires boto3. Run `navin plugins enable bedrock`."
-            ) from exc
+        from navin.providers.bedrock_media import DEFAULT_REGION, aws_session
 
-        session_kwargs: dict[str, Any] = {}
-        if self.profile:
-            session_kwargs["profile_name"] = self.profile
-        session = boto3.Session(**session_kwargs)
+        session = aws_session(self.profile, self.role_arn)
+        # The AWS profile's own region still wins over the default.
+        self.region = self.region or getattr(session, "region_name", None) or DEFAULT_REGION
 
-        client_kwargs: dict[str, Any] = {}
-        if self.region:
-            client_kwargs["region_name"] = self.region
+        from botocore.config import Config
+
+        # Long reads cover slow extended-thinking streams; botocore retries are
+        # off because the provider layer runs its own retry ladder.
+        client_kwargs: dict[str, Any] = {
+            "config": Config(
+                # A socket read limit, not a deadline: streams have their own
+                # idle watchdog, but a non-streamed converse() sends nothing
+                # until the whole answer exists, which can take longer than
+                # ten minutes at high effort with a 128k output budget.
+                read_timeout=3600,
+                connect_timeout=30,
+                retries={"max_attempts": 1, "mode": "standard"},
+            ),
+        }
+        client_kwargs["region_name"] = self.region
         if self.api_base:
             client_kwargs["endpoint_url"] = self.api_base
         return session.client("bedrock-runtime", **client_kwargs)
@@ -95,22 +180,47 @@ class BedrockProvider(LLMProvider):
             return model[len("bedrock/"):]
         return model
 
-    @staticmethod
-    def _matches_model_token(model: str, tokens: tuple[str, ...]) -> bool:
-        model_lower = model.lower()
-        return any(token in model_lower for token in tokens)
-
     @classmethod
     def _supports_temperature(cls, model: str) -> bool:
         # Version-based rule shared with the other providers: Claude 4.7+
         # deprecated temperature, unknown/future Claude models fail safe.
+        # Measured on Bedrock 2026-10-07: GPT-5.6/6 and Grok 4.7 refuse it too.
         from navin.providers.claude_capabilities import claude_supports_temperature
 
+        name = model.lower()
+        if name in _NO_TEMPERATURE_LEARNED:
+            return False
+        if re.search(r"(?:^|[./])openai\.(?:gpt-[5-9]|o[1-9])", name) or re.search(r"(?:^|[./])xai\.grok-[4-9]", name):
+            return False
         return claude_supports_temperature(model)
 
-    @classmethod
-    def _uses_adaptive_thinking_only(cls, model: str) -> bool:
-        return cls._matches_model_token(model, _ADAPTIVE_THINKING_ONLY_MODEL_TOKENS)
+    @staticmethod
+    def _vendor_reasoning_fields(model_id: str, reasoning_effort: str | None) -> dict[str, Any]:
+        """Reasoning fields for the non-Claude families Bedrock serves.
+
+        Measured 2026-10-07: GPT takes ``reasoning: {effort}`` (none, low ..
+        max; "minimal" and ``reasoning_effort`` are refused), Grok takes
+        ``reasoning_effort``, GLM takes ``thinking.type``. MiniMax always
+        reasons and has no knob. Without these, "none" reached GPT as its
+        default effort.
+        """
+        if not reasoning_effort:
+            return {}
+        effort = reasoning_effort.lower()
+        if effort == "adaptive":
+            return {}
+        effort = non_anthropic_effort(effort) or effort
+        name = model_id.lower()
+        if re.search(r"(?:^|[./])openai\.", name):
+            level = "none" if effort in ("minimal", "off") else effort
+            return {"reasoning": {"effort": level}}
+        if re.search(r"(?:^|[./])xai\.", name):
+            level = "none" if effort in ("minimal", "off") else effort
+            return {"reasoning_effort": level}
+        if re.search(r"(?:^|[./])zai\.glm", name):
+            off = effort in ("none", "minimal", "off")
+            return {"thinking": {"type": "disabled" if off else "enabled"}}
+        return {}
 
     @staticmethod
     def _image_url_block(block: dict[str, Any]) -> dict[str, Any] | None:
@@ -157,7 +267,7 @@ class BedrockProvider(LLMProvider):
                 continue
 
             # Preserve already-Bedrock-shaped content where possible.
-            for key in ("text", "image", "document", "video", "json", "searchResult"):
+            for key in ("text", "image", "document", "video", "json", "searchResult", "cachePoint"):
                 if key in item:
                     blocks.append({key: item[key]})
                     break
@@ -244,6 +354,46 @@ class BedrockProvider(LLMProvider):
         return blocks or [{"text": ""}]
 
     @staticmethod
+    def _without_stale_thinking(msg: dict[str, Any], *, keep: bool) -> dict[str, Any]:
+        """The message minus thinking from earlier turns or already refused."""
+        blocks = [
+            block for block in msg.get("thinking_blocks") or []
+            if keep and isinstance(block, dict) and _thinking_key(block) not in _REJECTED_THINKING
+        ]
+        return {**msg, "thinking_blocks": blocks or None}
+
+    @staticmethod
+    def _retire_replayed_thinking(model_id: str, messages: list[dict[str, Any]], text: str) -> bool:
+        """Stop replaying the thinking blocks a signature refusal hit.
+
+        The refusal names a block by its position in Bedrock's payload, which
+        does not map back to these messages reliably, so every block this
+        request replayed is retired. Blocks written from now on are bound to
+        the context as it is now and keep being replayed. True when the same
+        model can be asked again; False once nothing is left to remove.
+        """
+        if not _is_thinking_binding_rejection(text):
+            return False
+        current_turn = _current_turn_index(messages)
+        retired = 0
+        for msg in messages[current_turn + 1:]:
+            if msg.get("role") != "assistant":
+                continue
+            for block in msg.get("thinking_blocks") or []:
+                key = _thinking_key(block) if isinstance(block, dict) else None
+                if key and key not in _REJECTED_THINKING:
+                    _REJECTED_THINKING[key] = None
+                    retired += 1
+        while len(_REJECTED_THINKING) > _MAX_REJECTED_THINKING:
+            _REJECTED_THINKING.pop(next(iter(_REJECTED_THINKING)))
+        if retired:
+            logger.warning(
+                "Bedrock {} refused {} replayed thinking block(s) bound to an earlier "
+                "context; asking again without them", model_id, retired,
+            )
+        return bool(retired)
+
+    @staticmethod
     def _has_tool_use(msg: dict[str, Any]) -> bool:
         content = msg.get("content")
         return isinstance(content, list) and any(
@@ -282,8 +432,9 @@ class BedrockProvider(LLMProvider):
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         system: list[dict[str, Any]] = []
         converted: list[dict[str, Any]] = []
+        current_turn = _current_turn_index(messages)
 
-        for msg in messages:
+        for index, msg in enumerate(messages):
             role = msg.get("role")
             content = msg.get("content")
             if role == "system":
@@ -297,6 +448,8 @@ class BedrockProvider(LLMProvider):
                     converted.append({"role": "user", "content": [block]})
                 continue
             if role == "assistant":
+                if index < current_turn or _REJECTED_THINKING:
+                    msg = self._without_stale_thinking(msg, keep=index > current_turn)
                 converted.append({"role": "assistant", "content": self._assistant_blocks(msg)})
                 continue
             if role == "user":
@@ -368,49 +521,21 @@ class BedrockProvider(LLMProvider):
                 return {"tool": {"name": str(name)}}
         return {"auto": {}}
 
-    @staticmethod
-    def _adaptive_thinking(reasoning_effort: str | None) -> dict[str, Any] | None:
-        if not reasoning_effort:
-            return None
-        effort = reasoning_effort.lower()
-        if effort == "none":
-            return None
-        thinking: dict[str, Any] = {"type": "adaptive"}
-        if effort != "adaptive":
-            thinking["effort"] = effort
-        return thinking
-
     def _thinking_request(
         self,
         model_id: str,
         reasoning_effort: str | None,
         max_tokens: int,
-    ) -> tuple[dict[str, Any] | None, int]:
-        """Claude's ``thinking`` field for this effort, and the max_tokens it needs.
+    ) -> tuple[dict[str, Any], int]:
+        """Claude's reasoning fields for this effort, and the max_tokens they need.
 
-        No effort configured means no field: the model keeps its default.
-        An explicit effort is always spelled out, "none" included - Claude's
-        default is off today, but a request that says so survives a model
-        whose default changes, and omission is how "none" became a full chain
-        of thought on other wires.
+        No effort configured means no field: the model keeps its default. An
+        explicit effort is always spelled out, "none" included, in the form
+        each generation accepts (see claude_capabilities.claude_thinking_fields).
         """
-        from navin.providers.claude_capabilities import (
-            claude_accepts_thinking_param,
-            claude_supports_adaptive_thinking,
-        )
+        from navin.providers.claude_capabilities import claude_thinking_fields
 
-        if not reasoning_effort or not claude_accepts_thinking_param(model_id):
-            return None, max_tokens
-        effort = reasoning_effort.lower()
-        if effort in ("none", "minimal"):
-            return {"type": "disabled"}, max_tokens
-        if self._uses_adaptive_thinking_only(model_id):
-            return self._adaptive_thinking(reasoning_effort), max_tokens
-        if claude_supports_adaptive_thinking(model_id):
-            # 4.6 accepts adaptive thinking; the model picks its own budget.
-            return {"type": "adaptive"}, max_tokens
-        budget = {"low": 1024, "medium": 4096}.get(effort, max(8192, max_tokens))
-        return {"type": "enabled", "budget_tokens": budget}, max(max_tokens, budget + 4096)
+        return claude_thinking_fields(model_id, reasoning_effort, max_tokens=max_tokens)
 
     def _build_kwargs(
         self,
@@ -427,7 +552,17 @@ class BedrockProvider(LLMProvider):
         if not bedrock_messages:
             bedrock_messages = [{"role": "user", "content": [{"text": "(empty)"}]}]
 
-        thinking, max_tokens = self._thinking_request(model_id, reasoning_effort, max_tokens)
+        if model_id.lower() in _NO_REASONING_LEARNED:
+            reasoning_effort = None
+        if "claude" in model_id.lower():
+            from navin.providers.claude_capabilities import clamp_claude_max_tokens
+
+            max_tokens = clamp_claude_max_tokens(model_id, max_tokens)
+        thinking_fields, max_tokens = self._thinking_request(model_id, reasoning_effort, max_tokens)
+        thinking = thinking_fields.get("thinking")
+        if thinking and "display" in thinking and model_id.lower() in _NO_DISPLAY_LEARNED:
+            thinking = {k: v for k, v in thinking.items() if k != "display"}
+            thinking_fields = {**thinking_fields, "thinking": thinking}
         kwargs: dict[str, Any] = {
             "modelId": model_id,
             "messages": bedrock_messages,
@@ -435,14 +570,14 @@ class BedrockProvider(LLMProvider):
         }
         if system:
             kwargs["system"] = system
-        thinking_on = bool(thinking) and thinking.get("type") != "disabled"
+        thinking_on = bool(thinking) and thinking.get("type") not in ("disabled", "between_tools")
         if self._supports_temperature(model_id):
             # Extended thinking only runs at temperature 1.
             kwargs["inferenceConfig"]["temperature"] = 1.0 if thinking_on else temperature
 
-        additional: dict[str, Any] = {}
-        if thinking:
-            additional["thinking"] = thinking
+        additional: dict[str, Any] = dict(thinking_fields) or self._vendor_reasoning_fields(
+            model_id, reasoning_effort
+        )
         if self._extra_body:
             additional = _deep_merge(additional, self._extra_body)
         if additional:
@@ -452,6 +587,13 @@ class BedrockProvider(LLMProvider):
         tool_config: dict[str, Any] | None = None
         if bedrock_tools:
             tool_config = {"tools": bedrock_tools}
+            if tool_choice not in (None, "auto", "none") and "claude" in model_id.lower():
+                # Claude refuses forced tool use while thinking runs, and the
+                # newest generations refuse it outright.
+                from navin.providers.claude_capabilities import claude_rejects_forced_tool_choice
+
+                if thinking_on or claude_rejects_forced_tool_choice(model_id):
+                    tool_choice = "auto"
             choice = self._convert_tool_choice(tool_choice)
             if choice:
                 tool_config["toolChoice"] = choice
@@ -461,7 +603,32 @@ class BedrockProvider(LLMProvider):
         if tool_config:
             kwargs["toolConfig"] = tool_config
 
+        if _supports_cache_points(model_id):
+            self._add_cache_points(kwargs)
         return kwargs
+
+    @staticmethod
+    def _add_cache_points(kwargs: dict[str, Any]) -> None:
+        """Mark tools, system and conversation end as cacheable prefixes.
+
+        Without them every step re-read the whole prompt at full price and
+        speed. The last-message point lets the next step of a turn read all
+        of this one from cache. Three of Bedrock's four allowed points; a
+        caller that already placed its own is left alone.
+        """
+        system = kwargs.get("system")
+        messages = kwargs.get("messages") or []
+        if _has_cache_point(system) or any(
+            _has_cache_point(message.get("content")) for message in messages
+        ):
+            return
+        tools = (kwargs.get("toolConfig") or {}).get("tools")
+        if tools:
+            tools.append(dict(_CACHE_POINT))
+        if system:
+            system.append(dict(_CACHE_POINT))
+        if messages and isinstance(messages[-1].get("content"), list):
+            messages[-1]["content"].append(dict(_CACHE_POINT))
 
     @staticmethod
     def _finish_reason(stop_reason: str | None) -> str:
@@ -694,7 +861,15 @@ class BedrockProvider(LLMProvider):
         should_retry = None
         if status_code is not None:
             should_retry = int(status_code) == 429 or int(status_code) >= 500
-        if any(token in code_text for token in ("throttl", "timeout", "unavailable", "modelnotready")):
+        if any(
+            token in code_text
+            for token in (
+                "throttl", "timeout", "unavailable", "modelnotready",
+                # Transient per AWS: "An error occurred while streaming the
+                # response. Retry your request." (HTTP 424, no 5xx status).
+                "modelstreamerror", "internalserver",
+            )
+        ):
             should_retry = True
 
         return LLMResponse(
@@ -726,7 +901,77 @@ class BedrockProvider(LLMProvider):
             response = await asyncio.to_thread(self._client.converse, **kwargs)
             return self._parse_response(response)
         except Exception as e:
-            return self._handle_error(e)
+            result = self._handle_error(e)
+        if self._learned_thinking_retry(model, reasoning_effort, result, messages):
+            return await self.chat(
+                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+            )
+        return result
+
+    def _learned_thinking_retry(
+        self,
+        model: str | None,
+        reasoning_effort: str | None,
+        result: LLMResponse,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        """True once a refusal taught what this model wants (one retry).
+
+        Covers a temperature the model does not take, a "thinking off"
+        spelled the way an older generation expected, and replayed thinking
+        whose signature no longer matches the history.
+        """
+        if result.finish_reason != "error":
+            return False
+        model_id = self._strip_prefix(model or self.default_model)
+        text = (result.content or "").lower()
+        if _is_thinking_binding_rejection(text):
+            # The history is at fault, not the reasoning settings: turning
+            # reasoning off for the model would not remove the block.
+            return messages is not None and self._retire_replayed_thinking(model_id, messages, text)
+        if "temperature" in text and ("not support" in text or "remove temperature" in text):
+            if model_id.lower() not in _NO_TEMPERATURE_LEARNED:
+                _NO_TEMPERATURE_LEARNED.add(model_id.lower())
+                return True
+            return False
+        from navin.providers.claude_capabilities import learn_claude_thinking_off
+
+        if (
+            "display" in text
+            and any(word in text for word in _REFUSAL_WORDS)
+            and model_id.lower() not in _NO_DISPLAY_LEARNED
+        ):
+            # A deployment whose schema predates thinking.display: keep the
+            # reasoning, drop only the summary request.
+            _NO_DISPLAY_LEARNED.add(model_id.lower())
+            return True
+
+        effort = (reasoning_effort or "").lower()
+        if (
+            effort in ("none", "minimal", "off")
+            and "claude" in model_id.lower()
+            and learn_claude_thinking_off(model_id, result.content)
+        ):
+            return True
+        if effort and effort not in ("none", "minimal", "off", "adaptive") and "claude" in model_id.lower():
+            from navin.providers.claude_capabilities import learn_claude_effort
+
+            # A refused level names the ones the model takes: replay with the
+            # nearest of them before giving up on reasoning altogether.
+            if learn_claude_effort(model_id, "max" if effort == "ultra" else effort, result.content):
+                return True
+        # Last resort: a reasoning field this model refuses. Run it on its
+        # default rather than failing the step; once per model.
+        if (
+            reasoning_effort
+            and any(word in text for word in _REASONING_WORDS)
+            and any(word in text for word in _REFUSAL_WORDS)
+            and model_id.lower() not in _NO_REASONING_LEARNED
+        ):
+            _NO_REASONING_LEARNED.add(model_id.lower())
+            logger.warning("Bedrock {} refused its reasoning fields; using its default", model_id)
+            return True
+        return False
 
     async def chat_stream(
         self,
@@ -741,20 +986,22 @@ class BedrockProvider(LLMProvider):
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        _ = on_thinking_delta, on_tool_call_delta
+        _ = on_tool_call_delta
         idle_timeout_s = resolve_stream_idle_timeout_s()
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         thinking_blocks: list[dict[str, Any]] = []
         tool_buffers: dict[int, dict[str, Any]] = {}
         state: dict[str, Any] = {}
+        event_stream: Any = None
 
         try:
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
             )
             response = await asyncio.to_thread(self._client.converse_stream, **kwargs)
-            stream = iter(response.get("stream") or [])
+            event_stream = response.get("stream")
+            stream = iter(event_stream or [])
             while True:
                 event = await asyncio.wait_for(
                     asyncio.to_thread(_next_or_none, stream),
@@ -762,6 +1009,7 @@ class BedrockProvider(LLMProvider):
                 )
                 if event is None:
                     break
+                reasoning_before = len(reasoning_parts)
                 delta = self._parse_stream_event(
                     event,
                     content_parts=content_parts,
@@ -772,6 +1020,11 @@ class BedrockProvider(LLMProvider):
                 )
                 if delta and on_content_delta:
                     await on_content_delta(delta)
+                if on_thinking_delta and len(reasoning_parts) > reasoning_before:
+                    # Show the thinking as it arrives, not after the answer.
+                    thought = "".join(reasoning_parts[reasoning_before:])
+                    if thought:
+                        await on_thinking_delta(thought)
             return self._stream_result(
                 content_parts=content_parts,
                 reasoning_parts=reasoning_parts,
@@ -789,7 +1042,22 @@ class BedrockProvider(LLMProvider):
                 error_kind="timeout",
             )
         except Exception as e:
-            return self._handle_error(e)
+            result = self._handle_error(e)
+        finally:
+            close = getattr(event_stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        if not content_parts and self._learned_thinking_retry(model, reasoning_effort, result, messages):
+            return await self.chat_stream(
+                messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice,
+                on_content_delta=on_content_delta,
+                on_thinking_delta=on_thinking_delta,
+                on_tool_call_delta=on_tool_call_delta,
+            )
+        return result
 
     def get_default_model(self) -> str:
         return self.default_model

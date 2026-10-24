@@ -71,3 +71,14 @@ describe("composer menu choice", () => {
     expect(commit).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("opening gesture", () => {
+  it("ignores the release of the click that opened the menu, not a later pick", async () => {
+    const { isOpeningGesture, noteMenuOpened, resetMenuChoiceForTests } = await import("./menuChoice");
+    resetMenuChoiceForTests();
+    expect(isOpeningGesture(() => 1_000)).toBe(false);
+    noteMenuOpened(() => 1_000);
+    expect(isOpeningGesture(() => 1_200)).toBe(true);
+    expect(isOpeningGesture(() => 1_600)).toBe(false);
+  });
+});

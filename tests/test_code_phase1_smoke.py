@@ -30,6 +30,7 @@ class CodePhase1SmokeTest(unittest.TestCase):
                 "fast": "chat-fast",
                 "dev": "chat-dev",
             }
+            model_routing_enabled = True
 
         with patch("navin.config.loader.load_config", return_value=FakeConfig()):
             self.assertEqual(assist_api._assist_preset(), "tab-model")

@@ -16,14 +16,49 @@ from navin.session import turn_continuation as continuation
 from navin.session.manager import Session, SessionManager
 
 RECOVERY_KEY = "turn_recovery"
+# Automatic replays of an interrupted turn (about 4 minutes of backoff in all).
+MAX_RECOVERY_ATTEMPTS = 6
 RECOVERY_ID_META = "_turn_recovery_id"
 TRACKED_REQUEST_META = "_turn_recovery_request"
 _CHANNELS = frozenset({"websocket", "cli"})
+# An interrupted request idle for longer than this is not replayed after a
+# restart: the user has moved on and the saved state may no longer apply.
+MAX_RECOVERY_AGE_S = 6 * 3600.0
+# Session marker for an accepted request whose turn has not ended (owned by
+# the agent loop); ``cancel`` flags it so a restart never resumes a /stop.
+PENDING_USER_TURN_KEY = "pending_user_turn"
 
 
 def recovery_pending(metadata: dict[str, Any]) -> bool:
     record = metadata.get(RECOVERY_KEY)
     return isinstance(record, dict) and record.get("status") in {"running", "waiting"}
+
+
+def portable_request(msg: InboundMessage) -> dict[str, Any]:
+    """Snapshot of *msg* that can be replayed by a fresh process."""
+    # Runtime callbacks, acknowledgements and approval objects cannot
+    # survive a restart. Rebuild them from the current configuration.
+    metadata = {}
+    for key, value in msg.metadata.items():
+        if key.startswith("_") and key != "_wants_stream":
+            continue
+        if key in {"message_id", "goal_requested", "original_command"}:
+            continue
+        try:
+            metadata[key] = json.loads(json.dumps(value, allow_nan=False))
+        except (TypeError, ValueError):
+            continue
+    return {
+        "channel": msg.channel,
+        "chat_id": msg.chat_id,
+        "content": msg.content,
+        "media": list(msg.media),
+        "metadata": metadata,
+    }
+
+
+def _replayable_channel(channel: Any) -> bool:
+    return isinstance(channel, str) and bool(channel) and channel != "system"
 
 
 class TurnRecovery:
@@ -33,9 +68,23 @@ class TurnRecovery:
         self.sessions = sessions
         self.due: dict[str, float] = {}
         self.queued: dict[str, str] = {}
+        # Interrupted requests a restart gave up on (too old or replayed too
+        # often); the runtime closes them with a short note.
+        self.abandoned: list[str] = []
 
     def begin(self, session: Session, msg: InboundMessage, *, persisted: bool = True) -> None:
         if msg.channel not in _CHANNELS or msg.metadata.get("heartbeat"):
+            previous = session.metadata.get(RECOVERY_KEY)
+            if (
+                isinstance(previous, dict)
+                and not msg.metadata.get("heartbeat")
+                and not continuation.internal_continuation_inbound(msg.metadata)
+                and msg.metadata.get(RECOVERY_ID_META) is None
+            ):
+                # A new message supersedes a restart replay adopted for this
+                # channel; the queued replay must not run after it.
+                self.finish(session)
+                self.sessions.save(session, fsync=True)
             return
         previous = session.metadata.get(RECOVERY_KEY)
         same_request = isinstance(previous, dict) and msg.metadata.get(TRACKED_REQUEST_META) == previous.get("id")
@@ -46,29 +95,11 @@ class TurnRecovery:
                 return
             record = dict(previous)
         else:
-            # Runtime callbacks, acknowledgements and approval objects cannot
-            # survive a restart. Rebuild them from the current configuration.
-            metadata = {}
-            for key, value in msg.metadata.items():
-                if key.startswith("_") and key != "_wants_stream":
-                    continue
-                if key in {"message_id", "goal_requested", "original_command"}:
-                    continue
-                try:
-                    metadata[key] = json.loads(json.dumps(value, allow_nan=False))
-                except (TypeError, ValueError):
-                    continue
             record = {
                 "id": uuid.uuid4().hex,
                 "started_at": time.time(),
                 "attempts": 0,
-                "request": {
-                    "channel": msg.channel,
-                    "chat_id": msg.chat_id,
-                    "content": msg.content,
-                    "media": list(msg.media),
-                    "metadata": metadata,
-                },
+                "request": portable_request(msg),
             }
         record["request_persisted"] = bool(record.get("request_persisted")) or persisted
         msg.metadata[TRACKED_REQUEST_META] = record["id"]
@@ -91,9 +122,21 @@ class TurnRecovery:
         self.queued.pop(session.key, None)
 
     def cancel(self, key: str) -> None:
+        """The user stopped the request: drop its replay, now and after a restart."""
         session = self.sessions.peek(key)
-        if session is not None and RECOVERY_KEY in session.metadata:
+        if session is None:
+            return
+        marker = session.metadata.get(PENDING_USER_TURN_KEY)
+        changed = False
+        if marker and not (isinstance(marker, dict) and marker.get("stopped")):
+            session.metadata[PENDING_USER_TURN_KEY] = {
+                **(marker if isinstance(marker, dict) else {}), "stopped": True,
+            }
+            changed = True
+        if RECOVERY_KEY in session.metadata:
             self.finish(session)
+            changed = True
+        if changed:
             self.sessions.save(session, fsync=True)
 
     def schedule(self, session: Session, *, retry_after: float | None = None) -> float | None:
@@ -101,6 +144,12 @@ class TurnRecovery:
         if not isinstance(record, dict):
             return None
         attempts = max(0, int(record.get("attempts") or 0)) + 1
+        if attempts > MAX_RECOVERY_ATTEMPTS:
+            # A provider down for this long will not come back in the next
+            # minute: stop replaying the turn and let the error reach the user.
+            self.finish(session)
+            self.sessions.save(session, fsync=True)
+            return None
         delay = min(60.0, 5.0 * 2 ** min(attempts - 1, 4))
         if isinstance(retry_after, int | float) and math.isfinite(retry_after):
             # Honour provider cooldowns without polling that provider early.
@@ -125,8 +174,38 @@ class TurnRecovery:
         record = session.metadata.get(RECOVERY_KEY) if session is not None else None
         return isinstance(record, dict) and record.get("id") == token
 
-    def discover(self, *, channel: str, session_key: str | None = None) -> list[str]:
-        """Read once at startup; only this runtime's interactive channel resumes."""
+    def adopt(self, session: Session, request: dict[str, Any], *, started_at: float) -> bool:
+        """Track a request the gateway accepted on a channel without live recovery.
+
+        Used at startup for an interrupted turn whose user message is already
+        in history, so the replay never persists it a second time.
+        """
+        if RECOVERY_KEY in session.metadata or not isinstance(request, dict):
+            return False
+        if not _replayable_channel(request.get("channel")) or not request.get("chat_id"):
+            return False
+        session.metadata[RECOVERY_KEY] = {
+            "id": uuid.uuid4().hex,
+            "started_at": float(started_at),
+            "attempts": 0,
+            "request": request,
+            "request_persisted": True,
+            "status": "running",
+        }
+        self.sessions.save(session, fsync=True)
+        return True
+
+    def discover(
+        self, *, channel: str, session_key: str | None = None, external: bool = False,
+    ) -> list[str]:
+        """Read once at startup; only this runtime's interactive channel resumes.
+
+        ``external`` also resumes requests from non-interactive channels (chat
+        apps), which only the gateway serves. Every restart counts as a replay
+        attempt, so a request that keeps crashing the process stops after
+        ``MAX_RECOVERY_ATTEMPTS``; one idle for over ``MAX_RECOVERY_AGE_S`` is
+        dropped. Both end up in ``abandoned``.
+        """
         keys = [session_key] if session_key else [row["key"] for row in self.sessions.list_sessions()]
         recovered = []
         now = time.time()
@@ -136,12 +215,43 @@ class TurnRecovery:
                 continue
             record = session.metadata[RECOVERY_KEY]
             request = record.get("request")
-            if not isinstance(request, dict) or request.get("channel") != channel:
+            if not isinstance(request, dict):
                 continue
+            origin = request.get("channel")
+            if origin != channel and not (
+                external and origin not in _CHANNELS and _replayable_channel(origin)
+            ):
+                continue
+            if self._expired(session, record, now) or not self._count_restart(record):
+                self.finish(session)
+                self.sessions.save(session, fsync=True)
+                self.abandoned.append(key)
+                continue
+            self.sessions.save(session, fsync=True)
             due = record.get("next_attempt_at")
             self.due[key] = float(due) if isinstance(due, int | float) and math.isfinite(due) else now
             recovered.append(key)
         return recovered
+
+    @staticmethod
+    def _expired(session: Session, record: dict[str, Any], now: float) -> bool:
+        started = record.get("started_at")
+        last = float(started) if isinstance(started, int | float) and math.isfinite(started) else 0.0
+        updated = getattr(session, "updated_at", None)
+        if updated is not None:
+            try:
+                last = max(last, updated.timestamp())
+            except (AttributeError, OSError, OverflowError, ValueError):
+                pass
+        return now - last > MAX_RECOVERY_AGE_S
+
+    @staticmethod
+    def _count_restart(record: dict[str, Any]) -> bool:
+        attempts = max(0, int(record.get("attempts") or 0)) + 1
+        if attempts > MAX_RECOVERY_ATTEMPTS:
+            return False
+        record["attempts"] = attempts
+        return True
 
     def take_due(
         self, *, active_keys: set[str], now: float | None = None, only_key: str | None = None,
@@ -159,7 +269,11 @@ class TurnRecovery:
                 continue
             record = session.metadata[RECOVERY_KEY]
             request = record.get("request")
-            if not isinstance(request, dict) or request.get("channel") not in _CHANNELS:
+            if (
+                not isinstance(request, dict)
+                or not _replayable_channel(request.get("channel"))
+                or not request.get("chat_id")
+            ):
                 self.finish(session)
                 self.sessions.save(session)
                 continue

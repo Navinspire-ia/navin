@@ -111,7 +111,7 @@ def _get_json(url: str, *, headers: dict[str, str] | None = None) -> Any:
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "NavinCareer/1.0 (+https://navin.ai)",
+            "User-Agent": "NavinCareer/1.0 (+https://navin.live)",
             "Accept": "application/json",
             **(headers or {}),
         },
@@ -132,7 +132,7 @@ def _post_json(url: str, payload: dict[str, Any]) -> Any:
         url,
         data=data,
         headers={
-            "User-Agent": "NavinCareer/1.0 (+https://navin.ai)",
+            "User-Agent": "NavinCareer/1.0 (+https://navin.live)",
             "Accept": "application/json",
             "Content-Type": "application/json",
         },

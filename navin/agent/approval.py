@@ -134,6 +134,16 @@ class ApprovalDecision:
     reason: str = ""
 
 
+def _bypass_forbidden() -> bool:
+    """True when an organization policy forbids turning confirmations off."""
+    try:
+        from navin.agent.managed_policy import load
+
+        return bool(load().disable_bypass_permissions)
+    except Exception:  # noqa: BLE001 - a broken policy reader keeps today's behaviour
+        return False
+
+
 def _unattended(request: ApprovalRequest, why: str) -> ApprovalDecision:
     """The decision for a run with nobody watching: whatever used to happen."""
     if request.allow_when_unattended:
@@ -210,7 +220,7 @@ class ApprovalBroker:
     # -- asking -------------------------------------------------------------
 
     async def ask(self, request: ApprovalRequest) -> ApprovalDecision:
-        if not self._config.enabled:
+        if not self._config.enabled and not _bypass_forbidden():
             # Turning the gate off means the operator does not want to be asked,
             # so the operation goes ahead. Reading it as "nobody can be asked,
             # therefore refuse" made disabling approvals *more* restrictive than
@@ -252,6 +262,13 @@ class ApprovalBroker:
         self._pending[request_id] = entry
 
         route = {"channel": channel, "chat_id": chat_id, "session_key": session_key}
+        # How long the turn waited on the user, so it is not billed as work.
+        close_route = {
+            **route,
+            "opened_at": time.monotonic(),
+            # The closer restates the decision in the chat.
+            "action": request.action or request.tool,
+        }
         try:
             await self._publish(
                 request_id, request, {**route, "expires_at_ms": int(entry.expires_at * 1000)}
@@ -272,7 +289,7 @@ class ApprovalBroker:
             await self._notify_closed(
                 request_id,
                 ApprovalDecision(allowed=False, reason="the turn was stopped"),
-                route,
+                close_route,
             )
             raise
         finally:
@@ -281,7 +298,7 @@ class ApprovalBroker:
         if decision.allowed and decision.remembered and request.scope and self._config.remember:
             self._remembered.setdefault(session_key, set()).add(request.scope)
 
-        await self._notify_closed(request_id, decision, route)
+        await self._notify_closed(request_id, decision, close_route)
         return decision
 
     async def _notify_closed(
@@ -517,3 +534,54 @@ class UnattendedGate:
 
     async def ask(self, request: ApprovalRequest) -> ApprovalDecision:
         return _unattended(request, self._reason)
+
+
+# Tools whose approval an ``acceptEdits`` agent grants itself.
+EDIT_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "edit_file", "apply_patch", "manage_files", "notebook_edit"}
+)
+
+
+class SubagentApprovalGate:
+    """Forward a subagent's question to the user who started it.
+
+    The parent's gate (the loop's broker) is captured when the subagent is
+    spawned, and the request is shown on the parent's chat with the subagent
+    named in the action. When nobody can answer there, the refusal keeps the
+    background wording so the subagent reports back instead of insisting.
+    ``permission_mode`` comes from the agent definition: ``bypassPermissions``
+    approves everything (unless an organization policy forbids it),
+    ``acceptEdits`` approves file edits and forwards the rest.
+    """
+
+    def __init__(
+        self, parent: ApprovalGate | None, *, label: str, unattended_reason: str,
+        permission_mode: str = "default",
+    ) -> None:
+        self._parent = parent
+        self._label = label
+        self._unattended = unattended_reason
+        self._mode = permission_mode
+
+    async def ask(self, request: ApprovalRequest) -> ApprovalDecision:
+        from dataclasses import replace as _replace
+
+        if self._mode == "bypassPermissions" and not _bypass_forbidden():
+            return ApprovalDecision(allowed=True, reason="agent permissionMode bypassPermissions")
+        if self._mode == "acceptEdits" and request.tool in EDIT_TOOLS:
+            return ApprovalDecision(allowed=True, reason="agent permissionMode acceptEdits")
+        if self._parent is None:
+            return _unattended(request, self._unattended)
+        named = _replace(
+            request, action=f"[subagent {self._label}] {request.action or request.tool}"
+        )
+        try:
+            decision = await self._parent.ask(named)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("subagent approval forwarding failed for {}", request.tool)
+            return _unattended(request, self._unattended)
+        if not decision.allowed and decision.reason == NO_APPROVER:
+            return ApprovalDecision(allowed=False, reason=self._unattended)
+        return decision

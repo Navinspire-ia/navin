@@ -36,7 +36,9 @@ import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
 import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import { MontageInstallConsole } from "@/components/montage/MontageInstallConsole";
 import { MontageTimeline } from "@/components/montage/MontageTimeline";
+import { SiteLoginPicker } from "@/components/montage/SiteLoginPicker";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
+import { siteLoginInstruction, type BrowserCredentialSite } from "@/lib/browser-credentials-api";
 import { Button } from "@/components/ui/button";
 import {
   fetchMontageAssets,
@@ -261,6 +263,7 @@ export function MontageWorkbench({
     import("@/lib/api").MontageSetupStreamEvent[] | null
   >(null);
   const [modelBusy, setModelBusy] = useState<MediaToolKey | null>(null);
+  const [siteLogin, setSiteLogin] = useState<BrowserCredentialSite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<{
     url: string;
@@ -579,7 +582,9 @@ export function MontageWorkbench({
   };
 
   const runAction = (card: ActionCard, send: boolean) => {
-    const text = `/montage ${card.prompt}`;
+    // Only secret refs go in the prompt; the browser tool fills the values.
+    const login = siteLogin ? `${siteLoginInstruction(siteLogin)} ` : "";
+    const text = `/montage ${login}${card.prompt}`;
     if (send && onRun) {
       onRun(text);
       return;
@@ -677,7 +682,7 @@ export function MontageWorkbench({
               )}
               {item.label}
               {item.id === "gallery" && assets.length > 0 ? (
-                <span className="ml-1 tabular-nums opacity-80">{assets.length}</span>
+                <span className="ms-1 tabular-nums opacity-80">{assets.length}</span>
               ) : null}
             </button>
           ))}
@@ -789,9 +794,9 @@ export function MontageWorkbench({
                         onClick={() => void onInstallPackage("all", false)}
                       >
                         {setupBusy === "all" ? (
-                          <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                          <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                         ) : (
-                          <Download className="mr-1 h-3 w-3" aria-hidden />
+                          <Download className="me-1 h-3 w-3" aria-hidden />
                         )}
                         {tx("montage.installAll", "Install all")}
                       </Button>
@@ -861,9 +866,9 @@ export function MontageWorkbench({
                           onClick={() => void onInstallPackage(row.id, false)}
                         >
                           {setupBusy === row.id ? (
-                            <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                            <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                           ) : (
-                            <Download className="mr-1 h-3 w-3" aria-hidden />
+                            <Download className="me-1 h-3 w-3" aria-hidden />
                           )}
                           {tx("montage.install", "Install")}
                         </Button>
@@ -958,7 +963,7 @@ export function MontageWorkbench({
                           <Icon className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden />
                           <span>{mediaLabel(key, t)}</span>
                         </p>
-                        <p className="mt-0.5 truncate pl-6 text-[11.5px] text-muted-foreground">
+                        <p className="mt-0.5 truncate ps-6 text-[11.5px] text-muted-foreground">
                           {mediaSubtitle(row?.provider, currentModel)}
                         </p>
                       </div>
@@ -1024,7 +1029,7 @@ export function MontageWorkbench({
                           className="h-8 shrink-0 rounded-full px-2.5 text-[11.5px]"
                           onClick={() => onOpenSettings(section)}
                         >
-                          <ExternalLink className="mr-1 h-3 w-3" aria-hidden />
+                          <ExternalLink className="me-1 h-3 w-3" aria-hidden />
                           {tx("montage.media.openSettings", "Settings list")}
                         </Button>
                       ) : null}
@@ -1053,6 +1058,14 @@ export function MontageWorkbench({
               transition={spring}
               className="grid gap-2 sm:grid-cols-2"
             >
+              <SiteLoginPicker
+                token={token}
+                value={siteLogin}
+                onChange={setSiteLogin}
+                onInsert={onSeed ? (text) => onSeed(text) : undefined}
+                onAddSite={onOpenSettings ? () => onOpenSettings("sites") : undefined}
+                className="sm:col-span-2"
+              />
               {actionCards.map((card, index) => (
                 <motion.article
                   key={card.id}
@@ -1090,7 +1103,7 @@ export function MontageWorkbench({
                       className="h-8 rounded-full active:scale-[0.96]"
                       onClick={() => runAction(card, true)}
                     >
-                      <Play className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      <Play className="me-1.5 h-3.5 w-3.5" aria-hidden />
                       {tx("montage.run", "Run")}
                     </Button>
                     <Button
@@ -1149,7 +1162,7 @@ export function MontageWorkbench({
                       <button
                         type="button"
                         onClick={() => openAsset(asset)}
-                        className="flex w-full flex-col rounded-2xl border border-border/55 bg-card/40 p-3 text-left transition-colors hover:bg-muted/30 active:scale-[0.98]"
+                        className="flex w-full flex-col rounded-2xl border border-border/55 bg-card/40 p-3 text-start transition-colors hover:bg-muted/30 active:scale-[0.98]"
                       >
                         <span className="flex items-center gap-2">
                           <AssetIcon kind={asset.kind} />
@@ -1178,7 +1191,7 @@ export function MontageWorkbench({
               transition={spring}
               className="overflow-hidden rounded-2xl border border-border/55"
             >
-              <table className="w-full text-left text-[12px]">
+              <table className="w-full text-start text-[12px]">
                 <thead className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-semibold">

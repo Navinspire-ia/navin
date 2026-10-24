@@ -1,12 +1,15 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Desk schemas are off by default and come back when the turn asks for them.
+"""Desk schemas are off by default; only a desk's slash command or its module opens it.
 
 The five desk tools cost ~9k prompt tokens together, and prompt size is
 wall-clock: measured 2026-09-01 on glm-5.3-flash, a ~64k prompt answered in
 1768 ms against 1037 ms for ~31k, both at a 100% cache hit. A coding turn
 paying for `tenders` on every step was renting that for nothing.
+
+Plain words no longer open a desk: on coding turns they misfired constantly
+("resume en 3 points" opened career) and each misfire reset the prompt cache.
 """
 
 from __future__ import annotations
@@ -41,36 +44,44 @@ class DeskIntentTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(desk_tools_for_text(text), frozenset())
 
-    def test_each_desk_is_recognised_from_plain_french(self):
-        cases = {
-            "trouve moi des appels d offres BTP": "tenders",
-            "ameliore mon CV pour un poste de data engineer": "career",
-            "il me faut des leads dans la logistique": "leads",
-            "prepare une campagne marketing pour le lancement": "marketing",
-            "regarde mon portefeuille et place un stop loss": "trading",
-        }
-        for text, tool in cases.items():
+    def test_plain_words_never_open_a_desk(self):
+        """Each desk is its own module: Navin Code must not pull it in."""
+        for text in (
+            "trouve moi des appels d offres BTP",
+            "ameliore mon CV pour un poste de data engineer",
+            "resume en 3 points",
+            "il me faut des leads dans la logistique",
+            "prepare une campagne marketing pour le lancement",
+            "regarde mon portefeuille et place un stop loss",
+            "ajoute un champ contacts au modele",
+            "ajoute une video de demo",
+        ):
             with self.subTest(text=text):
-                self.assertIn(tool, desk_tools_for_text(text))
+                self.assertEqual(desk_tools_for_text(text), frozenset())
+
+    def test_a_desk_path_is_not_its_slash_command(self):
+        for text in ("regarde navin/career/loop.py", "corrige navin/trading/store.py", "/careers"):
+            with self.subTest(text=text):
+                self.assertEqual(desk_tools_for_text(text), frozenset())
 
     def test_a_slash_command_opens_its_desk(self):
         self.assertIn("tenders", desk_tools_for_text("/tenders veille du jour"))
         self.assertIn("career", desk_tools_for_text("/career refais mon CV"))
         self.assertIn("marketing", desk_tools_for_text("/campaign lancement"))
 
-    def test_accents_and_apostrophes_do_not_hide_a_desk(self):
-        self.assertIn("tenders", desk_tools_for_text("cherche des appels d'offres"))
-        self.assertIn("career", desk_tools_for_text("ma lettre de motivation"))
+    def test_a_command_after_the_brief_still_opens_its_desk(self):
+        self.assertEqual(desk_tools_for_text("fais la veille /tenders"), frozenset({"tenders"}))
 
 
 class DeskSchemaGatingTest(unittest.TestCase):
     def test_a_coding_turn_ships_no_desk_schema(self):
         self.assertEqual(_desks_in_schema("corrige runner.py"), set())
 
-    def test_naming_a_desk_puts_it_back_in_the_schema(self):
-        self.assertEqual(
-            _desks_in_schema("trouve des appels d offres"), {"tenders"}
-        )
+    def test_naming_a_desk_keeps_it_out_of_the_schema(self):
+        self.assertEqual(_desks_in_schema("trouve des appels d offres"), set())
+
+    def test_its_slash_command_puts_a_desk_in_the_schema(self):
+        self.assertEqual(_desks_in_schema("/tenders veille du jour"), {"tenders"})
 
     def test_a_product_module_keeps_its_own_desk(self):
         self.assertEqual(
@@ -89,7 +100,7 @@ class DeskSchemaGatingTest(unittest.TestCase):
 
     def test_a_turn_that_opens_a_desk_reports_it_for_the_session(self):
         opened = AgentLoop._desk_tools_opened_by_turn(
-            {}, "je cherche des appels d offres"
+            {}, "/tenders je cherche des appels d offres"
         )
         self.assertEqual(opened, {"tenders"})
 
@@ -107,7 +118,7 @@ class DeskSchemaGatingTest(unittest.TestCase):
 
 class CodeWorkbenchDesksTest(unittest.TestCase):
     """montage (1.6k tokens) and crm (0.4k) leave the Code workbench schema
-    until a turn names a video or a contact; then they stay for the session."""
+    until /montage or /crm opens them; then they stay for the session."""
 
     CODE = {"product_module": "code", "composer_mode": "agent"}
 
@@ -119,21 +130,20 @@ class CodeWorkbenchDesksTest(unittest.TestCase):
         self.assertEqual(self._visible("fix the failing test and run pytest"), set())
         self.assertEqual(self._visible("le client envoie une requete HTTP"), set())
 
-    def test_naming_a_video_brings_montage_back(self):
-        self.assertEqual(self._visible("add subtitles to the demo video"), {"montage"})
-        self.assertEqual(self._visible("ajoute une vidéo de démo"), {"montage"})
-        self.assertIn("montage", desk_tools_for_text("/montage teaser produit"))
+    def test_naming_a_video_or_a_contact_brings_nothing_back(self):
+        self.assertEqual(self._visible("add subtitles to the demo video"), set())
+        self.assertEqual(self._visible("sync the CRM contacts into the table"), set())
 
-    def test_naming_the_crm_brings_it_back(self):
-        self.assertEqual(self._visible("sync the CRM contacts into the table"), {"crm"})
+    def test_the_slash_commands_bring_them_back(self):
+        self.assertEqual(self._visible("/montage teaser produit"), {"montage"})
         self.assertEqual(self._visible("/crm import"), {"crm"})
 
     def test_the_session_remembers_an_opened_desk(self):
         session = {ACTIVE_DESKS_METADATA_KEY: ["montage"]}
         self.assertEqual(self._visible("continue", session), {"montage"})
         self.assertEqual(
-            AgentLoop._desk_tools_opened_by_turn(self.CODE, "coupe la video en clips"),
-            {"montage"},
+            AgentLoop._desk_tools_opened_by_turn(self.CODE, "/montage coupe la video en clips"),
+            {"marketing", "montage"},
         )
 
     def test_outside_the_code_workbench_nothing_changes(self):

@@ -64,6 +64,15 @@ class RepoNameTest(unittest.TestCase):
 
 
 class CloneGitProjectTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # No real config / gh lookup: subprocess.run is mocked below and a
+        # `gh auth token` call would hit the fake clone.
+        patcher = mock.patch(
+            "navin.utils.git_credentials.credential_for_url", return_value=None
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_clone_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
@@ -192,6 +201,101 @@ class CloneGitProjectTest(unittest.TestCase):
         message = ctx.exception.message
         self.assertIn("OPENSSL_3.2.0 not found", message)
         self.assertIn("fatal: remote helper", message)
+
+
+class CloneAuthTest(unittest.TestCase):
+    """Tokens reach git through the env only; auth failures are coded 401s."""
+
+    def _clone_failing(self, stderr: str, credential=None) -> GitCloneError:
+        fake = mock.Mock(returncode=128, stdout="", stderr=stderr)
+        with mock.patch(
+            "navin.utils.git_credentials.credential_for_url", return_value=credential
+        ), mock.patch(
+            "navin.webui.git_clone.shutil.which", return_value="/usr/bin/git"
+        ), mock.patch("navin.webui.git_clone.subprocess.run", return_value=fake):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(GitCloneError) as ctx:
+                    clone_git_project("https://github.com/org/private.git", parent=tmp)
+        return ctx.exception
+
+    def test_terminal_prompt_disabled_is_auth_required(self) -> None:
+        err = self._clone_failing(
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+        )
+        self.assertEqual(err.status, 401)
+        self.assertEqual(err.code, "auth_required")
+        self.assertEqual(err.host, "github.com")
+        self.assertIn("Settings > Git & GitHub", err.message)
+        body = err.payload()
+        self.assertEqual(body["code"], "auth_required")
+        self.assertEqual(body["host"], "github.com")
+        self.assertEqual(body["message"], err.message)
+
+    def test_rejected_saved_token_says_update_it(self) -> None:
+        from navin.utils.git_credentials import GitCredential
+
+        cred = GitCredential(
+            scheme="https", netloc="github.com", host="github.com", kind="github",
+            username="x-access-token", source="settings", token="ghp_secret",
+        )
+        err = self._clone_failing(
+            "remote: Invalid username or password.\n"
+            "fatal: Authentication failed for 'https://github.com/org/private.git/'",
+            credential=cred,
+        )
+        self.assertEqual((err.status, err.code), (401, "auth_required"))
+        self.assertIn("rejected the saved token", err.message)
+        self.assertNotIn("ghp_secret", err.message + err.detail)
+
+    def test_ssh_publickey_is_auth_required(self) -> None:
+        err = self._clone_failing(
+            "git@github.com: Permission denied (publickey).\n"
+            "fatal: Could not read from remote repository."
+        )
+        self.assertEqual((err.status, err.code), (401, "auth_required"))
+
+    def test_not_found_stays_404(self) -> None:
+        err = self._clone_failing("remote: Repository not found.\nfatal: repository 'x' not found")
+        self.assertEqual((err.status, err.code), (404, "not_found"))
+        self.assertIn("Settings > Git & GitHub", err.message)
+
+    def test_token_goes_in_env_never_in_argv(self) -> None:
+        from navin.utils.git_credentials import GitCredential
+
+        cred = GitCredential(
+            scheme="https", netloc="github.com", host="github.com", kind="github",
+            username="x-access-token", source="settings", token="ghp_topsecret",
+        )
+        captured: dict = {}
+
+        def _run(argv, **kwargs):
+            captured["argv"] = argv
+            captured["env"] = kwargs["env"]
+            Path(argv[-1]).mkdir(parents=True, exist_ok=True)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch(
+            "navin.utils.git_credentials.credential_for_url", return_value=cred
+        ), mock.patch(
+            "navin.webui.git_clone.shutil.which", return_value="/usr/bin/git"
+        ), mock.patch("navin.webui.git_clone.subprocess.run", side_effect=_run):
+            with tempfile.TemporaryDirectory() as tmp:
+                clone_git_project("https://github.com/org/private.git", parent=tmp)
+        self.assertNotIn("ghp_topsecret", " ".join(captured["argv"]))
+        env = captured["env"]
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GCM_INTERACTIVE"], "never")
+        self.assertIn("BatchMode=yes", env["GIT_SSH_COMMAND"])
+        index = int(env["GIT_CONFIG_COUNT"]) - 1
+        self.assertEqual(
+            env[f"GIT_CONFIG_KEY_{index}"], "http.https://github.com/.extraheader"
+        )
+        import base64
+
+        value = env[f"GIT_CONFIG_VALUE_{index}"]
+        self.assertTrue(value.startswith("Authorization: Basic "))
+        decoded = base64.b64decode(value.split()[-1]).decode()
+        self.assertEqual(decoded, "x-access-token:ghp_topsecret")
 
 
 if __name__ == "__main__":

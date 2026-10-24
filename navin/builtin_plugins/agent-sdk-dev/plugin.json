@@ -1,0 +1,14 @@
+{
+  "name": "agent-sdk-dev",
+  "version": "1.0.0",
+  "description": "Scaffold and verify apps built on the Navin agent: Python on the Navin SDK, TypeScript on an OpenAI-compatible client pointed at navin serve, with current versions checked, a type check and a PASS / PASS WITH WARNINGS / FAIL review.",
+  "category": "development",
+  "commands": ["new-sdk-app"],
+  "agents": ["agent-sdk-verifier-py", "agent-sdk-verifier-ts"],
+  "skills": [],
+  "steps": [
+    {"step": "interview, scaffold, install and type check a new app", "use": "/new-sdk-app"},
+    {"step": "review a Python Navin SDK app", "use": "agent:agent-sdk-verifier-py"},
+    {"step": "review a TypeScript client of navin serve", "use": "agent:agent-sdk-verifier-ts"}
+  ]
+}

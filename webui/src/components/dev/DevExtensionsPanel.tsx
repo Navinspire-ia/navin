@@ -401,12 +401,12 @@ export function DevExtensionsPanel({
       <div className="relative shrink-0 px-2 py-2">
         {searching ? (
           <Loader2
-            className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground"
+            className="pointer-events-none absolute start-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground"
             aria-hidden
           />
         ) : (
           <Search
-            className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute start-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
         )}
@@ -416,7 +416,7 @@ export function DevExtensionsPanel({
           placeholder={t("dev.extensions.searchPlaceholder", {
             defaultValue: "Search Open VSX",
           })}
-          className="h-8 pl-7 pr-7 text-[11px]"
+          className="h-8 ps-7 pe-7 text-[11px]"
           aria-label={t("dev.extensions.searchPlaceholder", {
             defaultValue: "Search Open VSX",
           })}
@@ -425,7 +425,7 @@ export function DevExtensionsPanel({
           <button
             type="button"
             onClick={() => setQuery("")}
-            className="absolute right-4 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            className="absolute end-4 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
             title={t("dev.extensions.clearSearch", { defaultValue: "Clear" })}
           >
             <X className="h-3 w-3" aria-hidden />

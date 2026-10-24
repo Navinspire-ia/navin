@@ -14,6 +14,18 @@
   .pending-review-toolbar > button:not(:first-child),
   .pending-review-toolbar > a { min-width: 40px; padding-inline: 8px; }
 }
+@container (max-width: 340px) {
+  .pending-review-toolbar .pending-review-diff { display: none; }
+}
+
+/* The file pane toolbar keeps every action reachable when the pane narrows:
+   below this width the buttons show their icon only (name in the tooltip). */
+.dev-file-toolbar { container-type: inline-size; }
+@container (max-width: 560px) {
+  .dev-file-toolbar-actions > button,
+  .dev-file-toolbar-actions > a { font-size: 0; gap: 0; padding-inline: 6px; }
+  .dev-file-toolbar-actions > span { display: none; }
+}
 
 /* Design tokens - monochrome (black / white / gray only). */
 @layer base {
@@ -49,7 +61,7 @@
     --scrollbar-thumb: hsl(var(--muted-foreground) / 0.26);
     --scrollbar-thumb-hover: hsl(var(--muted-foreground) / 0.42);
     /* Composer mode accents - distinct hues (no shared blue).
-       Ask=violet, Plan=blue, Review=amber, Security=red, Debug=teal. */
+       Ask=violet, Plan=blue, Review=amber, Security=red, Debug=teal, Reverse=lime. */
     --composer-ask: 262 72% 52%;
     --composer-ask-fg: 262 65% 36%;
     --composer-ask-soft: 262 90% 96%;
@@ -65,6 +77,9 @@
     --composer-debug: 168 72% 34%;
     --composer-debug-fg: 168 78% 24%;
     --composer-debug-soft: 168 50% 94%;
+    --composer-reverse: 84 81% 34%;
+    --composer-reverse-fg: 86 78% 24%;
+    --composer-reverse-soft: 80 70% 93%;
     /* Active mode tokens (overridden by .composer-mode-* on the shell). */
     --composer-mode: 217 91% 52%;
     --composer-mode-fg: 217 80% 38%;
@@ -133,6 +148,9 @@
     --composer-debug: 168 65% 50%;
     --composer-debug-fg: 168 72% 70%;
     --composer-debug-soft: 168 32% 13%;
+    --composer-reverse: 83 70% 52%;
+    --composer-reverse-fg: 82 78% 70%;
+    --composer-reverse-soft: 84 34% 13%;
     --composer-mode: 213 94% 68%;
     --composer-mode-fg: 213 96% 78%;
     --composer-mode-soft: 217 40% 16%;
@@ -265,29 +283,32 @@
     height: 0;
   }
 
-  /* Keep a narrow, draggable rail at the transcript edge beside the Code menu. */
-  html.native-host .thread-viewport-scrollbar {
+  /* Keep a narrow, draggable rail at the transcript edge beside the Code menu,
+     and on the sidebar list: with it hidden, a long list of projects and chats
+     gave no hint it could scroll. Code too (diffs, the editor): a long line
+     scrolled sideways under the gutter with nothing showing it or bringing it back. */
+  html.native-host :is(.thread-viewport-scrollbar, .sidebar-scroll, .code-scroll, .cm-scroller) {
     scrollbar-width: thin !important;
     scrollbar-gutter: stable !important;
     scrollbar-color: var(--scrollbar-thumb) transparent !important;
   }
 
-  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar {
+  html.native-host :is(.thread-viewport-scrollbar, .sidebar-scroll, .code-scroll, .cm-scroller)::-webkit-scrollbar {
     display: block !important;
     width: 6px !important;
     height: 6px !important;
   }
 
-  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar-thumb {
+  html.native-host :is(.thread-viewport-scrollbar, .sidebar-scroll, .code-scroll, .cm-scroller)::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thumb);
     border-radius: 9999px;
   }
 
-  html.native-host .thread-viewport-scrollbar:hover {
+  html.native-host :is(.thread-viewport-scrollbar, .sidebar-scroll, .code-scroll, .cm-scroller):hover {
     scrollbar-color: var(--scrollbar-thumb-hover) transparent !important;
   }
 
-  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar-thumb:hover {
+  html.native-host :is(.thread-viewport-scrollbar, .sidebar-scroll, .code-scroll, .cm-scroller)::-webkit-scrollbar-thumb:hover {
     background-color: var(--scrollbar-thumb-hover);
   }
 
@@ -484,12 +505,12 @@
      thread scales together. */
   :root,
   [data-chat-density="comfortable"] {
-    --chat-font-size: 14px;
+    --chat-font-size: 14.5px;
     --chat-line-height: 1.65;
     --cjk-line-height: var(--chat-line-height);
   }
   [data-chat-density="compact"] {
-    --chat-font-size: 13px;
+    --chat-font-size: 13.5px;
     --chat-line-height: 1.55;
     --cjk-line-height: var(--chat-line-height);
   }
@@ -510,6 +531,13 @@
     --md-code-ring: hsl(var(--foreground) / 0.035);
     --md-quote-bar: hsl(var(--foreground) / 0.18);
     --md-table-head: hsl(var(--foreground) / 0.035);
+    /* Accent colors, close to the CLI report: headings violet, bold blue,
+       inline code / file names teal, list markers violet. */
+    --md-heading: hsl(262 52% 46%);
+    --md-bold: hsl(217 72% 44%);
+    --md-code-fg: hsl(168 62% 28%);
+    --md-code-tint: hsl(168 50% 40% / 0.1);
+    --md-marker: hsl(262 45% 55%);
 
     --tw-prose-body: var(--md-body);
     --tw-prose-headings: var(--md-strong);
@@ -539,10 +567,17 @@
     --tw-prose-invert-td-borders: hsl(var(--border) / 0.7);
 
     color: var(--md-body);
-    font-size: var(--chat-font-size, 14px);
+    font-size: var(--chat-font-size, 14.5px);
     line-height: var(--chat-line-height, 1.65);
   }
 
+  .dark .markdown-content {
+    --md-heading: hsl(262 70% 78%);
+    --md-bold: hsl(212 90% 74%);
+    --md-code-fg: hsl(165 62% 66%);
+    --md-code-tint: hsl(165 50% 55% / 0.12);
+    --md-marker: hsl(262 60% 72%);
+  }
   .markdown-content > :first-child {
     @apply mt-0;
   }
@@ -553,7 +588,7 @@
   /* Headings: bold, clearly above the body, generous air above so sections
      read as sections ("Résultat", "Modifications", "Vérification"). */
   .markdown-content :where(h1, h2, h3, h4, h5, h6) {
-    color: var(--md-strong);
+    color: var(--md-heading);
     font-weight: 700;
     letter-spacing: -0.012em;
     line-height: 1.3;
@@ -590,7 +625,7 @@
     text-wrap: pretty;
   }
   .markdown-content :where(strong) {
-    color: var(--md-strong);
+    color: var(--md-bold);
     font-weight: 650;
   }
   .markdown-content :where(em) {
@@ -601,7 +636,7 @@
   .markdown-content :where(ul, ol) {
     margin-top: 0.55em;
     margin-bottom: 0.7em;
-    padding-left: 1.45em;
+    padding-inline-start: 1.45em;
   }
   .markdown-content :where(ul) {
     list-style-type: disc;
@@ -612,11 +647,11 @@
   .markdown-content :where(li) {
     margin-top: 0.3em;
     margin-bottom: 0.3em;
-    padding-left: 0.1em;
+    padding-inline-start: 0.1em;
     text-wrap: pretty;
   }
   .markdown-content :where(li)::marker {
-    color: var(--md-muted);
+    color: var(--md-marker);
   }
   .markdown-content :where(ol > li)::marker {
     font-variant-numeric: tabular-nums;
@@ -638,11 +673,11 @@
 
   /* Inline code: a quiet chip, slightly smaller than the text around it. */
   .markdown-content :where(:not(pre) > code) {
-    color: var(--md-strong);
-    font-weight: 400;
+    color: var(--md-code-fg);
+    font-weight: 500;
     font-size: 0.86em;
     letter-spacing: 0;
-    background: var(--md-code-bg);
+    background: var(--md-code-tint);
     box-shadow: inset 0 0 0 1px var(--md-code-ring);
     border-radius: 5px;
     padding: 0.12em 0.36em;
@@ -657,8 +692,9 @@
   .markdown-content :where(blockquote) {
     margin-top: 0.9em;
     margin-bottom: 0.9em;
-    padding: 0.15em 0 0.15em 0.95em;
-    border-left: 2px solid var(--md-quote-bar);
+    padding-block: 0.15em;
+    padding-inline-start: 0.95em;
+    border-inline-start: 2px solid var(--md-quote-bar);
     color: hsl(var(--foreground) / 0.78);
     font-style: normal;
     font-weight: 400;
@@ -695,7 +731,7 @@
     border-bottom-width: 0;
   }
   .markdown-content :where(th) {
-    color: var(--md-strong);
+    color: var(--md-heading);
     font-weight: 650;
     text-align: left;
     padding: 0.5em 0.85em;
@@ -711,13 +747,40 @@
     border-bottom: 0;
   }
   .markdown-content :where(th:first-child, td:first-child) {
-    padding-left: 0.85em;
+    padding-inline-start: 0.85em;
   }
   .markdown-content :where(th:last-child, td:last-child) {
-    padding-right: 0.85em;
+    padding-inline-end: 0.85em;
   }
   .markdown-content :where(td code, th code) {
     font-size: 0.88em;
+  }
+  /* Responsive tables: the wrapper owns the horizontal scroll, the cells wrap
+     at word boundaries (break-word, not the prose `anywhere`, so a column is
+     never squeezed to one letter) and keep a readable minimum width. */
+  .markdown-content .markdown-table-scroll {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .markdown-content :where(th, td) {
+    min-width: 4.5rem;
+    overflow-wrap: break-word;
+    word-break: normal;
+    text-wrap: pretty;
+    font-variant-numeric: tabular-nums;
+  }
+  @container thread-viewport (max-width: 40rem) {
+    .markdown-content :where(table) {
+      font-size: 0.9em;
+    }
+    .markdown-content :where(th, td) {
+      min-width: 3.5rem;
+      padding: 0.4em 0.6em;
+    }
   }
 
   .markdown-content :where(a) {
@@ -738,6 +801,47 @@
     border-radius: 5px;
     padding: 0.1em 0.4em;
     box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.16), 0 1px 0 hsl(var(--foreground) / 0.12);
+  }
+
+  /* The answer that closes a turn with tools, under the journal's "Final
+     result" title. It reads like the sections above it: body text in the
+     sections' column, titles (headings, or a paragraph that is only bold)
+     at the section-title size with the same check mark in the icon column,
+     bold lead-ins and inline code in the body's own color, not the accents. */
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content.markdown-content {
+    --md-heading: var(--md-strong);
+    --md-bold: var(--md-strong);
+    --md-marker: var(--md-muted);
+    padding-inline-start: 1.75rem;
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead) {
+    display: block;
+    margin-inline-start: calc(-1.75rem + 4px);
+    padding-inline-start: 28px;
+    text-indent: -28px;
+    margin-top: 1.1em;
+    margin-bottom: 0.4em;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.5rem;
+    color: var(--md-strong);
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead)::before {
+    content: "";
+    display: inline-block;
+    vertical-align: -3px;
+    width: 18px;
+    height: 18px;
+    margin-inline-end: 10px;
+    background-color: hsl(var(--tone-edit));
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead) > strong {
+    font-weight: inherit;
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content > :first-child:where(h1, h2, h3, h4, h5, h6, p.md-lead) {
+    margin-top: 0.35em;
   }
 
   /* L→R sheen clipped to live activity labels. The highlight lives inside
@@ -862,22 +966,22 @@
   }
   @keyframes task-progress-slide {
     0% {
-      left: -35%;
+      inset-inline-start: -35%;
     }
     100% {
-      left: 100%;
+      inset-inline-start: 100%;
     }
   }
   /* Sidebar "agent running" glyph: four dots, one dims at a time, clockwise. */
   @keyframes chat-run-dot {
     0%,
     100% {
-      opacity: 0.9;
+      opacity: 1;
       transform: scale(1);
     }
     50% {
-      opacity: 0.18;
-      transform: scale(0.72);
+      opacity: 0.25;
+      transform: scale(0.6);
     }
   }
   .run-pulse-icon {
@@ -982,6 +1086,11 @@
     --composer-mode-fg: 168 78% 24%;
     --composer-mode-soft: 168 50% 94%;
   }
+  .composer-mode-reverse {
+    --composer-mode: 84 81% 34%;
+    --composer-mode-fg: 86 78% 24%;
+    --composer-mode-soft: 80 70% 93%;
+  }
   .composer-mode-montage {
     --composer-mode: 340 75% 48%;
     --composer-mode-fg: 340 70% 34%;
@@ -1011,6 +1120,11 @@
     --composer-mode: 168 65% 50%;
     --composer-mode-fg: 168 72% 70%;
     --composer-mode-soft: 168 32% 13%;
+  }
+  .dark .composer-mode-reverse {
+    --composer-mode: 83 70% 52%;
+    --composer-mode-fg: 82 78% 70%;
+    --composer-mode-soft: 84 34% 13%;
   }
   .dark .composer-mode-montage {
     --composer-mode: 340 72% 62%;
@@ -1166,9 +1280,9 @@
   }
 
   /* Wide markdown tables scroll horizontally within the conversation column.
-     Tables are wrapped in an overflow-x:auto <div> by the markdown renderer's
-     custom `table` component (see MarkdownTextRenderer); min-w-max on the
-     <table> keeps natural column widths so it scrolls instead of shrinking. */
+     The markdown renderer wraps each table in `.markdown-table-scroll`
+     (see MarkdownTextRenderer); cells wrap at word boundaries, so only a
+     table whose words cannot fit scrolls, inside that box. */
 
   /* Clip any residual horizontal bleed at the thread column edge. Vertical
      scrolling and internal code-block scroll are unaffected. */
@@ -1183,7 +1297,7 @@
 
   .thread-prompt-rail {
     display: none;
-    left: 1.75rem;
+    inset-inline-start: 1.75rem;
   }
 
   @media (min-width: 768px) {
@@ -1215,6 +1329,7 @@
     }
 
     [data-testid="thread-composer-dock"] {
+      /* Notches are physical: keep the device insets directional on purpose. */
       padding-left: env(safe-area-inset-left);
       padding-right: env(safe-area-inset-right);
     }
@@ -1247,12 +1362,12 @@
   font-size: 0.8em;
   padding: 0.4rem 0.55rem;
 }
-.team-composer .tiptap ul { list-style: disc; padding-left: 1.1rem; }
-.team-composer .tiptap ol { list-style: decimal; padding-left: 1.1rem; }
+.team-composer .tiptap ul { list-style: disc; padding-inline-start: 1.1rem; }
+.team-composer .tiptap ol { list-style: decimal; padding-inline-start: 1.1rem; }
 .team-composer .tiptap blockquote {
-  border-left: 2px solid hsl(var(--border));
+  border-inline-start: 2px solid hsl(var(--border));
   color: hsl(var(--muted-foreground));
-  padding-left: 0.55rem;
+  padding-inline-start: 0.55rem;
 }
 .team-composer .tiptap a {
   color: hsl(199 80% 40%);
@@ -1427,4 +1542,33 @@
   .tenders-notice-table .tenders-notice-col-status {
     display: none;
   }
+}
+
+/* Right-to-left (Arabic).
+   Latin stays on the self-hosted DM Sans (its unicode-range has no Arabic),
+   so Arabic glyphs fall through to the first installed Arabic face. */
+:root[dir="rtl"] body,
+:root[dir="rtl"] .font-sans,
+[lang="ar"] .font-sans {
+  font-family:
+    "DM Sans", "Noto Sans Arabic", "IBM Plex Sans Arabic", "Segoe UI", Tahoma,
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* Arabic script needs a little more leading than Latin to stay legible. */
+:root[lang="ar"] {
+  --chat-line-height: 1.8;
+}
+:root[lang="ar"][data-chat-density="compact"] {
+  --chat-line-height: 1.7;
+}
+
+/* LTR islands: code, terminals, shell output and paths keep their own
+   direction inside a mirrored page. */
+:root[dir="rtl"] :is(pre, code, kbd, samp, .xterm, .cm-editor) {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+:root[dir="rtl"] :is(pre, .xterm, .cm-editor) {
+  text-align: left;
 }

@@ -73,7 +73,7 @@ export function SettingsPicker({
                 {caption}
               </span>
             </span>
-            <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <ChevronDown className="ms-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -90,7 +90,7 @@ export function SettingsPicker({
           {showSearch ? (
             <div className="sticky top-0 z-10 bg-popover p-1 pb-1.5">
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Search className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -108,7 +108,7 @@ export function SettingsPicker({
                         ?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
                     }
                   }}
-                  className="h-8 rounded-full pl-8 pr-3 text-[12px]"
+                  className="h-8 rounded-full ps-8 pe-3 text-[12px]"
                 />
               </div>
             </div>

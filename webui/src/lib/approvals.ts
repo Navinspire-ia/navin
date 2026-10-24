@@ -17,6 +17,8 @@
  * - a close frame for something that was never shown.
  */
 
+import type { UIMessage } from "./types";
+
 export interface PendingApproval {
   requestId: string;
   tool: string;
@@ -105,4 +107,26 @@ export function secondsLeft(
 ): number | null {
   if (request.expiresAt === null) return null;
   return Math.max(0, Math.ceil((request.expiresAt - now) / 1000));
+}
+
+/** The chat row that restates a settled approval: "Allowed: <action>" or "Denied". */
+export function approvalEchoMessage(
+  request: Pick<PendingApproval, "requestId" | "tool" | "action">,
+  allowed: boolean,
+  now: number,
+): UIMessage {
+  const action = request.action || request.tool;
+  return {
+    id: `approval-${request.requestId}`,
+    role: "tool",
+    kind: "approval",
+    content: action,
+    createdAt: now,
+    interaction: {
+      type: "approval",
+      requestId: request.requestId,
+      question: action,
+      allowed,
+    },
+  };
 }

@@ -17,6 +17,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -32,6 +33,7 @@ from navin.providers.base import (
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
 )
+from navin.providers.gateway import is_navin_gateway
 from navin.providers.openai_responses import (
     consume_sdk_stream,
     convert_messages,
@@ -47,7 +49,9 @@ from navin.providers.reasoning_control import (
     always_reasons,
     apply_shape,
     classify_rejection,
+    non_anthropic_effort,
     off_shapes,
+    openai_rejects_reasoning,
     suggested_floor,
 )
 from navin.providers.session_affinity import current_session_id
@@ -68,7 +72,50 @@ _ALLOWED_MSG_KEYS = frozenset({
 })
 _ALNUM = string.ascii_letters + string.digits
 
+# Idle time a pooled cloud socket may be reused. Long enough to span the
+# model -> tools -> model gap of one turn (a fresh TCP+TLS handshake costs
+# 130-230 ms per step), short enough that a NAT or proxy rarely drops it.
+_CLOUD_KEEPALIVE_S = 4.0
+# Set while a request replays on a fresh socket, so it is retried only once.
+_FRESH_SOCKET_RETRY: ContextVar[bool] = ContextVar("_fresh_socket_retry", default=False)
+
 _STANDARD_TC_KEYS = frozenset({"id", "type", "index", "function"})
+
+
+class _ToolCallSlots:
+    """Stream index -> call slot for live tool-call deltas (see _starts_new_tool_call)."""
+
+    def __init__(self) -> None:
+        self._slot_of: dict[int, int] = {}
+        self._bufs: dict[int, dict[str, Any]] = {}
+
+    def key(self, raw_index: int, tc_id: Any, fn_name: Any, args_delta: str) -> int:
+        key = self._slot_of.get(raw_index, raw_index)
+        current = self._bufs.get(key)
+        if current is not None and _starts_new_tool_call(current, tc_id, fn_name):
+            key = max(self._bufs) + 1
+        self._slot_of[raw_index] = key
+        buf = self._bufs.setdefault(key, {"id": "", "name": "", "arguments": ""})
+        if tc_id:
+            buf["id"] = str(tc_id)
+        if fn_name:
+            buf["name"] = str(fn_name)
+        buf["arguments"] += args_delta
+        return key
+
+
+def _starts_new_tool_call(buf: dict[str, Any], tc_id: Any, fn_name: Any) -> bool:
+    """A delta opens another call when it brings a different call id, or a
+    function name after the current call's arguments are already complete."""
+    if tc_id and buf["id"] and str(tc_id) != buf["id"]:
+        return True
+    if not (fn_name and buf["name"] and buf["arguments"].strip()):
+        return False
+    try:
+        json.loads(buf["arguments"])
+    except ValueError:
+        return False
+    return True
 
 # OpenRouter 404s non-OpenAI hosts when a function tool is literally named
 # "apply_patch" ("Try disabling apply_patch"). Wire it as file_patch outbound
@@ -104,6 +151,17 @@ _MIMO_THINKING_MODELS: frozenset[str] = frozenset({
     "mimo-v2-omni",
 })
 _OPENAI_COMPAT_REQUEST_TIMEOUT_S = 120.0
+# Silence allowed once the model has been thinking or has started a tool call.
+# Some endpoints do not stream what comes next: Kimi K3 on Bedrock (through
+# LiteLLM) sends its reasoning live, then nothing at all while it writes a tool
+# call, then the whole arguments at once (measured: 31 s of silence for a
+# 9,600-char write_file, more for a bigger file). The usual 120 s stall rule
+# cut such a turn and failed over mid-generation.
+_BUFFERED_OUTPUT_IDLE_S = 420.0
+
+
+def _buffered_output_idle_s() -> float:
+    return _float_env("NAVIN_STREAM_BUFFERED_IDLE_S", _BUFFERED_OUTPUT_IDLE_S)
 # GLM is served from two hosts with two key namespaces - open.bigmodel.cn for
 # mainland China and api.z.ai elsewhere - but it is one API, so quirks keyed on
 # the provider have to name both.
@@ -137,6 +195,122 @@ _MODEL_THINKING_STYLES: dict[str, str] = {
     **dict.fromkeys(_MIMO_THINKING_MODELS, "thinking_type"),
     **dict.fromkeys(_QWEN_THINKING_MODELS, "enable_thinking"),
 }
+
+
+def _replayable_thinking_blocks(blocks: Any) -> list[dict[str, Any]] | None:
+    """Claude thinking blocks that can go back to the model unchanged.
+
+    LiteLLM returns them on Claude replies (``message.thinking_blocks``). A
+    thinking block is only valid with its signature; a redacted one with its
+    opaque ``data``. Anything else would be refused, so it is dropped.
+    """
+    if not isinstance(blocks, list):
+        return None
+    kept: list[dict[str, Any]] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            dump = getattr(block, "model_dump", None)
+            block = dump() if callable(dump) else None
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "thinking" and block.get("signature"):
+            kept.append({
+                "type": "thinking",
+                "thinking": str(block.get("thinking") or ""),
+                "signature": str(block["signature"]),
+            })
+        elif kind == "redacted_thinking" and block.get("data"):
+            kept.append({"type": "redacted_thinking", "data": str(block["data"])})
+    return kept or None
+
+
+# Replayed thinking blocks the gateway refused because their signature no
+# longer matches the conversation before them (Bedrock: "Invalid `signature`
+# in `thinking` block. The block is bound to a different conversation"). It
+# happens inside one turn once the earlier context was rewritten (compaction,
+# cleared tool results, injected reports). Left in the history, the block
+# made every later step of the turn fail on the chosen model, so the fallback
+# chain answered the rest of the turn: Opus picked, Sonnet served. Keyed by
+# signature, shared by every instance: the runtime is rebuilt between turns.
+_REJECTED_THINKING: dict[str, None] = {}
+_MAX_REJECTED_THINKING = 2048
+
+
+def _thinking_block_key(block: dict[str, Any]) -> str | None:
+    if block.get("type") == "thinking" and block.get("signature"):
+        return "s:" + str(block["signature"])
+    if block.get("type") == "redacted_thinking" and block.get("data"):
+        return "r:" + hashlib.sha256(str(block["data"]).encode()).hexdigest()
+    return None
+
+
+def _is_thinking_binding_rejection(error: Exception) -> bool:
+    """A replayed thinking block was refused for its signature.
+
+    Not the "Expected thinking or redacted_thinking" refusal: that one asks
+    for a missing block, and removing more blocks cannot fix it.
+    """
+    text = f"{getattr(error, 'body', None)} {error}".lower()
+    if "thinking" not in text or "signature" not in text:
+        return False
+    return "bound to a different conversation" in text or "invalid `signature`" in text \
+        or "invalid signature" in text
+
+
+def _current_turn_thinking_only(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep thinking blocks only in the current turn (after the last user message).
+
+    A thinking signature is bound to the turn that produced it: sending back
+    a previous turn's blocks gets a 400 from Bedrock ("Invalid `signature` in
+    `thinking` block. The block is bound to a different conversation", seen
+    live on test-02). LiteLLM may then drop thinking for the first step of a
+    new turn (its warning names the previous turn's tool call); the model
+    thinks again from the next step on.
+    """
+    last_user = max(
+        (i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1,
+    )
+    return [
+        {k: v for k, v in m.items() if k != "thinking_blocks"}
+        if i < last_user and "thinking_blocks" in m else m
+        for i, m in enumerate(messages)
+    ]
+
+
+def _accumulate_thinking_deltas(acc: list[dict[str, Any]], blocks: Any) -> None:
+    """Fold streamed ``delta.thinking_blocks`` pieces into whole blocks.
+
+    LiteLLM streams a Claude thinking block as text pieces, then a piece that
+    carries the signature; a redacted block arrives whole. A text piece after
+    a signed block opens the next block (interleaved thinking).
+    """
+    if not isinstance(blocks, list):
+        return
+    for block in blocks:
+        if not isinstance(block, dict):
+            dump = getattr(block, "model_dump", None)
+            block = dump() if callable(dump) else None
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "redacted_thinking":
+            if block.get("data"):
+                acc.append({"type": "redacted_thinking", "data": str(block["data"])})
+            continue
+        if kind != "thinking":
+            continue
+        text = str(block.get("thinking") or "")
+        signature = block.get("signature")
+        current = acc[-1] if acc and acc[-1].get("type") == "thinking" else None
+        if current is None or current.get("signature"):
+            if not text and not signature:
+                continue
+            current = {"type": "thinking", "thinking": "", "signature": ""}
+            acc.append(current)
+        current["thinking"] += text
+        if signature:
+            current["signature"] = str(signature)
 
 
 def _model_slug(model_name: str) -> str:
@@ -471,6 +645,13 @@ class OpenAICompatProvider(LLMProvider):
             self._setup_env(api_key, api_base)
 
         effective_base = api_base or (spec.default_api_base if spec else None) or None
+        if spec is not None and spec.name == "navin":
+            # The subscription runs on the Navin gateway only; an OpenRouter
+            # base left in an older config is not a fallback route.
+            from navin.providers.gateway import navin_managed_base
+
+            effective_base = navin_managed_base(effective_base)
+            self.api_base = effective_base
         self._effective_base = effective_base
         self._default_headers = {"x-session-affinity": uuid.uuid4().hex}
         self._is_openrouter = _uses_openrouter_attribution(spec, effective_base)
@@ -495,6 +676,8 @@ class OpenAICompatProvider(LLMProvider):
         # (e.g. Anthropic "temperature is deprecated", OpenRouter 404 with
         # require_parameters). One retry without it, then remembered here.
         self._no_temperature_models: set[str] = set()
+        # Output ceilings learned from "max_tokens too large" refusals.
+        self._max_output_caps: dict[str, int] = {}
         # Models where require_parameters=true found no tool-capable endpoint.
         # Retry once without that filter (still keep the apply_patch wire alias).
         self._no_require_parameters_models: set[str] = set()
@@ -520,14 +703,21 @@ class OpenAICompatProvider(LLMProvider):
         timeout_s = _openai_compat_timeout_s()
         request_timeout = httpx.Timeout(
             connect=min(30.0, timeout_s),
-            read=timeout_s,
+            # The stream loop enforces its own idle windows (120 s, longer after
+            # reasoning); a 120 s socket read limit fired first and reported a
+            # buffered tool call as "Request timed out".
+            read=max(timeout_s, _buffered_output_idle_s()),
             write=timeout_s,
             pool=30.0,
         )
         http_client: httpx.AsyncClient | None = None
+        # A 200-worker wave shares this client with its parent and background
+        # requests. Bound every transport consistently, including proxy pools.
+        pool_limits = dict(max_connections=256, max_keepalive_connections=32)
         if self._proxy:
             http_client = httpx.AsyncClient(
                 timeout=request_timeout,
+                limits=httpx.Limits(**pool_limits, keepalive_expiry=_CLOUD_KEEPALIVE_S),
                 proxy=self._proxy,
                 trust_env=False,
                 follow_redirects=True,
@@ -547,19 +737,19 @@ class OpenAICompatProvider(LLMProvider):
             # HTTP_PROXY / HTTPS_PROXY / ALL_PROXY set, httpx would try to
             # route local traffic through the proxy, which typically cannot
             # reach localhost or LAN addresses.
-            _local_limits = httpx.Limits(keepalive_expiry=0)
+            _local_limits = httpx.Limits(**pool_limits, keepalive_expiry=0)
             http_client = httpx.AsyncClient(
                 limits=_local_limits,
                 timeout=request_timeout,
                 transport=httpx.AsyncHTTPTransport(proxy=None, limits=_local_limits),
             )
         else:
-            # Cloud providers: never reuse a pooled socket. A stale keepalive
-            # is what surfaces as "Error calling LLM: Connection error." on
-            # the first turn of a session; switching models "fixes" it only
-            # because that rebuilds the client. Five seconds was still long
-            # enough for OpenRouter / a WSL NAT to close the socket under us.
-            _cloud_limits = httpx.Limits(keepalive_expiry=0, max_keepalive_connections=0)
+            # Cloud providers: reuse a socket only within one turn. A stale
+            # keepalive used to surface as "Error calling LLM: Connection
+            # error." on the first turn of a session, so the idle window is
+            # short and a connection error before any output replays at once
+            # on a fresh socket (_replay_on_fresh_socket) instead of failing.
+            _cloud_limits = httpx.Limits(**pool_limits, keepalive_expiry=_CLOUD_KEEPALIVE_S)
             http_client = httpx.AsyncClient(
                 limits=_cloud_limits,
                 timeout=request_timeout,
@@ -574,6 +764,20 @@ class OpenAICompatProvider(LLMProvider):
             timeout=request_timeout,
             http_client=http_client,
         )
+
+    @staticmethod
+    async def _close_streams(streams: list[Any]) -> None:
+        """Close SDK streams so their HTTP responses go back to the pool."""
+        while streams:
+            close = getattr(streams.pop(), "close", None)
+            if not callable(close):
+                continue
+            try:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.debug("openai-compat stream close failed", exc_info=True)
 
     async def _reset_client(self) -> None:
         """Drop a dead HTTP pool so the next call opens a fresh connection."""
@@ -611,7 +815,10 @@ class OpenAICompatProvider(LLMProvider):
                     from openai import AsyncOpenAI as _AsyncOpenAI
                 AsyncOpenAI = _AsyncOpenAI
 
-            self._build_client()
+            # Off the event loop: the SSL context loads the system certificate
+            # store, seconds on Windows, and every reset after a connection
+            # error rebuilt it while streams and subagents waited.
+            await asyncio.to_thread(self._build_client)
             return self._client
 
     def _setup_env(self, api_key: str, api_base: str | None) -> None:
@@ -633,34 +840,97 @@ class OpenAICompatProvider(LLMProvider):
         cls,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        *,
+        mark_tools: bool = True,
+        mark_system: bool = True,
+        mark_tail: bool = True,
+        mark_tool_results: bool = False,
+        prefix_ttl: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
-        """Inject cache_control markers for prompt caching."""
+        """Inject cache_control markers for prompt caching.
+
+        ``mark_tool_results`` lets the tail marker land on a tool result. In a
+        tool loop the newest messages are tool results: without it the marker
+        walks back to the user turn and every step re-prefills the whole loop.
+        ``prefix_ttl`` ("1h") keeps the tools and system prompt cached past the
+        default 5 minutes, so a first message after a pause is not a full miss.
+        """
         cache_marker = {"type": "ephemeral"}
+        prefix_marker = {**cache_marker, "ttl": prefix_ttl} if prefix_ttl else cache_marker
         new_messages = list(messages)
 
-        def _mark(msg: dict[str, Any]) -> dict[str, Any]:
+        def _mark(msg: dict[str, Any], marker: dict[str, Any] = cache_marker) -> dict[str, Any]:
             content = msg.get("content")
             if isinstance(content, str):
+                if not content:
+                    return msg  # an empty block is not cacheable
                 return {**msg, "content": [
-                    {"type": "text", "text": content, "cache_control": cache_marker},
+                    {"type": "text", "text": content, "cache_control": marker},
                 ]}
             if isinstance(content, list) and content:
                 nc = list(content)
-                nc[-1] = {**nc[-1], "cache_control": cache_marker}
-                return {**msg, "content": nc}
+                # Same rule as the native Anthropic provider: walk back past
+                # empty text blocks, never mark a block the API discards.
+                for idx in range(len(nc) - 1, -1, -1):
+                    block = nc[idx]
+                    if isinstance(block, dict) and not (block.get("type") == "text" and not block.get("text")):
+                        nc[idx] = {**block, "cache_control": marker}
+                        return {**msg, "content": nc}
             return msg
 
-        if new_messages and new_messages[0].get("role") == "system":
-            new_messages[0] = _mark(new_messages[0])
-        if len(new_messages) >= 3:
-            new_messages[-2] = _mark(new_messages[-2])
+        if mark_system and new_messages and new_messages[0].get("role") == "system":
+            new_messages[0] = _mark(new_messages[0], prefix_marker)
+        if mark_tail and len(new_messages) >= 3:
+            # The newest turn before the last one that has text to carry the
+            # marker. In a tool loop messages[-2] is an assistant turn with
+            # only tool_calls (no content block to mark): stopping there left
+            # the whole conversation uncached on every step. The last user
+            # turn carries the runtime context and is never marked, but a
+            # trailing tool result is stable and caches the whole loop.
+            start = len(new_messages) - 2
+            if mark_tool_results and new_messages[-1].get("role") == "tool":
+                start = len(new_messages) - 1
+            for idx in range(start, 0, -1):
+                if new_messages[idx].get("role") == "tool" and not mark_tool_results:
+                    continue
+                marked = _mark(new_messages[idx])
+                if marked is not new_messages[idx]:
+                    new_messages[idx] = marked
+                    break
 
         new_tools = tools
-        if tools:
+        if tools and mark_tools:
             new_tools = list(tools)
             for idx in cls._tool_cache_marker_indices(new_tools):
-                new_tools[idx] = {**new_tools[idx], "cache_control": cache_marker}
+                new_tools[idx] = {**new_tools[idx], "cache_control": prefix_marker}
         return new_messages, new_tools
+
+    @classmethod
+    def _apply_gateway_cache_control(
+        cls,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model_name: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+        """Cache markers on the Navin gateway (Claude on Bedrock via LiteLLM):
+        each breakpoint only when the prefix it closes reaches the model's
+        cache minimum. Tools come first, then the system prompt, then the turns."""
+        from navin.providers.model_capabilities import prompt_cache_min_tokens
+        from navin.utils.helpers import estimate_prompt_tokens
+
+        minimum = prompt_cache_min_tokens(model_name)
+        tools_tokens = estimate_prompt_tokens([], tools) if tools else 0
+        system = messages[:1] if messages and messages[0].get("role") == "system" else []
+        system_tokens = estimate_prompt_tokens(system, tools) if system else tools_tokens
+        tail_tokens = estimate_prompt_tokens(messages[:-1], tools) if len(messages) >= 3 else 0
+        return cls._apply_cache_control(
+            messages, tools,
+            mark_tools=tools_tokens >= minimum,
+            mark_system=system_tokens >= minimum,
+            mark_tail=tail_tokens >= minimum,
+            mark_tool_results=True,
+            prefix_ttl="1h",
+        )
 
     @staticmethod
     def _normalize_tool_call_id(tool_call_id: Any) -> Any:
@@ -689,9 +959,76 @@ class OpenAICompatProvider(LLMProvider):
             dumped = str(content)
         return dumped or "(empty)"
 
-    def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _replays_thinking_blocks(self, model_name: str) -> bool:
+        """True for every model behind the Navin gateway (LiteLLM).
+
+        LiteLLM reads ``thinking_blocks`` on assistant messages and hands them
+        back to Bedrock. Without them a thinking turn that called a tool is
+        either refused ("Expected thinking or redacted_thinking") or, with
+        modify_params, silently loses thinking for every follow-up step. This
+        is not Claude only: GPT and other models served through Bedrock
+        Converse hit the same check (seen live on test-02 with GPT 6.1).
+        Blocks only exist when LiteLLM returned them, and only the current
+        turn's blocks are sent back (``_current_turn_thinking_only``).
+        """
+        return bool(self._spec is not None and self._spec.name == "navin")
+
+    def _register_thinking_binding_rejection(
+        self, model: str | None, messages: list[dict[str, Any]], e: Exception,
+    ) -> bool:
+        """Stop replaying the thinking blocks a signature refusal hit.
+
+        The refusal names a block by its position in the gateway's own
+        Anthropic payload, which does not map back to these messages, so every
+        block this request replayed is retired. Blocks the model writes from
+        now on are bound to the context as it is now and keep being replayed.
+        True when the same model can be asked again; False once nothing is
+        left to remove, so a refusal that persists still reaches the caller.
+        """
+        if not _is_thinking_binding_rejection(e):
+            return False
+        if not self._replays_thinking_blocks(model or self.default_model):
+            return False
+        retired = 0
+        for msg in _current_turn_thinking_only(messages):
+            if msg.get("role") != "assistant":
+                continue
+            for block in _replayable_thinking_blocks(msg.get("thinking_blocks")) or ():
+                key = _thinking_block_key(block)
+                if key and key not in _REJECTED_THINKING:
+                    _REJECTED_THINKING[key] = None
+                    retired += 1
+        while len(_REJECTED_THINKING) > _MAX_REJECTED_THINKING:
+            _REJECTED_THINKING.pop(next(iter(_REJECTED_THINKING)))
+        if retired:
+            logger.warning(
+                "Model {} refused {} replayed thinking block(s): their signature is bound "
+                "to an earlier context. Asking the same model again without them",
+                model or self.default_model,
+                retired,
+            )
+        return bool(retired)
+
+    def _sanitize_messages(
+        self, messages: list[dict[str, Any]], *, keep_thinking_blocks: bool = False,
+    ) -> list[dict[str, Any]]:
         """Strip non-standard keys, normalize tool_call IDs."""
-        sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
+        allowed = _ALLOWED_MSG_KEYS | {"thinking_blocks"} if keep_thinking_blocks else _ALLOWED_MSG_KEYS
+        sanitized = LLMProvider._sanitize_request_messages(messages, allowed)
+        if keep_thinking_blocks:
+            for msg in sanitized:
+                if "thinking_blocks" not in msg:
+                    continue
+                blocks = (
+                    _replayable_thinking_blocks(msg.get("thinking_blocks"))
+                    if msg.get("role") == "assistant" else None
+                )
+                if blocks and _REJECTED_THINKING:
+                    blocks = [b for b in blocks if _thinking_block_key(b) not in _REJECTED_THINKING]
+                if blocks:
+                    msg["thinking_blocks"] = blocks
+                else:
+                    msg.pop("thinking_blocks", None)
         id_map: dict[str, str] = {}
         pending_tool_ids: dict[str, deque[str]] = {}
         force_string_content = bool(self._spec and self._spec.name == "deepseek")
@@ -777,7 +1114,16 @@ class OpenAICompatProvider(LLMProvider):
                 and not (clean.get("role") == "assistant" and clean.get("tool_calls"))
             ):
                 clean["content"] = self._coerce_content_to_string(clean.get("content"))
+        if self._speaks_gemini_natively():
+            _sign_foreign_tool_calls(sanitized)
         return self._enforce_role_alternation(sanitized)
+
+    def _speaks_gemini_natively(self) -> bool:
+        """True when requests go straight to Google (AI Studio / Vertex OpenAI endpoint)."""
+        base = (self._effective_base or "").lower()
+        return bool(self._spec and self._spec.name == "gemini") or (
+            "googleapis.com" in base and "openai" in base
+        )
 
     # ------------------------------------------------------------------
     # Build kwargs
@@ -819,6 +1165,10 @@ class OpenAICompatProvider(LLMProvider):
         name = model_name.lower()
         if any(token in name for token in ("gpt-5", "gpt-6", "o1", "o3", "o4")):
             return False
+        # Grok 4+ always reasons; Bedrock refuses temperature on it outright
+        # (measured 2026-10-07, also through the LiteLLM gateway).
+        if re.search(r"grok-(?:[4-9]|\d{2})", name):
+            return False
         from navin.providers.claude_capabilities import claude_supports_temperature
 
         return claude_supports_temperature(name)
@@ -826,10 +1176,30 @@ class OpenAICompatProvider(LLMProvider):
     def _temperature_model_key(self, model: str | None) -> str:
         return (model or self.default_model).lower()
 
+    def _temperature_store_key(self, key: str) -> str:
+        return f"no-temperature|{self._reasoning_off._scope}|{key}"
+
+    def _temperature_refused(self, model: str | None) -> bool:
+        key = self._temperature_model_key(model)
+        if key in self._no_temperature_models:
+            return True
+        from navin.providers.reasoning_control import stored_flag
+
+        if stored_flag(self._temperature_store_key(key)):
+            self._no_temperature_models.add(key)
+            return True
+        return False
+
     _TEMPERATURE_REJECTION_MARKERS = (
         "temperature` is deprecated",
         "temperature is deprecated",
         "does not support temperature",
+        "doesn't support the temperature",
+        "does not support the temperature",
+        "remove temperature",
+        "temperature is not supported",
+        "'temperature' is not supported",
+        "unsupported parameter: 'temperature'",
         "no endpoints found that can handle the requested parameters",
     )
 
@@ -852,11 +1222,134 @@ class OpenAICompatProvider(LLMProvider):
         if key in self._no_temperature_models:
             return False
         self._no_temperature_models.add(key)
+        # Kept on disk: a gateway restart or a new provider instance (model
+        # switch, subagent) must not pay this refused round trip again.
+        from navin.providers.reasoning_control import remember_flag
+
+        remember_flag(self._temperature_store_key(key))
         logger.info(
             "Model {} rejected the temperature parameter; retrying without it",
             key,
         )
         return True
+
+    _MAX_TOKENS_REJECTION_MARKERS = (
+        "max_tokens",
+        "max_completion_tokens",
+        "max_output_tokens",
+        "maximum tokens",
+        "max tokens",
+        "output tokens",
+        "completion tokens",
+    )
+    _MAX_TOKENS_LIMIT_MARKERS = (
+        "too large",
+        "exceed",
+        "at most",
+        "maximum allowed",
+        "must be less than",
+        "less than or equal",
+        "above maximum",
+        "out of range",
+        "model limit",
+    )
+    _MAX_TOKENS_FLOOR = 1_024
+    _MAX_TOKENS_RETRY_WHEN_UNSTATED = 8_192
+
+    def _clamp_max_tokens(self, model: str | None, max_tokens: int) -> int:
+        cap = self._max_output_caps.get(self._temperature_model_key(model))
+        return min(max_tokens, cap) if cap else max_tokens
+
+    def _register_max_tokens_rejection(
+        self,
+        model: str | None,
+        e: Exception,
+        max_tokens: int,
+    ) -> bool:
+        """Detect a "max_tokens above this model's limit" refusal.
+
+        The default output budget is large (32k); some models stop lower.
+        Learn the limit the provider states (or a safe default) and retry
+        once. Loop-free: a model that already has a learned cap, or a request
+        already at or under it, falls through to normal error handling.
+        """
+        body = getattr(e, "body", None)
+        text = f"{body} {e}".lower()
+        if not any(m in text for m in self._MAX_TOKENS_REJECTION_MARKERS):
+            return False
+        if not any(m in text for m in self._MAX_TOKENS_LIMIT_MARKERS):
+            return False
+        if self._is_context_overflow_text(text):
+            return False
+        key = self._temperature_model_key(model)
+        if key in self._max_output_caps:
+            return False
+        numbers = [int(n) for n in re.findall(r"\d+", text.replace(",", "").replace("_", ""))]
+        stated = [n for n in numbers if self._MAX_TOKENS_FLOOR <= n < max_tokens]
+        cap = max(stated) if stated else self._MAX_TOKENS_RETRY_WHEN_UNSTATED
+        if cap >= max_tokens:
+            return False
+        self._max_output_caps[key] = cap
+        logger.info(
+            "Model {} refused max_tokens={}; retrying with {}",
+            key,
+            max_tokens,
+            cap,
+        )
+        return True
+
+    _CONTEXT_OVERFLOW_MARKERS = (
+        "maximum context length",
+        "context limit",
+        "context length",
+        "context window",
+    )
+    _CONTEXT_OVERFLOW_MARGIN = 1_024
+
+    @classmethod
+    def _is_context_overflow_text(cls, text: str) -> bool:
+        return any(marker in text for marker in cls._CONTEXT_OVERFLOW_MARKERS)
+
+    @classmethod
+    def _context_overflow_max_tokens(cls, e: Exception, max_tokens: int) -> int | None:
+        """Output budget that fits when prompt + max_tokens overflowed the window.
+
+        Per request, never remembered: the room left depends on this prompt.
+        Reads the two shapes providers use:
+        ``maximum context length is 131072 tokens ... (12000 in the messages,
+        128000 in the completion)`` and ``... exceed context limit:
+        188000 + 128000 > 200000``. None when the numbers are not there.
+        """
+        body = getattr(e, "body", None)
+        text = f"{body} {e}".lower().replace(",", "")
+        if not cls._is_context_overflow_text(text):
+            return None
+        limit = prompt = None
+        summed = re.search(r"(\d+)\s*\+\s*(\d+)\s*>\s*(\d+)", text)
+        if summed:
+            prompt, limit = int(summed.group(1)), int(summed.group(3))
+        else:
+            window = re.search(r"maximum context length is (\d+)", text)
+            if window:
+                limit = int(window.group(1))
+                in_messages = re.search(r"(\d+) in the messages", text)
+                requested = re.search(r"requested (\d+) tokens", text)
+                if in_messages:
+                    prompt = int(in_messages.group(1))
+                elif requested:
+                    prompt = int(requested.group(1)) - max_tokens
+        if limit is None or prompt is None:
+            return None
+        room = limit - prompt - cls._CONTEXT_OVERFLOW_MARGIN
+        if room < cls._MAX_TOKENS_FLOOR or room >= max_tokens:
+            return None
+        logger.info(
+            "Prompt + max_tokens={} overflowed a {}-token window; retrying with {}",
+            max_tokens,
+            limit,
+            room,
+        )
+        return room
 
     def _is_openrouter_wire(self) -> bool:
         """True when the endpoint speaks OpenRouter's reasoning vocabulary."""
@@ -928,6 +1421,12 @@ class OpenAICompatProvider(LLMProvider):
         key = self._temperature_model_key(model)
         model_name = self._request_model_name(model or self.default_model)
         effort = (reasoning_effort or "").lower() if isinstance(reasoning_effort, str) else ""
+        if effort and effort not in ("none", "minimal", "minimum"):
+            from navin.providers.reasoning_control import learn_accepted_efforts
+
+            if learn_accepted_efforts(key, effort, e):
+                # e.g. GLM 5.3 "please use low, high, or max" for "medium".
+                return True
         if (
             effort in ("none", "minimal", "minimum")
             and key not in self._thinking_off_rejected
@@ -1099,7 +1598,10 @@ class OpenAICompatProvider(LLMProvider):
         if spec and spec.supports_prompt_caching:
             model_name = model or self.default_model
             if any(model_name.lower().startswith(k) for k in ("anthropic/", "claude")):
-                messages, tools = self._apply_cache_control(messages, tools)
+                if spec.name == "navin" and is_navin_gateway(self.api_base):
+                    messages, tools = self._apply_gateway_cache_control(messages, tools, model_name)
+                else:
+                    messages, tools = self._apply_cache_control(messages, tools)
 
         model_name = self._request_model_name(model_name)
 
@@ -1109,17 +1611,24 @@ class OpenAICompatProvider(LLMProvider):
 
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
+            "messages": self._sanitize_messages(
+                self._sanitize_empty_content(
+                    _current_turn_thinking_only(messages)
+                    if self._replays_thinking_blocks(model_name) else messages
+                ),
+                keep_thinking_blocks=self._replays_thinking_blocks(model_name),
+            ),
         }
 
         # GPT-5 and reasoning models (o1/o3/o4) reject temperature when
         # reasoning_effort is active.  Only include it when safe.
         if (
             self._supports_temperature(model_name, reasoning_effort)
-            and self._temperature_model_key(model) not in self._no_temperature_models
+            and not self._temperature_refused(model)
         ):
             kwargs["temperature"] = temperature
 
+        max_tokens = self._clamp_max_tokens(model, max_tokens)
         if (
             spec and getattr(spec, "supports_max_completion_tokens", False)
         ) or _requires_max_completion_tokens(model_name):
@@ -1137,11 +1646,18 @@ class OpenAICompatProvider(LLMProvider):
         # Normalize reasoning_effort into a semantic form (OpenAI vocab)
         # used for internal decisions, and a wire form actually sent out.
         # "minimum" is accepted as a DashScope-native alias for "minimal".
+        reasoning_effort = non_anthropic_effort(reasoning_effort)
         semantic_effort: str | None = None
         if isinstance(reasoning_effort, str):
             semantic_effort = reasoning_effort.lower()
             if semantic_effort == "minimum":
                 semantic_effort = "minimal"
+
+        if semantic_effort == "minimal" and "claude" in _model_slug(model_name):
+            # Claude has no rung below "low": "minimal" means no thinking, as
+            # on the native Anthropic and Bedrock wires.
+            semantic_effort = "none"
+            reasoning_effort = "none"
 
         wire_effort = reasoning_effort
         if spec and spec.name == "dashscope" and semantic_effort == "minimal":
@@ -1162,9 +1678,27 @@ class OpenAICompatProvider(LLMProvider):
         # 400 to the parameter itself.
         if not strip_effort and (
             always_reasons(model_name)
+            or openai_rejects_reasoning(model_name)
             or self._temperature_model_key(model) in self._reasoning_knob_rejected
         ):
             strip_effort = True
+
+        # A value this model is known, or learned, to refuse goes out as the
+        # nearest one it takes: a routed "xhigh" or "none" must never fail a step.
+        if isinstance(semantic_effort, str) and semantic_effort:
+            from navin.providers.reasoning_control import accepted_efforts, nearest_effort
+
+            fitted = nearest_effort(
+                semantic_effort,
+                accepted_efforts(
+                    model_name,
+                    self._temperature_model_key(model),
+                    include_openai=semantic_effort != "none",
+                ),
+            )
+            if fitted != semantic_effort:
+                semantic_effort = fitted
+                wire_effort = fitted
 
         # Some providers accept a constrained reasoning_effort vocabulary
         # (Mistral: only "high"/"none"). Remap from OpenAI vocab to the
@@ -1340,11 +1874,15 @@ class OpenAICompatProvider(LLMProvider):
             # Explicit configuration means Responses is mandatory; do not
             # consult the circuit breaker or fall back to Chat Completions.
             return True
+        model_name = (model or self.default_model).lower()
         if self._spec is None or self._spec.name != "github_copilot":
             if not _is_direct_openai_base(self._effective_base):
                 return False
+        elif not re.search(r"(?:^|/)(?:gpt-|o[134](?:-|$)|codex)", model_name):
+            # Copilot serves Claude, Gemini and Grok on /chat/completions only;
+            # its /responses endpoint is for OpenAI models.
+            return False
 
-        model_name = (model or self.default_model).lower()
         wants = False
         if reasoning_effort and reasoning_effort.lower() != "none":
             wants = True
@@ -1426,6 +1964,7 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Build a Responses API body for direct OpenAI requests."""
+        max_tokens = self._clamp_max_tokens(model, max_tokens)
         model_name = model or self.default_model
         model_name = self._request_model_name(model_name)
         sanitized_messages = self._sanitize_messages(self._sanitize_empty_content(messages))
@@ -1440,11 +1979,26 @@ class OpenAICompatProvider(LLMProvider):
             "stream": False,
         }
 
+        reasoning_effort = non_anthropic_effort(reasoning_effort)
         if self._supports_temperature(model_name, reasoning_effort):
             body["temperature"] = temperature
 
         effort_lower = reasoning_effort.lower() if isinstance(reasoning_effort, str) else ""
-        knob_rejected = self._temperature_model_key(model) in self._reasoning_knob_rejected
+        knob_rejected = (
+            self._temperature_model_key(model) in self._reasoning_knob_rejected
+            or openai_rejects_reasoning(model_name)
+        )
+        if effort_lower and effort_lower != "none":
+            # Same fitting as Chat Completions: a documented or learned ladder
+            # turns a refused level into the nearest accepted one, so a refusal
+            # is never replayed with the very value that failed.
+            from navin.providers.reasoning_control import accepted_efforts, nearest_effort
+
+            effort_lower = nearest_effort(
+                effort_lower,
+                accepted_efforts(model_name, self._temperature_model_key(model)),
+            )
+            reasoning_effort = effort_lower
         if effort_lower == "none":
             # GPT-5 defaults to "medium" when the field is missing, so "none"
             # is spelled out (GPT-5.1+), or its floor for older generations.
@@ -1586,6 +2140,17 @@ class OpenAICompatProvider(LLMProvider):
                 result["cached_tokens"] = cached
                 break
 
+        # --- Anthropic-shaped cache counters (Claude behind LiteLLM / the
+        # Navin gateway): a write is billed differently from a read. ---
+        for key in ("cache_read_input_tokens", "cache_creation_input_tokens"):
+            value = cls._get_nested_int(usage_map, (key,)) if usage_map is not None else 0
+            if not value and usage_obj is not None:
+                value = cls._get_nested_int(usage_obj, (key,))
+            if value:
+                result[key] = value
+        if "cached_tokens" not in result and result.get("cache_read_input_tokens"):
+            result["cached_tokens"] = result["cache_read_input_tokens"]
+
         # --- reasoning tokens: the only witness that "none" reached the wire ---
         for path in (
             ("completion_tokens_details", "reasoning_tokens"),  # OpenAI/OpenRouter/Groq
@@ -1726,6 +2291,7 @@ class OpenAICompatProvider(LLMProvider):
                 finish_reason=finish_reason,
                 usage=self._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+                thinking_blocks=_replayable_thinking_blocks(msg0.get("thinking_blocks")),
             )
 
         if not response.choices:
@@ -1778,6 +2344,7 @@ class OpenAICompatProvider(LLMProvider):
             finish_reason=finish_reason or "stop",
             usage=self._extract_usage(response),
             reasoning_content=reasoning_content,
+            thinking_blocks=_replayable_thinking_blocks(getattr(msg, "thinking_blocks", None)),
         )
 
     @classmethod
@@ -1785,22 +2352,33 @@ class OpenAICompatProvider(LLMProvider):
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tc_bufs: dict[int, dict[str, Any]] = {}
+        thinking_acc: list[dict[str, Any]] = []
         finish_reason = "stop"
         usage: dict[str, int] = {}
 
+        # Raw stream index -> buffer key. Gemini's OpenAI endpoint sends each
+        # parallel call whole, all under index 0: without a split they would
+        # merge into one call with arguments like '{...}{...}'.
+        slot_of: dict[int, int] = {}
+
         def _accum_tc(tc: Any, idx_hint: int) -> None:
             """Accumulate one streaming tool-call delta into *tc_bufs*."""
-            tc_index: int = _get(tc, "index") if _get(tc, "index") is not None else idx_hint
-            buf = tc_bufs.setdefault(tc_index, {
+            raw_index: int = _get(tc, "index") if _get(tc, "index") is not None else idx_hint
+            tc_id = _get(tc, "id")
+            fn = _get(tc, "function")
+            fn_name = _get(fn, "name") if fn is not None else None
+            key = slot_of.get(raw_index, raw_index)
+            current = tc_bufs.get(key)
+            if current is not None and _starts_new_tool_call(current, tc_id, fn_name):
+                key = max(tc_bufs) + 1
+            slot_of[raw_index] = key
+            buf = tc_bufs.setdefault(key, {
                 "id": "", "name": "", "arguments": "",
                 "extra_content": None, "prov": None, "fn_prov": None,
             })
-            tc_id = _get(tc, "id")
             if tc_id:
                 buf["id"] = str(tc_id)
-            fn = _get(tc, "function")
             if fn is not None:
-                fn_name = _get(fn, "name")
                 if fn_name:
                     buf["name"] = str(fn_name)
                 fn_args = _get(fn, "arguments")
@@ -1862,6 +2440,7 @@ class OpenAICompatProvider(LLMProvider):
                     text = cls._extract_thinking_content(raw_delta_content)
                 if text:
                     reasoning_parts.append(text)
+                _accumulate_thinking_deltas(thinking_acc, delta.get("thinking_blocks"))
                 for idx, tc in enumerate(delta.get("tool_calls") or []):
                     _accum_tc(tc, idx)
                 _accum_legacy_function_call(delta.get("function_call"))
@@ -1890,6 +2469,8 @@ class OpenAICompatProvider(LLMProvider):
                     text = cls._extract_text_content(reasoning)
                     if text:
                         reasoning_parts.append(text)
+            if delta:
+                _accumulate_thinking_deltas(thinking_acc, getattr(delta, "thinking_blocks", None))
             for tc in (getattr(delta, "tool_calls", None) or []) if delta else []:
                 _accum_tc(tc, getattr(tc, "index", 0))
             if delta:
@@ -1925,6 +2506,7 @@ class OpenAICompatProvider(LLMProvider):
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
+            thinking_blocks=_replayable_thinking_blocks(thinking_acc),
         )
 
     @classmethod
@@ -2071,9 +2653,14 @@ class OpenAICompatProvider(LLMProvider):
         if retry_after is None:
             retry_after = LLMProvider._extract_retry_after(msg)
         metadata = OpenAICompatProvider._extract_error_metadata(e)
-        OpenAICompatProvider._maybe_resync_managed_key(
-            metadata.get("error_status_code"),
-        )
+        from navin.providers.user_facing_errors import is_model_unavailable_text
+
+        if not is_model_unavailable_text(text):
+            # A model the gateway's provider account cannot reach says nothing
+            # about our key: re-validating the license would not help.
+            OpenAICompatProvider._maybe_resync_managed_key(
+                metadata.get("error_status_code"),
+            )
         provider_label = ""
         if spec is not None:
             provider_label = str(
@@ -2103,6 +2690,7 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
         await self._ensure_client()
+        reasoning_effort = non_anthropic_effort(reasoning_effort)
         try:
             if self._should_use_responses_api(model, reasoning_effort):
                 try:
@@ -2136,7 +2724,23 @@ class OpenAICompatProvider(LLMProvider):
             )
             return self._parse(await self._client.chat.completions.create(**kwargs))
         except Exception as e:
+            if self._register_thinking_binding_rejection(model, messages, e):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
             if self._register_temperature_rejection(model, e):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
+            room = self._context_overflow_max_tokens(e, max_tokens)
+            if room is not None:
+                return await self.chat(
+                    messages, tools, model, room, temperature,
+                    reasoning_effort, tool_choice,
+                )
+            if self._register_max_tokens_rejection(model, e, max_tokens):
                 return await self.chat(
                     messages, tools, model, max_tokens, temperature,
                     reasoning_effort, tool_choice,
@@ -2151,6 +2755,15 @@ class OpenAICompatProvider(LLMProvider):
                     messages, tools, model, max_tokens, temperature,
                     reasoning_effort, tool_choice,
                 )
+            if await self._replay_on_fresh_socket(e, delivered=False):
+                token = _FRESH_SOCKET_RETRY.set(True)
+                try:
+                    return await self.chat(
+                        messages, tools, model, max_tokens, temperature,
+                        reasoning_effort, tool_choice,
+                    )
+                finally:
+                    _FRESH_SOCKET_RETRY.reset(token)
             await self._maybe_reset_client_after_error(e)
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
@@ -2168,7 +2781,27 @@ class OpenAICompatProvider(LLMProvider):
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         await self._ensure_client()
+        reasoning_effort = non_anthropic_effort(reasoning_effort)
         idle_timeout_s = resolve_stream_idle_timeout_s()
+        # A replay after a stale socket is safe only while nothing streamed.
+        delivered = False
+        caller_callbacks = (on_content_delta, on_thinking_delta, on_tool_call_delta)
+
+        def _tracked(callback):
+            if callback is None:
+                return None
+
+            async def _forward(value):
+                nonlocal delivered
+                delivered = True
+                await callback(value)
+
+            return _forward
+
+        on_content_delta = _tracked(on_content_delta)
+        on_thinking_delta = _tracked(on_thinking_delta)
+        on_tool_call_delta = _tracked(on_tool_call_delta)
+        open_streams: list[Any] = []
         try:
             if self._should_use_responses_api(model, reasoning_effort):
                 try:
@@ -2178,6 +2811,7 @@ class OpenAICompatProvider(LLMProvider):
                     )
                     body["stream"] = True
                     stream = await self._client.responses.create(**body)
+                    open_streams.append(stream)
 
                     async def _timed_stream():
                         stream_iter = stream.__aiter__()
@@ -2200,6 +2834,7 @@ class OpenAICompatProvider(LLMProvider):
                         _timed_stream(),
                         on_content_delta,
                         on_tool_call_delta=on_tool_call_delta,
+                        on_reasoning_delta=on_thinking_delta,
                     )
                     self._record_responses_success(model, reasoning_effort)
                     return LLMResponse(
@@ -2210,6 +2845,7 @@ class OpenAICompatProvider(LLMProvider):
                         reasoning_content=reasoning_content,
                     )
                 except Exception as responses_error:
+                    await self._close_streams(open_streams)
                     if self._register_reasoning_rejection(model, responses_error, reasoning_effort):
                         return await self.chat_stream(
                             messages, tools, model, max_tokens, temperature,
@@ -2242,19 +2878,40 @@ class OpenAICompatProvider(LLMProvider):
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
             stream = await self._client.chat.completions.create(**kwargs)
+            open_streams.append(stream)
+            live_slots = _ToolCallSlots()
             chunks: list[Any] = []
             stream_iter = stream.__aiter__()
+            buffered_idle_s = max(idle_timeout_s, _buffered_output_idle_s())
+            # True after reasoning or a tool-call start: what follows may come
+            # in one piece at the end, so silence is not a stall yet. A request
+            # that asked for reasoning starts that way: Claude behind LiteLLM /
+            # Bedrock can think for minutes before its first streamed byte
+            # when the thinking text itself is not streamed.
+            producing_unstreamed = isinstance(reasoning_effort, str) and (
+                reasoning_effort.strip().lower() not in ("", "none", "minimal", "off")
+            )
             while True:
+                window_s = buffered_idle_s if producing_unstreamed else idle_timeout_s
                 try:
                     chunk = await asyncio.wait_for(
                         stream_iter.__anext__(),
-                        timeout=idle_timeout_s,
+                        timeout=window_s,
                     )
                 except StopAsyncIteration:
                     break
+                except asyncio.TimeoutError:
+                    idle_timeout_s = window_s  # reported in the stall message
+                    raise
                 chunks.append(chunk)
                 if chunk.choices:
                     delta_obj = chunk.choices[0].delta
+                    if getattr(delta_obj, "tool_calls", None) or getattr(delta_obj, "function_call", None):
+                        producing_unstreamed = True
+                    elif getattr(delta_obj, "reasoning_content", None) or getattr(delta_obj, "reasoning", None):
+                        producing_unstreamed = True
+                    elif self._extract_text_content(getattr(delta_obj, "content", None)):
+                        producing_unstreamed = False
                     raw_delta_content = getattr(delta_obj, "content", None)
                     if on_content_delta:
                         # Mistral streams content as a list of {"type":"thinking",
@@ -2282,7 +2939,14 @@ class OpenAICompatProvider(LLMProvider):
                             fn = _get(tool_delta, "function")
                             tool_index = _get(tool_delta, "index")
                             await on_tool_call_delta({
-                                "index": tool_index if tool_index is not None else idx,
+                                # Same split as _parse_chunks, so the live
+                                # cards match the calls that will run.
+                                "index": live_slots.key(
+                                    tool_index if tool_index is not None else idx,
+                                    _get(tool_delta, "id"),
+                                    _get(fn, "name") if fn is not None else None,
+                                    str(_get(fn, "arguments") or "") if fn is not None else "",
+                                ),
                                 "call_id": str(_get(tool_delta, "id") or ""),
                                 "name": self._inbound_tool_name(
                                     str(_get(fn, "name") or "") if fn is not None else "",
@@ -2306,6 +2970,10 @@ class OpenAICompatProvider(LLMProvider):
                 parsed.tool_calls = self._remap_tool_calls(parsed.tool_calls)
             return parsed
         except asyncio.TimeoutError:
+            # A stalled stream usually means a dead socket: drop it and the
+            # pool, like other connection-level failures.
+            await self._close_streams(open_streams)
+            await self._reset_client()
             return LLMResponse(
                 content=(
                     f"Error calling LLM: stream stalled for more than "
@@ -2315,7 +2983,33 @@ class OpenAICompatProvider(LLMProvider):
                 error_kind="timeout",
             )
         except Exception as e:
+            await self._close_streams(open_streams)
+            if not delivered and self._register_thinking_binding_rejection(model, messages, e):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
             if self._register_temperature_rejection(model, e):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            room = None if delivered else self._context_overflow_max_tokens(e, max_tokens)
+            if room is not None:
+                return await self.chat_stream(
+                    messages, tools, model, room, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            if not delivered and self._register_max_tokens_rejection(model, e, max_tokens):
                 return await self.chat_stream(
                     messages, tools, model, max_tokens, temperature,
                     reasoning_effort, tool_choice,
@@ -2339,8 +3033,38 @@ class OpenAICompatProvider(LLMProvider):
                     on_thinking_delta=on_thinking_delta,
                     on_tool_call_delta=on_tool_call_delta,
                 )
+            if await self._replay_on_fresh_socket(e, delivered=delivered):
+                token = _FRESH_SOCKET_RETRY.set(True)
+                try:
+                    return await self.chat_stream(
+                        messages, tools, model, max_tokens, temperature,
+                        reasoning_effort, tool_choice,
+                        on_content_delta=caller_callbacks[0],
+                        on_thinking_delta=caller_callbacks[1],
+                        on_tool_call_delta=caller_callbacks[2],
+                    )
+                finally:
+                    _FRESH_SOCKET_RETRY.reset(token)
             await self._maybe_reset_client_after_error(e)
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
+        finally:
+            await self._close_streams(open_streams)
+
+    async def _replay_on_fresh_socket(self, error: Exception, delivered: bool) -> bool:
+        """Drop the pool and allow one immediate replay after a stale socket.
+
+        Only for cloud pools (local ones never keep sockets), only before any
+        output reached the caller, and only once per request.
+        """
+        if delivered or self._is_local or _FRESH_SOCKET_RETRY.get():
+            return False
+        kind = (self._extract_error_metadata(error).get("error_kind") or "").lower()
+        if kind != "connection":
+            return False
+        logger.info("Pooled LLM connection was stale; replaying on a fresh socket")
+        await self._reset_client()
+        await self._ensure_client()
+        return True
 
     async def _maybe_reset_client_after_error(self, error: Exception) -> None:
         kind = (self._extract_error_metadata(error).get("error_kind") or "").lower()
@@ -2353,3 +3077,33 @@ class OpenAICompatProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return self.default_model
+
+
+# Google's documented placeholder for function calls Gemini did not produce.
+_GEMINI_FOREIGN_SIGNATURE = "skip_thought_signature_validator"
+
+
+def _sign_foreign_tool_calls(messages: list[dict[str, Any]]) -> None:
+    """Give the current turn's unsigned tool calls Gemini's placeholder signature.
+
+    Gemini 3 validates thought signatures on every function call of the
+    current turn. A call another model made (a failover or a model switch
+    mid-turn: Claude, GLM, GPT...) has none, and the request failed with
+    "Function call is missing a thought_signature". Calls Gemini made keep
+    their real signature; older turns are not validated.
+    """
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    for message in messages[last_user + 1:]:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or ():
+            if not isinstance(call, dict):
+                continue
+            extra = call.get("extra_content") if isinstance(call.get("extra_content"), dict) else {}
+            google = extra.get("google") if isinstance(extra.get("google"), dict) else {}
+            if google.get("thought_signature"):
+                continue
+            call["extra_content"] = {
+                **extra,
+                "google": {**google, "thought_signature": _GEMINI_FOREIGN_SIGNATURE},
+            }

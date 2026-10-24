@@ -25,8 +25,12 @@ import type { LiveVoiceState } from "@/lib/live-voice";
 import { cn } from "@/lib/utils";
 import type { VoiceDevice } from "@/lib/voice-devices";
 
+import { livePresenceCaption, livePresenceMode } from "./LivePresence";
+
 interface LiveVoiceBarProps {
   control: LiveVoiceControl;
+  /** The agent is answering or working: the bar says "thinking and working". */
+  agentBusy?: boolean;
   className?: string;
   onOpenSettings?: () => void;
   voiceLabel?: string;
@@ -54,23 +58,25 @@ const STATE_TONE: Record<LiveVoiceState, { dot: string; ring: string; text: stri
  * live input level, the device picker, and the three controls a call needs
  * (mute, skip what is being said, hang up).
  */
-export function LiveVoiceBar({ control, className, onOpenSettings, voiceLabel }: LiveVoiceBarProps) {
+export function LiveVoiceBar({ control, className, onOpenSettings, voiceLabel, agentBusy }: LiveVoiceBarProps) {
   const visible = control.state !== "off" || control.error !== null;
   return (
     <AnimatePresence initial={false}>
       {visible ? <LiveVoiceBarBody key="live-voice-bar" control={control} className={className}
-        onOpenSettings={onOpenSettings} voiceLabel={voiceLabel} /> : null}
+        onOpenSettings={onOpenSettings} voiceLabel={voiceLabel} agentBusy={agentBusy} /> : null}
     </AnimatePresence>
   );
 }
 
-function LiveVoiceBarBody({ control, className, onOpenSettings, voiceLabel }: LiveVoiceBarProps) {
+function LiveVoiceBarBody({ control, className, onOpenSettings, voiceLabel, agentBusy = false }: LiveVoiceBarProps) {
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const { state } = control;
   const tone = STATE_TONE[state];
   const errorState = state === "error";
-  const pulsing = !reduceMotion && (state === "listening" || state === "speaking" || state === "working");
+  // The one animation of the call: it breathes while listening, speaking or
+  // while the agent thinks and works.
+  const pulsing = !reduceMotion && (state === "listening" || state === "speaking" || state === "working" || agentBusy);
 
   const statusLabel = errorState
     ? t(`thread.composer.liveVoice.errors.${control.error ?? "failed"}`, {
@@ -78,11 +84,14 @@ function LiveVoiceBarBody({ control, className, onOpenSettings, voiceLabel }: Li
           defaultValue: "The voice conversation stopped.",
         }),
       })
-    : control.userSpeaking
-      ? t("thread.composer.liveVoice.hearingYou", { defaultValue: "I hear you..." })
-      : control.awaitingPermission
-        ? t("thread.composer.liveVoice.permissionPrompt", { defaultValue: "Allow the microphone" })
-        : t(`thread.composer.liveVoice.status.${state}`, { defaultValue: state });
+    : control.awaitingPermission
+      ? t("thread.composer.liveVoice.permissionPrompt", { defaultValue: "Allow the microphone" })
+      : (() => {
+          // The same words as the presence orb, said once: "I'm listening",
+          // "Thinking and working", "Speaking"...
+          const mode = livePresenceMode(control, agentBusy);
+          return mode ? livePresenceCaption(mode, t) : t(`thread.composer.liveVoice.status.${state}`, { defaultValue: state });
+        })();
 
   const hint = errorState
     ? errorHint(control, t)
@@ -128,6 +137,7 @@ function LiveVoiceBarBody({ control, className, onOpenSettings, voiceLabel }: Li
     <motion.div
       role="status"
       aria-live="polite"
+      data-live-voice-bar=""
       data-live-voice-state={state}
       data-live-voice-hearing={control.hearing ? "true" : "false"}
       initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.985 }}
@@ -308,7 +318,7 @@ function errorHint(control: LiveVoiceControl, t: ReturnType<typeof useTranslatio
       defaultValue: "Check the microphone and try again.",
     }),
   });
-  return control.errorDetail && key === "failed" ? `${base} (${control.errorDetail})` : base;
+  return control.errorDetail && (key === "failed" || key === "realtimeUnavailable") ? `${base} (${control.errorDetail})` : base;
 }
 
 /**
@@ -452,7 +462,7 @@ function DeviceGroup({
                   aria-selected={active}
                   onClick={() => onSelect(item.id)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-muted/65",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12px] transition-colors hover:bg-muted/65",
                     active ? "bg-primary/10 text-foreground" : "text-foreground/85",
                   )}
                 >
@@ -500,7 +510,9 @@ function InputLevelMeter({ level, hearing, muted }: { level: number; hearing: bo
   );
 }
 
-const SPEAKING_BARS = [0.55, 0.9, 0.7, 1, 0.6, 0.85, 0.5];
+// Full-width wave: the call's one animation runs the whole length of the bar.
+const WAVE_BARS = Array.from({ length: 32 }, (_, index) => 0.35 + 0.65 * Math.abs(Math.sin(index * 1.7)));
+const WAVE_HEIGHT = 20;
 
 function VoiceLevels({
   levels,
@@ -515,35 +527,29 @@ function VoiceLevels({
   className?: string;
   reduceMotion: boolean;
 }) {
-  if (state === "speaking") {
+  if (state === "speaking" || state === "working") {
+    const speaking = state === "speaking";
     return (
-      <span className={cn("flex h-4 items-center gap-[3px]", className)} aria-hidden>
-        {SPEAKING_BARS.map((peak, index) => (
+      <span className={cn("flex h-5 min-w-0 flex-1 items-center justify-between overflow-hidden", className)} aria-hidden>
+        {WAVE_BARS.map((peak, index) => (
           <motion.span
             key={index}
-            className="w-[2.5px] rounded-full bg-current"
-            style={{ height: 16 }}
-            animate={reduceMotion ? { scaleY: peak } : { scaleY: [0.25, peak, 0.25] }}
+            className="w-[2px] rounded-full bg-current"
+            style={{ height: WAVE_HEIGHT }}
+            animate={
+              reduceMotion
+                ? { scaleY: speaking ? peak : 0.2, opacity: 0.8 }
+                : speaking
+                  ? { scaleY: [0.2, peak, 0.2], opacity: 0.85 }
+                  // Working: a slow light running along the line.
+                  : { scaleY: 0.2, opacity: [0.2, 0.95, 0.2] }
+            }
             transition={{
-              duration: 0.9,
+              duration: speaking ? 0.9 : 1.6,
               repeat: Infinity,
               ease: "easeInOut",
-              delay: index * 0.08,
+              delay: index * (speaking ? 0.04 : 0.05),
             }}
-          />
-        ))}
-      </span>
-    );
-  }
-  if (state === "working") {
-    return (
-      <span className={cn("flex h-4 items-center gap-[3px]", className)} aria-hidden>
-        {[0, 1, 2].map((index) => (
-          <motion.span
-            key={index}
-            className="h-1.5 w-1.5 rounded-full bg-current"
-            animate={reduceMotion ? { opacity: 0.7 } : { opacity: [0.25, 1, 0.25] }}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut", delay: index * 0.2 }}
           />
         ))}
       </span>
@@ -553,7 +559,7 @@ function VoiceLevels({
   return (
     <span
       className={cn(
-        "flex h-4 min-w-0 flex-1 items-center justify-between overflow-hidden",
+        "flex h-5 min-w-0 flex-1 items-center justify-between overflow-hidden",
         hearing ? "text-emerald-500" : className,
       )}
       aria-hidden
@@ -565,7 +571,7 @@ function VoiceLevels({
             "w-[2px] rounded-full bg-current transition-[height] duration-75 ease-linear motion-reduce:transition-none",
             muted ? "opacity-30" : "opacity-85",
           )}
-          style={{ height: muted ? 2 : Math.max(2, Math.round(level * 16)) }}
+          style={{ height: muted ? 2 : Math.max(2, Math.round(level * WAVE_HEIGHT)) }}
         />
       ))}
     </span>

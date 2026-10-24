@@ -54,6 +54,33 @@ class _RestrictCase(unittest.TestCase):
 
 
 class PolicyMathTests(unittest.TestCase):
+    def test_repeated_scopes_resolve_the_root_once(self) -> None:
+        """Every HTTP route builds a scope; on \\\\wsl.localhost each resolve() is a 9P round trip."""
+        from navin.utils import resolve_cache
+
+        resolve_cache.clear_root_cache()
+        original = Path.resolve
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            Path, "resolve", autospec=True, side_effect=original,
+        ) as resolve:
+            first = build_workspace_scope(Path(tmp), "restricted")
+            for _ in range(5):
+                again = build_workspace_scope(Path(tmp), "restricted")
+        self.assertEqual(again.project_path, first.project_path)
+        self.assertEqual(again.sandbox_status.workspace_root, str(first.project_path))
+        self.assertEqual(resolve.call_count, 1)
+
+    def test_root_cache_expires(self) -> None:
+        from navin.utils import resolve_cache
+
+        resolve_cache.clear_root_cache()
+        with tempfile.TemporaryDirectory() as tmp:
+            first = resolve_cache.resolve_root(tmp)
+            with patch.object(resolve_cache.time, "monotonic", return_value=10**9):
+                with patch.object(Path, "resolve", autospec=True, return_value=Path("/moved")):
+                    self.assertEqual(resolve_cache.resolve_root(tmp), Path("/moved"))
+        self.assertNotEqual(first, Path("/moved"))
+
     def test_settings_off_unlocks_restricted_chat(self) -> None:
         scope = build_workspace_scope(Path("/tmp/navin-project"), "restricted")
         scope_token = bind_workspace_scope(scope)

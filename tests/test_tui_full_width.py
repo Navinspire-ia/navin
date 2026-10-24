@@ -11,12 +11,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from textual import events
 from textual.widgets import Static
 
 from navin.bus.queue import MessageBus
 from navin.tui.app import NavinApp
 from navin.tui.prefs import TuiPrefs
-from navin.tui.widgets import Sidebar, ToolCall
+from navin.tui.widgets import EdgeScrollbar, Sidebar, ToolCall
 
 
 class LayoutHost(NavinApp):
@@ -81,7 +82,8 @@ def test_transcript_and_composer_fill_the_window_and_panel_toggle_releases_width
             for width in (100, 220, 72):
                 await pilot.resize_terminal(width, 35)
                 await pilot.pause()
-                assert app.transcript.region.width == width
+                # One column goes to the thin scrollbar on the screen edge.
+                assert app.transcript.region.width == width - 1
                 assert app.composer.region.right >= width - 4
                 body = block.query_one(ToolCall).query_one(".tool-body", Static)
                 assert body.region.right >= width - 4
@@ -91,9 +93,71 @@ def test_transcript_and_composer_fill_the_window_and_panel_toggle_releases_width
             await pilot.press("ctrl+b")
             await pilot.pause()
             assert app.query_one(Sidebar).display
-            assert app.transcript.region.width == 124
+            assert app.transcript.region.width == 123
             await pilot.press("ctrl+b")
             await pilot.pause()
             assert not app.query_one(Sidebar).display
-            assert app.transcript.region.width == 160
+            assert app.transcript.region.width == 159
+    asyncio.run(run())
+
+
+def test_thin_scrollbar_sits_on_the_screen_edge_and_drives_the_chat(tmp_path):
+    async def run():
+        prefs = TuiPrefs(mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = LayoutHost(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            bar = app.query_one(EdgeScrollbar)
+            transcript = app.transcript
+            assert (bar.region.width, bar.region.right) == (1, 120)
+            assert bar.shape[1] == -1
+            assert bar.render_line(0).text.strip() == ""
+
+            await transcript.add(Static("\n".join(f"row {index}" for index in range(300))))
+            await pilot.pause()
+            track, start, size = bar.shape
+            assert track == transcript.outer_size.height
+            assert 1 <= size < track and start + size == track
+            assert bar.render_line(track - 1).text == EdgeScrollbar.THUMB_GLYPH
+            assert bar.render_line(0).text == EdgeScrollbar.TRACK_GLYPH
+            # Next to the composer the column stays blank.
+            assert bar.render_line(track).text.strip() == ""
+            thumb = list(bar.render_line(track - 1))[0].style
+            rail = list(bar.render_line(0))[0].style
+            assert thumb.color != rail.color
+
+            # The sidebar opens to the bar's left: the bar keeps the screen edge.
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+            sidebar = app.query_one(Sidebar)
+            assert sidebar.display
+            assert bar.region.x == sidebar.region.right
+            assert bar.region.right == 120
+            assert transcript.region.right == sidebar.region.x
+
+            # A click at the top of the track jumps there and stops following.
+            await pilot.click(EdgeScrollbar, offset=(0, 0))
+            await pilot.pause()
+            assert transcript.scroll_y == 0
+            assert not transcript.auto_follow
+            assert bar.shape[1] == 0
+
+            # Dragging the thumb to the bottom returns to the tail and follows.
+            await pilot.mouse_down(EdgeScrollbar, offset=(0, 0))
+            assert bar.has_class("-dragging")
+            await pilot.hover(EdgeScrollbar, offset=(0, track - 1))
+            await pilot.mouse_up(EdgeScrollbar, offset=(0, track - 1))
+            await pilot.pause()
+            assert not bar.has_class("-dragging")
+            assert transcript.is_vertical_scroll_end
+            assert transcript.auto_follow
+            assert bar.shape[1] + bar.shape[2] == track
+
+            # The wheel over the bar scrolls the conversation.
+            before = transcript.scroll_y
+            bar.post_message(events.MouseScrollUp(bar, 0, 1, 0, -1, 0, False, False, False))
+            await pilot.pause()
+            assert transcript.scroll_y == before - EdgeScrollbar.WHEEL_LINES
+            assert bar.shape[1] + bar.shape[2] < track
     asyncio.run(run())

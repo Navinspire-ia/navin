@@ -164,10 +164,12 @@ def test_full_output_button_keyboard_and_selection_work(theme, width):
             await block.tool_event("run", "exec", "end", {"command": command}, output, None, None)
             row = block.query_one(ToolCall)
             await pilot.pause()
-            assert command in row._head_text()
+            # Short heading; the exact command stays in the details and copy.
+            assert row._head_text() == "✓ Ran python 3 files"
+            assert command in row.copy_text()
             assert row.added == row.removed == 0
             more = row.query_one(".tool-more", Button)
-            assert more.display and "Full output (95 lines)" in str(more.label)
+            assert more.display and "output (95 lines)" in str(more.label)
             assert "case_000" not in str(row.query_one(".tool-body", Static).content)
             assert "case_094" in str(row.query_one(".tool-body", Static).content)
             more.scroll_visible(animate=False)
@@ -234,7 +236,10 @@ def test_added_deleted_reverted_failed_and_cancelled_have_distinct_outcomes(tmp_
             assert "false success" not in failed.copy_text()
             assert "Permission denied" in failed.copy_text()
             assert failed.added == failed.removed == 0
-            assert not failed.display
+            # A failed step keeps its row with a red cross and a short reason,
+            # never the word "Failed" or a raw error dump.
+            assert failed.display and "× Edit never.py" in failed._head_text()
+            assert "permission denied" in failed._summary_text()
             foot = str(block.query_one(".assistant-foot", Static).content)
             # No outcome tallies on the foot: a stopped or failed step is a step, the
             # final message carries the verdict.
@@ -324,9 +329,10 @@ def test_binary_file_does_not_claim_zero_changed_lines(tmp_path):
     asyncio.run(run())
 
 
-def test_a_finished_command_shows_its_command_and_status_only():
-    """The transcript keeps the full command and its exit status; the output
-    is one click away. A traceback above "Exit code: 0" (a piped tail) stays."""
+def test_a_finished_command_shows_its_outcome_and_last_lines_only():
+    """A finished command: its row, an outcome line (exit code, line count)
+    and the last lines of output; the rest is one click away. An error above
+    "Exit code: 0" (a piped tail) stays visible."""
     async def run():
         app = ActivityHost()
         async with app.run_test(size=(110, 28)) as pilot:
@@ -337,7 +343,9 @@ def test_a_finished_command_shows_its_command_and_status_only():
             row = block.query_one(ToolCall)
             await pilot.pause()
             body = str(row.query_one(".tool-body", Static).content)
-            assert "Exit code: 0" in body
+            summary = str(row.query_one(".tool-summary", Static).content)
+            assert "└ exit 0 · 4 lines" in summary
+            assert "--ink: #111;" in body and "}" in body
             assert ":root" not in body and "tokens" not in body
             more = row.query_one(".tool-more", Button)
             assert more.display and "Show output" in str(more.label)
@@ -351,6 +359,7 @@ def test_a_finished_command_shows_its_command_and_status_only():
             await pilot.pause()
             second = [tool for tool in block.query(ToolCall) if tool is not row][-1]
             text = str(second.query_one(".tool-body", Static).content)
-            assert "ModuleNotFoundError" in text and "Exit code: 0" in text
+            assert "ModuleNotFoundError" in text
             assert "Traceback" not in text
+            assert "exit 0" in str(second.query_one(".tool-summary", Static).content)
     asyncio.run(run())

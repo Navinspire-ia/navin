@@ -1,10 +1,10 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Switch the WebUI composer turn mode (Plan / Agent / Review / Security / Debug / Montage).
+"""Switch the WebUI composer turn mode (Plan / Agent / Review / Security / Debug / Reverse / Montage).
 
 Investigate modes tint the composer shell like Plan does. Agents call this
-when they autonomously enter a review, security audit, debug, or montage posture
+when they autonomously enter a review, security audit, debug, reverse or montage posture
 so the user sees the matching mode and color without switching manually.
 """
 
@@ -20,7 +20,7 @@ from navin.bus.outbound_events import (
 )
 
 _ALLOWED_MODES = frozenset(
-    {"ask", "plan", "agent", "review", "security", "debug", "montage"}
+    {"ask", "plan", "agent", "review", "security", "debug", "reverse", "montage"}
 )
 
 _MODE_HELP = {
@@ -30,6 +30,7 @@ _MODE_HELP = {
     "review": "Review - evidence-only code review + report + fix plan",
     "security": "Security - evidence-only audit + scanners + hardening plan",
     "debug": "Debug - reproduce with real evidence + root-cause report",
+    "reverse": "Reverse - static-first reverse engineering + evidence + rebuild plan",
     "montage": "Montage - project marketing kit, calendar, images/videos, HyperFrames",
 }
 
@@ -54,10 +55,10 @@ class SetComposerModeTool(Tool):
     def description(self) -> str:
         return (
             "Switch the Navin composer turn mode in the editor UI "
-            "(ask, plan, agent, review, security, debug, montage) and update its "
-            "accent color. The editor already shows the mode a turn started in; "
-            "call this only to CHANGE mode: when you autonomously enter review/"
-            "security/debug/montage, or when the user asks for work the current "
+            "(ask, plan, agent, review, security, debug, reverse, montage) and "
+            "update its accent color. The editor already shows the mode a turn "
+            "started in; call this only to CHANGE mode: when you autonomously "
+            "enter review/security/debug/reverse/montage, or when the user asks for work the current "
             "mode does not allow (hand off Ask/Plan to Agent). The switch applies "
             "to this turn immediately: leaving Ask or Plan for Agent unlocks the "
             "build tools right away, switching into Plan or Ask tightens to "
@@ -83,6 +84,7 @@ class SetComposerModeTool(Tool):
                                 "review",
                                 "security",
                                 "debug",
+                                "reverse",
                                 "montage",
                             )
                         )

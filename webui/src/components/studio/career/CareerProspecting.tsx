@@ -1,12 +1,14 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { DESK_PANEL_STYLES } from "../desk-panel";
 import { useState } from "react";
 import { DefaultButton, PrimaryButton, Panel, PanelType, Pivot, PivotItem, TextField, Dropdown, Dialog, DialogType, DialogFooter,
   MessageBar, MessageBarType, ProgressIndicator, Stack, Link } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 import type { CareerDesk } from "@/lib/career-api";
 import { emptyProspecting, downloadCandidate, sourcingStatusText, type CandidateMatch } from "@/lib/career-prospecting";
 import { localizeCareerValue } from "@/lib/career-role-matrix";
@@ -23,8 +25,7 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
   token: string; onMail: () => void; onSchedule: () => void; onRun: Run; onDismiss: () => void;
 }) {
   const { i18n } = useTranslation();
-  const fr = i18n.language.startsWith("fr");
-  const c = (f: string, e: string) => fr ? f : e;
+  const c = (f: string, e: string, values?: Record<string, string | number>) => bilingual(f, e, values);
   const reduced = useReducedMotion();
   const state = desk.prospecting || emptyProspecting;
   const [tab, setTab] = useState<ProspectTab>(initialTab);
@@ -94,14 +95,14 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
           {!dossiers.length && <MessageBar>{c("Aucun dossier pour le moment. Configurez la société puis lancez la prospection, ou matchez une offre avec votre vivier.", "No dossiers yet. Set up your company and start prospecting, or match an offer against your talent pool.")}</MessageBar>}
           <div data-testid="career-daily-summary" className="rounded-xl border border-border p-4">
             <p className="font-semibold">{c("Recherche quotidienne", "Daily search")} · {desk.loop?.enabled ? c("Active", "Active") : c("En pause", "Paused")}</p>
-            {!!desk.loop?.next_due && desk.loop.enabled && <p className="mt-1 text-sm">{c("Prochaine recherche", "Next search")} : {new Date(desk.loop.next_due * 1000).toLocaleString(i18n.language)}</p>}
+            {!!desk.loop?.next_due && desk.loop.enabled && <p className="mt-1 text-sm">{c("Prochaine recherche", "Next search")} : {new Date(desk.loop.next_due * 1000).toLocaleString(intlLocale())}</p>}
             {(state.runs || []).length ? <ul className="mt-3 space-y-2 text-sm">{state.runs!.slice(-7).reverse().map((run, index) => <li key={`${run.at}-${index}`}>
-              <time>{new Date(run.at * 1000).toLocaleString(i18n.language)}</time>{" · "}
+              <time>{new Date(run.at * 1000).toLocaleString(intlLocale())}</time>{" · "}
               {run.offers} {c("nouvelles missions", "new missions")}, {run.new_profiles} {c("nouveaux profils", "new profiles")}, {run.matched_offers} {c("missions avec matching", "matched missions")}
               {(run.source_errors > 0 || run.deferred > 0) && <span className="block text-muted-foreground">{c("Recherche partielle : les sources disponibles ont été traitées. Les autres seront retentées.", "Partial search: available sources were processed. Others will be retried.")}</span>}
             </li>)}</ul> : <p className="mt-2 text-sm">{c("Le bilan apparaîtra après la première recherche.", "The summary will appear after the first search.")}</p>}
           </div>
-          <div style={{ overflowX: "auto" }}><table className="w-full text-left text-sm"><thead><tr>{[c("Mission", "Mission"), c("Profil", "Candidate"), c("Étape", "Stage"), c("Prochaine action", "Next action")].map(h => <th key={h} className="p-3">{h}</th>)}</tr></thead>
+          <div style={{ overflowX: "auto" }}><table className="w-full text-start text-sm"><thead><tr>{[c("Mission", "Mission"), c("Profil", "Candidate"), c("Étape", "Stage"), c("Prochaine action", "Next action")].map(h => <th key={h} className="p-3">{h}</th>)}</tr></thead>
             <tbody>{dossiers.map(d => <tr key={`${d.id}-${d.candidate.id}`} className="border-t border-border">
               <td className="p-3"><Link onClick={() => { setSelectedOffer(d.id); setTab("matches"); }}>{desk.opportunities.find(o => o.id === d.id)?.title || d.id}</Link></td>
               <td className="p-3">{d.candidate.name}<p className="text-xs tabular-nums">{d.score}%</p></td><td className="p-3">{stageLabel(d.stage)}</td>
@@ -119,12 +120,12 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
           <PrimaryButton text={c("Rechercher sur mes plateformes", "Search my platforms")} disabled={busy}
             onClick={() => void onRun("search_candidates", { query: filter })} styles={BUTTON_STYLES} />
           {!profiles.length && <MessageBar>{c("Aucun profil pour cette recherche. Lancez une prospection ou modifiez le filtre.", "No profiles for this search. Start prospecting or change the filter.")}</MessageBar>}
-          <div style={{ overflowX: "auto" }}><table className="w-full text-left text-sm" data-testid="career-candidate-list">
+          <div style={{ overflowX: "auto" }}><table className="w-full text-start text-sm" data-testid="career-candidate-list">
             <thead><tr>{[c("Profil", "Profile"), c("Source / fraîcheur", "Source / freshness"), c("Signal", "Signal"), "Actions"].map(h => <th key={h} className="p-3">{h}</th>)}</tr></thead>
             <tbody>{profiles.map(p => <tr key={p.id} className="border-t border-border">
               <td className="p-3"><strong>{p.name}</strong><p className="mt-1 max-w-lg">{p.snippet}</p>{p.skills.join(", ")}
                 {p.email && <p><a href={`mailto:${p.email}`}>{p.email}</a></p>}{p.phone && <p><a href={`tel:${p.phone}`}>{p.phone}</a></p>}</td>
-              <td className="p-3">{p.source}<p>{new Date(p.observed_at * 1000).toLocaleDateString(i18n.language)}</p></td>
+              <td className="p-3">{p.source}<p>{new Date(p.observed_at * 1000).toLocaleDateString(intlLocale())}</p></td>
               <td className="p-3">{p.signal === "declared" ? c("Disponibilité évoquée, à confirmer", "Availability mentioned, verify") : c("À confirmer", "Unconfirmed")}</td>
               <td className="p-3"><Stack tokens={{ childrenGap: 8 }}>
                 {p.url && links(p.url, c("Voir le profil", "View profile"))}
@@ -159,17 +160,17 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
             : matches
             ? c("Aucun profil correspondant dans les résultats disponibles. Consultez l'état des sources ci-dessous.", "No matching profiles in the available results. Check source status below.")
             : c("Aucun profil correspondant enregistré pour cette offre. Recherchez sur les plateformes ou dans le vivier.", "No saved matches for this offer. Search platforms or your candidate pool.")}</MessageBar>}
-          {matches && <p className="text-sm text-muted-foreground">{c("Dernier matching", "Last matched")} : {new Date(matches.searched_at * 1000).toLocaleString(i18n.language)}. {c("Score de correspondance documentaire, pas une probabilité de placement.", "Evidence match score, not a placement probability.")}</p>}
+          {matches && <p className="text-sm text-muted-foreground">{c("Dernier matching", "Last matched")} : {new Date(matches.searched_at * 1000).toLocaleString(intlLocale())}. {c("Score de correspondance documentaire, pas une probabilité de placement.", "Evidence match score, not a placement probability.")}</p>}
           {matches?.results.map(match => <Stack key={match.candidate.id} tokens={{ childrenGap: 10 }} styles={{ root: { padding: 18, borderRadius: 12, border: "1px solid rgba(128,128,128,.25)" } }}>
             <div className="flex items-start justify-between gap-4"><strong>{match.candidate.name}</strong><strong className="tabular-nums">{match.score}%</strong></div>
-            <p>{match.candidate.source} · {c("Observé le", "Observed")} {new Date(match.candidate.observed_at * 1000).toLocaleDateString(i18n.language)}</p>
+            <p>{match.candidate.source} · {c("Observé le", "Observed")} {new Date(match.candidate.observed_at * 1000).toLocaleDateString(intlLocale())}</p>
             <p>{match.candidate.snippet}</p>
             <div className="grid gap-2 sm:grid-cols-2">{match.reasons.map(r => <p key={r.label} className="text-sm"><strong>{matchLabel(r.label)} : {r.points}/{r.max}</strong><br />{matchDetail(r.detail)}</p>)}</div>
             {match.missing_skills.length > 0 && <p>{c("Compétences à vérifier", "Skills to verify")} : {match.missing_skills.join(", ")}</p>}
             <p>{stageLabel(match.stage)} · {c("Intérêt", "Interest")} : {confirmationLabel(match.interest)} · {c("Disponibilité", "Availability")} : {confirmationLabel(match.availability)}</p>
             {match.next_action && <MessageBar>{match.next_action}</MessageBar>}
             {match.availability_detail && <p>{match.availability_detail}</p>}
-            {match.interview?.slot && <p><strong>{c("Entretien", "Interview")} : </strong>{new Date(match.interview.slot).toLocaleString(i18n.language)} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
+            {match.interview?.slot && <p><strong>{c("Entretien", "Interview")} : </strong>{new Date(match.interview.slot).toLocaleString(intlLocale())} ({Intl.DateTimeFormat(intlLocale()).resolvedOptions().timeZone})</p>}
             {match.preparation && <details><summary className="cursor-pointer">{c("Préparation de l'entretien", "Interview preparation")}</summary><p className="whitespace-pre-wrap text-sm">{match.preparation}</p></details>}
             {match.last_reply && <details><summary className="cursor-pointer">{c("Dernière réponse", "Latest reply")}</summary><p className="whitespace-pre-wrap text-sm">{match.last_reply.text}</p></details>}
             {(match.emails || [match.candidate_mail, match.client_mail].filter(Boolean)).map((mail, index) => <details key={index}><summary className="cursor-pointer">Email : {mail?.recipient} · {mail?.status}</summary><p className="whitespace-pre-wrap text-sm">{mail?.body}</p></details>)}
@@ -216,7 +217,7 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
               availability_unknown: c("aucun signal public de disponibilité", "no public availability signal"),
               unavailable: c("indisponibilité déclarée", "declared unavailable"), evidence: c("extrait de recherche ambigu", "ambiguous search excerpt") } as Record<string, string>)[reason] || reason}
           </p>)}
-          {s.retry_at ? ` ${c("Nouvel essai possible à", "Retry after")} ${new Date(s.retry_at * 1000).toLocaleTimeString(i18n.language)}` : ""}
+          {s.retry_at ? ` ${c("Nouvel essai possible à", "Retry after")} ${new Date(s.retry_at * 1000).toLocaleTimeString(intlLocale())}` : ""}
         </MessageBar>)}
       </Stack></details>}
     </Stack>
@@ -224,8 +225,8 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
       modalProps={{ isBlocking: true }} dialogContentProps={{ type: DialogType.normal,
         closeButtonAriaLabel: c("Fermer", "Close"),
         title: c("Supprimer ce profil ?", "Delete this profile?"),
-        subText: c(`Le profil de ${deleteTarget?.name || ""}, ses documents enregistrés et ses correspondances avec les missions seront supprimés. Cette action est définitive.`,
-          `${deleteTarget?.name || ""}'s profile, saved documents and mission matches will be deleted. This cannot be undone.`) }}>
+        subText: c("Le profil de {{name}}, ses documents enregistrés et ses correspondances avec les missions seront supprimés. Cette action est définitive.",
+          "{{name}}'s profile, saved documents and mission matches will be deleted. This cannot be undone.", { name: deleteTarget?.name || "" }) }}>
       {error && <MessageBar messageBarType={MessageBarType.error}>{error}</MessageBar>}
       <DialogFooter>
         <DefaultButton text={c("Annuler", "Cancel")} disabled={busy} onClick={() => setDeleteTarget(null)} />

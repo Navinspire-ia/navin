@@ -1,19 +1,22 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { ChevronDown, Download, FolderOpen, Loader2 } from "lucide-react";
+import { ChevronDown, Download, FolderOpen, Loader2, PackageOpen, Upload } from "lucide-react";
 
 import {
   addImportRoot,
   importExternalSessions,
+  openSessionBundle,
   removeImportRoot,
+  uploadAndOpenSessionBundle,
   scanExternalSessions,
   type SessionImportSourceStat,
 } from "@/lib/api";
 import { useClient } from "@/providers/ClientProvider";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -22,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FolderBrowserDialog } from "@/components/dev/DevProjectSelector";
+import { nativeFolderPickerAvailable, pickNativeFile } from "@/lib/native-dialog";
 import {
   Dialog,
   DialogContent,
@@ -60,10 +64,16 @@ export function SessionImportDialog({
   open,
   onOpenChange,
   onImported,
+  onOpenedShared,
+  initialFile = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported?: () => void;
+  /** A shared .navin-session was rebuilt: open its new chat. */
+  onOpenedShared?: (chatId: string) => void;
+  /** A .navin-session dropped on the sidebar list: opened as soon as the dialog shows. */
+  initialFile?: File | null;
 }) {
   const { t } = useTranslation();
   const { token } = useClient();
@@ -75,6 +85,77 @@ export function SessionImportDialog({
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [resultNote, setResultNote] = useState("");
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundlePath, setBundlePath] = useState("");
+  const [bundleNote, setBundleNote] = useState("");
+  const [bundleError, setBundleError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // A .navin-session someone shared: rebuild its project and open the chat.
+  // Either a path on this machine (desktop picker, pasted path) or a file the
+  // browser uploads in slices.
+  const openShared = useCallback(async (source: string | File) => {
+    const clean = typeof source === "string" ? source.trim() : "";
+    if (typeof source === "string" && !clean) return;
+    if (typeof source !== "string" && !source.name.toLowerCase().endsWith(".navin-session")) {
+      setBundleError(t("sidebar.sessionImport.sharedWrongType", {
+        defaultValue: "Choose a .navin-session file.",
+      }));
+      return;
+    }
+    setBundleBusy(true);
+    setBundleError("");
+    setBundleNote("");
+    setUploadProgress(typeof source === "string" ? null : 0);
+    try {
+      const opened = typeof source === "string"
+        ? await openSessionBundle(token, clean)
+        : await uploadAndOpenSessionBundle(token, source, (fraction) => setUploadProgress(fraction));
+      setBundleNote(
+        t("sidebar.sessionImport.sharedOpened", {
+          defaultValue: "Opened in {{dir}}.",
+          dir: opened.project_dir,
+        })
+        + (opened.notes.length ? ` ${opened.notes.join(" ")}` : "")
+        + (opened.excluded_secrets.length
+          ? ` ${t("sidebar.sessionImport.sharedSecrets", {
+            defaultValue: "To recreate (not shared): {{list}}.",
+            list: opened.excluded_secrets.slice(0, 6).join(", "),
+          })}`
+          : ""),
+      );
+      onImported?.();
+      onOpenedShared?.(opened.chat_id);
+    } catch (exc) {
+      setBundleError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setBundleBusy(false);
+      setUploadProgress(null);
+    }
+  }, [onImported, onOpenedShared, t, token]);
+
+  // A file dropped on the sidebar list: open it once, right away.
+  const startedFileRef = useRef<File | null>(null);
+  useEffect(() => {
+    if (!open) {
+      startedFileRef.current = null;
+      return;
+    }
+    if (!initialFile || startedFileRef.current === initialFile) return;
+    startedFileRef.current = initialFile;
+    void openShared(initialFile);
+  }, [initialFile, open, openShared]);
+
+  const pickShared = useCallback(async () => {
+    try {
+      const picked = await pickNativeFile(["navin-session"], "Navin session");
+      if (picked) await openShared(picked);
+    } catch {
+      // No desktop bridge: the path field below.
+    }
+  }, [openShared]);
 
   const scan = useCallback(async () => {
     setPhase("scanning");
@@ -191,8 +272,9 @@ export function SessionImportDialog({
   const selectedCount = sources.filter((s) => selected[s.name]).length;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="flex max-h-[90dvh] max-w-md flex-col overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {t("sidebar.sessionImport.title", {
@@ -328,16 +410,102 @@ export function SessionImportDialog({
           </div>
         ) : null}
 
-        <FolderBrowserDialog
-          open={browserOpen}
-          startPath={null}
-          onOpenChange={setBrowserOpen}
-          showHidden
-          onPick={(path) => {
-            setBrowserOpen(false);
-            void addRoot(path);
-          }}
-        />
+        <div className="rounded-lg border border-border/70 p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <PackageOpen className="h-4 w-4 text-muted-foreground" aria-hidden />
+            {t("sidebar.sessionImport.sharedTitle", { defaultValue: "Open a shared session (.navin-session)" })}
+          </div>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            {t("sidebar.sessionImport.sharedHint", {
+              defaultValue: "Rebuilds the project (history and pending changes) in a new folder under Navin, then opens the conversation where it stopped.",
+            })}
+          </p>
+          <div
+            className={cn(
+              "mt-2 rounded-md border border-dashed p-2 transition-colors",
+              dragOver ? "border-primary bg-primary/5" : "border-border/70",
+            )}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file && !bundleBusy) void openShared(file);
+            }}
+          >
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={bundleBusy} onClick={() => fileInput.current?.click()}>
+                {uploadProgress !== null ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Upload className="h-4 w-4" aria-hidden />}
+                {t("sidebar.sessionImport.sharedUpload", { defaultValue: "Upload a file" })}
+              </Button>
+              {nativeFolderPickerAvailable() ? (
+                <Button size="sm" variant="outline" disabled={bundleBusy} onClick={() => void pickShared()}>
+                  <FolderOpen className="h-4 w-4" aria-hidden />
+                  {t("sidebar.sessionImport.sharedPick", { defaultValue: "Choose the file" })}
+                </Button>
+              ) : null}
+            </div>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".navin-session"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void openShared(file);
+              }}
+            />
+            <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+              {t("sidebar.sessionImport.sharedDrop", { defaultValue: "or drop the file here, or paste its path:" })}
+            </p>
+            <form
+              className="mt-1.5 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void openShared(bundlePath);
+              }}
+            >
+              <input
+                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                placeholder={t("sidebar.sessionImport.sharedPathPlaceholder", {
+                  defaultValue: "/path/to/project.navin-session",
+                })}
+                value={bundlePath}
+                onChange={(e) => setBundlePath(e.target.value)}
+              />
+              <Button size="sm" type="submit" variant="outline" disabled={bundleBusy || !bundlePath.trim()}>
+                {t("sidebar.sessionImport.sharedOpen", { defaultValue: "Open" })}
+              </Button>
+            </form>
+          </div>
+          {uploadProgress !== null ? (
+            <p className="mt-2 text-[12.5px] text-muted-foreground">
+              {uploadProgress < 1
+                ? t("sidebar.sessionImport.sharedUploading", {
+                    defaultValue: "Uploading... {{percent}}%",
+                    percent: Math.round(uploadProgress * 100),
+                  })
+                : t("sidebar.sessionImport.sharedBusy", { defaultValue: "Rebuilding the project..." })}
+            </p>
+          ) : null}
+          {bundleBusy && uploadProgress === null ? (
+            <p className="mt-2 text-[12.5px] text-muted-foreground">
+              {t("sidebar.sessionImport.sharedBusy", { defaultValue: "Rebuilding the project..." })}
+            </p>
+          ) : null}
+          {bundleNote ? <p className="mt-2 text-[12.5px] text-foreground/80">{bundleNote}</p> : null}
+          {bundleError ? (
+            <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[12.5px] text-destructive">
+              {bundleError}
+            </p>
+          ) : null}
+        </div>
+
 
         <div className="flex justify-end gap-2">
           <Button
@@ -353,7 +521,7 @@ export function SessionImportDialog({
             onClick={runImport}
             disabled={busy || selectedCount === 0}
           >
-            <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <Download className="me-1.5 h-3.5 w-3.5" aria-hidden />
             {t("sidebar.sessionImport.importAll", {
               count: selectedTotal,
               defaultValue: `Import ${selectedTotal} session${selectedTotal === 1 ? "" : "s"}`,
@@ -362,5 +530,18 @@ export function SessionImportDialog({
         </div>
       </DialogContent>
     </Dialog>
+    {/* Beside the import dialog, not inside its content: nested there, the
+        folder list did not scroll. */}
+    <FolderBrowserDialog
+      open={browserOpen}
+      startPath={null}
+      onOpenChange={setBrowserOpen}
+      showHidden
+      onPick={(path) => {
+        setBrowserOpen(false);
+        void addRoot(path);
+      }}
+    />
+    </>
   );
 }

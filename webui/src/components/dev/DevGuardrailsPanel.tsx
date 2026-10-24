@@ -32,6 +32,7 @@ import {
 import type { SettingsPayload } from "@/lib/types";
 import { bindMenuListWheel } from "@/lib/model-picker-scroll";
 import { cn } from "@/lib/utils";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 import { DevGuardrailsSecurity } from "./DevGuardrailsSecurity";
@@ -228,7 +229,7 @@ export function Section({
         {hint ? (
           <p className="min-w-0 flex-1 text-[11.5px] leading-5 text-muted-foreground/80">{hint}</p>
         ) : null}
-        {action ? <div className="ml-auto shrink-0">{action}</div> : null}
+        {action ? <div className="ms-auto shrink-0">{action}</div> : null}
       </div>
       {children}
     </motion.section>
@@ -272,6 +273,10 @@ export function DevGuardrailsPanel({
   onOpenAgi?: () => void;
 }) {
   const { token } = useClient();
+  // Reads take the token at call time: a rotation used to reload the panel
+  // (spinner, board, settings and git status) every 270 s.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const { t } = useTranslation();
   const tx = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }),
@@ -294,23 +299,23 @@ export function DevGuardrailsPanel({
   });
 
   const loadBranch = useCallback(async () => {
-    if (!token || !projectPath) return;
+    if (!tokenRef.current || !projectPath) return;
     try {
-      const git = await fetchGitStatus(token, projectPath);
+      const git = await fetchGitStatus(tokenRef.current, projectPath);
       setBranch(git.is_repo ? (git.branch ?? null) : null);
     } catch {
       setBranch(null);
     }
-  }, [token, projectPath]);
+  }, [tokenRef, projectPath]);
 
   const load = useCallback(
     async (options?: { silent?: boolean }) => {
-      if (!token) return;
+      if (!hasToken) return;
       if (!options?.silent) setLoading(true);
       try {
         const [board, payload] = await Promise.all([
-          fetchBoard(token, boardKey),
-          fetchSettings(token),
+          fetchBoard(tokenRef.current, boardKey),
+          fetchSettings(tokenRef.current),
         ]);
         setAutonomy(board.autonomy ?? null);
         setSettings(payload);
@@ -322,7 +327,7 @@ export function DevGuardrailsPanel({
       }
       void loadBranch();
     },
-    [token, boardKey, loadBranch],
+    [hasToken, tokenRef, boardKey, loadBranch],
   );
 
   useEffect(() => {
@@ -424,7 +429,7 @@ export function DevGuardrailsPanel({
           type="button"
           variant="ghost"
           size="sm"
-          className="ml-auto h-7 gap-1.5 px-2 text-[12px]"
+          className="ms-auto h-7 gap-1.5 px-2 text-[12px]"
           onClick={() => void load()}
           disabled={loading}
           data-testid="dev-guardrails-refresh"

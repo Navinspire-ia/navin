@@ -1,19 +1,33 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useClient } from "@/providers/ClientProvider";
 import { toMediaAttachment } from "@/lib/media";
 import {
   mergeToolProgressEvents,
-  mergeUniqueToolTraceLines,
+  mergeToolTraceLinesForEvents,
   normalizeToolProgressEvents,
   toolTraceLinesFromEvents,
 } from "@/lib/tool-traces";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
-import { dropExpired, removeApproval, type PendingApproval } from "@/lib/approvals";
-import { dropExpiredChoices, removeChoice, type PendingChoice } from "@/lib/choices";
+import {
+  approvalEchoMessage,
+  dropExpired,
+  removeApproval,
+  type PendingApproval,
+} from "@/lib/approvals";
+import {
+  choiceAnswerPayload,
+  choiceEchoFromClosedFrame,
+  choiceEchoMessage,
+  dropExpiredChoices,
+  removeChoice,
+  upsertInteractionEcho,
+  type PendingChoice,
+} from "@/lib/choices";
+import { liveToolActivityLabelFor } from "@/lib/live-activity";
 import type { StreamError } from "@/lib/navin-client";
 import type {
   InboundEvent,
@@ -51,6 +65,7 @@ function taskProgressFromAgentUi(blob: unknown): TaskProgressData | null {
   if (typeof data.indeterminate === "boolean") out.indeterminate = data.indeterminate;
   else if (out.percent == null) out.indeterminate = true;
   if (typeof data.eta_s === "number" && Number.isFinite(data.eta_s)) out.eta_s = data.eta_s;
+  if (typeof data.phase === "string") out.phase = data.phase;
   if (typeof data.step === "string") out.step = data.step;
   if (typeof data.step_index === "number") out.step_index = data.step_index;
   if (typeof data.steps_total === "number") out.steps_total = data.steps_total;
@@ -235,6 +250,20 @@ function findActiveAssistantPlaceholderIndex(
   if (!last.isStreaming) return null;
   if (!matchesTurn(last, turn)) return null;
   return prev.length - 1;
+}
+
+/**
+ * Withdraw the answer text of a stream segment a mid-stream retry abandoned.
+ * The row goes away unless it also carries reasoning, which stays visible.
+ */
+export function removeDiscardedAnswer(prev: UIMessage[], index: number | null): UIMessage[] {
+  if (index === null) return prev;
+  const target = prev[index];
+  if (!target || target.role !== "assistant" || target.kind === "trace") return prev;
+  if (target.reasoning) {
+    return replaceMessageAt(prev, index, { ...target, content: "" });
+  }
+  return [...prev.slice(0, index), ...prev.slice(index + 1)];
 }
 
 function replaceMessageAt(prev: UIMessage[], index: number, message: UIMessage): UIMessage[] {
@@ -443,6 +472,14 @@ function stripCoveredFileEditToolHints(message: UIMessage, edits: UIFileEdit[]):
   };
 }
 
+/** Keep how long the user took to answer, when the close frame says it. */
+function withWaitedMs(echo: UIMessage, waitedMs: unknown): UIMessage {
+  if (!echo.interaction || typeof waitedMs !== "number" || !Number.isFinite(waitedMs) || waitedMs < 0) {
+    return echo;
+  }
+  return { ...echo, interaction: { ...echo.interaction, waitedMs: Math.round(waitedMs) } };
+}
+
 function traceMessageIsEmpty(message: UIMessage): boolean {
   const traces = message.traces;
   const hasTrace = traces?.length
@@ -601,6 +638,7 @@ function eventExtendsModelActivity(ev: InboundEvent): boolean {
     || ev.event === "file_edit"
     || ev.event === "approval_request"
     || ev.event === "choice_request"
+    || ev.event === "credential_request"
     || ev.event === "goal_status"
   ) {
     if (ev.event === "goal_status") return ev.status === "running";
@@ -608,6 +646,20 @@ function eventExtendsModelActivity(ev: InboundEvent): boolean {
   }
   return ev.event === "message"
     && (ev.kind === "tool_hint" || ev.kind === "progress" || ev.kind === "reasoning");
+}
+
+/** When this page first saw each chat's turn running, for turns the server
+ * never dated (unix seconds). Kept per client outside the hook: leaving a chat
+ * and coming back must not restart its clock at 0s. */
+const observedRunStarts = new WeakMap<object, Map<string, number>>();
+
+function observedStartsFor(client: object): Map<string, number> {
+  let starts = observedRunStarts.get(client);
+  if (!starts) {
+    starts = new Map();
+    observedRunStarts.set(client, starts);
+  }
+  return starts;
 }
 
 function finalizeStreamedTurn(
@@ -662,6 +714,8 @@ export function useNavinStream(
   activeTaskProgress: TaskProgressData | null;
   /** Latest user-facing progress sentence, separate from private reasoning. */
   activityText: string | null;
+  /** The backend is summarizing the context right now (shown beside Working). */
+  isCompacting: boolean;
   send: (content: string, images?: SendAttachment[], options?: SendOptions) => void;
   transcribeAudio: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
   stop: () => void;
@@ -682,6 +736,8 @@ export function useNavinStream(
   respondToApproval: (requestId: string, allowed: boolean, remember?: boolean) => void;
   pendingChoices: PendingChoice[];
   respondToChoice: (requestId: string, optionId: string, skipped?: boolean, customText?: string) => void;
+  /** The current turn is streaming model reasoning right now. */
+  isThinking: boolean;
 } {
   const { client } = useClient();
   const currentModelRef = useRef(currentModel);
@@ -700,6 +756,16 @@ export function useNavinStream(
   const [checkpointNotice, setCheckpointNotice] = useState<CheckpointNotice | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [pendingChoices, setPendingChoices] = useState<PendingChoice[]>([]);
+  // Settled cards are restated in the chat, so the answer handlers need the
+  // request that was on screen when the click (or the close frame) landed.
+  const pendingApprovalsRef = useRef<PendingApproval[]>([]);
+  const pendingChoicesRef = useRef<PendingChoice[]>([]);
+  useEffect(() => {
+    pendingApprovalsRef.current = pendingApprovals;
+  }, [pendingApprovals]);
+  useEffect(() => {
+    pendingChoicesRef.current = pendingChoices;
+  }, [pendingChoices]);
   const messagesLengthRef = useRef(initialMessages.length);
   /** If history ends in unfinished agent activity, keep the loading spinner alive. */
   const initialStreaming = hasPendingAgentActivity(initialMessages);
@@ -709,6 +775,7 @@ export function useNavinStream(
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
   const [activeTaskProgress, setActiveTaskProgress] = useState<TaskProgressData | null>(null);
   const [activityText, setActivityText] = useState<string | null>(null);
+  const [isCompacting, setIsCompacting] = useState(false);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
@@ -744,6 +811,7 @@ export function useNavinStream(
     setContextCompaction(null);
     setCheckpointNotice(null);
     setActivityText(null);
+    setIsCompacting(false);
   }, [chatId]);
 
   useEffect(() => {
@@ -1019,6 +1087,26 @@ export function useNavinStream(
     });
   }, [applyPendingStreamEvents, closeActiveAssistantStream, resolveActiveAssistantIndex, turnModelStamp]);
 
+  const discardActiveAnswerSegment = useCallback((turn: UIMessageTurnFields = {}) => {
+    // Reasoning still in the frame queue is kept; only answer text goes.
+    const kept = pendingStreamEventsRef.current.filter((event) => event.kind !== "delta");
+    pendingStreamEventsRef.current = [];
+    if (streamFrameRef.current !== null) {
+      window.cancelAnimationFrame(streamFrameRef.current);
+      streamFrameRef.current = null;
+    }
+    setMessages((prev) => {
+      let next = kept.length > 0 ? applyPendingStreamEvents(prev, kept) : prev;
+      next = removeDiscardedAnswer(
+        next,
+        resolveActiveAssistantIndex(next, turn)
+          ?? findStreamingAssistantIndex(next, closedAssistantStreamIdsRef.current, turn),
+      );
+      closeActiveAssistantStream();
+      return next;
+    });
+  }, [applyPendingStreamEvents, closeActiveAssistantStream, resolveActiveAssistantIndex]);
+
   const schedulePendingStreamFlush = useCallback(() => {
     if (streamFrameRef.current !== null) return;
     streamFrameRef.current = window.requestAnimationFrame(() => {
@@ -1054,6 +1142,30 @@ export function useNavinStream(
     cancelStreamEndTimer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, client, cancelStreamEndTimer, clearActivitySegment, clearPendingStreamWork]);
+
+  // Remember when this chat's undated turn started, and forget it once the
+  // turn ends. A render that only switched chats still carries the previous
+  // chat's flag, so it neither records nor clears anything.
+  const clockChatRef = useRef<string | null | undefined>(undefined);
+  const [observedStart, setObservedStart] = useState<number | null>(null);
+  useEffect(() => {
+    const starts = observedStartsFor(client);
+    if (clockChatRef.current !== chatId) {
+      clockChatRef.current = chatId;
+      setObservedStart(chatId ? starts.get(chatId) ?? null : null);
+      return;
+    }
+    if (!chatId) return;
+    if (isStreaming) {
+      const known = starts.get(chatId) ?? Date.now() / 1000;
+      starts.set(chatId, known);
+      setObservedStart(known);
+    } else {
+      starts.delete(chatId);
+      setObservedStart(null);
+    }
+  }, [chatId, client, isStreaming]);
+  const clockStartedAt = runStartedAt ?? (isStreaming ? observedStart : null);
 
   useEffect(() => {
     if (hasPendingToolCalls) setIsStreaming(true);
@@ -1098,6 +1210,29 @@ export function useNavinStream(
         setIsStreaming(true);
       }
 
+      if (ev.event === "user_message") {
+        // Another window sent it: draw the bubble here too, once.
+        const turnId = ev.turn_id || crypto.randomUUID();
+        setMessages((prev) => {
+          if (ev.turn_id && prev.some((m) => m.role === "user" && m.turnId === ev.turn_id)) return prev;
+          return [
+            ...pruneReasoningOnlyPlaceholders(prev),
+            {
+              id: crypto.randomUUID(),
+              role: "user",
+              content: ev.content,
+              turnId,
+              turnPhase: "user",
+              turnSeq: 0,
+              createdAt: Date.now(),
+            },
+          ];
+        });
+        cancelStreamEndTimer();
+        setIsStreaming(true);
+        return;
+      }
+
       if (ev.event === "delta") {
         if (suppressStreamUntilTurnEndRef.current) return;
         const chunk = typeof ev.text === "string" ? ev.text : "";
@@ -1132,6 +1267,14 @@ export function useNavinStream(
 
       if (ev.event === "stream_end") {
         const turn = turnFieldsFromEvent(ev, "answer");
+        if (ev.discarded) {
+          // A mid-stream retry streams the whole answer again in a new
+          // segment: withdraw this segment's partial text, never keep it.
+          discardActiveAnswerSegment(turn);
+          if (suppressStreamUntilTurnEndRef.current) return;
+          scheduleStreamEndTimer(turn);
+          return;
+        }
         flushPendingStreamEvents({
           closeAnswerSegment: true,
           ...(typeof ev.text === "string" ? { finalAnswerText: ev.text } : {}),
@@ -1187,11 +1330,49 @@ export function useNavinStream(
       }
 
       if (ev.event === "approval_closed") {
+        // Answered here, from another window, or timed out: the chat keeps a
+        // one-line record of the outcome where the card was.
+        // The card may already be gone (timed out locally, another window):
+        // the frame itself names the action.
+        const settled = pendingApprovalsRef.current.find((item) => item.requestId === ev.request_id)
+          ?? (ev.action ? { requestId: ev.request_id, tool: "", action: ev.action } : undefined);
+        if (settled) {
+          const echo = withWaitedMs(
+            approvalEchoMessage(settled, Boolean(ev.allowed), Date.now()),
+            ev.waited_ms,
+          );
+          // The echo is a row of the activity block it interrupted: the
+          // command it allowed keeps running in the same block.
+          setMessages((prev) => (
+            prev.some((message) => message.id === echo.id) ? prev : [...prev, echo]
+          ));
+        }
         setPendingApprovals(client.getPendingApprovals(ev.chat_id));
         return;
       }
 
-      if (ev.event === "choice_request" || ev.event === "choice_closed") {
+      if (ev.event === "choice_request") {
+        // The model stopped thinking to ask: a reasoning stream left open
+        // here reads as a stuck "Thinking..." until the next frame.
+        setMessages((prev) => closeReasoningStream(prev));
+        setPendingChoices(client.getPendingChoices(ev.chat_id));
+        return;
+      }
+
+      if (ev.event === "choice_closed") {
+        const closedEcho = choiceEchoFromClosedFrame(ev, Date.now());
+        const echo = closedEcho
+          ? withWaitedMs(closedEcho, (ev as { waited_ms?: unknown }).waited_ms)
+          : null;
+        setMessages((prev) => {
+          const closed = closeReasoningStream(prev);
+          return echo ? upsertInteractionEcho(closed, echo) : closed;
+        });
+        // The answer does not end the activity block: the ask_user call
+        // returns right after it, and its end frame must land in the same
+        // block as its start (one row, not two). The composer status goes
+        // back to "Working".
+        setActivityText(null);
         setPendingChoices(client.getPendingChoices(ev.chat_id));
         return;
       }
@@ -1208,6 +1389,8 @@ export function useNavinStream(
       }
 
       if (ev.event === "context_compacted") {
+        setIsCompacting(false);
+        setActivityText((prev) => (prev && /^compacting/i.test(prev) ? null : prev));
         setContextCompaction({
           kind: ev.kind || "consolidation",
           messagesArchived: typeof ev.messages_archived === "number" ? ev.messages_archived : 0,
@@ -1227,6 +1410,7 @@ export function useNavinStream(
         setRunStartedAt(null);
         setActiveTaskProgress(null);
         setActivityText(null);
+        setIsCompacting(false);
         // A card that outlived its turn is unanswerable: the tool that asked has
         // already been told no. The client drops them, this follows - choices
         // included, or a question card stays stuck on screen after the turn.
@@ -1325,8 +1509,17 @@ export function useNavinStream(
             normalizeToolProgressEvents(ev.tool_events),
             progress,
           );
+          if (progress?.phase === "compacting") {
+            setIsCompacting(true);
+          } else if (progress || structuredEvents.length > 0 || ev.text) {
+            setIsCompacting(false);
+          }
           if (!sideChannelEvent) {
-            const label = progress?.step || progress?.label
+            // A named plan step wins; then the tool actually running ("Running
+            // python3 x.py", a still-running parallel call first); the generic
+            // progress label ("Running…") only when nothing more precise exists.
+            const running = liveToolActivityLabelFor(structuredEvents);
+            const label = progress?.step || running || progress?.label
               || (ev.kind === "progress" && structuredEvents.length === 0 ? ev.text : "");
             if (label?.trim()) {
               setActivityText(label.replace(/\s+/g, " ").trim());
@@ -1370,7 +1563,7 @@ export function useNavinStream(
                   ? [last.content]
                   : [];
               const mergedLines = visibleStructuredEvents.length > 0
-                ? mergeUniqueToolTraceLines(previousTraces, structuredLines)
+                ? mergeToolTraceLinesForEvents(previousTraces, last.toolEvents, visibleStructuredEvents)
                 : null;
               const merged: UIMessage = {
                 ...last,
@@ -1519,6 +1712,7 @@ export function useNavinStream(
     clearActivitySegment,
     clearPendingStreamWork,
     detachedActivitySegmentId,
+    discardActiveAnswerSegment,
     ensureActivitySegmentId,
     flushPendingStreamEvents,
     isSideChannelEvent,
@@ -1588,6 +1782,7 @@ export function useNavinStream(
         // Seed the elapsed clock immediately so the first-message wait never looks frozen.
         if (runStartedAtRef.current == null) {
           setActivityText(null);
+          setIsCompacting(false);
           setActiveTaskProgress(null);
           const startedAt = Date.now() / 1000;
           runStartedAtRef.current = startedAt;
@@ -1640,6 +1835,7 @@ export function useNavinStream(
     setRunStartedAt(null);
     setActiveTaskProgress(null);
     setActivityText(null);
+    setIsCompacting(false);
     setIsStreaming(false);
     setMessages((prev) => {
       buffer.current = null;
@@ -1663,6 +1859,13 @@ export function useNavinStream(
       // Drop the card now rather than on the close frame: the backend only sends
       // that once the suspended tool has resumed, and a button that stays live
       // after a click invites a second, contradictory answer.
+      const request = pendingApprovalsRef.current.find((item) => item.requestId === requestId);
+      if (request) {
+        const echo = approvalEchoMessage(request, allowed, Date.now());
+        setMessages((prev) => (
+          prev.some((message) => message.id === echo.id) ? prev : [...prev, echo]
+        ));
+      }
       setPendingApprovals((prev) => removeApproval(prev, requestId));
       client.sendApprovalDecision(requestId, allowed, remember);
     },
@@ -1671,19 +1874,31 @@ export function useNavinStream(
 
   const respondToChoice = useCallback(
     (requestId: string, optionId: string, skipped = false, customText = "") => {
+      // The card goes, the exchange stays: restate question and answer in the
+      // chat right away; the backend close frame later fills in the turn.
+      const choice = pendingChoicesRef.current.find((item) => item.requestId === requestId);
+      if (choice) {
+        const echo = choiceEchoMessage(choice, choiceAnswerPayload(optionId, skipped, customText), Date.now());
+        setMessages((prev) => upsertInteractionEcho(closeReasoningStream(prev), echo));
+      }
+      setActivityText(null);
       setPendingChoices((prev) => removeChoice(prev, requestId));
       client.sendChoiceAnswer(requestId, optionId, skipped, customText);
     },
     [client],
   );
 
+  const isThinking = useMemo(() => latestTurnIsThinking(messages), [messages]);
+
   return {
     messages,
     isStreaming,
-    runStartedAt,
+    /** Server start of the running turn, else when this page first saw it run. */
+    runStartedAt: clockStartedAt,
     goalState,
     activeTaskProgress,
     activityText,
+    isCompacting,
     send,
     transcribeAudio,
     stop,
@@ -1696,5 +1911,16 @@ export function useNavinStream(
     respondToApproval,
     pendingChoices,
     respondToChoice,
+    isThinking,
   };
+}
+
+/** True while the current turn streams model reasoning (drives "Thinking..." in the status). */
+export function latestTurnIsThinking(messages: UIMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role === "user") return false;
+    if (message.reasoningStreaming) return true;
+  }
+  return false;
 }

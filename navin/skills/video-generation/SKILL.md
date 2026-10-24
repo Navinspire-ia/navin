@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: Generate short videos with the generate_video tool (Veo, Sora, Hailuo) - scripts, storyboards, scene-by-scene AI generation, and ffmpeg assembly. Use for social clips, product demos, and ads.
+description: Generate short videos with the generate_video tool (Veo, Sora, Hailuo) - scripts, storyboards, scene-by-scene AI generation, and assembly with the montage tool. Use for social clips, product demos, and ads.
 metadata: {"navin":{"emoji":"🎥","category":"marketing"}}
 ---
 
@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"🎥","category":"marketing"}}
 
 ## Overview
 
-Four layers of video work: the script (always), AI generation with `generate_video`, image-to-video from product shots, and assembly (ffmpeg).
+Four layers of video work: the script (always), AI generation with `generate_video`, image-to-video from product shots, and assembly (`montage`).
 
 ## Tooling
 
@@ -54,16 +54,15 @@ generate_video(
 
 Aspect ratios per platform: 9:16 TikTok/Reels/Shorts, 16:9 YouTube/web, 1:1 feed.
 
-## 3. Assembly (ffmpeg via `exec`)
+## 3. Assembly (the `montage` tool, never raw ffmpeg)
 
-```bash
-# concat clips
-ffmpeg -f concat -safe 0 -i list.txt -c copy out.mp4
-# vertical crop for social (9:16)
-ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih" -c:a copy vertical.mp4
-# burn subtitles + add audio track
-ffmpeg -i in.mp4 -vf subtitles=subs.srt -i voix.mp3 -map 0:v -map 1:a out.mp4
-```
+Do not hand-write ffmpeg commands through `exec`: the `montage` tool already does the editing with progress, cancel, probing and platform canvases (see `montage-studio`).
+
+- `montage(action=probe, path=...)` - real clip length before trimming or placing transitions.
+- `montage(action=assemble, visuals=..., durations=..., trims=..., transition=fade, music=..., voice=..., srt=..., profile=...)` - one MP4 from clips, stills, music, narration and burned subtitles.
+- `montage(action=timeline_save, ...)` when the user may adjust the cut in Montage Studio, then `timeline_render`.
+- `montage(action=package, path=..., profiles=default)` - 16:9 / 9:16 / 1:1 platform exports.
+- For a product demo, promo or launch film, follow the "Premium demo video" recipe in `montage-studio` and the `motion-design` playbook (storyboard, scripted capture, polish, motion scenes, premium assemble, video QA loop). AI clips from `generate_video` are B-roll inside that edit, not the deliverable on their own.
 
 Subtitles: always (most social video plays muted) - generate the .srt from the script.
 
@@ -72,7 +71,7 @@ Subtitles: always (most social video plays muted) - generate the .srt from the s
 1. Clarify: platform (ratio! duration!), goal, brand constraints.
 2. Script + storyboard with one `generate_video` prompt per scene → user validation.
 3. Generate clips scene by scene; check each artifact before the next.
-4. Assemble with ffmpeg; subtitle; deliver per-platform exports via the `message` tool with artifact paths in `media`.
+4. Assemble with `montage(action=assemble)` or a timeline; subtitle; package per-platform exports with `montage(action=package)`; deliver via the `message` tool with artifact paths in `media`.
 
 ## Rules
 

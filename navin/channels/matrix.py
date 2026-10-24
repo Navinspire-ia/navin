@@ -601,6 +601,7 @@ class MatrixChannel(BaseChannel):
         stream_id: str | None = None,
         stream_end: bool = False,
         resuming: bool = False,
+        discarded: bool = False,
     ) -> None:
         relates_to = self._build_thread_relates_to(metadata)
 
@@ -608,6 +609,14 @@ class MatrixChannel(BaseChannel):
             stream_key = _matrix_stream_key(chat_id, stream_id)
             buf = self._stream_bufs.pop(stream_key, None)
             if not buf or not buf.event_id or not buf.text:
+                return
+            if discarded:
+                # The retry restarts the answer in a new segment: redact the
+                # partial message so the room shows the answer only once.
+                try:
+                    await self.client.room_redact(chat_id, buf.event_id)
+                except Exception:
+                    self.logger.debug("Discarded stream redact failed", exc_info=True)
                 return
 
             await self._stop_typing_keepalive(chat_id, clear_typing=True)

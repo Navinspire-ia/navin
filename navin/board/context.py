@@ -24,6 +24,7 @@ tool contract, which is always in the system prompt.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -110,18 +111,43 @@ def board_summary_lines(tasks: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def board_digest(project_path: Path | str) -> list[str]:
-    """Read the board (+ mission ledger + autonomy) and summarise. Never raises."""
+def board_digest(
+    project_path: Path | str,
+    session_key: str | None = None,
+    *,
+    whole_board: bool = False,
+) -> list[str]:
+    """Read the board (+ mission ledger + autonomy) and summarise. Never raises.
+
+    With a ``session_key``, the mission ledger is only shown to the chat that
+    works on it: a new chat must not be steered toward another chat's mission.
+    """
     lines: list[str] = []
     try:
         tasks = ProjectBoardStore(project_path).read_tasks()
+        if session_key and not whole_board:
+            # A chat only sees the tasks it worked on: another chat's queue
+            # must not show up here as "ready next".
+            from navin.board import session_focus
+
+            mine = set(session_focus.touched(session_key))
+            tasks = [task for task in tasks if task.get("id") in mine]
         lines.extend(board_summary_lines(tasks))
     except Exception:
         pass
     try:
         ledger_store = MissionLedgerStore(project_path)
         if ledger_store.exists():
-            mission_lines = ledger_store.runtime_lines(max_lines=12)
+            mission_lines: list[str] = []
+            if session_key is None:
+                mission_lines = ledger_store.runtime_lines(max_lines=12)
+            else:
+                from navin.board import session_focus
+                from navin.board.plan import mission_concerns
+
+                ledger = ledger_store.load()
+                if mission_concerns(ledger, session_focus.touched(session_key)):
+                    mission_lines = ledger_store.runtime_lines(ledger, max_lines=12)
             if mission_lines:
                 if lines:
                     lines.append("")
@@ -138,7 +164,51 @@ def board_digest(project_path: Path | str) -> list[str]:
             lines.extend(autonomy_lines)
     except Exception:
         pass
+    try:
+        from navin.reverse.repo import runtime_lines as reverse_runtime_lines
+
+        touched: set[str] | None = None
+        if session_key and not whole_board:
+            from navin.board import session_focus
+
+            touched = set(session_focus.touched(session_key))
+        reverse_lines = reverse_runtime_lines(project_path, touched=touched)
+        if reverse_lines:
+            if lines:
+                lines.append("")
+            lines.extend(reverse_lines)
+    except Exception:
+        pass
     return lines
+
+
+_HISTORY_ASK = re.compile(
+    r"\b(continu\w*|reprend\w*|reprise|resume\w*|historique|history|mission|"
+    r"o[uù] (on|en) (est|etait|était)|where (were|are) we|last (session|time)|derni[eè]re session)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_project_history(text: str | None) -> bool:
+    """True when the user asks to see or continue earlier project work."""
+    return bool(text and _HISTORY_ASK.search(text))
+
+
+def session_is_fresh(request: "RequestContext") -> bool:
+    """A chat that touched no board task and did not ask for the project history.
+
+    A new chat starts clean: earlier missions, the board and the resume brief
+    stay out of its context until the user asks for them or the chat works on
+    a task itself.
+    """
+    key = getattr(request, "session_key", None) or ""
+    if not key:
+        return False
+    from navin.board import session_focus
+
+    if session_focus.touched(key):
+        return False
+    return not wants_project_history(getattr(request, "original_user_text", None))
 
 
 async def board_context_provider(
@@ -148,7 +218,16 @@ async def board_context_provider(
     workspace = request.workspace
     if workspace is None:
         return None
-    lines = await asyncio.to_thread(board_digest, workspace)
+    if await asyncio.to_thread(session_is_fresh, request):
+        return None
+    whole_board = wants_project_history(getattr(request, "original_user_text", None))
+    lines = await asyncio.to_thread(
+        lambda: board_digest(
+            workspace,
+            getattr(request, "session_key", None) or "",
+            whole_board=whole_board,
+        )
+    )
     content = wrap_runtime_context_lines(lines)
     if not content:
         return None

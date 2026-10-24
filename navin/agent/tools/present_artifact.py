@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,9 @@ from typing import Any
 from navin.agent.tools.base import Tool, ToolResult
 from navin.agent.tools.context import current_request_context
 from navin.agent.tools.path_utils import closest_existing_match
+from navin.artifacts.canvas import build_canvas
+from navin.artifacts.canvas.templates import TEMPLATES as CANVAS_TEMPLATES
+from navin.artifacts.canvas.templates import build_template as build_canvas_template
 from navin.artifacts.detect import extract_fenced_artifacts, upsert_fenced_artifacts
 from navin.artifacts.store import ARTIFACT_TYPES, ArtifactError, ArtifactStore
 from navin.bus.outbound_events import (
@@ -92,7 +96,10 @@ class PresentArtifactTool(Tool):
             "instead of only reading code in the transcript. For HTML or "
             "Mermaid, pass the full content. For an existing file, pass type "
             "file and path. You can also pass scan_content with a markdown "
-            "reply containing ```html / ```mermaid fences to auto-present them."
+            "reply containing ```html / ```mermaid fences to auto-present them. "
+            "For analytical results (audits, benchmarks, metrics, findings, "
+            "status boards) use type canvas with JSON blocks (or a template) "
+            "instead of writing HTML; see the canvas skill."
         )
 
     @property
@@ -102,11 +109,45 @@ class PresentArtifactTool(Tool):
             "properties": {
                 "type": {
                     "type": "string",
-                    "enum": list(ARTIFACT_TYPES),
+                    "enum": [*ARTIFACT_TYPES, "canvas"],
                     "description": (
-                        "Artifact kind: html, markdown, mermaid, or file. "
+                        "Artifact kind: html, markdown, mermaid, file, or canvas "
+                        "(analytical view built from blocks or a template). "
                         "Omit when using scan_content only."
                     ),
+                },
+                "blocks": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": (
+                        "type=canvas: typed blocks (section, stats, table, "
+                        "bar_chart, line_chart, timeline, findings, diff, badges, "
+                        "text). Charts need title, x_label, y_label, unit, caption "
+                        "and named series."
+                    ),
+                },
+                "template": {
+                    "type": "string",
+                    "enum": list(CANVAS_TEMPLATES),
+                    "description": (
+                        "type=canvas: build blocks from Navin data instead. board "
+                        "and token_usage read local data when data is omitted."
+                    ),
+                },
+                "data": {
+                    "type": "object",
+                    "description": "type=canvas with template: the template input (see the canvas skill).",
+                },
+                "data_path": {
+                    "type": "string",
+                    "description": (
+                        "type=canvas with template: workspace JSON file to use as "
+                        "data (e.g. video-qa.json, a bench_tui --json result)."
+                    ),
+                },
+                "subtitle": {
+                    "type": "string",
+                    "description": "type=canvas: one line under the title (scope, source, time range).",
                 },
                 "title": {
                     "type": "string",
@@ -152,6 +193,34 @@ class PresentArtifactTool(Tool):
     def read_only(self) -> bool:
         return True
 
+    def _build_canvas(self, kwargs: dict[str, Any], title: Any) -> tuple[str, str]:
+        """Return ``(title, html)`` for a type=canvas call (raises ArtifactError)."""
+        blocks = kwargs.get("blocks")
+        template = str(kwargs.get("template") or "").strip()
+        if template:
+            data = kwargs.get("data")
+            data_path = str(kwargs.get("data_path") or "").strip()
+            if data_path and data in (None, {}, []):
+                root = Path(self._working_dir or os.getcwd())
+                target = Path(data_path).expanduser()
+                if not target.is_absolute():
+                    target = root / target
+                try:
+                    data = json.loads(target.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise ArtifactError(f"could not read data_path {data_path}: {exc}") from exc
+            default_title, blocks = build_canvas_template(
+                template, data, workspace=self._working_dir,
+            )
+            title = title or default_title
+        elif not isinstance(blocks, list):
+            raise ArtifactError("type=canvas needs blocks (a list) or a template")
+        clean_title = str(title or "").strip() or "Canvas"
+        subtitle = kwargs.get("subtitle")
+        return clean_title, build_canvas(
+            clean_title, blocks, subtitle=str(subtitle) if subtitle else None,
+        )
+
     async def execute(self, **kwargs: Any) -> Any:
         ctx = current_request_context()
         if ctx is None or ctx.channel != "websocket":
@@ -182,6 +251,14 @@ class PresentArtifactTool(Tool):
         path_raw = str(kwargs.get("path") or "").strip()
         title = kwargs.get("title")
         artifact_id = kwargs.get("id")
+
+        if artifact_type == "canvas":
+            try:
+                title, content = self._build_canvas(kwargs, title)
+            except ArtifactError as exc:
+                return ToolResult.error(f"Error: {exc.message}")
+            artifact_type = "html"
+            path_raw = ""
 
         # Bare markdown content with fences and no type => auto-detect only.
         if (

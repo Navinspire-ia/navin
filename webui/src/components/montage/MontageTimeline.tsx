@@ -934,7 +934,7 @@ export function MontageTimeline({
                     className="grid min-w-max grid-cols-[96px_1fr]"
                     style={{ width: Math.max(650, 96 + duration * zoom) }}
                   >
-                    <div className="h-7 border-r border-white/10" />
+                    <div className="h-7 border-e border-white/10" />
                     <div className="relative h-7 border-b border-white/10 font-mono text-[10px] tabular-nums text-slate-500">
                       {Array.from({ length: Math.ceil(duration) + 1 }, (_, second) => (
                         <span
@@ -967,7 +967,7 @@ export function MontageTimeline({
                             onDrop={(event) => onDrop(event, index)}
                             onClick={() => setSelectedIndex(index)}
                             className={cn(
-                              "group relative flex h-11 cursor-grab items-center overflow-hidden rounded-lg px-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.12)] focus-within:ring-2 focus-within:ring-pink-400 active:cursor-grabbing",
+                              "group relative flex h-11 cursor-grab items-center overflow-hidden rounded-lg px-3 text-start shadow-[inset_0_1px_rgba(255,255,255,0.12)] focus-within:ring-2 focus-within:ring-pink-400 active:cursor-grabbing",
                               selectedIndex === index
                                 ? "bg-pink-500 text-white ring-2 ring-pink-300"
                                 : isMissing
@@ -985,7 +985,7 @@ export function MontageTimeline({
                           >
                             <button
                               type="button"
-                              className="min-w-0 flex-1 cursor-grab text-left focus:outline-none"
+                              className="min-w-0 flex-1 cursor-grab text-start focus:outline-none"
                               aria-label={`${fileName(visual.path)}, ${formatTime(visualDuration(visual))}`}
                             >
                               <span className="block truncate text-[11px] font-semibold">{fileName(visual.path)}</span>
@@ -1013,7 +1013,7 @@ export function MontageTimeline({
                                 type="button"
                                 className={cn(
                                   "absolute inset-y-0 w-3 cursor-ew-resize bg-white/20 opacity-70 transition-opacity hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-white",
-                                  edge === "start" ? "left-0" : "right-0",
+                                  edge === "start" ? "start-0" : "end-0",
                                 )}
                                 aria-label={tx(
                                   `montage.timeline.trim.${edge}`,
@@ -1221,7 +1221,7 @@ export function MontageTimeline({
                     {tx("montage.timeline.assetsEmpty", "No compatible project assets found.")}
                   </p>
                 ) : (
-                  <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+                  <div className="max-h-72 space-y-1 overflow-y-auto pe-1">
                     {visualAssets.map((asset) => (
                       <AssetRow
                         key={asset.path}
@@ -1271,7 +1271,7 @@ export function MontageTimeline({
               <section className="rounded-2xl bg-[#131d31] p-3" data-testid="montage-jobs">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 text-left text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
+                  className="flex w-full items-center gap-2 text-start text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
                   onClick={() => setJobsOpen((open) => !open)}
                   aria-expanded={jobsOpen}
                 >
@@ -1294,7 +1294,7 @@ export function MontageTimeline({
                           <StatusPill status={job.status} tx={tx} />
                           <button
                             type="button"
-                            className="min-w-0 flex-1 truncate text-left hover:underline focus:outline-none"
+                            className="min-w-0 flex-1 truncate text-start hover:underline focus:outline-none"
                             title={montageJobOutput(job) ?? job.id}
                             onClick={() => setActiveJob(job)}
                           >

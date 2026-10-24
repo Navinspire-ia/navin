@@ -25,6 +25,8 @@ Neither changes what any route does; they only make the next stall legible.
 from __future__ import annotations
 
 import asyncio
+import gc
+import os
 import sys
 import threading
 import time
@@ -43,6 +45,13 @@ STALL_DUMP_MIN_INTERVAL_S = 60.0
 LOOP_LAG_WARN_S = 1.0
 LOOP_LAG_POLL_S = 0.25
 LOOP_LAG_MIN_INTERVAL_S = 30.0
+# A full garbage collection at least this long gets the caller's reaction.
+SLOW_FULL_GC_S = 0.5
+# At most one reaction per interval, whatever the collector does meanwhile.
+SLOW_FULL_GC_REACTION_INTERVAL_S = 60.0
+# Frames of an event loop waiting for I/O: selectors (POSIX), proactor (Windows).
+_SELECTOR_WAITS = frozenset({"select", "poll", "_poll"})
+_SELECTOR_FILES = frozenset({"selectors.py", "windows_events.py"})
 
 _MAX_FRAMES_PER_THREAD = 6
 _MAX_THREADS = 24
@@ -161,6 +170,11 @@ class LoopLagMonitor:
     stamp. The thread can read the main thread's frame while the loop is still
     inside the blocking call, which nothing running *on* the loop could do.
     Once the loop resumes, the coroutine logs how long the gap was.
+
+    A report names a garbage collection in progress, and a loop found idle in
+    its selector is not reported. ``after_slow_full_gc`` runs on the loop once
+    a full collection took ``slow_full_gc_s`` or more (the CLI freezes the
+    survivors there so the next full collection does not walk them again).
     """
 
     def __init__(
@@ -170,6 +184,8 @@ class LoopLagMonitor:
         warn_after_s: float = LOOP_LAG_WARN_S,
         poll_s: float = LOOP_LAG_POLL_S,
         min_interval_s: float = LOOP_LAG_MIN_INTERVAL_S,
+        after_slow_full_gc: Callable[[], None] | None = None,
+        slow_full_gc_s: float = SLOW_FULL_GC_S,
     ) -> None:
         self._log = log
         self._warn_after_s = max(0.05, float(warn_after_s))
@@ -177,17 +193,26 @@ class LoopLagMonitor:
         self._min_interval_s = max(0.0, float(min_interval_s))
         self._beat = time.monotonic()
         self._loop_ident: int | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._task: asyncio.Task[None] | None = None
+        self._after_slow_full_gc = after_slow_full_gc
+        self._last_gc_reaction = float("-inf")
+        self._gc = GcClock(slow_full_s=slow_full_gc_s, on_slow_full=self._slow_full_gc_seen)
         self.reports = 0
+        # Gaps seen while the loop sat idle in its selector: not reported.
+        self.idle_gaps = 0
 
     def start(self) -> None:
         if self._task is not None:
             return
         self._loop_ident = threading.get_ident()
+        self._loop = asyncio.get_running_loop()
         self._beat = time.monotonic()
         self._stop.clear()
+        if self._gc not in gc.callbacks:
+            gc.callbacks.append(self._gc)
         self._task = asyncio.create_task(self._heartbeat(), name="navin-loop-lag-beat")
         self._thread = threading.Thread(
             target=self._watch, name="navin-loop-lag", daemon=True
@@ -196,6 +221,8 @@ class LoopLagMonitor:
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._gc in gc.callbacks:
+            gc.callbacks.remove(self._gc)
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -219,6 +246,26 @@ class LoopLagMonitor:
                 )
             await asyncio.sleep(self._poll_s)
 
+    def _slow_full_gc_seen(self, _seconds: float) -> None:
+        """Called inside the collector: hand the reaction to the loop."""
+        loop = self._loop
+        if self._after_slow_full_gc is None or loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._react_to_slow_full_gc)
+        except RuntimeError:
+            pass  # loop closing
+
+    def _react_to_slow_full_gc(self) -> None:
+        now = time.monotonic()
+        if self._after_slow_full_gc is None or now - self._last_gc_reaction < SLOW_FULL_GC_REACTION_INTERVAL_S:
+            return
+        self._last_gc_reaction = now
+        try:
+            self._after_slow_full_gc()
+        except Exception as exc:  # a diagnostics helper must never break the loop
+            self._log.warning("reaction to a slow full garbage collection failed: {}", exc)
+
     def _watch(self) -> None:
         last_report = float("-inf")
         while not self._stop.wait(self._poll_s):
@@ -226,16 +273,76 @@ class LoopLagMonitor:
             stale = now - self._beat
             if stale < self._warn_after_s or now - last_report < self._min_interval_s:
                 continue
+            frame = sys._current_frames().get(self._loop_ident or -1)
+            if idle_in_selector(frame):
+                # Nothing ran on the loop: the process itself was not
+                # scheduled (host under load, WSL paused, laptop waking up).
+                self.idle_gaps += 1
+                continue
             last_report = now
             self.reports += 1
-            frame = sys._current_frames().get(self._loop_ident or -1)
             where = (
                 "".join(traceback.format_stack(frame)[-8:]).rstrip()
                 if frame is not None
                 else "(main thread frame unavailable)"
             )
+            gc_note = self._gc.describe(now)
             self._log.warning(
-                "event loop blocked for {:.1f}s so far; main thread is in:\n{}",
+                "event loop blocked for {:.1f}s so far; main thread is in:\n{}{}",
                 stale,
                 where,
+                f"\n  {gc_note}" if gc_note else "",
             )
+
+
+def idle_in_selector(frame: Any) -> bool:
+    """Whether the loop thread is waiting in its selector, i.e. idle.
+
+    182 of 1,618 CLI freeze reports from 17 to 23 October showed the main
+    thread in ``selectors.select``: the heartbeat was late because the whole
+    process was not scheduled, and the stack named no code to fix.
+    """
+    if frame is None:
+        return False
+    code = frame.f_code
+    return code.co_name in _SELECTOR_WAITS and os.path.basename(code.co_filename) in _SELECTOR_FILES
+
+
+class GcClock:
+    """``gc.callbacks`` entry: which collection runs, and since when.
+
+    In the CLI freeze log, 316 reports stopped in ``_weakrefset._remove``
+    under Textual layout or render code, up to 13 s: the collector freeing
+    widgets, not the layout itself. Naming the collection in the report makes
+    that cause readable instead of pointing at whatever line allocated last.
+    """
+
+    def __init__(
+        self,
+        *,
+        slow_full_s: float = SLOW_FULL_GC_S,
+        on_slow_full: Callable[[float], None] | None = None,
+    ) -> None:
+        self.started: float | None = None
+        self.generation: int | None = None
+        self._slow_full_s = max(0.0, float(slow_full_s))
+        self._on_slow_full = on_slow_full
+
+    def __call__(self, phase: str, info: dict[str, Any]) -> None:
+        if phase == "start":
+            self.generation = info.get("generation")
+            self.started = time.monotonic()
+            return
+        started, self.started = self.started, None
+        if started is None or info.get("generation") != 2 or self._on_slow_full is None:
+            return
+        took = time.monotonic() - started
+        if took >= self._slow_full_s:
+            self._on_slow_full(took)
+
+    def describe(self, now: float | None = None) -> str:
+        started, generation = self.started, self.generation
+        if started is None:
+            return ""
+        now = time.monotonic() if now is None else now
+        return f"(garbage collection of generation {generation} running for {now - started:.1f}s)"

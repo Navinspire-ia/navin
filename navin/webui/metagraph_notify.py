@@ -11,13 +11,17 @@ After annotate, index refresh, or a debounced file-write batch, call
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from navin.bus.outbound_events import MetagraphUpdatedEvent, outbound_message_for_event
 
 _DEBOUNCE_S = 0.3
-_timers: dict[str, threading.Timer] = {}
-_timers_lock = threading.Lock()
+# One worker thread serves every root: a Timer per write started (and
+# cancelled) a thread on each edit, which waited on a busy interpreter.
+_due: dict[str, float] = {}
+_due_cond = threading.Condition()
+_worker: threading.Thread | None = None
 
 
 def publish_metagraph_update(
@@ -55,27 +59,40 @@ def publish_metagraph_update(
         pass
 
 
+def _rebuild(key: str) -> None:
+    try:
+        from pathlib import Path
+
+        from navin.webui.metagraph import rebuild_and_notify
+
+        rebuild_and_notify(Path(key))
+    except Exception:
+        pass
+
+
+def _run_worker() -> None:
+    while True:
+        with _due_cond:
+            while not _due:
+                _due_cond.wait()
+            now = time.monotonic()
+            ready = [key for key, at in _due.items() if at <= now]
+            if not ready:
+                _due_cond.wait(min(_due.values()) - now)
+                continue
+            for key in ready:
+                _due.pop(key, None)
+        for key in ready:
+            _rebuild(key)
+
+
 def schedule_metagraph_refresh(root: str | Any) -> None:
     """Debounce a rebuild+notify after file edits (default bus)."""
-    key = str(root)
-    with _timers_lock:
-        previous = _timers.pop(key, None)
-        if previous is not None:
-            previous.cancel()
-
-        def _fire() -> None:
-            with _timers_lock:
-                _timers.pop(key, None)
-            try:
-                from pathlib import Path
-
-                from navin.webui.metagraph import rebuild_and_notify
-
-                rebuild_and_notify(Path(key))
-            except Exception:
-                pass
-
-        timer = threading.Timer(_DEBOUNCE_S, _fire)
-        timer.daemon = True
-        _timers[key] = timer
-        timer.start()
+    global _worker
+    with _due_cond:
+        # Each new write pushes the rebuild back: one per burst of edits.
+        _due[str(root)] = time.monotonic() + _DEBOUNCE_S
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_run_worker, name="navin-metagraph-refresh", daemon=True)
+            _worker.start()
+        _due_cond.notify()

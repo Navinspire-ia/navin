@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from navin.config.secrets import is_runtime_secret_path
+from navin.config.secrets import is_runtime_secret_entry
 from navin.security.workspace_access import WorkspaceScope
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 
@@ -73,7 +73,7 @@ def file_tree_payload(
                     is_dir = dirent.is_dir(follow_symlinks=False)
                 except OSError:
                     continue
-                if is_runtime_secret_path(dirent.path):
+                if is_runtime_secret_entry(dirent):
                     continue
                 infos.append((is_dir, dirent.name, dirent.path))
     except OSError as e:

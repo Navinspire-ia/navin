@@ -67,7 +67,7 @@ class DoctorReport:
             lines.append("ADB devices:")
             for device in self.devices:
                 lines.append(f"  - {device}")
-        elif self.project.kind in {"expo", "react-native", "flutter"}:
+        elif self.project.kind in {"expo", "react-native", "flutter", "android-native"}:
             lines.append("")
             lines.append("ADB devices: none connected")
         if self.avds:
@@ -94,7 +94,9 @@ class DoctorReport:
         }
 
 
-_REQUIRED = frozenset({"node", "package_manager", "npx"})
+_REQUIRED = frozenset(
+    {"node", "package_manager", "npx", "flutter", "java", "gradle", "xcodebuild"}
+)
 
 
 def run_doctor(project: MobileProject) -> DoctorReport:
@@ -116,6 +118,57 @@ def run_doctor(project: MobileProject) -> DoctorReport:
             )
         )
         return DoctorReport(project=project, checks=checks)
+
+    if project.kind == "ios-native":
+        from navin.utils.host import host_platform
+
+        if host_platform() != "macos":
+            checks.append(
+                DoctorCheck(
+                    name="xcodebuild",
+                    status="missing",
+                    detail="native iOS builds need macOS + Xcode",
+                    fix="Build on a Mac (or a macOS CI runner such as GitHub Actions macos-latest).",
+                )
+            )
+        else:
+            checks.append(
+                _which_check(
+                    "xcodebuild",
+                    "xcodebuild",
+                    fix="Install Xcode, then `sudo xcode-select -s /Applications/Xcode.app`.",
+                )
+            )
+            if (project.root / "Podfile").is_file():
+                checks.append(
+                    _which_check(
+                        "cocoapods",
+                        "pod",
+                        fix="`brew install cocoapods`, then `pod install`.",
+                        required=False,
+                    )
+                )
+        return DoctorReport(project=project, checks=checks)
+
+    if project.kind == "android-native":
+        checks.append(
+            _which_check(
+                "java",
+                "java",
+                fix="Install a JDK 17 (Temurin/OpenJDK) or set JAVA_HOME to Android Studio's jbr.",
+            )
+        )
+        wrapper = project.root / ("gradlew.bat" if os.name == "nt" else "gradlew")
+        if wrapper.is_file():
+            checks.append(DoctorCheck(name="gradle", status="ok", detail=f"wrapper {wrapper.name}"))
+        else:
+            checks.append(
+                _which_check(
+                    "gradle",
+                    "gradle",
+                    fix="Add the Gradle wrapper (`gradle wrapper`) or install Gradle.",
+                )
+            )
 
     if project.kind == "flutter":
         checks.extend(_flutter_checks())
@@ -149,6 +202,9 @@ def run_doctor(project: MobileProject) -> DoctorReport:
         return DoctorReport(
             project=project, checks=checks, devices=devices, avds=avds
         )
+
+    if project.kind == "android-native":
+        return _android_toolchain_report(project, checks)
 
     # Expo / React Native
     checks.append(_which_check("node", "node", fix="Install Node.js 20+ LTS."))
@@ -188,8 +244,17 @@ def run_doctor(project: MobileProject) -> DoctorReport:
         fix="Install a JDK 17 (Temurin/OpenJDK) for Android builds.",
         required=False,
     )
+    if java.status == "missing":
+        java.status = "warn"
     checks.append(java)
+    return _android_toolchain_report(project, checks)
 
+
+def _android_toolchain_report(
+    project: MobileProject, checks: list[DoctorCheck]
+) -> DoctorReport:
+    devices: list[str] = []
+    avds: list[str] = []
     from navin.mobile.adb import adb_setup_help, clear_adb_cache, resolve_adb_location
 
     clear_adb_cache()

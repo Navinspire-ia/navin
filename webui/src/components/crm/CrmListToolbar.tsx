@@ -47,14 +47,14 @@ export function CrmListToolbar({
     <div className={cn("flex shrink-0 flex-wrap items-center gap-2 pb-3", className)}>
       <label className="relative min-w-[200px] flex-1">
         <Search
-          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+          className="pointer-events-none absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden
         />
         <Input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder={searchPlaceholder || tx("crm.searchList", "Nom, email, telephone, entreprise...")}
-          className="h-8 pl-8 text-[13px]"
+          className="h-8 ps-8 text-[13px]"
           aria-label={tx("crm.searchList", "Nom, email, telephone, entreprise...")}
         />
       </label>
@@ -95,7 +95,7 @@ export function CrmListToolbar({
           </label>
         </>
       ) : null}
-      <p className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-muted-foreground">
+      <p className="ms-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-muted-foreground">
         {countLabel}
       </p>
       {actions}

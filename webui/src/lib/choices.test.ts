@@ -6,12 +6,15 @@ import { describe, expect, it } from "vitest";
 import {
   addChoice,
   choiceAnswerPayload,
+  choiceEchoFromClosedFrame,
+  choiceEchoMessage,
   choiceCanContinue,
   CUSTOM_CHOICE_MAX_CHARS,
   dropExpiredChoices,
   OTHER_CHOICE_ID,
   removeChoice,
   toPendingChoice,
+  upsertInteractionEcho,
   type ChoiceRequestFrame,
 } from "./choices";
 
@@ -148,5 +151,42 @@ describe("choiceAnswerPayload", () => {
     expect(choiceAnswerPayload(OTHER_CHOICE_ID, false, long).customText.length).toBe(
       CUSTOM_CHOICE_MAX_CHARS,
     );
+  });
+});
+
+describe("choice echo", () => {
+  const pending = () => toPendingChoice(frame(), NOW);
+
+  it("restates the picked option label", () => {
+    const echo = choiceEchoMessage(pending(), { optionId: "b", skipped: false, customText: "" }, NOW);
+    expect(echo.id).toBe("choice-r1");
+    expect(echo.kind).toBe("choice");
+    expect(echo.interaction).toMatchObject({ question: "Where do we start?", label: "Profiler only", skipped: false });
+  });
+
+  it("restates a typed answer and a skip with the recommended path", () => {
+    const typed = choiceEchoMessage(pending(), { optionId: OTHER_CHOICE_ID, skipped: false, customText: " Do both " }, NOW);
+    expect(typed.interaction).toMatchObject({ customText: "Do both", label: "" });
+    const skipped = choiceEchoMessage(pending(), { optionId: "b", skipped: true, customText: "" }, NOW);
+    expect(skipped.interaction).toMatchObject({ skipped: true, label: "Full phase" });
+  });
+
+  it("updates the optimistic row in place when the close frame lands", () => {
+    const first = choiceEchoMessage(pending(), { optionId: "b", skipped: false, customText: "" }, NOW);
+    const later = choiceEchoFromClosedFrame({
+      request_id: "r1",
+      question: "Where do we start?",
+      label: "Profiler only",
+      turn_id: "t1",
+      turn_seq: 7,
+    }, NOW + 500);
+    expect(later).not.toBeNull();
+    const rows = upsertInteractionEcho(upsertInteractionEcho([], first), later!);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ createdAt: NOW, turnId: "t1", turnSeq: 7 });
+  });
+
+  it("ignores a close frame without a question (older backends)", () => {
+    expect(choiceEchoFromClosedFrame({ request_id: "r1", option_id: "a" }, NOW)).toBeNull();
   });
 });

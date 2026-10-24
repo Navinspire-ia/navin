@@ -886,7 +886,33 @@ class OpenRouterTranscriptionProvider:
 
 
 class NavinTranscriptionProvider(OpenRouterTranscriptionProvider):
-    """STT via the managed Navin OpenRouter key (Qwen ASR / curated list)."""
+    """STT via the managed Navin key (Qwen ASR / curated list).
+
+    On the Navin gateway (LiteLLM) it is the standard OpenAI
+    ``/audio/transcriptions`` client, with the same key and base.
+    """
+
+    def __new__(
+        cls,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        from navin.providers.gateway import navin_managed_base
+
+        # Gateway only, never OpenRouter (see navin.providers.gateway).
+        api_base = navin_managed_base(api_base)
+        return OpenAITranscriptionProvider(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model or "qwen/qwen3-asr-flash-2026-02-10",
+            provider_label="Navin",
+            default_api_base=api_base or "",
+            env_key="",
+            default_model="qwen/qwen3-asr-flash-2026-02-10",
+        )
 
     def __init__(
         self,
@@ -904,6 +930,69 @@ class NavinTranscriptionProvider(OpenRouterTranscriptionProvider):
             env_key="",
             default_model="qwen/qwen3-asr-flash-2026-02-10",
         )
+
+
+class GeminiTranscriptionProvider:
+    """STT with the user's own Gemini key: the audio goes inline to
+    ``generateContent`` with a verbatim-transcription instruction."""
+
+    DEFAULT_MODEL = "gemini-flash-latest"
+    DEFAULT_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        base = (api_base or self.DEFAULT_API_BASE).rstrip("/")
+        # Settings store the OpenAI-compatible base (.../v1beta/openai).
+        self.api_base = base.removesuffix("/openai")
+        self.language = language or None
+        self.model = (model or self.DEFAULT_MODEL).removeprefix("models/")
+
+    async def transcribe(self, file_path: str | Path) -> str:
+        if not self.api_key:
+            logger.warning("Gemini API key not configured for transcription")
+            return ""
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("Audio file not found: {}", file_path)
+            return ""
+        instruction = (
+            "Transcribe this audio verbatim. Return only the spoken words, "
+            "without comments, labels or quotes. Return nothing if no one speaks."
+        )
+        if self.language:
+            instruction += f" The speech is in {self.language}."
+        body = {
+            "contents": [{"role": "user", "parts": [
+                {"text": instruction},
+                {"inline_data": {"mime_type": _audio_mime_type(path),
+                                 "data": base64.b64encode(path.read_bytes()).decode("ascii")}},
+            ]}],
+            "generationConfig": {"temperature": 0},
+        }
+        url = f"{self.api_base}/models/{self.model}:generateContent"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            payload = await _request_json_with_retry(
+                client, "POST", url, provider_label="Gemini",
+                headers={"x-goog-api-key": self.api_key}, json=body,
+            )
+        if not payload:
+            return ""
+        texts: list[str] = []
+        for candidate in payload.get("candidates") or []:
+            for part in (candidate.get("content") or {}).get("parts") or []:
+                if not isinstance(part, dict) or part.get("thought"):
+                    continue
+                # Transcription models answer in ``audioTranscription``, the
+                # general ones in plain ``text``.
+                heard = part.get("audioTranscription")
+                texts.append(str((heard or {}).get("text") or "") if isinstance(heard, dict) else str(part.get("text") or ""))
+        return " ".join(t.strip() for t in texts if t.strip()).strip()
 
 
 class XiaomiMiMoTranscriptionProvider:
@@ -991,3 +1080,173 @@ class StepFunTranscriptionProvider:
             partials=partials,
         )
         return text, partials
+
+
+class BedrockTranscriptionProvider:
+    """STT with the user's own AWS Bedrock credentials: Voxtral (Mistral) reads
+    the audio through the Converse API, in the region that serves the model
+    (navin/providers/bedrock_media.py)."""
+
+    DEFAULT_MODEL = "mistral.voxtral-small-24b-2507"
+    # Converse audio formats (botocore AudioFormat), by file extension.
+    _FORMATS = {
+        "mp3": "mp3", "wav": "wav", "flac": "flac", "ogg": "ogg", "oga": "ogg", "opus": "opus",
+        "webm": "webm", "weba": "webm", "m4a": "m4a", "mp4": "mp4", "aac": "aac", "mka": "mka",
+        "mkv": "mkv", "mpeg": "mpeg", "mpga": "mpga", "pcm": "pcm",
+    }
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        from navin.providers.bedrock_media import decode_target, model_region
+
+        self.api_key = api_key
+        self.language = language or None
+        self.model = (model or self.DEFAULT_MODEL).removeprefix("bedrock/")
+        default_region, self.profile = decode_target(api_base)
+        self.region = model_region(self.model, default_region)
+
+    @staticmethod
+    def _to_wav(path: Path) -> bytes | None:
+        """16 kHz mono WAV from any take, through the bundled ffmpeg."""
+        import subprocess
+
+        from navin.montage.detect import find_ffmpeg
+        from navin.utils.proc import no_window_kwargs
+
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            return None
+        try:
+            done = subprocess.run(
+                [ffmpeg, "-loglevel", "error", "-i", str(path), "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
+                capture_output=True, timeout=60, check=False, **no_window_kwargs(),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return done.stdout if done.returncode == 0 and done.stdout else None
+
+    def _converse(self, audio: bytes, audio_format: str) -> str:
+        from navin.providers.bedrock_media import bearer_token, boto_client
+
+        instruction = (
+            "Transcribe this audio verbatim, in the language that is spoken. Do not translate. "
+            "Return only the spoken words, without comments, labels or quotes. "
+            "Return nothing if no one speaks."
+        )
+        if self.language:
+            instruction += f" The speech is in {self.language}."
+        with bearer_token(self.api_key):
+            client = boto_client("bedrock-runtime", self.region, self.profile)
+            response = client.converse(
+                modelId=self.model,
+                messages=[{"role": "user", "content": [
+                    {"audio": {"format": audio_format, "source": {"bytes": audio}}},
+                    {"text": instruction},
+                ]}],
+                inferenceConfig={"temperature": 0, "maxTokens": 2000},
+            )
+        parts = ((response.get("output") or {}).get("message") or {}).get("content") or []
+        return " ".join(str(part.get("text") or "").strip() for part in parts if isinstance(part, dict)).strip()
+
+    async def transcribe(self, file_path: str | Path) -> str:
+        if not self.api_key:
+            logger.warning("AWS Bedrock credentials not configured for transcription")
+            return ""
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("Audio file not found: {}", file_path)
+            return ""
+        audio_format = self._FORMATS.get(path.suffix.lstrip(".").lower(), "wav")
+        audio = path.read_bytes()
+        if audio_format not in {"mp3", "wav"}:
+            # Voxtral on Bedrock reads MP3 and WAV only (browser takes are WebM).
+            converted = await asyncio.to_thread(self._to_wav, path)
+            if converted is None:
+                logger.warning("Bedrock transcription: cannot convert {} to WAV (ffmpeg missing?)", path.suffix)
+                return ""
+            audio, audio_format = converted, "wav"
+        try:
+            return await asyncio.to_thread(self._converse, audio, audio_format)
+        except Exception as exc:  # noqa: BLE001 - one failed take must not crash the voice session
+            logger.warning("Bedrock transcription failed ({} in {}): {}", self.model, self.region, str(exc)[:300])
+            return ""
+
+
+class XaiTranscriptionProvider:
+    """STT with the user's own xAI key: ``POST /v1/stt`` (multipart, xAI's own
+    format), model ``grok-voice-transcribe-2.0``."""
+
+    DEFAULT_MODEL = "grok-voice-transcribe-2.0"
+    DEFAULT_API_BASE = "https://api.x.ai/v1"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        self.api_key = api_key or os.environ.get("XAI_API_KEY")
+        self.api_base = (api_base or self.DEFAULT_API_BASE).rstrip("/")
+        self.language = language or None
+        self.model = (model or self.DEFAULT_MODEL).removeprefix("xai/")
+
+    async def transcribe(self, file_path: str | Path) -> str:
+        if not self.api_key:
+            logger.warning("xAI API key not configured for transcription")
+            return ""
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("Audio file not found: {}", file_path)
+            return ""
+        data = {"model": self.model}
+        if self.language:
+            data["language"] = self.language
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                with path.open("rb") as handle:
+                    response = await client.post(
+                        f"{self.api_base}/stt",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        data=data,
+                        files={"file": (path.name, handle, _audio_mime_type(path))},
+                    )
+        except httpx.HTTPError as exc:
+            logger.warning("xAI transcription request failed: {}", exc)
+            return ""
+        if response.status_code >= 400:
+            logger.warning("xAI transcription failed (HTTP {}): {}", response.status_code, response.text[:300])
+            return ""
+        try:
+            return str((response.json() or {}).get("text") or "").strip()
+        except ValueError:
+            return ""
+
+
+class OmniRouteTranscriptionProvider(OpenAITranscriptionProvider):
+    """STT through the local OmniRoute gateway (``/v1/audio/transcriptions``;
+    models are ``provider/model``, e.g. ``openai/whisper-1``, ``deepgram/nova-3``)."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model,
+            provider_label="OmniRoute",
+            default_api_base="http://localhost:20128/v1",
+            env_key="OMNIROUTE_API_KEY",
+            default_model="openai/whisper-1",
+            allow_missing_key=True,
+        )

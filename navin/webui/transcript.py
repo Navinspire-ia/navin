@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import base64
 import binascii
@@ -15,6 +16,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple
 from urllib.parse import unquote, urlparse
@@ -26,6 +28,7 @@ from navin.runtime_context import public_history_message
 from navin.session.automation_turns import is_automation_kind
 from navin.session.history_visibility import is_hidden_history_message
 from navin.session.manager import SessionManager
+from navin.utils.helpers import stringify_text_blocks
 from navin.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
@@ -39,8 +42,10 @@ _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
 # Streaming appends one record per token. Writing each one straight through cost
 # thousands of fsync barriers per turn on the loop that also serves the UI.
-# Deltas are buffered; every other event, and every read, drains the buffer
-# first, so a reader never sees less than what was appended.
+# Records are buffered per session (on an event loop the batch is written by a
+# writer thread: deltas within _APPEND_BUFFER_MAX_AGE_S, other events within
+# _URGENT_FLUSH_DELAY_S); every read drains the buffers first, so a reader never sees less than what
+# was appended.
 _APPEND_BUFFER_MAX_BYTES = 64 * 1024
 _APPEND_BUFFER_MAX_AGE_S = 0.25
 _BUFFERED_APPEND_EVENTS: frozenset[str] = frozenset({"delta", "reasoning_delta"})
@@ -74,6 +79,8 @@ _TURN_DISPLAY_EVENTS: frozenset[str] = frozenset({
     "stream_end",
     "message",
     "file_edit",
+    "choice_closed",
+    "approval_closed",
     "turn_end",
 })
 
@@ -176,27 +183,129 @@ class _PendingAppends(NamedTuple):
 # session_key -> buffered lines not yet handed to the OS.
 _append_buffers: dict[str, _PendingAppends] = {}
 _append_lock = threading.Lock()
+# Every write to transcript files: appends, rotation, rewrites, deletion. Turn
+# end rotates on the agent's thread while the history endpoint (a worker
+# thread) rotates too; unguarded, the two shared the same temp files and a
+# long chat's history came back empty. Reentrant: rotation flushes appends.
+# Never taken while holding _append_lock (that one only guards the buffers).
+_transcript_lock = threading.RLock()
 
 
-def _buffer_append(session_key: str, line: str) -> None:
-    """Queue ``line``, writing the whole batch once it is big or old enough."""
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _buffer_append(session_key: str, line: str, *, urgent: bool = False) -> None:
+    """Queue ``line``; the batch is written once it is big or old enough.
+
+    On an event loop the write itself never happens on the loop: the batch is
+    handed to the transcript writer thread (within ``_URGENT_FLUSH_DELAY_S``
+    when *urgent*, at once when full, else within ``_APPEND_BUFFER_MAX_AGE_S``;
+    one job drains every session). Every record of a session goes
+    through the same buffer, so the file order is the append order. Without a
+    running loop the due batch is written inline, as before.
+    """
     now = time.monotonic()
+    loop = _running_loop()
+    if loop is None:
+        # Pop and write under the file lock: a concurrent flush cannot slip a
+        # newer batch in front of this one.
+        with _transcript_lock:
+            with _append_lock:
+                pending = _append_buffers.get(session_key) or _PendingAppends([], 0, now)
+                pending.lines.append(line)
+                nbytes = pending.nbytes + len(line.encode("utf-8"))
+                if (
+                    not urgent
+                    and nbytes < _APPEND_BUFFER_MAX_BYTES
+                    and now - pending.since < _APPEND_BUFFER_MAX_AGE_S
+                ):
+                    _append_buffers[session_key] = _PendingAppends(
+                        pending.lines, nbytes, pending.since
+                    )
+                    return
+                _append_buffers.pop(session_key, None)
+            _write_append_batch(session_key, pending.lines)
+        return
     with _append_lock:
         pending = _append_buffers.get(session_key) or _PendingAppends([], 0, now)
-        lines = [*pending.lines, line]
+        pending.lines.append(line)
         nbytes = pending.nbytes + len(line.encode("utf-8"))
-        if nbytes < _APPEND_BUFFER_MAX_BYTES and now - pending.since < _APPEND_BUFFER_MAX_AGE_S:
-            _append_buffers[session_key] = _PendingAppends(lines, nbytes, pending.since)
-            return
-        _append_buffers.pop(session_key, None)
-    _write_append_batch(session_key, lines)
+        _append_buffers[session_key] = _PendingAppends(pending.lines, nbytes, pending.since)
+    if nbytes >= _APPEND_BUFFER_MAX_BYTES:
+        delay = 0.0
+    elif urgent:
+        delay = _URGENT_FLUSH_DELAY_S
+    else:
+        delay = _APPEND_BUFFER_MAX_AGE_S
+    _schedule_append_flush(loop, delay)
+
+
+# Non-delta records reach the file within this delay. One writer job then
+# drains every session's buffer: under load that is a few thread hand-offs a
+# second instead of one per tool row / progress line / turn end.
+_URGENT_FLUSH_DELAY_S = 0.05
+
+# The single planned flush: (loop, timer, loop time it fires). Only touched
+# from event-loop threads.
+_flush_plan: list[tuple[asyncio.AbstractEventLoop, asyncio.TimerHandle, float] | None] = [None]
+_flush_pool_lock = threading.Lock()
+_flush_pool: Any = None
+
+
+def _transcript_writer() -> Any:
+    """The single writer thread: flushes run in submission order."""
+    global _flush_pool
+    with _flush_pool_lock:
+        if _flush_pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            _flush_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="webui-transcript")
+        return _flush_pool
+
+
+def _flush_all_append_buffers_logged() -> None:
+    try:
+        _flush_all_append_buffers()
+    except Exception:
+        logger.exception("webui transcript flush failed")
+
+
+def _schedule_append_flush(loop: asyncio.AbstractEventLoop, delay: float) -> None:
+    """Make sure a writer-thread flush of all buffers runs within *delay*."""
+    due = loop.time() + delay
+    plan = _flush_plan[0]
+    if plan is not None:
+        planned_loop, timer, planned_due = plan
+        if planned_loop is loop and not loop.is_closed() and planned_due <= due:
+            return  # an earlier flush already covers this record
+        timer.cancel()
+
+    def _submit() -> None:
+        current = _flush_plan[0]
+        if current is not None and current[1] is handle:
+            _flush_plan[0] = None
+        try:
+            _transcript_writer().submit(_flush_all_append_buffers_logged)
+        except RuntimeError:
+            # Interpreter shutdown: the atexit flush writes what is left.
+            pass
+
+    handle = loop.call_later(delay, _submit)
+    _flush_plan[0] = (loop, handle, due)
 
 
 def _flush_append_buffer(session_key: str) -> None:
-    with _append_lock:
-        pending = _append_buffers.pop(session_key, None)
-    if pending is not None and pending.lines:
-        _write_append_batch(session_key, pending.lines)
+    # Pop and write under the file lock so flushes from different threads
+    # land in the order their lines were buffered.
+    with _transcript_lock:
+        with _append_lock:
+            pending = _append_buffers.pop(session_key, None)
+        if pending is not None and pending.lines:
+            _write_append_batch(session_key, pending.lines)
 
 
 def _discard_append_buffer(session_key: str) -> None:
@@ -206,12 +315,13 @@ def _discard_append_buffer(session_key: str) -> None:
 
 
 def _flush_all_append_buffers() -> None:
-    with _append_lock:
-        pending_by_key = dict(_append_buffers)
-        _append_buffers.clear()
-    for session_key, pending in pending_by_key.items():
-        if pending.lines:
-            _write_append_batch(session_key, pending.lines)
+    with _transcript_lock:
+        with _append_lock:
+            pending_by_key = dict(_append_buffers)
+            _append_buffers.clear()
+        for session_key, pending in pending_by_key.items():
+            if pending.lines:
+                _write_append_batch(session_key, pending.lines)
 
 
 atexit.register(_flush_all_append_buffers)
@@ -219,9 +329,10 @@ atexit.register(_flush_all_append_buffers)
 
 def _write_append_batch(session_key: str, lines: list[str]) -> None:
     path = webui_transcript_path(session_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write("".join(lines))
+    with _transcript_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("".join(lines))
 
 
 def _read_transcript_file(path: Path) -> list[dict[str, Any]]:
@@ -258,7 +369,7 @@ def _flatten_turns(turns: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return [record for turn in turns for record in turn]
 
 
-def _write_records_to_path(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_records_to_path(path: Path, rows: list[dict[str, Any]], *, tail: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -268,6 +379,8 @@ def _write_records_to_path(path: Path, rows: list[dict[str, Any]]) -> None:
                 if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
                     raise ValueError("webui transcript line too large")
                 f.write(raw + "\n")
+            if tail:
+                f.write(tail)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -416,6 +529,11 @@ def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -
 
 
 def _rotate_active_transcript_if_needed(session_key: str) -> None:
+    with _transcript_lock:
+        _rotate_active_transcript_locked(session_key)
+
+
+def _rotate_active_transcript_locked(session_key: str) -> None:
     # Chunk layout is read from the files, so pending appends must land first:
     # this is the choke point every session-scoped read goes through.
     _flush_append_buffer(session_key)
@@ -430,6 +548,10 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
 
     lines = _read_transcript_file(path)
     if not lines:
+        return
+    try:
+        read_size = path.stat().st_size
+    except OSError:
         return
     turns = _split_transcript_turns(lines)
     if len(turns) <= 1:
@@ -450,15 +572,33 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     if not moved:
         return
     _append_segment_turns(session_key, moved)
-    _write_records_to_path(path, _flatten_turns(kept))
+    # Writing the segments reads files, and every read drains the append
+    # buffers into this active file: records buffered after the read above
+    # (an event loop appends without this lock) landed past ``read_size``.
+    # Carry that tail over, or the rewrite below would drop it.
+    _flush_append_buffer(session_key)
+    try:
+        with open(path, "rb") as f:
+            f.seek(read_size)
+            tail = f.read()
+    except OSError:
+        tail = b""
+    _write_records_to_path(path, _flatten_turns(kept), tail=tail.decode("utf-8"))
 
 
 def _chunk_ids(session_key: str) -> list[str]:
-    _rotate_active_transcript_if_needed(session_key)
-    ids = _read_segment_ids(session_key)
-    if webui_transcript_path(session_key).is_file():
-        ids.append(_TRANSCRIPT_ACTIVE_CHUNK_ID)
-    return ids
+    # The layout is read under the lock: a rotation never moves turns mid-read.
+    with _transcript_lock:
+        _rotate_active_transcript_locked(session_key)
+        ids = _read_segment_ids(session_key)
+        if webui_transcript_path(session_key).is_file():
+            ids.append(_TRANSCRIPT_ACTIVE_CHUNK_ID)
+        return ids
+
+
+_CHUNK_TURNS_CACHE: "OrderedDict[str, tuple[tuple[int, int], list[list[dict[str, Any]]]]]" = OrderedDict()
+_CHUNK_TURNS_CACHE_MAX = 16
+_CHUNK_TURNS_LOCK = threading.Lock()
 
 
 def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, Any]]]:
@@ -466,9 +606,30 @@ def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, An
         path = webui_transcript_path(session_key)
     else:
         path = _segment_file_path(session_key, chunk_id)
+    # A pending buffered tail must land before the file stamp is read.
+    _flush_all_append_buffers()
+    try:
+        st = path.stat()
+    except OSError:
+        return []
     if not path.is_file():
         return []
-    return _split_transcript_turns(_read_transcript_file(path))
+    # Switching back to a chat used to re-decode its whole file (seconds for
+    # a long chat). Turns are cached per file and dropped on any change.
+    stamp = (st.st_mtime_ns, st.st_size)
+    cache_key = str(path)
+    with _CHUNK_TURNS_LOCK:
+        hit = _CHUNK_TURNS_CACHE.get(cache_key)
+        if hit is not None and hit[0] == stamp:
+            _CHUNK_TURNS_CACHE.move_to_end(cache_key)
+            return hit[1]
+    turns = _split_transcript_turns(_read_transcript_file(path))
+    with _CHUNK_TURNS_LOCK:
+        _CHUNK_TURNS_CACHE[cache_key] = (stamp, turns)
+        _CHUNK_TURNS_CACHE.move_to_end(cache_key)
+        while len(_CHUNK_TURNS_CACHE) > _CHUNK_TURNS_CACHE_MAX:
+            _CHUNK_TURNS_CACHE.popitem(last=False)
+    return turns
 
 
 def _encode_page_cursor(before_turn_ordinal: int) -> str:
@@ -638,10 +799,11 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
 
 
 def _write_transcript_lines(session_key: str, rows: list[dict[str, Any]]) -> None:
-    delete_webui_transcript(session_key)
-    path = webui_transcript_path(session_key)
-    _write_records_to_path(path, rows)
-    _rotate_active_transcript_if_needed(session_key)
+    with _transcript_lock:
+        delete_webui_transcript(session_key)
+        path = webui_transcript_path(session_key)
+        _write_records_to_path(path, rows)
+        _rotate_active_transcript_locked(session_key)
 
 
 def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
@@ -650,12 +812,14 @@ def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
         msg = "webui transcript line too large"
         raise ValueError(msg)
     line = raw + "\n"
-    if obj.get("event") in _BUFFERED_APPEND_EVENTS:
-        _buffer_append(session_key, line)
-        return
-    # Anything that is not a stream delta is rare, and ordering must hold.
-    _flush_append_buffer(session_key)
-    _write_append_batch(session_key, [line])
+    # Stream deltas wait for the batch; anything else asks for a prompt flush
+    # (inline without a loop, on the writer thread with one). Both share the
+    # session's buffer, so ordering holds.
+    _buffer_append(
+        session_key,
+        line,
+        urgent=obj.get("event") not in _BUFFERED_APPEND_EVENTS,
+    )
 
 
 def _now_ms() -> int:
@@ -678,11 +842,62 @@ def _record_for_append(obj: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+# Sessions whose turn-end rotation runs on a worker thread, with the tasks kept
+# alive until done (the loop only holds weak references to tasks).
+_background_rotations: dict[str, asyncio.Task[None]] = {}
+
+
+def _active_transcript_over_limit(session_key: str) -> bool:
+    # Records still waiting in the append buffer count: on an event loop they
+    # reach the file a moment later, on the writer thread.
+    with _append_lock:
+        pending = _append_buffers.get(session_key)
+        buffered = pending.nbytes if pending is not None else 0
+    try:
+        size = webui_transcript_path(session_key).stat().st_size
+    except OSError:
+        size = 0
+    return size + buffered > _MAX_TRANSCRIPT_FILE_BYTES
+
+
+def _schedule_turn_end_rotation(session_key: str) -> None:
+    """Rotate after a turn ends without blocking a running event loop.
+
+    Rotation can read, parse and rewrite up to 8 MB. On an event loop it runs
+    on a worker thread; every write takes ``_transcript_lock``, so appends
+    made meanwhile still land in order (before the rotation reads the file or
+    after it rewrote it), and readers rotate on their own under the lock.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _rotate_active_transcript_if_needed(session_key)
+        return
+    # Cheap check first: almost every turn end has nothing to rotate.
+    if not _active_transcript_over_limit(session_key):
+        return
+    running = _background_rotations.get(session_key)
+    if running is not None and not running.done():
+        return
+
+    async def _rotate() -> None:
+        try:
+            await asyncio.to_thread(_rotate_active_transcript_if_needed, session_key)
+        except Exception:
+            logger.exception("webui transcript rotation failed for {}", session_key)
+        finally:
+            if _background_rotations.get(session_key) is task:
+                del _background_rotations[session_key]
+
+    task = loop.create_task(_rotate(), name=f"transcript-rotate:{session_key}")
+    _background_rotations[session_key] = task
+
+
 def append_transcript_object(session_key: str, obj: dict[str, Any]) -> None:
     record = _record_for_append(obj)
     _append_to_active_transcript(session_key, record)
     if record.get("event") == "turn_end":
-        _rotate_active_transcript_if_needed(session_key)
+        _schedule_turn_end_rotation(session_key)
 
 
 def normalize_webui_turn_id(value: Any) -> str:
@@ -884,6 +1099,11 @@ def write_session_messages_as_transcript(
 ) -> None:
     """Write a minimal WebUI transcript from already-truncated session messages."""
     target_chat_id = _chat_id_from_session_key(target_key)
+    results: dict[str, Any] = {}
+    for msg in messages:
+        call_id = msg.get("tool_call_id")
+        if msg.get("role") == "tool" and isinstance(call_id, str) and call_id:
+            results[call_id] = msg.get("content")
     rows: list[dict[str, Any]] = []
     for msg in messages:
         if is_hidden_history_message(msg):
@@ -892,6 +1112,16 @@ def write_session_messages_as_transcript(
         role = msg.get("role")
         content = msg.get("content")
         text = content if isinstance(content, str) else ""
+        if role == "assistant" and msg.get("tool_calls"):
+            # The tool steps of the turn, as the live run showed them.
+            events = _tool_events_from_calls(msg.get("tool_calls"), results)
+            if events:
+                rows.append({
+                    "event": "message", "chat_id": target_chat_id, "text": "",
+                    "kind": "progress", "tool_events": events,
+                })
+            if not text.strip():
+                continue
         if role == "user":
             row: dict[str, Any] = {"event": "user", "chat_id": target_chat_id, "text": text}
             media = msg.get("media")
@@ -912,7 +1142,59 @@ def write_session_messages_as_transcript(
     _write_transcript_lines(target_key, rows)
 
 
+def drop_stale_rebuilt_transcript(session_key: str, messages: list[dict[str, Any]]) -> bool:
+    """Delete a rebuilt transcript that lacks the tool steps of its session."""
+    if not any(m.get("role") == "assistant" and m.get("tool_calls") for m in messages):
+        return False
+    path = webui_transcript_path(session_key)
+    try:
+        if path.stat().st_size > 256 * 1024 or b'"tool_events"' in path.read_bytes():
+            return False
+    except OSError:
+        return False
+    return delete_webui_transcript(session_key)
+
+
+_REBUILT_RESULT_CHARS = 4000
+
+
+def _tool_events_from_calls(calls: Any, results: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for call in calls if isinstance(calls, list) else ():
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = fn.get("name") or call.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        raw_args = fn.get("arguments", call.get("arguments"))
+        if isinstance(raw_args, str):
+            try:
+                arguments = json.loads(raw_args) if raw_args.strip() else {}
+            except ValueError:
+                arguments = {"input": raw_args}
+        else:
+            arguments = raw_args if isinstance(raw_args, dict) else {}
+        call_id = call.get("id") if isinstance(call.get("id"), str) else ""
+        result = results.get(call_id) if call_id else None
+        if not isinstance(result, str):
+            result = (stringify_text_blocks(result) or "") if isinstance(result, list) else ""
+        if len(result) > _REBUILT_RESULT_CHARS:
+            result = result[:_REBUILT_RESULT_CHARS] + "\n..."
+        events.append({
+            "version": 1, "phase": "end", "call_id": call_id, "name": name,
+            "arguments": arguments, "result": result, "error": None,
+            "files": [], "embeds": [],
+        })
+    return events
+
+
 def delete_webui_transcript(session_key: str) -> bool:
+    with _transcript_lock:
+        return _delete_webui_transcript_locked(session_key)
+
+
+def _delete_webui_transcript_locked(session_key: str) -> bool:
     _discard_append_buffer(session_key)
     removed = False
     for path in (webui_transcript_path(session_key), _legacy_webui_thread_path(session_key)):
@@ -1139,7 +1421,9 @@ def _format_tool_call_trace(call: Any) -> str | None:
     if isinstance(args, str) and args.strip():
         return f"{name}({args})"
     if args and isinstance(args, dict):
-        return f"{name}({json.dumps(args, ensure_ascii=False)})"
+        # Same shape as the web UI's JSON.stringify (no spaces), so a trace
+        # replayed from history keys onto the same row as the live one.
+        return f"{name}({json.dumps(args, ensure_ascii=False, separators=(',', ':'))})"
     return f"{name}()"
 
 
@@ -1166,6 +1450,103 @@ def tool_trace_lines_from_events(events: Any) -> list[str]:
 
 _PHASE_RANK = {"start": 1, "end": 2, "error": 3}
 
+# A tool result rides in the transcript for the journal only: the model reads
+# the full output from the tool-results files. Studio tools (career, tenders,
+# CRM...) can return megabytes of JSON per call, which made a 15-message chat
+# weigh 4.6 MB on every open and froze the desktop while it parsed and
+# rendered it. Results above this budget are cut down before they reach the
+# UI; the keys the journal renders are kept, small results pass through as is.
+_TOOL_RESULT_UI_CHARS = 16_000
+_TOOL_RESULT_TEXT_KEYS = ("content", "output", "text", "result", "message", "error", "summary", "status", "ok")
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _truncate_result_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    # Keep the head and the tail: a test summary or an error sits at the end.
+    head = max(limit * 3 // 4, 1)
+    tail = max(limit - head, 0)
+    omitted = len(text) - head - tail
+    tail_text = text[-tail:] if tail else ""
+    return f"{text[:head]}\n... [{omitted} chars omitted] ...\n{tail_text}"
+
+
+def compact_tool_event_result(result: Any, limit: int = _TOOL_RESULT_UI_CHARS) -> Any:
+    """Return ``result`` unchanged when it fits ``limit`` chars, else a bounded copy.
+
+    Strings keep their head and tail. Dicts keep the text keys the journal
+    renders (``content``, ``output``, ``text``...) plus ``truncated`` markers;
+    lists of text blocks become text, other lists keep their leading items.
+    """
+    if result is None or isinstance(result, (bool, int, float)):
+        return result
+    if isinstance(result, str):
+        return _truncate_result_text(result, limit)
+    if isinstance(result, dict):
+        size = _json_size(result)
+        if size <= limit:
+            return result
+        compact: dict[str, Any] = {}
+        remaining = limit
+        for key in _TOOL_RESULT_TEXT_KEYS:
+            if key not in result:
+                continue
+            value = result[key]
+            if isinstance(value, list):
+                value = stringify_text_blocks(value) if value else None
+                if not value:
+                    continue
+            if isinstance(value, str):
+                value = _truncate_result_text(value, max(remaining, 1_000))
+                remaining -= len(value)
+            elif value is not None and not isinstance(value, (bool, int, float)):
+                continue
+            compact[key] = value
+        compact["truncated"] = True
+        compact["truncated_chars"] = size
+        compact["dropped_keys"] = [str(key) for key in result if key not in compact]
+        return compact
+    if isinstance(result, list):
+        size = _json_size(result)
+        if size <= limit:
+            return result
+        text = stringify_text_blocks(result)
+        if text:
+            return _truncate_result_text(text, limit)
+        kept: list[Any] = []
+        used = 0
+        for item in result:
+            item_size = _json_size(item)
+            if used + item_size > limit:
+                break
+            kept.append(item)
+            used += item_size
+        kept.append({"truncated": True, "omitted_items": len(result) - len(kept), "truncated_chars": size})
+        return kept
+    return _truncate_result_text(str(result), limit)
+
+
+def compact_tool_events_for_ui(events: Any, limit: int = _TOOL_RESULT_UI_CHARS) -> list[Any]:
+    """Copy ``events`` with oversized results cut down; small events are returned as is."""
+    if not isinstance(events, list):
+        return []
+    out: list[Any] = []
+    for event in events:
+        if isinstance(event, dict) and event.get("result") is not None:
+            result = event["result"]
+            compact = compact_tool_event_result(result, limit)
+            if compact is not result:
+                event = {**event, "result": compact}
+        out.append(event)
+    return out
+
 
 def _normalize_tool_events(events: Any) -> list[dict[str, Any]]:
     if not isinstance(events, list):
@@ -1180,7 +1561,10 @@ def _normalize_tool_events(events: Any) -> list[dict[str, Any]]:
             fn = event.get("function")
             if not (isinstance(fn, dict) and isinstance(fn.get("name"), str)):
                 continue
-        out.append(dict(event))
+        normalized = dict(event)
+        if normalized.get("result") is not None:
+            normalized["result"] = compact_tool_event_result(normalized["result"])
+        out.append(normalized)
     return out
 
 
@@ -1351,6 +1735,66 @@ def _media_from_signed_urls(value: Any) -> list[dict[str, Any]]:
                 },
             )
     return media
+
+
+def choice_echo_row(rec: dict[str, Any]) -> dict[str, Any] | None:
+    """UI row restating an answered ``ask_user`` card (question + answer)."""
+    question = rec.get("question")
+    request_id = rec.get("request_id")
+    if not isinstance(question, str) or not question.strip():
+        return None
+    label = rec.get("label") if isinstance(rec.get("label"), str) else ""
+    custom_text = rec.get("custom_text") if isinstance(rec.get("custom_text"), str) else ""
+    answer = custom_text or label
+    return {
+        "id": f"choice-{request_id}" if isinstance(request_id, str) and request_id else f"choice-{uuid.uuid4().hex[:8]}",
+        "role": "tool",
+        "kind": "choice",
+        "content": answer,
+        "interaction": {
+            "type": "choice",
+            "requestId": request_id if isinstance(request_id, str) else "",
+            "question": question.strip(),
+            "label": label,
+            "customText": custom_text,
+            "skipped": bool(rec.get("skipped")),
+            "timedOut": bool(rec.get("timed_out")),
+            "stopped": bool(rec.get("stopped")),
+            **(
+                {"waitedMs": int(rec["waited_ms"])}
+                if isinstance(rec.get("waited_ms"), (int, float))
+                and not isinstance(rec.get("waited_ms"), bool)
+                and rec["waited_ms"] >= 0
+                else {}
+            ),
+        },
+    }
+
+
+def approval_echo_row(rec: dict[str, Any]) -> dict[str, Any] | None:
+    """UI row restating a settled approval card ("Allowed: delete 12 files")."""
+    action = rec.get("action")
+    request_id = rec.get("request_id")
+    if not isinstance(action, str) or not action.strip():
+        return None
+    waited = rec.get("waited_ms")
+    return {
+        "id": f"approval-{request_id}" if isinstance(request_id, str) and request_id else f"approval-{uuid.uuid4().hex[:8]}",
+        "role": "tool",
+        "kind": "approval",
+        "content": action.strip(),
+        "interaction": {
+            "type": "approval",
+            "requestId": request_id if isinstance(request_id, str) else "",
+            "question": action.strip(),
+            "allowed": bool(rec.get("allowed")),
+            **(
+                {"waitedMs": int(waited)}
+                if isinstance(waited, (int, float)) and not isinstance(waited, bool) and waited >= 0
+                else {}
+            ),
+        },
+    }
 
 
 def replay_transcript_to_ui_messages(
@@ -1898,6 +2342,21 @@ def replay_transcript_to_ui_messages(
                 buffer_message_id = None
                 buffer_parts = []
                 continue
+            if rec.get("discarded"):
+                # A mid-stream retry abandoned this segment and streamed the
+                # answer again: replay must not show the partial text twice.
+                if buffer_message_id is not None:
+                    for i, m in enumerate(messages):
+                        if m.get("id") != buffer_message_id:
+                            continue
+                        if m.get("reasoning"):
+                            messages[i] = {**m, "content": ""}
+                        else:
+                            del messages[i]
+                        break
+                buffer_message_id = None
+                buffer_parts = []
+                continue
             final_text = rec.get("text")
             if isinstance(final_text, str):
                 if buffer_message_id is None:
@@ -1946,6 +2405,25 @@ def replay_transcript_to_ui_messages(
             if suppress_until_turn_end:
                 continue
             close_reasoning(messages)
+            continue
+
+        if ev in {"choice_closed", "approval_closed"}:
+            row = choice_echo_row(rec) if ev == "choice_closed" else approval_echo_row(rec)
+            if row is None:
+                continue
+            close_reasoning(messages)
+            # The answer stays inside the activity block it interrupted: the
+            # ask_user call returns right after it, and its end frame must
+            # join the row its start frame opened (same as the live stream).
+            buffer_message_id = None
+            buffer_parts = []
+            messages.append(
+                {
+                    **row,
+                    **_turn_fields(rec, "activity"),
+                    "createdAt": _created_at_ms(rec, idx),
+                },
+            )
             continue
 
         if ev == "message":
@@ -2168,6 +2646,8 @@ def has_pending_tool_calls(lines: list[dict[str, Any]]) -> bool:
             "reasoning_delta",
             "reasoning_end",
             "file_edit",
+            "choice_closed",
+            "approval_closed",
         }:
             return True
         if ev in {WEBUI_FORK_MARKER_EVENT}:

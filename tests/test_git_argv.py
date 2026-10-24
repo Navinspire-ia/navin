@@ -62,6 +62,31 @@ class TestGitArgv:
         assert argv is not None
         assert argv[1:] == ["-C", r"C:\Users\me\proj"]
 
+    def test_windows_git_installed_after_start_is_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Git landed in Program Files\Git\cmd after Navin started: the PATH is
+        # completed and probed again instead of reporting git as missing.
+        from navin.utils import path_env
+
+        exe = r"C:\Program Files\Git\cmd\git.exe"
+        found: dict[str, str | None] = {"git": None}
+        monkeypatch.setattr(wsl, "wsl_executable", lambda: None)
+        monkeypatch.setattr("navin.utils.git_argv.shutil.which", lambda _name: found["git"])
+        monkeypatch.setattr(path_env, "augment_path_for_user_tools", lambda: found.update(git=exe))
+        argv = git_argv(r"C:\Users\me\proj", platform="win32")
+        assert argv == [exe, "-C", r"C:\Users\me\proj"]
+
+    def test_windows_without_any_git_still_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from navin.utils import path_env
+
+        monkeypatch.setattr(wsl, "wsl_executable", lambda: None)
+        monkeypatch.setattr("navin.utils.git_argv.shutil.which", lambda _name: None)
+        monkeypatch.setattr(path_env, "augment_path_for_user_tools", lambda: None)
+        assert git_argv(r"C:\Users\me\proj", platform="win32") is None
+
     def test_windows_unc_falls_back_when_wsl_is_absent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

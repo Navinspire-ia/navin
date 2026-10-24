@@ -7,9 +7,13 @@ import {
   actionFromToolArgs,
   activityLabelForTool,
   GENERIC_ACTIVITY_LABELS,
+  isSpawnTool,
+  spawnNameFromArgs,
+  spawnTaskLineFromArgs,
 } from "@/lib/activity-labels";
 import type { ActivityEvidence } from "@/lib/activity-timeline";
 import { computerSetupIssue } from "@/lib/computer-setup";
+import type { UIInteractionEcho } from "@/lib/types";
 
 export type ActivityJournalKind =
   | "explore"
@@ -20,7 +24,8 @@ export type ActivityJournalKind =
   | "mcp"
   | "edit"
   | "tool"
-  | "media";
+  | "media"
+  | "reasoning";
 
 export type ActivityJournalTone =
   | ActivityJournalKind
@@ -30,7 +35,11 @@ export type ActivityJournalTone =
   | "browser"
   | "error";
 
-export type ActivityJournalStatus = "running" | "done" | "error";
+/**
+ * ``interrupted``: the call started but the turn ended (stopped, crashed,
+ * cut off) before it returned. Neither done nor failed - shown neutral.
+ */
+export type ActivityJournalStatus = "running" | "done" | "error" | "interrupted";
 
 export type ActivityJournalFact = {
   label: string;
@@ -108,10 +117,26 @@ export type JournalStep =
       evidence?: ActivityEvidence[];
       /** Plain progress text that was not a tool call. */
       text?: string;
+      /** ask_user: the settled card, the authoritative answer. */
+      echo?: UIInteractionEcho;
+    }
+  | {
+      /** The user allowed or denied an action the agent asked to run. */
+      kind: "approval";
+      key: string;
+      action: string;
+      allowed: boolean;
     }
   | {
       kind: "media";
       evidence: ActivityEvidence[];
+    }
+  | {
+      /** A thinking segment, kept in time order between the tool calls. */
+      kind: "reasoning";
+      key: string;
+      text: string;
+      status: ActivityJournalStatus;
     };
 
 export type ActivityJournalEntry = {
@@ -140,7 +165,14 @@ export type ActivityJournalEntry = {
   // search
   query?: string;
   // shell
+  /** One-line display form of the command (first line, spaces collapsed). */
   command?: string;
+  /** The command as run, for the tooltip, the copy button and merging. */
+  fullCommand?: string;
+  /** Lines after the first one in a multi-line command (heredocs). */
+  commandExtraLines?: number;
+  /** Identity of the call (call id or trace line) the row stands for. */
+  runKey?: string;
   output?: string;
   error?: string;
   shellRun?: ShellRunSummary;
@@ -162,7 +194,24 @@ export type ActivityJournalEntry = {
   facts?: ActivityJournalFact[];
   occurrences?: string[];
   evidence?: ActivityEvidence[];
+  // ask_user
+  answer?: AskUserAnswer;
+  // approval
+  approval?: { allowed: boolean };
+  // reasoning
+  text?: string;
 };
+
+export type AskUserAnswer = {
+  /** ``other``: the result is not an answer (no card, an error): never shown as one. */
+  kind: "chose" | "custom" | "skipped" | "timeout" | "stopped" | "other";
+  text: string;
+};
+
+/** Answer kinds that are a real reply from the user (shown with the arrow). */
+export function isUserAnswer(answer: AskUserAnswer | undefined): boolean {
+  return Boolean(answer && answer.text && (answer.kind === "chose" || answer.kind === "custom"));
+}
 
 /** Where a turn's wall time went, by what the agent was doing. */
 export type ActivityPhaseKey = "thinking" | "explore" | "edit" | "command" | "tool";
@@ -233,6 +282,7 @@ const JOURNAL_FACT_KEYS = [
 ] as const;
 
 const JOURNAL_TARGET_KEYS = [
+  "question",
   "title",
   "name",
   "skill",
@@ -268,8 +318,10 @@ export function isReportedFailure(entry: Pick<ActivityJournalEntry, "status" | "
 
 /** A failed step that is not a command changed nothing: it is not shown. */
 function isQuietFailure(step: JournalStep): boolean {
-  if (!("status" in step) || step.status !== "error" || step.kind === "shell") return false;
+  if (!("status" in step) || step.status !== "error" || step.kind === "shell" || step.kind === "reasoning") return false;
   const tool = step.kind === "tool" || step.kind === "cli" ? step.name : step.kind === "mcp" ? step.toolName : "";
+  // A question to the user is never hidden: its answer steers the turn.
+  if (step.kind === "tool" && toolLeaf(step.name) === "ask_user") return false;
   const error = "error" in step ? step.error : undefined;
   return !computerSetupIssue(tool, error);
 }
@@ -289,12 +341,96 @@ export function clipJournalText(value: string, max = 72): string {
   return `${compact.slice(0, max - 1).trim()}…`;
 }
 
-export function formatActivityDuration(ms: number): string {
+function isCallKey(key: string | undefined): boolean {
+  return Boolean(key?.startsWith("call:"));
+}
+
+/** Spaces collapsed, for telling two runs of one command apart from two commands. */
+function normalizeCommand(command: string): string {
+  return command.replace(/\s+/g, " ").trim();
+}
+
+function commandLines(command: string): string[] {
+  return command
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/**
+ * The clean answer of an ``ask_user`` call, read from the tool result the
+ * agent got back (see navin/agent/choice.py ChoiceAnswer.as_text).
+ */
+export function parseAskUserAnswer(output: string | undefined | null): AskUserAnswer | undefined {
+  const text = (output ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!text) return undefined;
+  const custom = /They wrote this instead:\s*\n([\s\S]*?)(?:\nFollow that instruction[\s\S]*)?$/.exec(text);
+  if (custom) {
+    const answer = custom[1].trim();
+    if (answer) return { kind: "custom", text: answer };
+  }
+  const chose = /^The user chose "([^"]*)"(?: \(([\s\S]*))?$/.exec(text);
+  if (chose) {
+    // The label may hold parentheses itself ("Fast (beta)"): it ends at the
+    // first "): " (a detail follows) or at the closing ")." of the line.
+    const rest = chose[2] ?? "";
+    const detailAt = rest.indexOf("): ");
+    const label = (detailAt >= 0 ? rest.slice(0, detailAt) : rest.replace(/\)\.?\s*$/, "")).trim();
+    const answer = label || chose[1].trim();
+    if (answer) return { kind: "chose", text: answer };
+  }
+  const recommended = /Recommended:\s*(\S+?)(?:\s+-\s+([^\n]*?))?\s*(?:\([^\n]*\))?\.?$/.exec(text);
+  if (/^The user skipped/.test(text)) {
+    return { kind: "skipped", text: (recommended?.[2] || recommended?.[1] || "").trim() };
+  }
+  if (/^The user did not answer in time/.test(text)) {
+    return { kind: "timeout", text: (recommended?.[2] || recommended?.[1] || "").trim() };
+  }
+  if (/^The turn was stopped before a choice was made/.test(text)) {
+    return { kind: "stopped", text: "" };
+  }
+  const first = text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+  return first ? { kind: "other", text: clipJournalText(first, 200) } : undefined;
+}
+
+/** The answer as the settled card recorded it (beats parsing the tool result). */
+export function askUserAnswerFromEcho(echo: UIInteractionEcho | undefined): AskUserAnswer | undefined {
+  if (!echo || echo.type !== "choice") return undefined;
+  if (echo.customText?.trim()) return { kind: "custom", text: echo.customText.trim() };
+  const label = (echo.label ?? "").trim();
+  if (echo.stopped) return { kind: "stopped", text: "" };
+  if (echo.timedOut) return { kind: "timeout", text: label };
+  if (echo.skipped) return { kind: "skipped", text: label };
+  return label ? { kind: "chose", text: label } : undefined;
+}
+
+type DurationTranslate = (key: string, options: Record<string, unknown>) => string;
+
+/**
+ * "45s", "3m 20s", "2h 5m". Localized through i18n keys when ``t`` is given
+ * (digits stay Latin in every language, like the rest of the app).
+ */
+export function formatActivityDuration(ms: number, t?: DurationTranslate): string {
   const seconds = ms > 0 && ms < 1000 ? 1 : Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  const say = (key: string, defaultValue: string, values: Record<string, number>) => (
+    t
+      ? t(`message.activityDuration.${key}`, { ...values, defaultValue })
+      : defaultValue.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(values[name] ?? ""))
+  );
+  if (seconds < 60) return say("seconds", "{{s}}s", { s: seconds });
+  const minutesTotal = Math.floor(seconds / 60);
+  if (minutesTotal < 60) {
+    const rest = seconds % 60;
+    return rest
+      ? say("minutesSeconds", "{{m}}m {{s}}s", { m: minutesTotal, s: rest })
+      : say("minutes", "{{m}}m", { m: minutesTotal });
+  }
+  const hours = Math.floor(minutesTotal / 60);
+  const minutes = minutesTotal % 60;
+  return minutes
+    ? say("hoursMinutes", "{{h}}h {{m}}m", { h: hours, m: minutes })
+    : say("hours", "{{h}}h", { h: hours });
 }
 
 function parseArgsRecord(args: string): Record<string, unknown> | null {
@@ -317,6 +453,29 @@ export function pathFromToolArgs(args: string): string {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+/**
+ * Every file a read names: one path, or each entry of a batch read
+ * (`{"files": [{"path": ...}, ...]}`). Trace text is often cut mid-argument,
+ * so complete `"path": "..."` pairs are recovered when the JSON does not parse.
+ */
+export function pathsFromToolArgs(args: string): string[] {
+  const record = parseArgsRecord(args);
+  if (record) {
+    const files = record.files;
+    if (Array.isArray(files)) {
+      const paths = files
+        .map((item) => (typeof item === "string" ? item : item && typeof item === "object" ? (item as Record<string, unknown>).path : ""))
+        .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+        .map((value) => value.trim());
+      if (paths.length) return paths;
+    }
+    const single = pathFromToolArgs(args);
+    return single ? [single] : [];
+  }
+  const found = [...args.matchAll(/"(?:path|file_path|file)"\s*:\s*"((?:[^"\\]|\\.)+)"/g)].map((match) => match[1].trim());
+  return [...new Set(found.filter(Boolean))];
 }
 
 /** Human target only - skip redundant `action: status` noise. */
@@ -422,6 +581,13 @@ export function journalTaskLink(entry: ActivityJournalEntry): { id?: string; tit
   };
 }
 
+/** The question of an ``ask_user`` call, on one line. */
+export function journalQuestionFromArgs(args: string): string {
+  const record = parseArgsRecord(args);
+  const value = record?.question;
+  return typeof value === "string" && value.trim() ? clipJournalText(value, 240) : "";
+}
+
 export function journalQueryFromArgs(args: string): string {
   const record = parseArgsRecord(args);
   if (!record) return "";
@@ -503,7 +669,11 @@ export function buildJournalTimeline(
       if (!explore) explore = newExplore(seq);
       // A later successful read must not hide a failed or still-running
       // operation elsewhere in this group.
-      if (step.status === "error" || explore.status !== "error" && step.status === "running") {
+      if (
+        step.status === "error"
+        || (explore.status !== "error" && step.status === "running")
+        || (explore.status === "done" && step.status === "interrupted")
+      ) {
         explore.status = step.status;
       }
       explore.operations.push(step);
@@ -533,13 +703,56 @@ export function buildJournalTimeline(
     explore = null;
     const previous = entries[entries.length - 1];
 
+    if (step.kind === "reasoning") {
+      const text = step.text.trim();
+      if (previous?.kind === "reasoning") {
+        // Back-to-back thinking with nothing in between reads as one thought.
+        previous.text = [previous.text, text].filter(Boolean).join("\n\n");
+        previous.status = step.status;
+        previous.live = step.status === "running";
+        return;
+      }
+      if (!text && step.status !== "running") return;
+      entries.push({
+        id: `reasoning:${step.key}`,
+        kind: "reasoning",
+        tone: "reasoning",
+        seq,
+        status: step.status,
+        live: step.status === "running",
+        text,
+      });
+      return;
+    }
+
     if (step.kind === "shell") {
-      if (previous?.kind === "shell" && previous.command === step.command) {
+      const lines = commandLines(step.command);
+      const display = clipJournalText(lines[0] ?? step.command, 240);
+      if (
+        previous?.kind === "shell"
+        && (previous.runKey === step.key
+          || (previous.status === "running" && step.status !== "running"
+            // Two calls with their own ids are two runs, even of one command.
+            && !(isCallKey(previous.runKey) && isCallKey(step.key))
+            && normalizeCommand(previous.fullCommand ?? "") === normalizeCommand(step.command)))
+      ) {
+        // The same call seen twice (start then end, or a trace line and its
+        // structured event): one row that moves from running to its outcome.
+        previous.status = step.status;
+        previous.live = step.status === "running";
+        previous.shellRun = step.run ?? previous.shellRun;
+        previous.output = step.output ?? previous.output;
+        previous.error = step.error ?? previous.error;
+        previous.durationMs = step.durationMs ?? previous.durationMs;
+        return;
+      }
+      if (previous?.kind === "shell" && normalizeCommand(previous.fullCommand ?? "") === normalizeCommand(step.command)) {
         if (previous.status === "error" && step.status !== "error") {
           previous.status = step.status;
           previous.live = step.status === "running";
           previous.recovered = true;
           previous.attempts = (previous.attempts ?? 1) + 1;
+          previous.runKey = step.key;
           previous.shellRun = step.run ?? previous.shellRun;
           previous.output = step.output ?? previous.output;
           previous.error = undefined;
@@ -548,6 +761,7 @@ export function buildJournalTimeline(
         }
         if (previous.status === "done" && step.status === "done") {
           previous.count = (previous.count ?? 1) + 1;
+          previous.runKey = step.key;
           previous.durationMs = sumDuration(previous.durationMs, step.durationMs);
           previous.shellRun = step.run ?? previous.shellRun;
           previous.output = step.output ?? previous.output;
@@ -562,7 +776,10 @@ export function buildJournalTimeline(
         status: step.status,
         live: step.status === "running",
         durationMs: step.durationMs,
-        command: clipJournalText(step.command, 96),
+        command: display,
+        fullCommand: step.command,
+        commandExtraLines: Math.max(0, lines.length - 1),
+        runKey: step.key,
         output: step.output,
         error: step.error,
         shellRun: step.run,
@@ -632,6 +849,22 @@ export function buildJournalTimeline(
       return;
     }
 
+    if (step.kind === "approval") {
+      entries.push({
+        id: `approval:${step.key}`,
+        kind: "tool",
+        tone: "task",
+        seq,
+        status: "done",
+        labelKey: step.allowed ? "message.activityJournalApprovalAllowed" : "message.activityJournalApprovalDenied",
+        defaultValue: step.allowed ? "Allowed" : "Denied",
+        target: clipJournalText(step.action, 200),
+        tool: "approval",
+        approval: { allowed: step.allowed },
+      });
+      return;
+    }
+
     if (step.kind === "media") {
       entries.push({
         id: `media:${seq}`,
@@ -649,6 +882,9 @@ export function buildJournalTimeline(
     const action = actionFromToolArgs(step.args);
     const url = journalUrlFromArgs(step.args);
     const mapped = step.name ? activityLabelForTool(step.name, action) : null;
+    const spawn = isSpawnTool(step.name) && action !== "results";
+    const spawnName = spawn ? spawnNameFromArgs(step.args) : "";
+    const spawnTask = spawn ? spawnTaskLineFromArgs(step.args) : "";
     const label = mapped
       ?? (step.name && (/fetch|read|open/i.test(leaf) || url)
         ? GENERIC_ACTIVITY_LABELS.reading
@@ -657,7 +893,14 @@ export function buildJournalTimeline(
           : GENERIC_ACTIVITY_LABELS.working);
     const target = step.text
       ? clipJournalText(step.text)
-      : journalTargetFromArgs(step.args) || (!mapped && step.name ? leaf : "");
+      : spawn
+        ? clipJournalText(spawnName || spawnTask, 200)
+        : leaf === "ask_user"
+          ? journalQuestionFromArgs(step.args)
+          : journalTargetFromArgs(step.args) || (!mapped && step.name ? leaf : "");
+    const answer = leaf === "ask_user"
+      ? askUserAnswerFromEcho(step.echo) ?? parseAskUserAnswer(step.output)
+      : undefined;
     const tone: ActivityJournalTone = url ? "browser" : journalToneForTool(step.name || "");
     const facts = step.text ? [] : journalFactsFromArgs(step.args);
     if (leaf === "computer") {
@@ -676,6 +919,8 @@ export function buildJournalTimeline(
       && previous.target === target
       && !previous.evidence?.length
       && !step.evidence?.length
+      && !spawn
+      && leaf !== "ask_user"
     ) {
       previous.count = (previous.count ?? 1) + 1;
       previous.status = step.status;
@@ -707,6 +952,8 @@ export function buildJournalTimeline(
       output: step.output,
       error: step.error,
       evidence: step.evidence,
+      ...(spawn && spawnName && spawnTask ? { detail: clipJournalText(spawnTask, 200) } : {}),
+      ...(answer ? { answer } : {}),
     });
   });
 
@@ -714,7 +961,9 @@ export function buildJournalTimeline(
 
   if (!options.streaming) {
     for (const entry of entries) {
-      if (entry.status === "running") entry.status = "done";
+      // The turn is over: thinking that was still open simply ended, a call
+      // that never returned was stopped - neither a check nor a cross.
+      if (entry.status === "running") entry.status = entry.kind === "reasoning" ? "done" : "interrupted";
       entry.live = false;
     }
   }
@@ -753,7 +1002,8 @@ export function summarizeJournal(entries: ActivityJournalEntry[]): ActivityJourn
         break;
       case "mcp":
       case "tool":
-        digest.tools += count;
+        // An approval is the user's answer, not something the agent ran.
+        if (entry.tool !== "approval") digest.tools += count;
         break;
       default:
         break;
@@ -767,15 +1017,19 @@ export function summarizeJournal(entries: ActivityJournalEntry[]): ActivityJourn
   return digest;
 }
 
-/** The row to surface in the header while the turn is live. */
+/**
+ * The row to surface in the header while the turn is live: only a step that
+ * is actually running. A finished one would read as current work.
+ */
 export function currentJournalEntry(entries: ActivityJournalEntry[]): ActivityJournalEntry | undefined {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
-    if (entries[i].status === "running") return entries[i];
+    if (entries[i].status === "running" && entries[i].kind !== "reasoning") return entries[i];
   }
-  return entries[entries.length - 1];
+  return undefined;
 }
 
 export function journalHasDetails(entry: ActivityJournalEntry): boolean {
+  if (entry.kind === "reasoning") return Boolean(entry.text);
   return Boolean(
     entry.filesList?.length
     || entry.operations?.length
@@ -793,4 +1047,100 @@ export function journalHasDetails(entry: ActivityJournalEntry): boolean {
     || entry.query
     || entry.detail,
   );
+}
+
+/** The sections a finished turn is read in: what was looked at, changed, run, and what is left. */
+export type JournalPhaseKey = "explore" | "edit" | "agents" | "command" | "check" | "test" | "attention";
+
+export const JOURNAL_PHASE_ORDER: JournalPhaseKey[] = ["explore", "edit", "agents", "command", "check", "test", "attention"];
+
+/** Tools that only look around the project: they read as exploration, not commands. */
+const EXPLORE_TOOLS = new Set(["list_dir", "find_files", "glob", "code_index", "lsp", "tree"]);
+
+const TEST_COMMAND_RE =
+  /(^|[\s;&|(])(pytest|py\.test|vitest|jest|mocha|ava|unittest|phpunit|rspec|playwright\s+test|go\s+test|cargo\s+test|dotnet\s+test|(npm|pnpm|yarn|bun)(\s+run)?\s+test(:\S+)?)(?=$|[\s;&|)])/i;
+const CHECK_COMMAND_RE =
+  /(^|[\s;&|(])(ruff|eslint|tsc|mypy|pyright|flake8|pylint|black\s+--check|prettier\s+--check|compileall|clippy|cargo\s+(check|clippy|build)|go\s+(vet|build)|(npm|pnpm|yarn|bun)(\s+run)?\s+(lint|build|typecheck|check)(:\S+)?)(?=$|[\s;&|)])/i;
+
+/** What a command or tool call was for: running tests, checking (lint, types, build), or anything else. */
+export function commandPurpose(entry: ActivityJournalEntry): "test" | "check" | "command" {
+  const tool = entry.tool ?? "";
+  if (tool === "test_run") return "test";
+  if (tool === "verify") return "check";
+  const text = entry.kind === "shell" || entry.kind === "cli" ? entry.fullCommand || entry.command || "" : "";
+  if (text && TEST_COMMAND_RE.test(text)) return "test";
+  if (text && CHECK_COMMAND_RE.test(text)) return "check";
+  return "command";
+}
+
+export type JournalPhase = {
+  key: JournalPhaseKey;
+  entries: ActivityJournalEntry[];
+  /** Steps of the section that ended in error. */
+  errors: number;
+  /** What the section counts: operations, files, commands or open points. */
+  count: number;
+  /** Edits only: line totals across the section. */
+  added: number;
+  deleted: number;
+  running: boolean;
+};
+
+function phaseOf(entry: ActivityJournalEntry): Exclude<JournalPhaseKey, "attention"> {
+  switch (entry.kind) {
+    case "explore":
+    case "read":
+    case "search":
+      return "explore";
+    case "edit":
+      return "edit";
+    default:
+      if (entry.kind === "tool" && entry.tool === "spawn") return "agents";
+      if (entry.kind === "tool" && EXPLORE_TOOLS.has(entry.tool ?? "")) return "explore";
+      return commandPurpose(entry);
+  }
+}
+
+/** A step that ended badly and was not put right later in the turn. */
+export function needsAttention(entry: ActivityJournalEntry): boolean {
+  return entry.status === "error" && !entry.recovered;
+}
+
+/**
+ * The journal grouped by section, in reading order, empty sections dropped.
+ * A step that needs attention stays in its own section and is listed again
+ * under "attention", so the open points read on their own.
+ */
+export function groupJournalPhases(entries: ActivityJournalEntry[]): JournalPhase[] {
+  const phases = new Map<JournalPhaseKey, JournalPhase>(
+    JOURNAL_PHASE_ORDER.map((key) => [key, { key, entries: [], errors: 0, count: 0, added: 0, deleted: 0, running: false }]),
+  );
+  for (const entry of entries) {
+    // Thinking between the calls is not a step of the work: the sections list
+    // what was read, changed and run. It stays in the live journal.
+    if (entry.kind === "reasoning") continue;
+    const keys: JournalPhaseKey[] = [phaseOf(entry)];
+    if (needsAttention(entry)) keys.push("attention");
+    for (const key of keys) {
+      const phase = phases.get(key)!;
+      phase.entries.push(entry);
+      if (entry.status === "running") phase.running = true;
+      if (entry.status === "error") phase.errors += 1;
+      if (key === "explore") {
+        if (entry.kind === "explore") phase.count += (entry.files ?? 0) + (entry.searches ?? 0) || 1;
+        else phase.count += 1;
+      } else if (key === "edit") {
+        phase.count += 1;
+        phase.added += entry.added ?? 0;
+        phase.deleted += entry.deleted ?? 0;
+      } else if (key === "command" || key === "check" || key === "test") {
+        if (entry.tool !== "approval") phase.count += entry.count ?? 1;
+      } else {
+        phase.count += 1;
+      }
+    }
+  }
+  return JOURNAL_PHASE_ORDER
+    .map((key) => phases.get(key)!)
+    .filter((phase) => phase.entries.length > 0);
 }

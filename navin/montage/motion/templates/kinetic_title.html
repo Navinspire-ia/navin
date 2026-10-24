@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kinetic_title</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .kt-blob { position: absolute; border-radius: 50%; opacity: 0.5; }
+  .kt-blob.a { width: 60%; aspect-ratio: 1; left: -12%; top: -20%; background: radial-gradient(circle, var(--c-primary), transparent 68%); }
+  .kt-blob.b { width: 50%; aspect-ratio: 1; right: -14%; bottom: -24%; background: radial-gradient(circle, var(--c-secondary), transparent 68%); opacity: 0.32; }
+  .kt-wrap {
+    position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center;
+    padding: 0 9%; gap: calc(var(--u) * 6);
+  }
+  .kt-wrap.center { align-items: center; text-align: center; }
+  .kt-wrap.left { align-items: flex-start; text-align: left; }
+  .kt-eyebrow { margin-bottom: calc(var(--u) * 26); }
+  .kt-rule { width: calc(var(--u) * 96); height: calc(var(--u) * 6); border-radius: 99px; background: var(--c-accent); margin-bottom: calc(var(--u) * 34); transform-origin: left center; }
+  .kt-wrap.center .kt-rule { transform-origin: center; }
+  .kt-line { white-space: nowrap; font-size: calc(var(--u) * 140); letter-spacing: -0.045em; line-height: 1.04; }
+  .kt-line .nm-mask { padding-bottom: 0.18em; margin-bottom: -0.18em; }
+  .kt-em {
+    color: var(--c-accent);
+    background-image: linear-gradient(var(--c-accent), var(--c-accent));
+    background-repeat: no-repeat; background-position: 0 96%; background-size: 0% 0.08em;
+  }
+  .kt-line.dim { color: var(--c-muted); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop nm-bg"></div>
+  <div class="kt-blob a nm-bg"></div>
+  <div class="kt-blob b nm-bg"></div>
+  <div class="kt-wrap"></div>
+  <div class="nm-grain"></div>
+</div>
+<script>
+const NM = window.NavinMotion;
+
+function clean(word) {
+  return String(word).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+NM.mount({
+  duration: 4,
+  setup(nm) {
+    const { duration, canvas } = nm;
+    let lines = nm.prop('lines', []);
+    if (typeof lines === 'string') lines = lines.split(/\n|\|/);
+    lines = lines.map((l) => String(l).trim()).filter(Boolean).slice(0, 4);
+    if (!lines.length) lines = [nm.brand.tagline || nm.brand.name || 'Your message here'];
+    const emphasis = new Set((nm.prop('emphasis', []) || []).map(clean));
+    const style = nm.prop('style', 'rise');
+    const align = nm.prop('align', 'center') === 'left' ? 'left' : 'center';
+
+    const wrap = document.querySelector('.kt-wrap');
+    wrap.classList.add(align);
+    const eyebrowText = nm.prop('eyebrow', '');
+    let eyebrow = null;
+    let rule = null;
+    if (eyebrowText) eyebrow = nm.el('div', 'nm-eyebrow kt-eyebrow', eyebrowText, wrap);
+    else rule = nm.el('div', 'kt-rule', null, wrap);
+
+    const longest = Math.max(...lines.map((l) => l.length));
+    const widthBudget = canvas.width * 0.82;
+    const base = nm.px(canvas.portrait ? 150 : 172) / Math.max(1, lines.length * 0.32 + 0.7);
+    const fontPx = Math.min(base, widthBudget / Math.max(4, longest * 0.56));
+
+    const lineEls = lines.map((text, i) => {
+      const el = nm.el('h1', 'nm-heading kt-line', text, wrap);
+      el.style.fontSize = fontPx + 'px';
+      if (i > 0 && lines.length > 2 && i === lines.length - 1 && !emphasis.size) el.classList.add('dim');
+      return el;
+    });
+    // Shrink any line that still overflows.
+    lineEls.forEach((el) => {
+      let size = fontPx;
+      while (el.scrollWidth > widthBudget && size > 12) {
+        size *= 0.95;
+        el.style.fontSize = size + 'px';
+      }
+    });
+
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.kt-blob.a', { xPercent: -10, yPercent: -6, scale: 0.9 }, { xPercent: 12, yPercent: 8, scale: 1.08, duration, ease: 'sine.inOut' }, 0);
+    tl.fromTo('.kt-blob.b', { xPercent: 10, yPercent: 6 }, { xPercent: -12, yPercent: -10, duration, ease: 'sine.inOut' }, 0);
+    if (rule) tl.from(rule, { scaleX: 0, duration: 0.7, ease: 'expo.out' }, 0.05);
+    if (eyebrow) tl.from(eyebrow, { y: nm.px(18), opacity: 0, duration: 0.6, ease: 'expo.out' }, 0.05);
+
+    const ems = [];
+    const lineGap = Math.min(0.42, (duration * 0.45) / Math.max(1, lines.length));
+    lineEls.forEach((el, i) => {
+      const parts = nm.split(el, style === 'chars' ? 'chars' : 'words');
+      el.querySelectorAll('.nm-word').forEach((w) => {
+        if (emphasis.has(clean(w.textContent))) { w.classList.add('kt-em'); ems.push(w); }
+      });
+      const at = 0.18 + i * lineGap;
+      if (style === 'chars') {
+        tl.from(parts, { yPercent: 105, opacity: 0, duration: 0.8, ease: 'power4.out', stagger: 0.018 }, at);
+      } else if (style === 'scale') {
+        tl.from(parts, { scale: 1.35, opacity: 0, filter: 'blur(12px)', duration: 0.8, ease: 'expo.out', stagger: 0.07 }, at);
+      } else {
+        tl.from(parts, { yPercent: 118, rotate: 5, duration: 0.95, ease: 'expo.out', stagger: 0.065 }, at);
+      }
+    });
+    const emAt = 0.5 + lines.length * lineGap;
+    if (ems.length) tl.to(ems, { backgroundSize: '100% 0.08em', duration: 0.6, ease: 'power3.inOut', stagger: 0.12 }, emAt);
+
+    // Exit: lines leave upward through their masks.
+    const exitAt = Math.max(emAt + 0.6, duration - 0.6);
+    if (exitAt < duration - 0.2 && nm.prop('exit', true)) {
+      tl.to(wrap.querySelectorAll('.nm-word, .nm-char'), { yPercent: -110, duration: 0.5, ease: 'power3.in', stagger: 0.012 }, exitAt);
+      if (rule) tl.to(rule, { scaleX: 0, duration: 0.4, ease: 'power3.in' }, exitAt);
+      if (eyebrow) tl.to(eyebrow, { opacity: 0, duration: 0.35 }, exitAt);
+    }
+    tl.set({}, {}, duration);
+    return { timeline: tl };
+  },
+});
+</script>
+</body>
+</html>

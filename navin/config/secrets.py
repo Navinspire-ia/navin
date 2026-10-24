@@ -116,6 +116,59 @@ def unlock_stored_secret(value: str | None, config_path: Path) -> str:
     return "" if is_locked_secret(unlocked) else unlocked
 
 
+def _runtime_secret_targets() -> tuple[Path, Path, frozenset[str]]:
+    """(config, key, every final name that could stand for one of them)."""
+    from navin.utils.resolve_cache import resolve_root
+
+    try:
+        from navin.config.loader import get_config_path
+        lexical = Path(get_config_path()).expanduser()
+    except Exception:
+        lexical = Path.home() / ".navin" / "config.json"
+    # Local disk next to the app, but resolved on every tool call and every
+    # file-tree entry before: remembered for a few seconds like a root.
+    config = resolve_root(lexical)
+    key = key_path_for(config)
+    key_target = resolve_root(key)
+    names = frozenset(
+        name.casefold()
+        for name in (lexical.name, config.name, KEY_FILENAME, key_target.name)
+    )
+    return config, key_target, names
+
+
+def runtime_secret_name_suspect(name: str) -> bool:
+    """Could an entry whose final name is ``name`` be the live config or its key?
+
+    Without a link in the last component, resolving a path never changes its
+    final name, except through these spellings: case (Windows, macOS), the
+    trailing dots and spaces Windows drops, 8.3 short names (``CONFIG~1.JSO``),
+    alternate data streams (``config.json::$DATA``) and ``..``.
+    """
+    text = name.casefold()
+    if text in {"", ".", ".."} or "~" in text or ":" in text:
+        return True
+    return text.rstrip(" .") in _runtime_secret_targets()[2]
+
+
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: symlinks, junctions, WSL links
+
+
+def _stat_is_link(st: os.stat_result) -> bool:
+    import stat as _stat
+
+    return _stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
+def _last_component_is_link(path: Path) -> bool:
+    try:
+        return _stat_is_link(os.lstat(path))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # unknown: let the full check decide
+
+
 def is_runtime_secret_path(path: Path | str) -> bool:
     """True for the live ``config.json`` and its machine-local key.
 
@@ -123,17 +176,38 @@ def is_runtime_secret_path(path: Path | str) -> bool:
     ``tokenIssueSecret`` and other secret leaves are encrypted at rest. The
     live file still must not be opened from Code, preview, or agent tools:
     that is how a user ends up staring at ``channels.websocket``.
+
+    A path whose final name cannot spell either file and whose last component
+    is not a link is answered without ``resolve()``. That call opened the file
+    on Windows: a 9P round trip per tool call and per file-tree entry on a
+    ``\\\\wsl.localhost`` project, and 95 stalls in the desktop log of
+    2026-10-21. A link in an earlier component cannot change the final name.
     """
-    try:
-        resolved = Path(path).expanduser().resolve()
-    except OSError:
+    candidate = Path(path).expanduser()
+    if not runtime_secret_name_suspect(candidate.name) and not _last_component_is_link(candidate):
         return False
     try:
-        from navin.config.loader import get_config_path
-        config = Path(get_config_path()).expanduser().resolve()
-    except Exception:
-        config = (Path.home() / ".navin" / "config.json").resolve()
-    return resolved in {config, key_path_for(config)}
+        resolved = candidate.resolve()
+    except OSError:
+        return False
+    config, key, _names = _runtime_secret_targets()
+    return resolved in {config, key, key_path_for(config)}
+
+
+def is_runtime_secret_entry(entry: os.DirEntry) -> bool:
+    """``is_runtime_secret_path`` for a ``scandir`` entry, without a system call.
+
+    ``scandir`` already knows the entry's type (and, on Windows, its reparse
+    attribute): a plainly named regular entry needs no ``lstat``.
+    """
+    if not runtime_secret_name_suspect(entry.name):
+        try:
+            linked = _stat_is_link(entry.stat(follow_symlinks=False)) if os.name == "nt" else entry.is_symlink()
+        except OSError:
+            linked = True
+        if not linked:
+            return False
+    return is_runtime_secret_path(entry.path)
 
 
 def _write_private(path: Path, data: bytes) -> None:

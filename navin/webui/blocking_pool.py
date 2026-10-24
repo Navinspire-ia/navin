@@ -17,6 +17,13 @@ socket costs a stack and nothing else, and ``ThreadPoolExecutor`` only creates
 a thread when there is work for it, so a high ceiling is free while idle: the
 pool grows to demand and no further.
 
+The ceiling is not what starves the event loop of the GIL: a thread parked on
+a socket, a child process or the pool queue releases the GIL, so a couple
+hundred idle or waiting threads cost the loop nothing. What does hurt is CPU-bound Python in
+the pool (the workspace watcher's tree walks were the measured case), and
+capping the pool would not fix that - it would only queue the agent wave's
+checkouts behind it. Keep pure-Python crunching out of this pool instead.
+
 A number chosen today can still be wrong tomorrow, so :func:`watch_pool_latency`
 keeps checking. It is the difference between a user reporting "it is slow" and
 the log saying which resource ran out.

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from navin.career.mission_platforms import mission_platform_catalog
 
+
 def profile_navigation_url(url):
     """Restore the working public host without changing profile identity or path."""
     try:

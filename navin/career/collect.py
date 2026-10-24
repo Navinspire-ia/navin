@@ -200,7 +200,7 @@ def _guess_track(title: str, profile_track: str) -> str:
 
 def _fetch_remotive(query: str, *, strict: bool = False) -> list[dict[str, Any]]:
     url = f"{_REMOTIVE}?search={urllib.parse.quote(query)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "NavinCareer/1.0 (+https://navin.ai)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "NavinCareer/1.0 (+https://navin.live)"})
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
@@ -250,7 +250,7 @@ def _fetch_remotive(query: str, *, strict: bool = False) -> list[dict[str, Any]]
 def _fetch_json(url: str) -> Any:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "NavinCareer/1.0 (+https://navin.ai)", "Accept": "application/json"},
+        headers={"User-Agent": "NavinCareer/1.0 (+https://navin.live)", "Accept": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=12) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -404,7 +404,7 @@ def _search_ddg_html(query: str, limit: int = 6, *, strict: bool = False) -> lis
         _DDG_HTML,
         data=data,
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; NavinCareer/1.0; +https://navin.ai)",
+            "User-Agent": "Mozilla/5.0 (compatible; NavinCareer/1.0; +https://navin.live)",
             "Accept": "text/html",
             "Content-Type": "application/x-www-form-urlencoded",
         },

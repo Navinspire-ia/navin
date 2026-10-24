@@ -303,6 +303,48 @@ class StaleTurnClearingTest(unittest.TestCase):
         grep = next(m for m in updated if m.get("name") == "grep")
         self.assertEqual(grep["content"], "x" * 4_000)
 
+    def test_thought_signatures_age_out_on_the_same_boundary(self) -> None:
+        messages = self._three_turn_history()
+        for idx in (1, 5):
+            call = dict(messages[idx]["tool_calls"][0])
+            call["extra_content"] = {"google": {"thought_signature": "QUJD" * 300}}
+            messages[idx] = {**messages[idx], "tool_calls": [call]}
+        updated = ContextGovernor().clear_stale_turn_tool_results(
+            _config(window=1_000_000), messages
+        )
+        self.assertNotIn("extra_content", updated[1]["tool_calls"][0])
+        # The previous turn keeps its signature, like its result.
+        self.assertIn("extra_content", updated[5]["tool_calls"][0])
+        self.assertIn("extra_content", messages[1]["tool_calls"][0])
+
+    def test_runtime_reminders_do_not_age_out_the_current_request(self) -> None:
+        from navin.agent.scope_anchor import exploration_budget_message
+        from navin.session.turn_continuation import _board_continuation_prompt
+
+        messages = [
+            _user("fix the plan runner"),
+            _assistant_call("call_1", "read_file"),
+            _tool_result("call_1", "read_file", 4_000),
+            {"role": "assistant", "content": "Please continue."},
+            _user(exploration_budget_message(4)["content"]),
+            _assistant_call("call_2", "grep"),
+            _tool_result("call_2", "grep", 4_000),
+            _user(_board_continuation_prompt()),
+        ]
+        updated = ContextGovernor().clear_stale_turn_tool_results(
+            _config(window=1_000_000), messages
+        )
+        # Both reminders belong to the request: its first read is still there.
+        self.assertEqual(_stale_blanked(updated), [])
+
+        # A real new user turn after them still ages the old request out.
+        messages += [{"role": "assistant", "content": "done"}, _user("next request"),
+                     {"role": "assistant", "content": "ok"}, _user("third request")]
+        updated = ContextGovernor().clear_stale_turn_tool_results(
+            _config(window=1_000_000), messages
+        )
+        self.assertEqual(_stale_blanked(updated), ["read_file", "grep"])
+
     def test_small_results_are_not_worth_a_stub(self) -> None:
         messages = self._three_turn_history(size=100)
         governor = ContextGovernor()
@@ -365,7 +407,9 @@ class ConfigSurfaceTest(unittest.TestCase):
         self.assertEqual(shipped.exclude_tools, list(DEFAULT_CLEARING_EXCLUDE_TOOLS))
         self.assertEqual(shipped.keep_recent, 12)
         self.assertEqual(shipped.clear_at_least, 2_000)
-        self.assertAlmostEqual(shipped.soft_clear_ratio, 0.22)
+        # No early blanking by default: results are cleared when the input
+        # budget (90 % of the window) is exceeded, not at 22 % of it.
+        self.assertEqual(shipped.soft_clear_ratio, 0)
 
     def test_the_knob_is_settable_in_camel_case(self) -> None:
         """config.json is camelCase; every other agent default accepts both."""
@@ -384,3 +428,21 @@ class ConfigSurfaceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_old_turn_thought_signatures_are_dropped_with_stale_results():
+    """Gemini validates signatures on the current turn only; older ones are dead weight."""
+    from navin.agent.context_governance import _has_thought_signatures, _without_thought_signature
+
+    call = {
+        "id": "c1",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": "{}"},
+        "extra_content": {"google": {"thought_signature": "QUJD" * 500}, "other": 1},
+    }
+    trimmed = _without_thought_signature(call)
+    assert trimmed["extra_content"] == {"other": 1}
+    assert call["extra_content"]["google"]["thought_signature"]  # input untouched
+    bare = _without_thought_signature({**call, "extra_content": {"google": {"thought_signature": "x"}}})
+    assert "extra_content" not in bare
+    assert not _has_thought_signatures({"role": "assistant", "tool_calls": [bare]})

@@ -47,17 +47,22 @@ import {
 import { DevCheckpointsPanel } from "@/components/dev/DevCheckpointsPanel";
 import { DevGitTimeline } from "@/components/dev/DevGitTimeline";
 import { DevProveChange } from "@/components/dev/DevProveChange";
+import { GitConnectPanel } from "@/components/settings/GitConnectPanel";
+import { GitMachineStatus } from "@/components/settings/GitMachineStatus";
 import { forgeCopy, forgeSetupHint } from "@/lib/forge";
+import { gitAuthRequired, looksLikeGitAuthFailure } from "@/lib/git-auth";
 import {
   canRewriteLastCommit,
   canRunPrimaryGitAction,
   primaryGitAction,
 } from "@/lib/git-primary-action";
 import { publishNotification } from "@/lib/notification-bus";
+import { openSettingsSection } from "@/lib/settings-events";
 import type {
   GithubCiStatusPayload,
   GithubPrViewPayload,
   GitChangesPayload,
+  GitSetupAction,
   GitStashEntry,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -132,6 +137,18 @@ export function DevGitPanel({
   const [newBranch, setNewBranch] = useState("");
   const [prView, setPrView] = useState<GithubPrViewPayload | null>(null);
   const [ci, setCi] = useState<GithubCiStatusPayload | null>(null);
+  /** Host a push, pull, PR or CI call just needed a sign-in for. */
+  const [authHost, setAuthHost] = useState<string | null>(null);
+  /** What to run again once that host is connected. */
+  const retryAfterConnectRef = useRef<(() => void) | null>(null);
+  /** What the automatic Git setup did after the last connect, and a reload tick. */
+  const [gitSetupActions, setGitSetupActions] = useState<GitSetupAction[] | undefined>(undefined);
+  const [gitMachineKey, setGitMachineKey] = useState(0);
+  useEffect(() => {
+    setAuthHost(null);
+    retryAfterConnectRef.current = null;
+    setGitSetupActions(undefined);
+  }, [sessionKey]);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const branchRef = useRef<HTMLDivElement | null>(null);
   const messageBoxRef = useRef<HTMLTextAreaElement | null>(null);
@@ -245,6 +262,40 @@ export function DevGitPanel({
     });
   }, [setupHint, t]);
 
+  /**
+   * "Connect this host" is a step, not an error to decipher: when the remote
+   * has no account, or a call just failed on sign-in, the panel shows the
+   * inline connect card (device flow + token) and runs the call again after.
+   */
+  const remoteHost = prView?.host || ci?.host || "";
+  const missingTokenHost =
+    setupHint?.key === "dev.git.forgeTokenMissing" ? setupHint.host : null;
+  const connectHost = authHost ?? missingTokenHost;
+  const noteAuthFailure = useCallback(
+    (err: unknown, retry?: () => void): boolean => {
+      if (!looksLikeGitAuthFailure(err)) return false;
+      setAuthHost(gitAuthRequired(err)?.host || remoteHost || "github.com");
+      retryAfterConnectRef.current = retry ?? null;
+      publishNotification({
+        level: "warning",
+        source: "session",
+        title: tx("dev.git.connectNeeded", "Connect your Git account to continue"),
+        key: "git:connect-needed",
+      });
+      return true;
+    },
+    [remoteHost, tx],
+  );
+  const onGitConnected = () => {
+    const retry = retryAfterConnectRef.current;
+    retryAfterConnectRef.current = null;
+    setAuthHost(null);
+    setError(null);
+    setGitMachineKey((value) => value + 1);
+    refresh();
+    retry?.();
+  };
+
   const generateMessage = useCallback(() => {
     if (busy !== null || changeCount === 0) return;
     const useSelection = selectedList.length > 0;
@@ -311,6 +362,7 @@ export function DevGitPanel({
             onWorkingTreeChanged?.();
           })
           .catch((err) => {
+            if (noteAuthFailure(err, () => runAction("pull"))) return;
             const detail = err instanceof Error ? err.message : String(err);
             publishNotification({
               level: "error",
@@ -369,6 +421,11 @@ export function DevGitPanel({
           onDidCommit?.();
         })
         .catch((err) => {
+          // A commit that landed before the push failed is not redone: retry pushes.
+          if (noteAuthFailure(err, () => runAction(action === "publish" ? "publish" : "push"))) {
+            if (wantsCommit) refresh();
+            return;
+          }
           const detail = err instanceof Error ? err.message : String(err);
           publishNotification({
             level: "error",
@@ -385,6 +442,7 @@ export function DevGitPanel({
       branch,
       changeCount,
       message,
+      noteAuthFailure,
       onDidCommit,
       onWorkingTreeChanged,
       refresh,
@@ -396,7 +454,8 @@ export function DevGitPanel({
     ],
   );
 
-  const notifyGitError = (err: unknown) => {
+  const notifyGitError = (err: unknown, retry?: () => void) => {
+    if (noteAuthFailure(err, retry)) return;
     const detail = err instanceof Error ? err.message : String(err);
     publishNotification({
       level: "error",
@@ -574,7 +633,7 @@ export function DevGitPanel({
         onDidCommit?.();
         onWorkingTreeChanged?.();
       })
-      .catch(notifyGitError)
+      .catch((err) => notifyGitError(err, pullRebase))
       .finally(() => setBusy(null));
   };
 
@@ -621,7 +680,7 @@ export function DevGitPanel({
         onWorkingTreeChanged?.();
         return result;
       })
-      .catch(notifyGitError)
+      .catch((err) => notifyGitError(err, syncChanges))
       .finally(() => setBusy(null));
   };
 
@@ -677,7 +736,7 @@ export function DevGitPanel({
           key: "git:fetch",
         });
       })
-      .catch(notifyGitError)
+      .catch((err) => notifyGitError(err, fetchRemote))
       .finally(() => setBusy(null));
   };
 
@@ -740,6 +799,7 @@ export function DevGitPanel({
         refresh();
       })
       .catch((err) => {
+        if (noteAuthFailure(err, () => openPr(draft))) return;
         const detail = err instanceof Error ? err.message : String(err);
         publishNotification({
           level: "error",
@@ -799,6 +859,11 @@ export function DevGitPanel({
         onDidCommit?.();
       })
       .catch((err) => {
+        // The commit may have landed: the retry only opens the request.
+        if (noteAuthFailure(err, () => openPr(true))) {
+          refresh();
+          return;
+        }
         const detail = err instanceof Error ? err.message : String(err);
         publishNotification({
           level: "error",
@@ -857,7 +922,9 @@ export function DevGitPanel({
           key: "git:explain-ci",
         });
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err) => {
+        if (!noteAuthFailure(err, explainCi)) setError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setBusy(null));
   };
 
@@ -883,7 +950,9 @@ export function DevGitPanel({
           key: "git:fix-ci",
         });
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err) => {
+        if (!noteAuthFailure(err, fixCi)) setError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setBusy(null));
   };
 
@@ -1040,7 +1109,7 @@ export function DevGitPanel({
                 <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
               </button>
               {branchOpen ? (
-                <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md">
+                <div className="absolute start-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md">
                   <div className="flex gap-1 border-b border-border/50 p-1">
                     <input
                       value={newBranch}
@@ -1070,7 +1139,7 @@ export function DevGitPanel({
                           type="button"
                           onClick={() => switchBranch(name)}
                           className={cn(
-                            "flex w-full items-center gap-1 truncate rounded px-2 py-1 text-left text-[11px]",
+                            "flex w-full items-center gap-1 truncate rounded px-2 py-1 text-start text-[11px]",
                             name === branch
                               ? "bg-muted text-foreground"
                               : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
@@ -1162,7 +1231,7 @@ export function DevGitPanel({
                 }
                 rows={1}
                 disabled={busy !== null || changeCount === 0}
-                className="w-full resize-none overflow-y-auto rounded-md border border-border/60 bg-background py-1.5 pl-2 pr-16 text-[12px] leading-5 text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+                className="w-full resize-none overflow-y-auto rounded-md border border-border/60 bg-background py-1.5 ps-2 pe-16 text-[12px] leading-5 text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
               />
               <button
                 type="button"
@@ -1177,7 +1246,7 @@ export function DevGitPanel({
                   "Write a commit message from the current changes",
                 )}
                 data-testid="git-generate-commit-message"
-                className="absolute right-1 top-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-bold tracking-wide text-foreground/90 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                className="absolute end-1 top-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-bold tracking-wide text-foreground/90 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy === "generate" ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -1194,7 +1263,7 @@ export function DevGitPanel({
                   type="button"
                   onClick={() => runAction(primary)}
                   disabled={primaryDisabled}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-l-md bg-primary px-2 py-1.5 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-s-md bg-primary px-2 py-1.5 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {busy ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -1209,19 +1278,19 @@ export function DevGitPanel({
                   type="button"
                   onClick={() => setMenuOpen((open) => !open)}
                   disabled={busy !== null}
-                  className="flex items-center rounded-r-md border-l border-primary-foreground/20 bg-primary px-1.5 text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center rounded-e-md border-s border-primary-foreground/20 bg-primary px-1.5 text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label={tx("dev.git.moreActions", "More actions")}
                   aria-expanded={menuOpen}
                 >
                   <ChevronDown className="h-3.5 w-3.5" aria-hidden />
                 </button>
                 {menuOpen ? (
-                  <div className="absolute right-0 top-full z-20 mt-1 max-h-[min(70vh,28rem)] w-60 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
+                  <div className="absolute end-0 top-full z-20 mt-1 max-h-[min(70vh,28rem)] w-60 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
                     <button
                       type="button"
                       onClick={() => runAction("commit")}
                       disabled={!canCommit}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.commit", "Commit")}
                     </button>
@@ -1229,7 +1298,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => runAction("commit-push")}
                       disabled={!canCommit}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.commitPush", "Commit & Push")}
                     </button>
@@ -1237,7 +1306,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={commitAndCreatePr}
                       disabled={!canCommit}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {forge.commitAndCreate}
                     </button>
@@ -1245,7 +1314,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={amendCommit}
                       disabled={busy !== null || !canAmend}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.amend", "Commit (Amend)")}
                     </button>
@@ -1253,7 +1322,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={undoLastCommit}
                       disabled={busy !== null || !canUndo}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.undoCommit", "Undo Last Commit")}
                     </button>
@@ -1262,7 +1331,7 @@ export function DevGitPanel({
                         type="button"
                         onClick={() => runAction("push")}
                         disabled={!canPush}
-                        className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {tx("dev.git.push", "Push")}
                       </button>
@@ -1271,7 +1340,7 @@ export function DevGitPanel({
                         type="button"
                         onClick={() => runAction("publish")}
                         disabled={busy !== null}
-                        className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {tx("dev.git.publishBranch", "Publish Branch")}
                       </button>
@@ -1280,7 +1349,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => openPr(true)}
                       disabled={busy !== null || !isRepo}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {forge.create}
                     </button>
@@ -1288,7 +1357,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => runAction("pull")}
                       disabled={busy !== null}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.pull", "Pull")}
                     </button>
@@ -1296,7 +1365,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={pullRebase}
                       disabled={busy !== null || conflictBusy}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.pullRebase", "Pull (Rebase)")}
                     </button>
@@ -1304,7 +1373,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={syncChanges}
                       disabled={busy !== null || conflictBusy}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.sync", "Sync")}
                     </button>
@@ -1312,7 +1381,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={fetchRemote}
                       disabled={busy !== null}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.fetch", "Fetch")}
                     </button>
@@ -1321,7 +1390,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => stageAll(true)}
                       disabled={busy !== null || changeCount === 0}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.stageAll", "Stage All Changes")}
                     </button>
@@ -1329,7 +1398,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => stageAll(false)}
                       disabled={busy !== null || stagedCount === 0}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.unstageAll", "Unstage All Changes")}
                     </button>
@@ -1337,7 +1406,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={stashChanges}
                       disabled={busy !== null || changeCount === 0}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.stash", "Stash")}
                     </button>
@@ -1345,7 +1414,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={stashPop}
                       disabled={busy !== null || stashCount === 0}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.stashPop", "Stash Pop")}
                     </button>
@@ -1389,7 +1458,7 @@ export function DevGitPanel({
                       type="button"
                       onClick={() => discardPaths()}
                       disabled={busy !== null || changeCount === 0}
-                      className="w-full rounded px-2 py-1.5 text-left text-[12px] text-destructive transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded px-2 py-1.5 text-start text-[12px] text-destructive transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {tx("dev.git.discardAll", "Discard All Changes")}
                     </button>
@@ -1462,7 +1531,18 @@ export function DevGitPanel({
                 ) : null}
               </div>
 
-              {forgeSetupText ? (
+              {connectHost ? (
+                <GitConnectPanel
+                  compact
+                  token={token}
+                  host={connectHost}
+                  session={sessionKey}
+                  onSetup={(result) => setGitSetupActions(result.actions)}
+                  onConnected={onGitConnected}
+                  onOpenSettings={() => openSettingsSection("git")}
+                  className="px-3 py-2.5"
+                />
+              ) : forgeSetupText ? (
                 <p className="text-[11px] leading-4 text-muted-foreground">
                   {forgeSetupText}
                   {setupHint?.env ? (
@@ -1478,6 +1558,17 @@ export function DevGitPanel({
                   ) : null}
                 </p>
               ) : null}
+
+              <GitMachineStatus
+                token={token}
+                session={sessionKey}
+                compact
+                refreshKey={gitMachineKey}
+                actions={gitSetupActions}
+                onConnect={(host) => setAuthHost(host)}
+                onChanged={refresh}
+                className="rounded-lg border border-border/50 bg-card/50 px-2.5 py-2"
+              />
 
               {changeCount > 0 ? (
                 <p className="text-[11px] text-amber-500">
@@ -1504,7 +1595,7 @@ export function DevGitPanel({
           ) : null}
 
           <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 pt-1">
-            {error ? (
+            {error && !authHost ? (
               <p className="px-2 py-1.5 text-[12px] text-destructive">{error}</p>
             ) : null}
             {!error && payload && !payload.is_repo ? (
@@ -1547,7 +1638,7 @@ export function DevGitPanel({
                     <button
                       type="button"
                       onClick={() => onShowDiff(file.path)}
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-start"
                       title={file.path}
                     >
                       <span
@@ -1595,7 +1686,7 @@ export function DevGitPanel({
                         title={tx("dev.git.discard", "Discard Changes")}
                         aria-label={tx("dev.git.discard", "Discard Changes")}
                       >
-                        <Undo2 className="h-3.5 w-3.5" aria-hidden />
+                        <Undo2 className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
                       </button>
                     </div>
                   </div>

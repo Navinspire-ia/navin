@@ -113,6 +113,7 @@ class BaseChannel(ABC):
         stream_id: str | None = None,
         stream_end: bool = False,
         resuming: bool = False,
+        discarded: bool = False,
     ) -> None:
         """Deliver a streaming text chunk.
 
@@ -121,6 +122,10 @@ class BaseChannel(ABC):
 
         Stateful implementations should key buffers by ``stream_id`` rather
         than only by ``chat_id`` when it is provided.
+
+        ``discarded`` (only with ``stream_end``) means the segment's text was
+        abandoned by a mid-stream retry that streams the answer again in a new
+        segment: remove what was shown for it instead of finalizing it.
         """
         pass
 

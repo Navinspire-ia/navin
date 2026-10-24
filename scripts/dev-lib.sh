@@ -18,6 +18,44 @@ WEBUI_LOG_DIR="${WEBUI_DIR}/logs"
 WEBUI_LOG="${WEBUI_LOG_DIR}/frontend.log"
 WEBUI_PID="${WEBUI_LOG_DIR}/frontend.pid"
 
+# Under WSL the Windows browser asks Windows first for localhost:PORT. When a
+# Windows program already listens there (a project left on 5173 by the Navin
+# desktop app, another Vite), the browser shows that app instead of Navin's
+# editor started here, with no error anywhere. Prints "PID|command" lines.
+windows_port_owners() {
+    port="$1"
+    [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null || return 0
+    ps_bin="${NAVIN_POWERSHELL:-powershell.exe}"
+    need_cmd "$ps_bin" || return 0
+    script='$c=Get-NetTCPConnection -State Listen -LocalPort '"$port"' -ErrorAction SilentlyContinue;'
+    script="$script"' foreach($x in $c){$p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$x.OwningProcess);'
+    script="$script"' if($p -and $p.Name -notmatch "^(wslrelay|wslhost|System|svchost)"){"{0}|{1}" -f $p.ProcessId,$p.CommandLine}}'
+    if need_cmd timeout; then
+        timeout 15 "$ps_bin" -NoProfile -NonInteractive -Command "$script" 2>/dev/null | tr -d '\r' | sort -u
+    else
+        "$ps_bin" -NoProfile -NonInteractive -Command "$script" 2>/dev/null | tr -d '\r' | sort -u
+    fi
+}
+
+WINDOWS_FRONT_CONFLICT=""
+
+warn_windows_port_conflict() {
+    port="$1"
+    owners="$(windows_port_owners "$port")"
+    [ -n "$owners" ] || return 0
+    WINDOWS_FRONT_CONFLICT="$owners"
+    warn "Le port $port est deja pris cote Windows par un autre programme :"
+    printf '%s\n' "$owners" | while IFS='|' read -r pid cmd; do
+        printf "    PID %s  %s\n" "$pid" "$cmd"
+    done
+    warn "Le navigateur Windows affichera ce programme sur http://localhost:$port au lieu de Navin."
+    printf "  Pour l'arreter : powershell.exe -NoProfile -Command \"Stop-Process -Id %s\"\n" \
+        "$(printf '%s\n' "$owners" | cut -d'|' -f1 | paste -sd, -)"
+}
+
+wsl_ip() {
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
 SCOPE="all"
 DO_INSTALL=0
 FG=0
@@ -385,9 +423,11 @@ start_front_bg() {
         die "node_modules manquant. Lancez: make install   ou   sh scripts/install.sh front"
     fi
     if has_make; then
+        warn_windows_port_conflict "$WEBUI_PORT_DEFAULT"
         make -C "$WEBUI_DIR" start-bg
         return $?
     fi
+    warn_windows_port_conflict "$WEBUI_PORT_DEFAULT"
     mkdir -p "$WEBUI_LOG_DIR"
     if [ -f "$WEBUI_PID" ]; then
         pid="$(cat "$WEBUI_PID")"
@@ -499,6 +539,11 @@ print_urls() {
     wp="$(webui_api_port)"
     if [ "$PROD" != "1" ] && { [ "$SCOPE" = "all" ] || [ "$SCOPE" = "front" ]; }; then
         printf "  Dev  (Vite, hot reload)  : %bhttp://localhost:%s/%b\n" "$CYAN" "$WEBUI_PORT_DEFAULT" "$NC"
+        ip="$(wsl_ip)"
+        if [ -n "$WINDOWS_FRONT_CONFLICT" ] && [ -n "$ip" ]; then
+            printf "  Navin depuis Windows     : %bhttp://%s:%s/%b  (localhost:%s montre l'autre programme)\n" \
+                "$CYAN" "$ip" "$WEBUI_PORT_DEFAULT" "$NC" "$WEBUI_PORT_DEFAULT"
+        fi
     fi
     printf "  Prod (build, gateway)    : %bhttp://localhost:%s/%b\n" "$CYAN" "$wp" "$NC"
     printf "  Le gateway sert navin/web/dist. Vite (:5173) n'est que le mode dev.\n"

@@ -192,6 +192,12 @@ class TestAutonomyState(unittest.TestCase):
             digest = "\n".join(runtime_lines(tmp))
             self.assertIn("Auto-branch is OFF", digest)
             self.assertNotIn("isolated navin/task-<id> branch", digest)
+            # No task branch means the board opens no pull request; the agent
+            # must not be told to push the user's branch and wait for one.
+            self.assertTrue(state["effective"]["open_pr_on_done"])
+            self.assertNotIn("push its branch", digest)
+            write_autonomy(tmp, {"enabled": True, "auto_branch": True})
+            self.assertIn("push its branch", "\n".join(runtime_lines(tmp)))
             # Opting in is what flips it, and the agent is then told to say so.
             write_autonomy(tmp, {"auto_branch": True})
             digest = "\n".join(runtime_lines(tmp))

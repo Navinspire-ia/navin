@@ -26,7 +26,16 @@ type AnsiState = {
 };
 
 const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "g");
+// CSI (colours, cursor), OSC (window title, hyperlinks) and two-byte escapes.
+const TERMINAL_ESCAPE_PATTERN = new RegExp(
+  `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)|[@-Z\\\\-_])`,
+  "g",
+);
+const LONE_ESC_PATTERN = new RegExp(ESC, "g");
+// SGR colour codes whose ESC byte was dropped on the way: "[2m Tests [22m".
+const ORPHAN_SGR_PATTERN = /\[\d{1,3}(?:;\d{1,3})*m/g;
 
 const ANSI_COLORS = [
   "#000000",
@@ -60,6 +69,84 @@ export function hasAnsi(value: string): boolean {
 export function stripAnsi(value: string): string {
   ANSI_PATTERN.lastIndex = 0;
   return value.replace(ANSI_PATTERN, "");
+}
+
+/**
+ * Plain text of terminal output for display. Removes colour and cursor
+ * escapes, OSC sequences, and SGR codes that lost their ESC byte, which would
+ * otherwise show up as literal noise such as "[2m Test Files [22m".
+ */
+export function cleanTerminalText(value: string): string {
+  if (!value) return value;
+  return value
+    .replace(TERMINAL_ESCAPE_PATTERN, "")
+    .replace(LONE_ESC_PATTERN, "")
+    .replace(ORPHAN_SGR_PATTERN, "");
+}
+
+/** A command result split into what the command printed and the runtime's notes about it. */
+export type RunOutput = {
+  body: string;
+  /** The exit code the runtime appended, null when it did not say. */
+  exitCode: number | null;
+  /** Characters left out of a long output, null when nothing was shortened. */
+  hiddenChars: number | null;
+  /** Where the runtime saved the full output, when it did. */
+  fullOutputPath: string | null;
+};
+
+const EXIT_LINE = /^Exit code:\s*(-?\d+)$/;
+const COMPACTED_LINE = /^\[compacted ([\d,.\s\u00a0\u202f]+) chars(?:; full output in (.+)| \([^)]*\))?\]$/;
+// Lines the runtime adds for the agent: stream labels and background-session
+// bookkeeping. They are not part of what the command printed.
+const BOOKKEEPING_LINE = new RegExp(
+  "^(?:STDERR:|STDOUT:|Stdin closed\\.|\\(no output yet\\)|Elapsed: [\\d.]+s"
+    + "|Process running\\. session_id: \\S+|You will be told when it finishes\\b.*"
+    + "|Still running after \\d+s\\. The command was not killed\\b.*"
+    + "|\\[sandboxed:[^\\]]*\\]|\\[ran outside the os sandbox[^\\]]*\\]?)$",
+  "i",
+);
+
+/**
+ * What a command printed, for display, with the runtime's own lines lifted
+ * out: "Exit code: 1", "[compacted 1,515 chars; full output in ...]",
+ * "STDERR:" and session notes. The exit code and the shortening are only read
+ * from the end of the result, where the runtime appends them, so a command
+ * that prints "Exit code: 7" itself keeps that line.
+ */
+export function tidyRunOutput(value: string | null | undefined): RunOutput {
+  const lines = cleanTerminalText(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  let exitCode: number | null = null;
+  let hiddenChars: number | null = null;
+  let fullOutputPath: string | null = null;
+  let end = lines.length;
+  while (end > 0) {
+    const line = lines[end - 1].trim();
+    const exit = EXIT_LINE.exec(line);
+    const compacted = exit ? null : COMPACTED_LINE.exec(line);
+    if (exit) {
+      exitCode ??= Number.parseInt(exit[1], 10);
+    } else if (compacted) {
+      hiddenChars ??= Number.parseInt(compacted[1].replace(/\D/g, ""), 10) || null;
+      fullOutputPath ??= compacted[2]?.trim() || null;
+    } else if (line && !BOOKKEEPING_LINE.test(line)) {
+      break;
+    }
+    end -= 1;
+  }
+  const body = lines
+    .slice(0, end)
+    .filter((line) => !BOOKKEEPING_LINE.test(line.trim()))
+    .map((line) => line.replace(/\s+$/, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+|\n+$/g, "");
+  return { body, exitCode, hiddenChars, fullOutputPath };
+}
+
+/** True when the runtime notes are worth a line under the output. */
+export function hasRunOutputNote(run: RunOutput): boolean {
+  return (run.exitCode !== null && run.exitCode !== 0) || run.hiddenChars !== null;
 }
 
 function initialState(): AnsiState {

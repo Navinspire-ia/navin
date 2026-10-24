@@ -54,4 +54,23 @@ describe("reasoningSummary", () => {
     expect(live.length).toBeLessThanOrEqual(481);
     expect(reasoningSummary(paragraph).endsWith("…")).toBe(true);
   });
+
+  it("keeps line breaks and short list items instead of one run-on line", () => {
+    const text = "Let me check:\n1. the handler\n2. the route\n3. the test";
+    const summary = reasoningSummary(text);
+    expect(summary).toBe("Let me check:\n1. the handler\n2. the route\n3. the test");
+  });
+
+  it("keeps a short list paragraph next to a long one", () => {
+    const text = [
+      "The Preview Ouvrir button treats 127.0.0.1 as the Navin app itself, so Windows opens another window.",
+      "",
+      "Next:",
+      "- fix the URL check",
+      "- add a test",
+    ].join("\n");
+    const summary = reasoningSummary(text);
+    expect(summary).toContain("Preview Ouvrir");
+    expect(summary).toContain("Next:\n- fix the URL check\n- add a test");
+  });
 });

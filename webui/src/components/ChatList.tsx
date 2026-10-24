@@ -7,9 +7,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type ReactNode,
 } from "react";
 import {
+  AppWindow,
   Archive,
   ArchiveRestore,
   ExternalLink,
@@ -18,6 +20,7 @@ import {
   Folder,
   FolderOpen,
   GitFork,
+  Share2,
   GripVertical,
   Mail,
   MailOpen,
@@ -42,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { compactRelativeTime, deriveTitle } from "@/lib/format";
+import { isDesktopShell } from "@/lib/desktop";
 import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import {
   GROUP_VISIBLE_INCREMENT,
@@ -51,9 +55,11 @@ import {
   displayTitle,
   groupSessions,
   isCollapsedProject,
+  runningSessionsFirst,
   visibleSessionsForLimit,
   type ChatGroupLabels,
 } from "@/lib/chat-groups";
+import { projectFolderTints } from "@/lib/project-color";
 import { cn } from "@/lib/utils";
 import type {
   ChatSummary,
@@ -72,12 +78,14 @@ const ACTION_MENU_ITEM_CLASS = "grid w-full grid-cols-[1rem_minmax(0,1fr)] items
  * carried by the glyph (folder vs status dot), not by extra indentation.
  */
 const ROW_CLASS =
-  "group flex min-w-0 items-center gap-2 rounded-md pl-2 pr-1 text-[13px] leading-4 transition-colors";
+  "group flex min-w-0 items-center gap-2 rounded-lg ps-2 pe-1 text-[13.5px] leading-4 transition-colors duration-150";
 const ROW_IDLE_CLASS =
   "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground";
-const ROW_ACTIVE_CLASS = "bg-sidebar-accent text-sidebar-foreground";
+const ROW_ACTIVE_CLASS = "bg-sidebar-accent font-medium text-sidebar-foreground";
 const ROW_ACTION_CLASS =
   "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50";
+const NEW_AGENT_BUTTON_CLASS =
+  "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-[11.5px] font-medium text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50 active:scale-[0.97]";
 
 interface ChatListProps {
   sessions: ChatSummary[];
@@ -94,6 +102,10 @@ interface ChatListProps {
   onRequestRename: (key: string, label: string) => void;
   onToggleArchive: (key: string) => void;
   onForkChat?: (key: string) => void;
+  /** Share a chat (send a copy as a .navin-session file). */
+  onShareChat?: (chatId: string, title: string) => void;
+  /** Export a chat as a .navin-session file (same file as the guest page download). */
+  onExportChat?: (chatId: string, title: string) => void;
   onOpenInNewTab?: (key: string) => void;
   onToggleUnread?: (chatId: string) => void;
   onArchivePriorChats?: (key: string) => void;
@@ -105,6 +117,8 @@ interface ChatListProps {
   onOpenProject?: (projectPath: string, projectName: string) => void;
   onCreateProjectFolder?: () => void;
   onImportSessions?: () => void;
+  /** A .navin-session file dropped on the list: open it as a new chat. */
+  onDropSessionFile?: (file: File) => void;
   onNewChat?: () => void;
   pinnedKeys?: string[];
   chatOrder?: string[];
@@ -135,6 +149,8 @@ export const ChatList = memo(function ChatList({
   onRequestRename,
   onToggleArchive,
   onForkChat,
+  onShareChat,
+  onExportChat,
   onOpenInNewTab,
   onToggleUnread,
   onArchivePriorChats,
@@ -146,6 +162,7 @@ export const ChatList = memo(function ChatList({
   onOpenProject,
   onCreateProjectFolder,
   onImportSessions,
+  onDropSessionFile,
   onNewChat,
   pinnedKeys = [],
   chatOrder = [],
@@ -210,6 +227,11 @@ export const ChatList = memo(function ChatList({
       recentProjects,
     ],
   );
+  // Each project's folder icon gets its own calm tint to tell them apart.
+  const folderTints = useMemo(
+    () => projectFolderTints(groups.map((group) => (group.kind === "project" ? group.projectPath ?? group.label : null))),
+    [groups],
+  );
   useEffect(() => {
     setExtraByGroup({});
   }, [showArchived, sort]);
@@ -220,6 +242,34 @@ export const ChatList = memo(function ChatList({
       [groupId]: (current[groupId] ?? 0) + GROUP_VISIBLE_INCREMENT,
     }));
   };
+
+  // A browser tab means nothing in the desktop app: there the entry opens a
+  // second Navin window instead, and says so.
+  const opensInWindow = useMemo(() => isDesktopShell(), []);
+
+  // A .navin-session dropped anywhere on the list opens it as a new chat.
+  const [sessionDropActive, setSessionDropActive] = useState(false);
+  const sessionDropHandlers = onDropSessionFile
+    ? {
+        onDragOver: (e: ReactDragEvent<HTMLDivElement>) => {
+          if (!hasDraggedFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setSessionDropActive(true);
+        },
+        onDragLeave: (e: ReactDragEvent<HTMLDivElement>) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          setSessionDropActive(false);
+        },
+        onDrop: (e: ReactDragEvent<HTMLDivElement>) => {
+          if (!hasDraggedFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          setSessionDropActive(false);
+          const file = navinSessionFileFrom(e.dataTransfer.files);
+          if (file) onDropSessionFile(file);
+        },
+      }
+    : {};
 
   if (loading && sessions.length === 0) {
     return (
@@ -290,13 +340,25 @@ export const ChatList = memo(function ChatList({
   const archived = new Set(archivedKeys);
   const running = new Set(runningChatIds);
   const updated = new Set(updatedChatIds);
-  const rowHeightClass = density === "compact" ? "h-6" : "h-7";
+  const rowHeightClass = density === "compact" ? "h-7" : "h-8";
   const firstProjectGroupIndex = groups.findIndex((group) => group.kind === "project");
   const projectsHidden = Boolean(collapsedGroups[SECTION_PROJECTS_ID]);
   const chatsHidden = Boolean(collapsedGroups[SECTION_CHATS_ID]);
 
   return (
-    <div className="min-w-0 overflow-x-hidden px-2 pb-2 pt-2">
+    <div
+      className={cn(
+        "min-w-0 overflow-x-hidden rounded-lg px-2 pb-2 pt-2 transition-[background-color,box-shadow] duration-150",
+        sessionDropActive && "bg-sidebar-accent/50 ring-1 ring-inset ring-primary/40",
+      )}
+      data-session-drop={sessionDropActive ? "active" : undefined}
+      {...sessionDropHandlers}
+    >
+      {sessionDropActive ? (
+        <div className="pointer-events-none mb-1 rounded-md px-2 py-1 text-[12px] font-medium text-primary" role="status">
+          {t("sidebar.sessionImport.dropHint", { defaultValue: "Drop to open this shared session" })}
+        </div>
+      ) : null}
       {firstProjectGroupIndex < 0 && projectsHeaderActions ? (
         <SectionHeader
           label={labels.projects}
@@ -314,9 +376,12 @@ export const ChatList = memo(function ChatList({
         const projectCollapsed = isCollapsedProject(group, collapsedGroups);
         const hideBody =
           (isProject && projectsHidden) || (isChatsGroup && chatsHidden) || projectCollapsed;
+        const orderedSessions = isProject
+          ? runningSessionsFirst(group.sessions, running)
+          : group.sessions;
         const visibleSessions = hideBody
           ? []
-          : visibleSessionsForLimit(group.sessions, visibleCap, activeKey);
+          : visibleSessionsForLimit(orderedSessions, visibleCap, activeKey);
         const hiddenInGroup = hideBody
           ? 0
           : Math.max(0, group.sessions.length - visibleCap);
@@ -347,10 +412,10 @@ export const ChatList = memo(function ChatList({
             }
             className={cn(
               "min-w-0",
-              startsSection && index > 0 && "mt-3",
+              startsSection && index > 0 && "mt-5",
               // Breathing room after an open folder so the next folder row
               // does not read as one of its chats.
-              isProject && !projectCollapsed && visibleSessions.length > 0 && "mb-1.5",
+              isProject && !projectCollapsed && visibleSessions.length > 0 && "mb-3",
             )}
           >
             {index === firstProjectGroupIndex ? (
@@ -366,6 +431,7 @@ export const ChatList = memo(function ChatList({
               <ProjectGroupHeader
                 label={group.label}
                 path={group.projectPath}
+                tint={folderTints.get(group.projectPath ?? group.label)}
                 collapsed={projectCollapsed}
                 onToggle={() => onToggleGroup?.(group.id)}
                 onOpen={
@@ -409,6 +475,7 @@ export const ChatList = memo(function ChatList({
             ) : (
               <SectionHeader
                 label={group.label}
+                actionBesideLabel
                 collapsed={isChatsGroup ? chatsHidden : undefined}
                 onToggle={
                   isChatsGroup ? () => onToggleGroup?.(SECTION_CHATS_ID) : undefined
@@ -426,7 +493,7 @@ export const ChatList = memo(function ChatList({
               />
             )}
             {visibleSessions.length > 0 ? (
-              <ul className="space-y-px">
+              <ul className={cn("space-y-0.5", isProject && "mt-0.5 ms-3 border-s border-sidebar-border/50 ps-1")}>
                 {visibleSessions.map((s) => {
                   const active = s.key === activeKey;
                   const fallbackTitle = t("chat.fallbackTitle", {
@@ -448,8 +515,11 @@ export const ChatList = memo(function ChatList({
                     isPinned,
                     isArchived,
                     isUnread,
+                    opensInWindow,
                     onTogglePin: () => onTogglePin(s.key),
                     onForkChat: onForkChat ? () => onForkChat(s.key) : undefined,
+                    onShareChat: onShareChat ? () => onShareChat(s.chatId, title) : undefined,
+                    onExportChat: onExportChat ? () => onExportChat(s.chatId, title) : undefined,
                     onOpenInNewTab: onOpenInNewTab
                       ? () => onOpenInNewTab(s.key)
                       : undefined,
@@ -519,6 +589,8 @@ export const ChatList = memo(function ChatList({
                         className={cn(
                           ROW_CLASS,
                           rowHeightClass,
+                          // Inside a folder the title sits close to its guide line.
+                          isProject && "gap-1 ps-0.5",
                           "host-no-drag",
                           active ? ROW_ACTIVE_CLASS : ROW_IDLE_CLASS,
                           draggingKey === s.key && "opacity-40",
@@ -526,6 +598,7 @@ export const ChatList = memo(function ChatList({
                         )}
                       >
                         <ChatRowHandle
+                          compact={isProject}
                           unread={isUnread && !active}
                           pinned={isPinned}
                           active={active}
@@ -543,11 +616,15 @@ export const ChatList = memo(function ChatList({
                             onSelect(s.key);
                           }}
                           title={tooltipTitle}
-                          className="flex h-full min-w-0 flex-1 items-center overflow-hidden rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+                          className="flex h-full min-w-0 flex-1 items-center overflow-hidden rounded-md text-start outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
                         >
                           <span
+                            // Titles keep their own reading order (an English
+                            // title in the Arabic UI truncates at its end) but
+                            // still align with the list.
+                            dir="auto"
                             className={cn(
-                              "min-w-0 flex-1 truncate",
+                              "min-w-0 flex-1 truncate [text-align:match-parent]",
                               isUnread && !active && "font-medium text-sidebar-foreground",
                             )}
                           >
@@ -558,14 +635,14 @@ export const ChatList = memo(function ChatList({
                           <RunningDots
                             label={t("chat.activity.running")}
                             className={cn(
-                              "mr-1 group-hover:hidden",
+                              "me-1 group-hover:hidden",
                               active ? "text-sidebar-foreground/85" : "text-sidebar-foreground/65",
                             )}
                           />
                         ) : showTimestamps ? (
                           <span
                             className={cn(
-                              "shrink-0 pr-1 text-[11.5px] tabular-nums text-muted-foreground/60",
+                              "shrink-0 pe-1 text-[11.5px] tabular-nums text-muted-foreground/60",
                               "group-hover:hidden",
                             )}
                           >
@@ -637,13 +714,16 @@ export const ChatList = memo(function ChatList({
   );
 });
 
-function sessionActionEntries({
+export function sessionActionEntries({
   t,
   isPinned,
   isArchived,
   isUnread,
+  opensInWindow = false,
   onTogglePin,
   onForkChat,
+  onShareChat,
+  onExportChat,
   onOpenInNewTab,
   onToggleUnread,
   onRequestRename,
@@ -656,8 +736,12 @@ function sessionActionEntries({
   isPinned: boolean;
   isArchived: boolean;
   isUnread: boolean;
+  /** Desktop app: "Open in new window" (a second Navin) instead of a tab. */
+  opensInWindow?: boolean;
   onTogglePin: () => void;
   onForkChat?: () => void;
+  onShareChat?: () => void;
+  onExportChat?: () => void;
   onOpenInNewTab?: () => void;
   onToggleUnread?: () => void;
   onRequestRename: () => void;
@@ -681,11 +765,31 @@ function sessionActionEntries({
           onSelect: onForkChat,
         }]
       : []),
+    ...(onShareChat
+      ? [{
+          id: "share",
+          label: t("chat.shareChat", { defaultValue: "Share" }),
+          icon: <Share2 className={iconClass} />,
+          onSelect: onShareChat,
+        }]
+      : []),
+    ...(onExportChat
+      ? [{
+          id: "export",
+          label: t("chat.exportChat", { defaultValue: "Export session" }),
+          icon: <Download className={iconClass} />,
+          onSelect: onExportChat,
+        }]
+      : []),
     ...(onOpenInNewTab
       ? [{
           id: "tab",
-          label: t("chat.openInNewTab", { defaultValue: "Open in new tab" }),
-          icon: <ExternalLink className={iconClass} />,
+          label: opensInWindow
+            ? t("chat.openInNewWindow", { defaultValue: "Open in new window" })
+            : t("chat.openInNewTab", { defaultValue: "Open in new tab" }),
+          icon: opensInWindow
+            ? <AppWindow className={iconClass} />
+            : <ExternalLink className={iconClass} />,
           onSelect: onOpenInNewTab,
         }]
       : []),
@@ -735,6 +839,20 @@ function sessionActionEntries({
   ];
 }
 
+/** True when the drag carries files from the OS (not a chat row being moved). */
+export function hasDraggedFiles(dt: Pick<DataTransfer, "types"> | null | undefined): boolean {
+  return Boolean(dt && Array.from(dt.types ?? []).includes("Files"));
+}
+
+/** The first .navin-session among dropped files, or null. */
+export function navinSessionFileFrom(files: ArrayLike<File> | null | undefined): File | null {
+  if (!files) return null;
+  for (const file of Array.from(files)) {
+    if (file.name.toLowerCase().endsWith(".navin-session")) return file;
+  }
+  return null;
+}
+
 /** Muted 12px caption with an optional icon action at the right edge. */
 function SectionHeader({
   label,
@@ -743,6 +861,7 @@ function SectionHeader({
   actionNode,
   collapsed,
   onToggle,
+  actionBesideLabel = false,
 }: {
   label: string;
   action?: { label: string; icon: ReactNode; onClick: () => void };
@@ -750,15 +869,20 @@ function SectionHeader({
   actionNode?: ReactNode;
   collapsed?: boolean;
   onToggle?: () => void;
+  /** The action sits right after the label instead of at the far end. */
+  actionBesideLabel?: boolean;
 }) {
   const { t } = useTranslation();
   const toggleLabel = collapsed
     ? t("chat.expandSection", { defaultValue: "Show {{label}}", label })
     : t("chat.collapseSection", { defaultValue: "Hide {{label}}", label });
-  const titleClass = "min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground/75";
+  const titleClass = cn(
+    "min-w-0 truncate text-[12px] font-medium text-muted-foreground/75",
+    !actionBesideLabel && "flex-1",
+  );
 
   return (
-    <div className="flex h-7 items-center gap-1 pl-2 pr-1">
+    <div className="mb-1 flex h-8 items-center gap-1 ps-2 pe-1">
       {onToggle ? (
         <button
           type="button"
@@ -770,7 +894,7 @@ function SectionHeader({
         >
           <ChevronRight
             className={cn(
-              "h-3.5 w-3.5 transition-transform duration-200",
+              "rtl:[&:not(.rotate-90)]:rotate-180 h-3.5 w-3.5 transition-transform duration-200",
               !collapsed && "rotate-90",
             )}
             strokeWidth={1.75}
@@ -783,7 +907,7 @@ function SectionHeader({
         <button
           type="button"
           onClick={onToggle}
-          className={cn(titleClass, "rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-ring/50")}
+          className={cn(titleClass, "rounded-md text-start outline-none focus-visible:ring-1 focus-visible:ring-ring/50")}
         >
           {label}
         </button>
@@ -803,6 +927,7 @@ function SectionHeader({
           {action.icon}
         </button>
       ) : null}
+      {actionBesideLabel ? <span className="flex-1" aria-hidden /> : null}
     </div>
   );
 }
@@ -810,6 +935,7 @@ function SectionHeader({
 function ProjectGroupHeader({
   label,
   path,
+  tint,
   collapsed,
   onToggle,
   onOpen,
@@ -821,6 +947,8 @@ function ProjectGroupHeader({
 }: {
   label: string;
   path?: string;
+  /** Calm color of the folder icon, one per project. */
+  tint?: string;
   collapsed: boolean;
   onToggle: () => void;
   onOpen?: () => void;
@@ -851,23 +979,17 @@ function ProjectGroupHeader({
         onClick={onToggle}
         className="relative grid h-4 w-4 shrink-0 place-items-center rounded-sm text-muted-foreground/80 outline-none transition-colors before:absolute before:-inset-1.5 before:content-[''] hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
       >
-        <FolderGlyph className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+        <FolderGlyph className={cn("h-4 w-4", tint)} strokeWidth={1.75} aria-hidden />
       </button>
       <button
         type="button"
         onClick={onOpen ?? onToggle}
-        className="h-full min-w-0 flex-1 truncate rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+        className="h-full min-w-0 flex-1 truncate rounded-md text-start outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
       >
         {label}
       </button>
       {onNewChat || hasMenu ? (
-        <span
-          className={cn(
-            "ml-auto flex shrink-0 items-center gap-px opacity-0 transition-opacity",
-            "group-hover:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100",
-            "[@media(hover:none)]:opacity-100",
-          )}
-        >
+        <span className="ms-auto flex shrink-0 items-center gap-px">
           {onNewChat ? (
             <button
               type="button"
@@ -875,11 +997,11 @@ function ProjectGroupHeader({
                 event.stopPropagation();
                 onNewChat();
               }}
-              aria-label={t("sidebar.newAgent")}
               title={t("sidebar.newAgent")}
-              className={ROW_ACTION_CLASS}
+              className={NEW_AGENT_BUTTON_CLASS}
             >
-              <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              {t("sidebar.newAgent")}
             </button>
           ) : null}
           {hasMenu ? (
@@ -938,6 +1060,13 @@ function ProjectGroupHeader({
  * the timestamp's slot while the run lasts. Static dots under reduced motion.
  */
 const RUN_DOT_DELAYS_MS = [0, 300, 900, 600]; // DOM order TL, TR, BL, BR -> clockwise
+// One soft color per dot, the same calm families as the project folders.
+const RUN_DOT_COLORS = [
+  "bg-sky-500 dark:bg-sky-400",
+  "bg-emerald-500 dark:bg-emerald-400",
+  "bg-violet-500 dark:bg-violet-400",
+  "bg-amber-500 dark:bg-amber-400",
+];
 
 export function RunningDots({
   label,
@@ -954,11 +1083,15 @@ export function RunningDots({
       data-testid="chat-running-dots"
       className={cn("grid h-4 w-4 shrink-0 place-items-center", className)}
     >
-      <span className="grid grid-cols-2 gap-[3px]">
-        {RUN_DOT_DELAYS_MS.map((delay) => (
+      {/* 5px dots: the 3px ones read as a smudge at sidebar size. */}
+      <span className="grid grid-cols-2 gap-[2px]">
+        {RUN_DOT_DELAYS_MS.map((delay, index) => (
           <span
             key={delay}
-            className="h-[3px] w-[3px] rounded-full bg-current animate-[chat-run-dot_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+            className={cn(
+              "h-[5px] w-[5px] rounded-full animate-[chat-run-dot_1.2s_ease-in-out_infinite] motion-reduce:animate-none",
+              RUN_DOT_COLORS[index],
+            )}
             style={{ animationDelay: `${delay}ms` }}
           />
         ))}
@@ -972,11 +1105,14 @@ export function RunningDots({
  * a grip so the row can be dragged. Pinned chats keep the grip visible.
  */
 function ChatRowHandle({
+  compact = false,
   unread,
   pinned,
   active,
   dragLabel,
 }: {
+  /** Narrower column for chats inside a project folder. */
+  compact?: boolean;
   unread: boolean;
   pinned: boolean;
   active: boolean;
@@ -991,7 +1127,7 @@ function ChatRowHandle({
         role="img"
         aria-label={label}
         title={label}
-        className="grid h-4 w-4 shrink-0 place-items-center"
+        className={cn("grid h-4 shrink-0 place-items-center", compact ? "w-3" : "w-4")}
       >
         <span className="h-1.5 w-1.5 rounded-full bg-sidebar-foreground/80" />
       </span>
@@ -1004,9 +1140,12 @@ function ChatRowHandle({
       title={dragLabel}
       data-testid="chat-drag-handle"
       className={cn(
-        "grid h-4 w-4 shrink-0 cursor-grab place-items-center active:cursor-grabbing",
-        "text-muted-foreground/40 group-hover:text-muted-foreground/80",
-        pinned && "text-muted-foreground/70",
+        "grid h-4 shrink-0 cursor-grab place-items-center active:cursor-grabbing",
+        compact ? "w-3" : "w-4",
+        // Quiet list: the grip shows on hover or focus; a pinned chat keeps its mark.
+        "text-muted-foreground/70 opacity-0 transition-opacity duration-150",
+        "group-hover:opacity-100 group-focus-within:opacity-100",
+        pinned && "opacity-100",
         active && "text-sidebar-foreground/55",
       )}
     >
@@ -1034,7 +1173,7 @@ function ChatsFoldFooter({
       )}
     >
       <span className="h-4 w-4 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-left">
+      <span className="min-w-0 flex-1 truncate text-start">
         {t("chat.showMore", { count: hiddenCount })}
       </span>
     </button>

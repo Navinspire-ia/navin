@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -40,6 +41,13 @@ _MAX_LIST = 40
 _MAX_HISTORY = 80
 _MAX_FINGERPRINTS = 24
 _MAX_STEPS = 200
+# A proof is what a reviewer can re-check: a command and its result, a test
+# name, a file and line. A bare "ok" proves nothing.
+_MIN_PROOF_CHARS = 12
+_TRIVIAL_PROOFS = frozenset(
+    {"ok", "done", "yes", "passed", "pass", "works", "fixed", "verified", "complete", "completed"}
+)
+_PROOF_LINE = re.compile(r"^\s*#?(\d{1,2})\s*[:.)=-]\s*(.+?)\s*$")
 
 _DEFAULT_BUDGET = {
     "max_retries": 3,
@@ -153,6 +161,7 @@ def empty_ledger(*, goal: str = "", status: str = "draft") -> dict[str, Any]:
         "facts": [],
         "missing_info": [],
         "acceptance_criteria": [],
+        "criteria_evidence": {},
         "steps": [],
         "history": [
             {
@@ -326,6 +335,7 @@ def normalize_ledger(raw: Any) -> dict[str, Any] | None:
         pause_reason = ""
     elif isinstance(pause_reason, str):
         pause_reason = pause_reason.strip()[:80]
+    criteria = _clean_str_list(raw.get("acceptance_criteria"))
     return {
         "schema_version": MISSION_SCHEMA_VERSION,
         "goal": goal,
@@ -334,9 +344,12 @@ def normalize_ledger(raw: Any) -> dict[str, Any] | None:
         "constraints": _clean_str_list(raw.get("constraints")),
         "facts": _clean_str_list(raw.get("facts")),
         "missing_info": _clean_str_list(raw.get("missing_info")),
-        "acceptance_criteria": _clean_str_list(raw.get("acceptance_criteria")),
+        "acceptance_criteria": criteria,
+        "criteria_evidence": _clean_criteria_evidence(raw.get("criteria_evidence"), criteria),
         "steps": steps,
         "history": history,
+        "snapshots": _clean_snapshots(raw.get("snapshots")),
+        "outcomes": _clean_outcomes(raw.get("outcomes")),
         "paused_at": raw.get("paused_at") if isinstance(raw.get("paused_at"), str) else None,
         "pause_reason": pause_reason or "",
         "progress": _clean_progress(raw.get("progress")),
@@ -344,6 +357,141 @@ def normalize_ledger(raw: Any) -> dict[str, Any] | None:
         if isinstance(raw.get("updated_at"), str)
         else _now_iso(),
     }
+
+
+_SNAPSHOT_FIELDS = (
+    "goal",
+    "status",
+    "constraints",
+    "facts",
+    "missing_info",
+    "acceptance_criteria",
+    "criteria_evidence",
+    "steps",
+)
+
+
+def snapshot_of(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Restorable content of a ledger version (not its history or progress)."""
+    return json.loads(json.dumps({k: ledger.get(k) for k in _SNAPSHOT_FIELDS}))
+
+
+_DONE_STEP_STATUSES = frozenset({"completed", "done"})
+_OUTCOME_INT_FIELDS = (
+    "steps_total",
+    "steps_completed",
+    "retries",
+    "criteria_total",
+    "criteria_proven",
+)
+
+
+def outcome_of(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Measured result of a ledger state: steps done, retries, criteria proven.
+
+    Saved for every version on every save, so the outcome of a version is the
+    state it reached before the next replan, which is what a strategy produced.
+    """
+    steps = [s for s in ledger.get("steps") or [] if isinstance(s, dict)]
+    criteria = ledger.get("acceptance_criteria") or []
+    retries = 0
+    for step in steps:
+        try:
+            retries += max(0, int(step.get("retry_count") or 0))
+        except (TypeError, ValueError):
+            continue
+    return {
+        "status": str(ledger.get("status") or ""),
+        "steps_total": len(steps),
+        "steps_completed": sum(1 for s in steps if s.get("status") in _DONE_STEP_STATUSES),
+        "retries": retries,
+        "criteria_total": len(criteria),
+        "criteria_proven": len(criteria) - len(unproven_criteria(ledger)),
+        "updated_at": str(ledger.get("updated_at") or _now_iso()),
+    }
+
+
+def _clean_outcomes(raw: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, item in raw.items():
+        if not (isinstance(item, dict) and str(key).isdigit()):
+            continue
+        clean: dict[str, Any] = {
+            "status": _clean_str(item.get("status"), max_len=32) or "",
+            "updated_at": _clean_str(item.get("updated_at"), max_len=40) or "",
+        }
+        for field in _OUTCOME_INT_FIELDS:
+            try:
+                clean[field] = max(0, int(item.get(field) or 0))
+            except (TypeError, ValueError):
+                clean[field] = 0
+        out[str(int(key))] = clean
+    keep = sorted(out, key=int)[-_MAX_HISTORY:]
+    return {k: out[k] for k in keep}
+
+
+def _clean_snapshots(raw: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, snap in raw.items():
+        if isinstance(snap, dict) and str(key).isdigit():
+            out[str(int(key))] = snap
+    keep = sorted(out, key=int)[-_MAX_HISTORY:]
+    return {k: out[k] for k in keep}
+
+
+def _clean_criteria_evidence(raw: Any, criteria: list[str]) -> dict[str, str]:
+    """Proofs keyed by the criterion text they prove.
+
+    Keyed by text, not position: rewording or replacing a criterion drops its
+    proof, so a changed contract can never inherit the old one's evidence.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for criterion in criteria:
+        proof = _clean_str(raw.get(criterion), max_len=_MAX_SHORT)
+        if proof:
+            out[criterion] = proof
+    return out
+
+
+def is_real_proof(text: Any) -> bool:
+    """True when *text* is something a reviewer could re-check."""
+    if not isinstance(text, str):
+        return False
+    proof = text.strip()
+    if len(proof) < _MIN_PROOF_CHARS:
+        return False
+    return proof.lower().strip(" .!") not in _TRIVIAL_PROOFS
+
+
+def parse_criteria_evidence(text: str | None) -> dict[int, str]:
+    """Read ``N: proof`` lines (1-based criterion numbers) from *text*."""
+    proofs: dict[int, str] = {}
+    for line in (text or "").splitlines():
+        match = _PROOF_LINE.match(line)
+        if match:
+            proofs[int(match.group(1))] = match.group(2)
+    return proofs
+
+
+def checkpoint_id_for_version(version: int) -> str:
+    """Stable checkpoint id of a registry version."""
+    return f"ckpt-v{int(version)}"
+
+
+def unproven_criteria(ledger: Mapping[str, Any]) -> list[tuple[int, str]]:
+    """Acceptance criteria (1-based number, text) that still have no proof."""
+    evidence = ledger.get("criteria_evidence") or {}
+    return [
+        (number, criterion)
+        for number, criterion in enumerate(ledger.get("acceptance_criteria") or [], start=1)
+        if not is_real_proof(evidence.get(criterion))
+    ]
 
 
 def validation_requires_evidence(validation: Any) -> bool:
@@ -376,9 +524,40 @@ class MissionLedgerStore:
         if cleaned is None:
             raise BoardError("invalid mission ledger")
         cleaned["updated_at"] = _now_iso()
+        # One full snapshot per version, written the first time a version is
+        # saved. Files from before this feature simply lack older snapshots.
+        snaps = dict(cleaned.get("snapshots") or {})
+        snaps.setdefault(str(cleaned["version"]), snapshot_of(cleaned))
+        cleaned["snapshots"] = _clean_snapshots(snaps)
+        # The outcome follows the version as it runs (unlike its snapshot).
+        outcomes = dict(cleaned.get("outcomes") or {})
+        outcomes[str(cleaned["version"])] = outcome_of(cleaned)
+        cleaned["outcomes"] = _clean_outcomes(outcomes)
         with self._lock:
             _atomic_write_json(self.path, cleaned)
         return cleaned
+
+    def restore_version(
+        self, version: int, *, reason: str = "", actor: str = "user"
+    ) -> dict[str, Any]:
+        """Re-apply the snapshot of ``version`` as a NEW version (history is kept)."""
+        ledger = self.load()
+        if not ledger:
+            raise BoardError("no mission ledger")
+        snap = (ledger.get("snapshots") or {}).get(str(int(version)))
+        if not isinstance(snap, dict):
+            raise BoardError(f"version {int(version)} has no snapshot and cannot be restored")
+        for key in _SNAPSHOT_FIELDS:
+            if key in snap:
+                ledger[key] = json.loads(json.dumps(snap[key]))
+        note = _clean_str(reason, max_len=_MAX_SHORT) or "no reason given"
+        self.bump_version(
+            ledger,
+            reason=f"restore v{int(version)}: {note}",
+            changes=[f"restore:v{int(version)}"],
+            actor=actor,
+        )
+        return self.save(ledger)
 
     def create(
         self,
@@ -494,6 +673,39 @@ class MissionLedgerStore:
             ledger["status"] = "running"
         _ = actor  # reserved for activity callers
         return ledger
+
+    def record_criteria_evidence(
+        self,
+        ledger: dict[str, Any],
+        proofs: Mapping[int, str],
+        *,
+        actor: str = "agent",
+    ) -> list[str]:
+        """Attach proofs to acceptance criteria; return why any were refused."""
+        criteria = list(ledger.get("acceptance_criteria") or [])
+        evidence = dict(ledger.get("criteria_evidence") or {})
+        problems: list[str] = []
+        changed: list[str] = []
+        for number, proof in sorted(proofs.items()):
+            if not 1 <= number <= len(criteria):
+                problems.append(f"criterion {number} does not exist (1..{len(criteria)})")
+                continue
+            if not is_real_proof(proof):
+                problems.append(
+                    f"criterion {number}: '{proof}' is not a proof; give the command and "
+                    "its result, the test name or the file:line that shows it"
+                )
+                continue
+            cleaned = _clean_str(proof, max_len=_MAX_SHORT) or ""
+            if evidence.get(criteria[number - 1]) != cleaned:
+                evidence[criteria[number - 1]] = cleaned
+                changed.append(f"proof:{number}")
+        if changed:
+            ledger["criteria_evidence"] = evidence
+            self.bump_version(
+                ledger, reason="acceptance evidence", changes=changed, actor=actor
+            )
+        return problems
 
     @staticmethod
     def detect_loop(fingerprints: list[str], *, window: int = 6, repeats: int = 3) -> bool:
@@ -734,6 +946,7 @@ class MissionLedgerStore:
             "status": ledger.get("status"),
             "version": ledger.get("version"),
             "acceptance_criteria": list(ledger.get("acceptance_criteria") or []),
+            "criteria_evidence": dict(ledger.get("criteria_evidence") or {}),
             "constraints": list(ledger.get("constraints") or [])[:10],
             "facts": list(ledger.get("facts") or [])[:10],
             "missing_info": list(ledger.get("missing_info") or [])[:10],
@@ -784,9 +997,19 @@ class MissionLedgerStore:
         if snap.get("missing_info"):
             lines.append("Missing info: " + "; ".join(snap["missing_info"][:5]))
         if snap.get("acceptance_criteria"):
-            lines.append(
-                "Acceptance: " + "; ".join(snap["acceptance_criteria"][:5])
-            )
+            # Numbered with their proof state: this block is replayed every
+            # turn, so the contract survives model switches and compaction.
+            evidence = snap.get("criteria_evidence") or {}
+            marks = [
+                f"[{'x' if is_real_proof(evidence.get(c)) else ' '}] {n}. {c[:160]}"
+                for n, c in enumerate(snap["acceptance_criteria"][:8], start=1)
+            ]
+            lines.append("Acceptance: " + "; ".join(marks))
+            if any("[ ]" in mark for mark in marks):
+                lines.append(
+                    "Done needs proof for every criterion: "
+                    "ledger_update evidence='N: command -> result' before status=done."
+                )
         hist = snap.get("history_tail") or []
         if hist:
             last = hist[-1]

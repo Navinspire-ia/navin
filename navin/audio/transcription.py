@@ -160,6 +160,11 @@ def resolve_transcription_config(config: Any) -> EffectiveTranscriptionConfig:
     provider_cfg = _provider_config(config, provider)
     api_key = _resolve_transcription_api_key(provider, provider_cfg, config)
     api_base = _resolve_transcription_api_base(provider, provider_cfg)
+    if provider == "bedrock":
+        # Voxtral runs with the Bedrock provider's AWS credentials and region.
+        from navin.providers.bedrock_media import provider_credentials
+
+        api_key, api_base = provider_credentials(provider_cfg)
     model = (getattr(top, "model", None) or default_model).strip()
     # Only legacy automatic settings may fall back to a managed/shared key.
     # Keep an explicit BYOK choice on its provider even when its key is missing.

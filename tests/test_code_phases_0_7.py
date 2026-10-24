@@ -26,6 +26,7 @@ class Phase0FoundationsTest(unittest.TestCase):
 
         class FakeConfig:
             model_routes = {"code": "tab-model", "fast": "chat-fast"}
+            model_routing_enabled = True
 
         with patch("navin.config.loader.load_config", return_value=FakeConfig()):
             self.assertEqual(assist_api._assist_preset(), "tab-model")
@@ -94,14 +95,14 @@ class Phase1EditorTest(unittest.TestCase):
 
 class Phase2AgentTest(unittest.TestCase):
     def test_code_denied_and_apply_patch_keys(self) -> None:
+        import navin.command.modules as modules
         from navin.command.modules import (
-            APPLY_PATCH_ONLY_METADATA_KEY,
             CODE_DENIED_TOOLS,
             READ_ONLY_TOOLS_METADATA_KEY,
         )
 
         self.assertIn("scrape", CODE_DENIED_TOOLS)
-        self.assertEqual(APPLY_PATCH_ONLY_METADATA_KEY, "apply_patch_only")
+        self.assertFalse(hasattr(modules, "APPLY_PATCH_ONLY_METADATA_KEY"))
         self.assertEqual(READ_ONLY_TOOLS_METADATA_KEY, "read_only_tools")
 
     def test_context_pack_provider_registered(self) -> None:

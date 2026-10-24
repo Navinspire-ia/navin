@@ -10,16 +10,22 @@ import contextlib
 import json
 import re
 import time
+from collections.abc import Iterator
+from operator import itemgetter
 from typing import Any
 
-from rich.cells import cell_len
+from rich.cells import cell_len, set_cell_size
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.geometry import Region
 from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
@@ -28,17 +34,24 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from navin.tui.brand import MARK, tide_text, wave_frame
+from navin.providers.model_names import bedrock_display_name, is_bedrock_model_id
+from navin.tui.brand import MARK, tide_text
+from navin.tui.copy_chip import CopyChip
+from navin.tui.frame_scheduler import FRAME_SECONDS, FrameRequest, note_input, schedule_paint
 from navin.tui.frames import paint_input
 from navin.tui.markdown import install_path_styles, readable_validation_report
 from navin.tui.markdown_stream import TranscriptMarkdown
 from navin.tui.modes import display_user_text
+from navin.tui.nodelist_fix import install as install_nodelist_fix
 from navin.tui.paths import PATH_INK, looks_like_path
 from navin.tui.perf import install as install_textual_perf
+from navin.tui.settled import SettledMarkdown
 from navin.tui.textmarkup import escape
+from navin.tui.virtual import BlockRecord, RecordGap
 from navin.utils.command_output import (
     COMMAND_PREVIEW_LINES,
     GIT_PREVIEW_LINES,
+    CompactRowsCache,
     command_exit_code,
     compact_command_rows,
     is_exit_line,
@@ -56,8 +69,10 @@ from navin.utils.tool_hints import (
     CARD_ONLY_TOOLS,
     MAX_TRANSCRIPT_LINES,
     PREVIEW_OPEN_LINES,
+    StreamRowsCache,
     activity_head_text,
     activity_label,
+    activity_palette,
     activity_path_key,
     clip_transcript,
     command_summary,
@@ -68,9 +83,12 @@ from navin.utils.tool_hints import (
     format_tool_detail,
     format_tool_preview_markup,
     format_turn_summary,
+    highlight_output_statuses,
+    humanize_agent_error,
     is_validation_pending,
     preview_rows,
     redact_command,
+    result_summary,
     short_run_target,
     tool_cluster_kind,
     tool_target,
@@ -79,11 +97,38 @@ from navin.utils.tool_hints import (
 
 install_path_styles()
 install_textual_perf()
+install_nodelist_fix()
 
 # Coalesce bursts without making input or the engine wait for each paint.
-STREAM_FRAME_SECONDS = 1 / 20
+# Streams paint on the app-wide frame clock (navin.tui.frame_scheduler).
+STREAM_FRAME_SECONDS = FRAME_SECONDS
+# One answer re-parses its Markdown tail at most this often; the clock's
+# other frames go to tool rows, spinners and, first of all, typing.
+STREAM_PAINT_SECONDS = 1 / 20
+# When the process is already busy (a long turn, parallel answers, the engine
+# working on the same loop), each paint and its relayout take CPU from the
+# model stream itself: paint less often, down to this slowest cadence.
+STREAM_PAINT_SLOW_SECONDS = 1 / 6
+STREAM_PAINT_BUSY_SHARE = 0.3
+
+
+def stream_paint_delay(widget: Any) -> float:
+    """Next stream paint delay, from this process's CPU share since the last one."""
+    wall, cpu = time.monotonic(), time.process_time()
+    last = getattr(widget, "_stream_paint_clock", None)
+    widget._stream_paint_clock = (wall, cpu)
+    if last is None or wall - last[0] <= 0:
+        return STREAM_PAINT_SECONDS
+    share = (cpu - last[1]) / (wall - last[0])
+    if share <= STREAM_PAINT_BUSY_SHARE:
+        return STREAM_PAINT_SECONDS
+    # 30% busy -> 1/20 s, fully busy (or more, with threads) -> 1/6 s.
+    ratio = min(1.0, (share - STREAM_PAINT_BUSY_SHARE) / (1 - STREAM_PAINT_BUSY_SHARE))
+    return STREAM_PAINT_SECONDS + ratio * (STREAM_PAINT_SLOW_SECONDS - STREAM_PAINT_SECONDS)
 TOOL_OUTPUT_FRAME_SECONDS = 0.1
 ACTIVITY_PAGE_SIZE = 20
+# One-cell spinner for running rows: aligned with the done/failed icons.
+ROW_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -99,6 +144,24 @@ def content_width(widget: Widget) -> int:
     """
     width = widget.outer_size.width - widget.styles.gutter.width - widget.scrollbar_gutter.width
     return max(0, width)
+
+
+def same_height_text(widget: Widget, old: str, new: str) -> bool:
+    """Whether ``new`` keeps the rows ``old`` took, so no layout is needed.
+
+    Any layout request reflows and repaints the whole screen (about 30 ms on
+    a long chat). A status line whose spinner or clock ticks keeps its size:
+    true only when both texts fit the width unwrapped, on as many lines.
+    """
+    if not widget.display:
+        return True  # takes no rows; showing it again lays it out
+    width = content_width(widget)
+    if width <= 0:
+        return False
+    old_lines, new_lines = old.split("\n"), new.split("\n")
+    return len(old_lines) == len(new_lines) and all(
+        cell_len(line) <= width for line in (*old_lines, *new_lines)
+    )
 
 
 def swap_classes(widget: Widget, remove: set[str] | frozenset[str], add: set[str] | frozenset[str]) -> None:
@@ -126,6 +189,70 @@ class LocalDisplayStyles:
         return
 
 
+def forget_app_watchers(widget: Widget) -> None:
+    """Drop ``widget.watch(app, ...)`` callbacks when the widget leaves.
+
+    Textual prunes them only the next time the watched value changes (a
+    theme switch), so every tool row ever removed stayed reachable from the
+    app until then.
+    """
+    try:
+        app = widget.app
+    except Exception:  # noqa: BLE001 - never mounted
+        return
+    for callbacks in (getattr(app, "__watchers", None) or {}).values():
+        if any(node is widget for node, _callback in callbacks):
+            callbacks[:] = [item for item in callbacks if item[0] is not widget]
+
+
+def restyle_focus(widget: Widget, *children: Widget) -> None:
+    """Apply a focus change to ``widget`` and the few children its CSS styles.
+
+    Textual's default ``watch_has_focus`` restyles the whole subtree. For a
+    focusable container that is every block inside it: focusing the chat
+    (or a tool group with hundreds of rows) cost seconds on a long session,
+    though only the container's own ``:focus`` rules (if any) change.
+    """
+    if not widget.is_attached:
+        return
+    widget.app.stylesheet.update_nodes([widget, *children], animate=True)
+
+
+# -- records: blocks kept as data while out of view (navin.tui.virtual) -----
+
+# Plain attributes a Static-based block carries next to its content.
+_STATIC_ATTRS = ("latest", "detail", "echo", "narration", "task_id", "transient")
+
+
+def static_state(widget: Static) -> dict[str, Any]:
+    """What rebuilds a Static block exactly: content, markup mode, attributes."""
+    state: dict[str, Any] = {"content": widget.content, "markup": widget._render_markup}
+    attrs = widget.__dict__
+    for name in _STATIC_ATTRS:
+        if name in attrs:
+            state[name] = attrs[name]
+    return state
+
+
+def build_static(widget_type: type[Static], state: dict[str, Any]) -> Static:
+    # The subclass __init__ formats its arguments into content; the content
+    # is already formatted, so only the Static part runs again.
+    widget = widget_type.__new__(widget_type)
+    Static.__init__(widget, state["content"], markup=state["markup"])
+    for name in _STATIC_ATTRS:
+        if name in state:
+            setattr(widget, name, state[name])
+    return widget
+
+
+def static_record(widget: Static) -> BlockRecord:
+    return BlockRecord(
+        type(widget), static_state(widget),
+        lambda record: build_static(record.widget_type, record.state),
+        classes=set(widget.classes),
+    )
+
+
 def token_label(text: str) -> str:
     """``~840 tokens`` / ``~1.2k tokens``: the unit a model is billed in.
 
@@ -136,6 +263,38 @@ def token_label(text: str) -> str:
     if tokens >= 1000:
         return f"~{tokens / 1000:.1f}k tokens"
     return f"~{tokens} tokens"
+
+
+# Every running row's spinner advances on one shared tick, in one paint pass.
+ROW_SPIN_SECONDS = 0.12
+
+
+def running_tool_rows(app: Any) -> dict[Any, None]:
+    """Rows whose spinner is live, in start order (one registry per app)."""
+    rows = getattr(app, "_running_tool_rows", None)
+    if rows is None:
+        rows = {}
+        app._running_tool_rows = rows
+    return rows
+
+
+def tick_running_rows(app: Any) -> None:
+    """Advance every live row spinner at once.
+
+    NavinApp calls this from its own status tick; another host gets a single
+    app-level timer that stops itself when no row is running. Either way a
+    row never owns a timer, so 12 parallel reads cost one pass, not 12.
+    """
+    rows = getattr(app, "_running_tool_rows", None)
+    if not rows:
+        timer = getattr(app, "_row_spin_timer", None)
+        if timer is not None:
+            timer.stop()
+            app._row_spin_timer = None
+        return
+    with app.batch_update():
+        for row in list(rows):
+            row._tick()
 
 
 def on_screen(widget: Widget) -> bool:
@@ -378,9 +537,61 @@ def looks_like_client_prompt(text: str) -> bool:
     return False
 
 
+# Narration between tool steps stays whole; only a runaway one is capped.
+NARRATION_CHARS = 600
+
+
+# Markdown structure in an interim message: a heading, list, table, quote or
+# code fence line, bold / inline code, or several paragraphs.
+_RICH_LINE = re.compile(r"^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>\s|```)", re.M)
+
+
+def is_rich_narration(text: str) -> bool:
+    """True when an interim message carries Markdown worth rendering as such.
+
+    Flattening it into the one-line narration turned tables, lists, headings,
+    bold and code into a grey run-on line ("· # Title | a | b | | --- |...").
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if "```" in stripped or "**" in stripped or "`" in stripped or _RICH_LINE.search(stripped):
+        return True
+    return len([part for part in re.split(r"\n\s*\n", stripped) if part.strip()]) >= 2
+
+
+def narration_text(text: str, limit: int = NARRATION_CHARS) -> str:
+    """The full interim message as one wrapped line, capped with "…"."""
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    cut = compact[: max(limit - 1, 1)]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip() + "…"
+
+
+def markdown_plain(text: str) -> str:
+    """Markdown as read on screen: no `#`, `**`, backticks, list or table marks."""
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if re.fullmatch(r"[|:\-\s]+", line) or line.startswith("```"):
+            continue
+        line = re.sub(r"^#{1,6}\s+|^>\s?|^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?", "", line)
+        line = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", line)
+        line = re.sub(r"(\*\*|__|~~)(.+?)\1", r"\2", line)
+        line = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"\1", line)
+        line = re.sub(r"`+([^`]*)`+", r"\1", line)
+        if line.startswith("|"):
+            line = " · ".join(cell.strip() for cell in line.strip("|").split("|"))
+        out.append(line)
+    return "\n".join(out)
+
+
 def assistant_preview(text: str, limit: int = PREVIEW_CHARS) -> str:
     """One short line for the folded reflection view."""
-    compact = " ".join((text or "").split())
+    compact = " ".join(markdown_plain(text).split())
     if not compact:
         return ""
     match = re.match(r"^(.+?[.!?])(?:\s|$)", compact)
@@ -464,7 +675,7 @@ class UserMessage(Vertical):
     UserMessage {
         height: auto;
         margin: 1 0 1 0;
-        padding: 1 1;
+        padding: 0 1;
         border: none;
         background: $panel;
     }
@@ -531,19 +742,39 @@ class UserMessage(Vertical):
     def copy_text(self) -> str:
         return clip_transcript(self.raw_text)
 
+    def snapshot_record(self) -> BlockRecord | None:
+        return BlockRecord(
+            type(self),
+            {"raw_text": self.raw_text, "show_head": self._show_head, "expanded": self._expanded},
+            UserMessage._from_record,
+            classes=set(self.classes),
+            copy=lambda record: clip_transcript(record.state["raw_text"]),
+        )
+
+    @staticmethod
+    def _from_record(record: BlockRecord) -> UserMessage:
+        state = record.state
+        message = record.widget_type("", show_head=state["show_head"])
+        message.raw_text = state["raw_text"]
+        message._expanded = state["expanded"]
+        return message
+
 
 class ReasoningBlock(Vertical):
-    """Collapsible reasoning stream (model thinking)."""
+    """Model thinking, folded to one line: ``Thinking…`` then ``Thought for 4s``.
+
+    The live animation belongs to the working line under the chat; this row
+    stays still and keeps the full text one click away.
+    """
 
     DEFAULT_CSS = """
     ReasoningBlock {
         height: auto;
         margin: 0;
-        padding: 0 1;
-        border-left: tall $accent 50%;
+        padding: 0;
     }
     ReasoningBlock > .reasoning-head {
-        color: $accent;
+        color: $text-muted;
         text-style: italic;
     }
     ReasoningBlock > .reasoning-body {
@@ -561,36 +792,70 @@ class ReasoningBlock(Vertical):
         self._buffer: list[str] = []
         self._open = False
         self._done = False
-        self._paint_timer: Timer | None = None
+        self._paint_timer: FrameRequest | None = None
+        self._segment_started = time.monotonic()
+        self._elapsed = 0.0
 
     def compose(self) -> ComposeResult:
-        yield Static("◌ thinking…", classes="reasoning-head")
-        yield Static("", classes="reasoning-body")
+        yield Static(self._head_markup(), classes="reasoning-head")
+        body = escape("".join(self._buffer)[-6000:]) if self._open and self._done else ""
+        yield Static(body, classes="reasoning-body")
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"buffer": "".join(self._buffer), "elapsed": self.elapsed, "open": self._open}
+
+    @classmethod
+    def from_snapshot(cls, state: dict[str, Any]) -> ReasoningBlock:
+        block = cls()
+        block._buffer = [state["buffer"]] if state["buffer"] else []
+        block._done = True
+        block._elapsed = state["elapsed"]
+        block._open = state["open"]
+        return block
+
+    @property
+    def elapsed(self) -> float:
+        running = 0.0 if self._done else time.monotonic() - self._segment_started
+        return self._elapsed + running
+
+    def _head_markup(self) -> str:
+        hint = "[dim] (click to collapse)[/dim]" if self._open else "[dim] (click to expand)[/dim]"
+        if not self._done:
+            return f"∴ Thinking…{hint if self._buffer else ''}"
+        return f"∴ Thought for {format_elapsed(max(1.0, self.elapsed))}{hint}"
 
     def append(self, text: str) -> None:
         self._buffer.append(text)
         if self._paint_timer is None:
-            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._paint)
+            self._paint_timer = schedule_paint(self, "reasoning", self._paint)
+
+    def reopen(self) -> None:
+        """Continue the same thought: a new segment with nothing in between."""
+        if not self._done:
+            return
+        self._done = False
+        self._segment_started = time.monotonic()
+        self._paint()
 
     def _paint(self) -> None:
         self._paint_timer = None
         if not self.is_attached:
             return
         if not self._done and self.screen is not self.app.screen:
-            self._paint_timer = self.set_timer(0.1, self._paint)
+            self._paint_timer = schedule_paint(self, "reasoning", self._paint, delay=0.1)
             return
-        joined = "".join(self._buffer)
         if self._open:
+            joined = "".join(self._buffer)
             self.query_one(".reasoning-body", Static).update(escape(joined[-6000:]))
-        self.query_one(".reasoning-head", Static).update(
-            ("[$success]✓[/] [$accent]reasoning[/]" if self._done else "[$accent]◌ thinking…[/]")
-            + f" [dim]({token_label(joined)}, click to toggle)[/dim]"
-        )
+        self.query_one(".reasoning-head", Static).update(self._head_markup())
 
     def finish(self) -> None:
+        if not self._done:
+            self._elapsed += time.monotonic() - self._segment_started
         self._done = True
         if self._paint_timer is not None:
             self._paint_timer.stop()
+            self._paint_timer = None
         self._paint()
 
     def toggle(self) -> None:
@@ -598,10 +863,33 @@ class ReasoningBlock(Vertical):
         self.set_class(self._open, "-open")
         if self._paint_timer is not None:
             self._paint_timer.stop()
+            self._paint_timer = None
         self._paint()
 
     def on_click(self) -> None:
         self.toggle()
+
+
+_BELL_AND_ERASE_RE = re.compile(r"\x07|\x1b\[[0-2]?K|\x1b\[\?25[hl]")
+
+
+def terminal_lines(text: str) -> list[str]:
+    """Output lines as a terminal leaves them on screen.
+
+    A carriage return redraws its line (progress bars, spinners), so only the
+    last redraw is kept instead of one row per frame; bells and erase codes
+    are dropped.
+    """
+    text = _BELL_AND_ERASE_RE.sub("", text.replace("\r\n", "\n"))
+    lines = []
+    for line in text.split("\n"):
+        if "\r" in line:
+            frames = [frame for frame in line.split("\r") if frame.strip()]
+            line = frames[-1] if frames else ""
+        lines.append(line)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
@@ -622,6 +910,11 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
     }
     ToolCall:focus > .tool-head { background: $surface; }
     ToolCall.-validation-pending > .tool-head { color: $warning; }
+    ToolCall > .tool-summary {
+        height: auto;
+        color: $text-muted;
+        background: $background;
+    }
     ToolCall.-cancelled > .tool-head { color: $text-muted; }
     ToolCall > .tool-output {
         height: auto;
@@ -645,7 +938,13 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         color: $text-muted;
         background: $background;
     }
-    ToolCall > Button.tool-more.-style-default {
+    ToolCall > .tool-actions {
+        width: 1fr;
+        height: auto;
+        background: $background;
+    }
+    ToolCall > .tool-actions > CopyChip { margin: 0 0 0 1; }
+    ToolCall Button.tool-more.-style-default {
         height: 1;
         min-height: 1;
         min-width: 0;
@@ -657,7 +956,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         color: $text-muted;
         text-style: none;
     }
-    ToolCall > Button.tool-more.-style-default:hover, ToolCall > Button.tool-more.-style-default:focus {
+    ToolCall Button.tool-more.-style-default:hover, ToolCall Button.tool-more.-style-default:focus {
         background: $panel;
         color: $foreground;
         text-style: none;
@@ -703,15 +1002,19 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         self._show_full = False
         self._spin = 0
         self._open = False
+        self._output_mounted = False
         self.cluster_kind = ""
         self._cluster_owner: ToolCluster | None = None
         self.tree_mark = ""
-        self._spin_timer: Timer | None = None
-        self._output_timer: Timer | None = None
+        self._spin_app: Any = None
+        self._output_timer: FrameRequest | None = None
         self._painted_head: tuple[str, bool] | None = None
         self._body_size: tuple[int, int] | None = None
         self._preview_overflow = False
-        self._command_summary_cache: dict = {}
+        # Live output only (created on its first paint, dropped at the end):
+        # thousands of finished rows in a long session keep no cache objects.
+        self._command_summary_cache: CompactRowsCache | None = None
+        self._stream_rows_cache: StreamRowsCache | None = None
         self._body_revision = 0
         self._painted_body_key: tuple | None = None
         if tool_verb(name) in {"edit", "create"}:
@@ -721,17 +1024,84 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
 
     def compose(self) -> ComposeResult:
         yield Static(self._plain_head(), classes="tool-head", markup=False)
-        with VerticalScroll(classes="tool-output"):
-            yield Static("", classes="tool-command", markup=False)
-            yield Static("", classes="tool-body", markup=False)
-        yield Button("Show full output", classes="tool-more", compact=True)
+        summary = Static("", classes="tool-summary", markup=False)
+        summary.display = False
+        yield summary
+        if self._open:
+            self._output_mounted = True
+            with VerticalScroll(classes="tool-output"):
+                yield from self._output_widgets()
+            with Horizontal(classes="tool-actions"):
+                yield from self._action_widgets()
+
+    def _output_widgets(self) -> list[Widget]:
+        return [
+            Static("", classes="tool-command", markup=False),
+            Static("", classes="tool-body", markup=False),
+        ]
+
+    def _action_widgets(self) -> list[Widget]:
+        return [
+            Button("Show full output", classes="tool-more", compact=True),
+            # The command and its full retained output, one click.
+            CopyChip(self.copy_text, classes="tool-copy"),
+        ]
+
+    def _ensure_output(self) -> None:
+        """Mount the output viewport and its actions on the first open.
+
+        Most rows stay folded for their whole life. Their six output widgets
+        (about 1,000 tracked objects) made every row cost three times what
+        it shows, and full garbage collections over a long turn froze the
+        CLI for a second. Mounted synchronously, so queries see them at once.
+        """
+        if self._output_mounted:
+            return
+        self._output_mounted = True
+        viewport = VerticalScroll(classes="tool-output")
+        actions = Horizontal(classes="tool-actions")
+        self.mount(viewport, actions)
+        viewport.mount(*self._output_widgets())
+        actions.mount(*self._action_widgets())
 
     def on_mount(self) -> None:
-        if not self.cluster_kind:
-            self._spin_timer = self.set_interval(0.12, self._tick)
+        # Grouped rows animate too: each running step shows its own spinner,
+        # driven by the one app-level tick (a finished replayed row gets none).
+        if self.phase in {"start", "output"}:
+            self._start_spinning()
         self.watch(self.app, "theme", self._theme_changed, init=False)
         self._refresh_head()
         self._refresh_body()
+
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        # Only ``ToolCall:focus > .tool-head`` depends on focus.
+        restyle_focus(self, *self.query_children(".tool-head"))
+
+    def on_unmount(self) -> None:
+        self._stop_spinning()
+        if self._output_timer is not None:
+            self._output_timer.stop()
+            self._output_timer = None
+        forget_app_watchers(self)
+
+    @property
+    def spinning(self) -> bool:
+        """Whether the shared tick animates this row."""
+        return self._spin_app is not None
+
+    def _start_spinning(self) -> None:
+        if self._spin_app is not None or not self.is_attached:
+            return
+        app = self.app
+        self._spin_app = app
+        running_tool_rows(app)[self] = None
+        if not getattr(app, "drives_row_spinners", False) and getattr(app, "_row_spin_timer", None) is None:
+            app._row_spin_timer = app.set_interval(ROW_SPIN_SECONDS, lambda: tick_running_rows(app))
+
+    def _stop_spinning(self) -> None:
+        app, self._spin_app = self._spin_app, None
+        if app is not None:
+            running_tool_rows(app).pop(self, None)
 
     def _theme_changed(self, _theme: str) -> None:
         self._refresh_head()
@@ -743,11 +1113,25 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                 self._notify_cluster()
             return
         try:
-            key = (self._plain_head(), self.app.current_theme.dark)
+            summary = self._summary_text()
+            inline = bool(self.cluster_kind)
+            key = (self._plain_head(), self.app.current_theme.dark, summary)
             if key != self._painted_head:
-                self.query_one(".tool-head", Static).update(
-                    activity_head_text(key[0], dark=key[1]), layout=not animation_only,
+                head = activity_head_text(key[0], dark=key[1])
+                if inline and summary:
+                    head.append(f"  {summary}", style=activity_palette(key[1])["muted"])
+                head_widget = self.query_one(".tool-head", Static)
+                old = str(head_widget.content)
+                # A finished step swaps its spinner for a check: same row.
+                head_widget.update(
+                    head,
+                    layout=not (animation_only or same_height_text(head_widget, old, head.plain)),
                 )
+                line = self.query_one(".tool-summary", Static)
+                below = "" if inline or not summary else f"  └ {summary}"
+                if str(line.content) != below:
+                    line.update(below)
+                line.display = bool(below)
                 self._painted_head = key
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
@@ -767,33 +1151,24 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
 
     def _tick(self) -> None:
         if self.phase in {"start", "output"} and on_screen(self):
-            self._spin = (self._spin + 1) % self.SPINNER_STEPS
+            self._spin = (self._spin + 1) % len(ROW_SPINNER)
             self._refresh_head(notify_cluster=False, animation_only=True)
 
     def _status_glyph(self) -> str:
-        # Three cells wide in every state so the tool names stay aligned.
+        """One cell: spinner while running, green check, red cross."""
         if self.phase in {"start", "output"}:
-            return wave_frame(self._spin)
+            return ROW_SPINNER[self._spin % len(ROW_SPINNER)]
         if self.validation_pending:
-            return " ! "
-        return " ✓ "
+            return "!"
+        if self.phase == "error":
+            return "×"
+        if self.phase == "end":
+            return "✓"
+        return "•"
 
     @property
     def validation_pending(self) -> bool:
         return self.phase == "error" and is_validation_pending(self.tool_name, self.error)
-
-    @property
-    def quiet_failure(self) -> bool:
-        """A failed step that changed nothing: a bad edit call, a missing
-        file, a refused board move. The agent retries; the transcript never
-        shows it. A failed command keeps its row: its output is the step."""
-        return (
-            self.phase == "error"
-            and not self.validation_pending
-            and not self.file_recorded
-            and tool_verb(self.tool_name) != "run"
-            and self.tool_name != "test_run"
-        )
 
     def _plain_head(self) -> str:
         if self.cluster_kind == "explore":
@@ -818,30 +1193,66 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                 label = label.replace(
                     command_summary(raw.strip()), short_run_target(redact_command(raw.strip())),
                 )
-        if self.percent is not None:
+        if self.percent is not None and self.phase in {"start", "output", "error"}:
+            # While it runs, and where a failure stopped it; once done, the
+            # icon and the outcome line already say it.
             from navin.utils.task_progress import progress_bar
 
             label += "  " + progress_bar(self.percent)
+        glyph = self._status_glyph()
         if self.cluster_kind:
-            mark = self.tree_mark or "  "
+            mark = self.tree_mark
             if self.cluster_kind == "explore" and self.phase == "cancelled":
                 label += "  (cancelled)"
-            return f"{mark}{label}"
-        if self.validation_pending:
-            mark = "! "
-        elif self.phase == "cancelled":
-            # A failure is a step, not a verdict: agents probe and retry.
-            # Whether the task worked is the final message's job, not a red
-            # cross on a row.
-            mark = "• "
-        elif self.phase in {"start", "output"}:
-            mark = f"{self._status_glyph().strip()} "
-        else:
-            mark = "• "
-        return f"{mark}{label}".replace("\n", "\n  │ ")
+            return f"{mark}{glyph} {label}"
+        return f"{glyph} {label}".replace("\n", "\n  │ ")
+
+    def _summary_text(self) -> str:
+        """The outcome under a finished row (``120 lines``, ``exit 0 · 4 lines``)."""
+        if self.phase not in {"end", "error"} or self.file_recorded:
+            return ""
+        key = (self._body_revision, self.phase)
+        cached = getattr(self, "_summary_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        text = result_summary(
+            self.tool_name, self.arguments, self.result, self.output_lines,
+            phase=self.phase, error=self.error,
+        )
+        self._summary_cache = (key, text)
+        return text
 
     def _head_text(self) -> str:
         return self._plain_head()
+
+    # Everything a finished card needs to be built again off its record.
+    _SNAPSHOT_FIELDS = (
+        "phase", "result", "error", "percent", "added", "removed", "edit_count",
+        "diff_text", "file_path", "file_operation", "file_recorded", "file_truncated",
+        "file_binary", "_show_full", "_open", "cluster_kind", "tree_mark",
+    )
+
+    def snapshot(self) -> dict[str, Any]:
+        """The card as data (results and arguments are shared, not copied)."""
+        self._flush_output_buffer()
+        data = {name: getattr(self, name) for name in self._SNAPSHOT_FIELDS}
+        data.update(
+            call_id=self.call_id, call_ids=list(self.call_ids), tool_name=self.tool_name,
+            arguments=self.arguments, output_lines=self._output_lines,
+            classes=frozenset(self.classes),
+        )
+        return data
+
+    @classmethod
+    def from_snapshot(cls, data: dict[str, Any]) -> ToolCall:
+        card = cls(data["call_id"], data["tool_name"], data["arguments"])
+        for name in cls._SNAPSHOT_FIELDS:
+            setattr(card, name, data[name])
+        card.call_ids = list(data["call_ids"])
+        card._output_lines = list(data["output_lines"])
+        card._output_buffer = "\n".join(card._output_lines)
+        card.set_classes(set(data["classes"]))
+        return card
 
     def continuation(self) -> ToolCall:
         """Copy a live card's data without reusing its widget or timers."""
@@ -865,7 +1276,9 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
     ) -> None:
         from navin.utils.task_progress import parse_progress_from_output
 
-        if percent is None and output:
+        if percent is None and output and tool_verb(self.tool_name) != "run":
+            # A shell's `[100%]` or `60%` is output, not a progress report:
+            # parsing it drew a bar that jumped on every streamed chunk.
             percent = parse_progress_from_output(output).get("percent")
         progress_changed = percent is not None and percent != self.percent
         if percent is not None:
@@ -882,20 +1295,25 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                 self._flush_output_buffer()
         if phase == "output":
             self.phase = "output"
+            if not self._open and not self.cluster_kind and (
+                tool_verb(self.tool_name) == "run" or self.tool_name == "test_run"
+            ):
+                # A running command shows its output live under its row.
+                self._open = True
         elif phase in {"end", "error", "cancelled"}:
             self._body_revision += 1
             if tool_verb(self.tool_name) == "run" or self.tool_name == "test_run":
                 code = command_exit_code(result)
                 if code is not None and phase == "end":
-                    self.percent = 100
+                    if code == 0 and self.percent is not None:
+                        # A bar only on a command that reported its progress.
+                        self.percent = 100
                     if code != 0:
                         phase = "error"
             self.phase = phase
             self.result = result
             self.error = error
-            self.display = not self.quiet_failure
-            if self._spin_timer is not None:
-                self._spin_timer.pause()
+            self._stop_spinning()
             swap_classes(
                 self,
                 {"-running", "-ok", "-error", "-cancelled", "-validation-pending"},
@@ -906,7 +1324,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             if progress_changed:
                 self._refresh_head()
             if self.is_attached and self._output_timer is None:
-                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
+                self._output_timer = self._schedule_output_paint()
             if not self.is_attached:
                 self._notify_cluster()
             return
@@ -922,13 +1340,30 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
     def _flush_output_buffer(self) -> None:
         if not self._pending_output:
             return
-        self._output_buffer += "".join(self._pending_output)
+        old = self._output_buffer
+        buffer = self._output_buffer = old + "".join(self._pending_output)
         self._pending_output.clear()
         self._pending_output_chars = 0
-        lines = self._output_buffer.splitlines()
+        # Complete lines never change: re-split only from the start of the
+        # old last line (it may have grown or been redrawn). The same line
+        # objects survive, so the preview caches compare them by identity.
+        start = old.rfind("\n") + 1
+        tail = terminal_lines(old[start:])
+        prefix = len(self._output_lines) - len(tail)
+        if old and prefix == old.count("\n", 0, start) and self._output_lines[prefix:] == tail:
+            lines = self._output_lines[:prefix] + terminal_lines(buffer[start:])
+        else:
+            lines = terminal_lines(buffer)
         self._output_lines = lines[-MAX_TRANSCRIPT_LINES:]
-        if len(lines) > MAX_TRANSCRIPT_LINES:
-            trailing = "\n" if self._output_buffer.endswith("\n") else ""
+        drop = len(lines) - MAX_TRANSCRIPT_LINES
+        if 0 < drop <= 64:
+            # Cut the dropped lines off the raw text, without joining 5000.
+            cut = -1
+            for _ in range(drop):
+                cut = buffer.find("\n", cut + 1)
+            self._output_buffer = buffer[cut + 1:]
+        elif drop > 0:
+            trailing = "\n" if buffer.endswith("\n") else ""
             self._output_buffer = "\n".join(self._output_lines) + trailing
 
     def _paint_output(self) -> None:
@@ -940,29 +1375,28 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             # Keep all output in memory, but don't parse and style thousands
             # of hidden lines while the user types or opens a picker. The
             # latest output paints as soon as this activity comes into view.
-            self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
+            self._output_timer = self._schedule_output_paint()
             return
         self._flush_output_buffer()
         if self.phase != "output":
             self._refresh_head()
         self._refresh_body()
 
+    def _schedule_output_paint(self) -> FrameRequest | None:
+        # Live logs repaint ten times a second on the app's shared frame
+        # clock: parallel commands share its frames instead of each waking
+        # its own timer between the user's key presses.
+        return schedule_paint(
+            self, "output", self._paint_stream_output, delay=TOOL_OUTPUT_FRAME_SECONDS, yield_to_input=True,
+        )
+
     async def _paint_stream_output(self) -> None:
-        # Streaming timers often expire together. Yield between their costly
-        # previews so input and navigation can run between individual paints.
+        # Async on purpose: the frame clock runs these previews one at a
+        # time within its budget and lets a queued key paint between them.
         if not self.is_attached:
+            self._output_timer = None
             return
-        if not self._open or self._defer_output_paint():
-            self._paint_output()
-            return
-        app = self.app
-        lock = getattr(app, "_tool_output_paint_lock", None)
-        if lock is None:
-            lock = app._tool_output_paint_lock = asyncio.Lock()
-        async with lock:
-            if self.is_attached:
-                self._paint_output()
-            await asyncio.sleep(1 / 60)
+        self._paint_output()
 
     def _defer_output_paint(self) -> bool:
         return (
@@ -982,10 +1416,9 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             merged = dict(self.arguments) if isinstance(self.arguments, dict) else {}
             merged.update(arguments)
             self.arguments = merged
-        swap_classes(self, {"-ok"}, {"-running"})
+        swap_classes(self, {"-ok", "-error"}, {"-running"})
         self.phase = "start"
-        if self._spin_timer is not None:
-            self._spin_timer.resume()
+        self._start_spinning()
 
     def copy_text(self) -> str:
         # The detail formatter already caps the output. Capping it again
@@ -1012,7 +1445,9 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         if not isinstance(raw, str):
             return ""
         command = redact_command(raw.strip())
-        return command if command_summary(command) != command else ""
+        # The heading shows a short form; print the exact command under it
+        # whenever the two differ.
+        return command if short_run_target(command) != command else ""
 
     def _refresh_body(self) -> None:
         if not self.is_mounted:
@@ -1023,8 +1458,13 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             # Resize and theme messages may have been queued before a modal
             # opened or output scrolled away. Defer hidden output there too.
             if self._output_timer is None:
-                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
+                self._output_timer = self._schedule_output_paint()
             return
+        if not self._open and not self._output_mounted:
+            self._painted_body_key = None
+            return
+        if self._open:
+            self._ensure_output()
         try:
             body = self.query_one(".tool-body", Static)
             viewport = self.query_one(".tool-output", VerticalScroll)
@@ -1036,6 +1476,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             self.query_one(".tool-command", Static).display = False
             viewport.display = False
             self.query_one(".tool-more", Button).display = False
+            self.query_one(".tool-copy", CopyChip).display = False
+            self.query_one(".tool-actions").display = False
             return
         # Before the first layout this is 0: the preview uses its minimum
         # width and on_resize repaints at the real one.
@@ -1047,16 +1489,18 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         )
         if body_key == self._painted_body_key:
             return
+        if self.phase == "output" and self._stream_rows_cache is None:
+            self._stream_rows_cache, self._command_summary_cache = StreamRowsCache(), CompactRowsCache()
         rows = preview_rows(
             self.tool_name, self.arguments, result=self.result, error=self.error,
             output_lines=self.output_lines, diff_text=self.diff_text,
-            include_run_output=True,
+            include_run_output=True, cache=self._stream_rows_cache,
         )
         command_output = tool_verb(self.tool_name) == "run" or self.tool_name in {"test_run", "git"}
         git_output = command_output and is_git_command(self.tool_name, self.arguments)
-        compact = command_output and not git_output and not self.diff_text and not any(
-            row[1] in {"add", "del"} for row in rows
-        )
+        # One C-level pass: a live log holds thousands of rows per paint.
+        changed_rows = not set(map(itemgetter(1), rows)).isdisjoint(("add", "del"))
+        compact = command_output and not git_output and not self.diff_text and not changed_rows
         preview_limit = GIT_PREVIEW_LINES if git_output else PREVIEW_OPEN_LINES
         diagnostic = self.phase in {"error", "cancelled"} and not command_output
         if diagnostic:
@@ -1067,34 +1511,33 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             summary = compact_command_rows(rows, cache=self._command_summary_cache) if compact else rows[:preview_limit]
         finished = self.phase in {"end", "error", "cancelled"}
         status_only = False
-        has_diff = bool(self.diff_text) or any(row[1] in {"add", "del"} for row in rows)
+        has_diff = bool(self.diff_text) or changed_rows
         if finished and not command_output and not has_diff and not diagnostic and not self._show_full and rows:
             # Browser consoles, fetched pages, search hits: one heading line,
             # the payload behind "Show output". Only diffs stay inline.
             summary = []
             status_only = True
-        if compact and self.phase == "error" and not self._show_full:
-            # A failed probe (`ls` of a file that is not there, a grep with no
-            # hit) is a step, not news: its command only, the output behind
-            # "Show output". The final message says if the task failed.
+        if diagnostic and not self._show_full:
+            # A failed step that is not a command: the red cross and the
+            # short reason under the row say it; the raw error stays behind
+            # "Show error details".
             summary = []
             status_only = True
-        elif compact and finished and not self._show_full and not diagnostic:
-            # A finished command reads as its full command line and its exit
-            # status; the output is one click (or F) away, not a wall of
-            # numbered lines in the transcript.
-            exit_rows = [row for row in summary if is_exit_line(row[2])]
-            if exit_rows:
-                # One error line survives: "Exit code: 0" after a piped
-                # `| tail` can sit under a traceback, and hiding it would make
-                # a failure read as a success.
-                errors = [row for row in summary if row[1] == "failure" and not is_exit_line(row[2])]
-                totals = [row for row in summary if _TEST_TOTALS.search(row[2]) and row not in errors]
-                kept = [*errors[-1:], *totals[-1:], exit_rows[-1]]
-                summary = [(index, row[1], row[2]) for index, row in enumerate(kept, 1)]
-                status_only = True
+        elif compact and finished and not self._show_full:
+            # A finished command reads as its row, its outcome line (exit
+            # code, line count) and the last line or two of output. The
+            # full output is one click (or F) away.
+            errors = [row for row in summary if row[1] == "failure" and not is_exit_line(row[2])]
+            totals = [row for row in summary if _TEST_TOTALS.search(row[2]) and row not in errors]
+            kept = [*errors[-1:], *totals[-1:]] or [
+                row for row in summary if row[2].strip() and not is_exit_line(row[2])
+            ][-2:]
+            # No 1, 2 gutter: these are the last lines of the output, not
+            # source lines, and the numbers read as noise.
+            summary = [(None, row[1], row[2]) for row in kept[-2:]]
+            status_only = True
         self._preview_overflow = (
-            [row[2] for row in summary] != [row[2] for row in rows]
+            len(summary) != len(rows) or any(shown[2] != row[2] for shown, row in zip(summary, rows))
             or (compact and any(cell_len(row[2]) > max(1, width - 8) for row in summary))
         )
         limit = MAX_TRANSCRIPT_LINES if self._show_full else len(summary) or 1
@@ -1131,6 +1574,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         # Rich escapes and Textual escapes are different. Pass styled text,
         # so an unmatched '[' in code cannot consume a closing style tag.
         rendered = Text.from_markup(text)
+        if not self.file_recorded and not self.diff_text:
+            highlight_output_statuses(rendered, dark=self.app.current_theme.dark)
         if body.content != rendered:
             # Preview rows are already wrapped and padded to the viewport.
             # New text at the same width/height only repaints those cells;
@@ -1143,26 +1588,38 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         details = self._command_details()
         if command.content != details:
             command.update(details)
-        command.display = self._open and bool(details) and (self._show_full or status_only)
+        # The full script is one click away; the row stays one line.
+        command.display = self._open and bool(details) and self._show_full
         if command.display != getattr(self, "_command_below", False):
             self._command_below = command.display
             self._refresh_head()
         viewport.display = body.display or command.display
         more = self.query_one(".tool-more", Button)
         more.display = self._open and (self._preview_overflow or bool(details))
+        if (status_only and not command_output and not diagnostic and not self._show_full
+                and len(rows) <= 1 and self._summary_text()):
+            # The outcome line already says it all: no button for one line.
+            more.display = False
+        noun = "line" if len(rows) == 1 else "lines"
         label = "Show less" if self._show_full else (
             "Show error details" if diagnostic and self._preview_overflow else
-            f"Show output ({len(rows)} lines)" if status_only and self._preview_overflow
-            else f"Full output ({len(rows)} lines)" if compact and self._preview_overflow
+            f"Show output ({len(rows)} {noun})" if status_only and self._preview_overflow
+            else f"Full output ({len(rows)} {noun})" if compact and self._preview_overflow
             else f"Show all (+{len(rows) - preview_limit} lines)" if len(rows) > preview_limit
             else "Show command"
         )
         if more.label.plain != label:
             more.label = label
         more.tooltip = "F expands the full output. Enter folds this activity."
+        copy = self.query_one(".tool-copy", CopyChip)
+        copy.display = viewport.display
+        self.query_one(".tool-actions").display = more.display or copy.display
         self._painted_body_key = body_key
+        if self.phase == "output" and viewport.display:
+            # Live output follows its newest line, like a terminal.
+            viewport.scroll_end(animate=False)
         if self.phase in {"end", "error", "cancelled"}:
-            self._command_summary_cache.clear()
+            self._command_summary_cache = self._stream_rows_cache = None
 
     def on_resize(self) -> None:
         if self._open:
@@ -1229,6 +1686,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         self._refresh_body()
 
     def action_page_output(self, direction: int) -> None:
+        if not self._output_mounted:
+            raise SkipAction()
         viewport = self.query_one(".tool-output", VerticalScroll)
         if not viewport.display or not viewport.max_scroll_y:
             raise SkipAction()
@@ -1243,6 +1702,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         self._refresh_body()
 
         def scroll() -> None:
+            if not self._output_mounted:
+                return  # hidden row: the next paint opens it
             viewport = self.query_one(".tool-output", VerticalScroll)
             if end:
                 viewport.scroll_end(animate=False)
@@ -1316,7 +1777,9 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
 
     def compose(self) -> ComposeResult:
         yield Static(self._head_text(), classes="cluster-head", markup=False)
-        yield Vertical(classes="cluster-body")
+        # Empty for a live group (rows mount as they arrive); a group built
+        # back from its record mounts its first page of rows at once.
+        yield Vertical(*self.tools[:self._visible_limit], classes="cluster-body")
         more = Button("Show more activity", classes="cluster-more", compact=True)
         more.display = False
         yield more
@@ -1325,9 +1788,17 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
         self.watch(self.app, "theme", lambda _: self._refresh_head(), init=False)
         self._refresh_head()
 
+    def on_unmount(self) -> None:
+        forget_app_watchers(self)
+
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        # Only ``ToolCluster:focus > .cluster-head`` depends on focus; the
+        # rows below (up to a page of tool cards) keep their styles.
+        restyle_focus(self, *self.query_children(".cluster-head"))
+
     def _head_text(self) -> str:
         title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
-        shown = [tool for tool in self.tools if not tool.quiet_failure]
+        shown = self.tools
         confirmed = [tool for tool in shown if tool.file_recorded and tool.phase != "cancelled"]
         if self.kind == "edit":
             operations = {file_operation_label(tool.file_operation) for tool in confirmed}
@@ -1356,12 +1827,13 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
             return
         try:
             head = self.query_one(".cluster-head", Static)
-            shown = [tool for tool in self.tools if not tool.quiet_failure]
-            self.display = bool(shown) or not self.tools
+            shown = self.tools
             head.display = self.kind != "edit" or len(shown) > 1 or not self._open
             key = (self._head_text(), self.app.current_theme.dark)
             if key != self._painted_head:
-                head.update(activity_head_text(key[0], dark=key[1]))
+                text = activity_head_text(key[0], dark=key[1])
+                # Counts and spinners change; the one-line head keeps its size.
+                head.update(text, layout=not same_height_text(head, str(head.content), text.plain))
                 self._painted_head = key
             more = self.query_one(".cluster-more", Button)
             remaining = max(0, len(self.tools) - self._visible_limit)
@@ -1384,7 +1856,7 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
         # Appending changes only the old tail and the new tail.
         for index in range(max(0, last - 1), last + 1):
             tool = self.tools[index]
-            tool.tree_mark = "• " if self.kind == "edit" and last == 0 else "└ " if index == last else "├ "
+            tool.tree_mark = "" if self.kind == "edit" and last == 0 else "└ " if index == last else "├ "
             tool._refresh_head(notify_cluster=False)
 
     async def add_call(self, widget: ToolCall) -> None:
@@ -1438,6 +1910,23 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
             self.toggle()
             event.stop()
 
+    def snapshot(self, tool_snapshot: Any) -> dict[str, Any]:
+        return {
+            "kind": self.kind, "open": self._open, "visible_limit": self._visible_limit,
+            "tools": [tool_snapshot(tool) for tool in self.tools],
+        }
+
+    @classmethod
+    def from_snapshot(cls, state: dict[str, Any], build_tool: Any) -> ToolCluster:
+        cluster = cls(state["kind"])
+        cluster._open = state["open"]
+        cluster._visible_limit = state["visible_limit"]
+        for data in state["tools"]:
+            tool = build_tool(data)
+            tool._cluster_owner = cluster
+            cluster.tools.append(tool)
+        return cluster
+
     def copy_text(self) -> str:
         parts = [self._head_text()]
         for tool in self.tools:
@@ -1447,11 +1936,18 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
         return clip_transcript("\n".join(parts))
 
 
+class InterimMarkdown(TranscriptMarkdown):
+    """An interim message with Markdown, kept rendered in the activity chain."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text, classes="assistant-body -interim")
+        self.narration = text
+
+
 class ProgressLine(Static):
     DEFAULT_CSS = """
     ProgressLine {
         height: auto;
-        max-height: 2;
         margin: 0;
         padding: 0 1;
         color: $text-muted;
@@ -1461,6 +1957,7 @@ class ProgressLine(Static):
 
     def __init__(self, text: str) -> None:
         super().__init__(f"· {text}", markup=False)
+        self.narration = text
 
 
 def format_elapsed(seconds: float) -> str:
@@ -1484,10 +1981,15 @@ def running_exec_count() -> int:
         return 0
 
 
-def format_working_line(*, elapsed_s: float, background: int = 0) -> str:
-    """Status shown in chat while a turn runs. Keys are Navin keys, not Cursor's."""
+def format_working_line(*, elapsed_s: float, background: int = 0, activity: str = "") -> str:
+    """Status shown in chat while a turn runs: what the agent is doing now.
+    Keys are Navin keys, not Cursor's."""
     clock = format_elapsed(elapsed_s)
-    parts = [f"Working ({clock} • esc to interrupt)"]
+    label = " ".join((activity or "").split()) or "Working"
+    if cell_len(label) > 72:
+        # Cut by terminal cells: wide glyphs take two.
+        label = set_cell_size(label, 71).rstrip() + "…"
+    parts = [f"{label} ({clock} • esc to interrupt)"]
     if background == 1:
         parts.append("1 background terminal running")
         parts.append("/ps to view")
@@ -1495,6 +1997,94 @@ def format_working_line(*, elapsed_s: float, background: int = 0) -> str:
         parts.append(f"{background} background terminals running")
         parts.append("/ps to view")
     return " • ".join(parts)
+
+
+class JumpToBottom(Static):
+    """Shown under the conversation once the reader scrolls up: one click
+    brings the latest messages back and follows them again."""
+
+    DEFAULT_CSS = """
+    JumpToBottom {
+        height: 0;
+        min-height: 0;
+        display: none;
+        content-align: center middle;
+        text-align: center;
+        color: $accent;
+        background: $background;
+        text-style: bold;
+    }
+    JumpToBottom.-visible {
+        display: block;
+        height: 1;
+    }
+    JumpToBottom:hover {
+        background: $boost;
+    }
+    """
+
+    class Pressed(Message):
+        """The reader asked for the latest messages."""
+
+    def show(self, visible: bool, label: str) -> None:
+        if visible:
+            self.update(label)
+        self.set_class(visible, "-visible")
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.Pressed())
+
+
+class LivePresenceLine(Static):
+    """The agent on the Live call, above the composer: one calm accent that
+    breathes while listening, follows the voice, turns while thinking and
+    moves while speaking (the terminal twin of the desktop LivePresence)."""
+
+    DEFAULT_CSS = """
+    LivePresenceLine {
+        height: 0;
+        min-height: 0;
+        padding: 0 1;
+        color: $text-muted;
+        background: $background;
+        display: none;
+    }
+    LivePresenceLine.-visible {
+        display: block;
+        height: 1;
+    }
+    """
+
+    _BREATH = ("·", "•", "●", "●", "•", "·")
+    _SPIN = ("◐", "◓", "◑", "◒")
+    _BARS = "▁▂▃▄▅▆▇"
+
+    def paint(self, mode: str | None, caption: str, *, frame: int, level: float = 0.0) -> None:
+        if mode is None:
+            if self.display:
+                self.update("")
+                self.display = False
+                self.remove_class("-visible")
+            return
+        if mode == "listening":
+            glyph = self._BREATH[(frame // 2) % len(self._BREATH)]
+        elif mode == "hearing":
+            peak = min(len(self._BARS) - 1, int(max(0.0, level) * 60))
+            glyph = "".join(self._BARS[max(0, peak - abs(2 - i))] for i in range(5))
+        elif mode == "thinking":
+            glyph = self._SPIN[frame % len(self._SPIN)]
+        elif mode == "speaking":
+            glyph = "".join(self._BARS[(frame * 3 + i * 5) % len(self._BARS)] for i in range(5))
+        else:  # muted
+            glyph = "○"
+        text = Text()
+        text.append(glyph, style="bold #5EA8FF" if mode != "muted" else "dim")
+        text.append(f"  {caption}")
+        self.update(text)
+        if not self.display:
+            self.display = True
+            self.add_class("-visible")
 
 
 class WorkingLine(Static):
@@ -1518,12 +2108,17 @@ class WorkingLine(Static):
     }
     """
 
-    def set_line(self, text: str) -> None:
-        content = f"◦ {text}" if text else ""
-        if str(self.content) == content and self.display == bool(text):
+    def set_line(self, text: str, *, frame: int = 0) -> None:
+        glyph = ROW_SPINNER[frame % len(ROW_SPINNER)]
+        content = f"{glyph} {text}" if text else ""
+        old = str(self.content)
+        if old == content and self.display == bool(text):
             return
         if text:
-            self.update(Text(content))
+            line = Text(content)
+            line.stylize(activity_palette(self.app.current_theme.dark)["blue"], 0, 1)
+            # The spinner and the clock tick 8 times a second: same size, no reflow.
+            self.update(line, layout=not (self.has_class("-visible") and same_height_text(self, old, content)))
             self.display = True
             self.add_class("-visible")
             return
@@ -1535,7 +2130,7 @@ class AgentsPanel(Static):
     """Agents working in parallel, under the chat: ``main`` then one row each.
 
     ``● main``, then per agent its own name, what it is doing now, and on the
-    right how long it has run and the tokens it has used. Ten rows at most;
+    right how long it has run and the tokens it has used. Six agents at most;
     finished agents stay a few seconds with their outcome, then leave.
     """
 
@@ -1549,37 +2144,75 @@ class AgentsPanel(Static):
     }
     """
 
-    MAX_ROWS = 10
+    MAX_VISIBLE_AGENTS = 6
+    MAX_ROWS = MAX_VISIBLE_AGENTS + 2  # main, agents, optional More row
     DONE_LINGER_S = 4.0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__("", *args, markup=False, **kwargs)
         self._agents: dict[str, dict[str, Any]] = {}
+        self._history: dict[str, dict[str, Any]] = {}
         self._main: tuple[bool, float] = (False, 0.0)
         self._painted: tuple | None = None
+        self.expanded = False
 
     @property
     def active(self) -> bool:
         return bool(self._agents)
 
+    def toggle_expanded(self) -> None:
+        """Show every live agent, or fold back to the first six."""
+        self.expanded = not self.expanded
+        self._painted = None
+        self.tick(*self._main)
+
     def upsert(
         self, task_id: str, *, label: str, status_line: str, phase: str,
         done: bool, error: str | None, started_ms_ago: int | None,
         tokens: int | None, task: str | None = None,
+        steps: list[dict[str, str]] | None = None, model: str | None = None,
     ) -> None:
         now = time.monotonic()
         row = self._agents.setdefault(task_id, {"started": now, "tokens": 0})
         if started_ms_ago is not None:
             row["started"] = now - started_ms_ago / 1000
+        # Provider errors read as a calm status ("Model timed out, retrying"),
+        # never as the raw exception text.
+        status = humanize_agent_error(error, retrying=not done) if error else (status_line or phase or "")
         row.update(label=(label or "").strip() or task_id, task=(task or "").strip(),
-                   status=(error or status_line or phase or "").strip(), phase=phase,
-                   error=bool(error))
+                   status=status.strip(), phase=phase, error=bool(error))
         if tokens:
             row["tokens"] = tokens
-        if done or phase in {"done", "error"}:
+        row["model"] = model
+        if steps is not None:
+            row["steps"] = [dict(step) for step in steps]
+        if done:
             row.setdefault("done_at", now)
             row["elapsed"] = row.get("elapsed") or now - row["started"]
+            self._history[task_id] = dict(row)
+            while len(self._history) > 400:
+                del self._history[next(iter(self._history))]
         self.tick(*self._main)
+
+    def inspection_rows(self) -> dict[str, dict[str, Any]]:
+        """All live agents plus recent completed agents for the F8 inspector."""
+        return {**self._history, **self._agents}
+
+    def reset(self) -> None:
+        self._agents.clear()
+        self._history.clear()
+        self._painted = None
+        self.display = False
+        self.update("")
+
+    def on_click(self, event: Any = None) -> None:
+        lines = str(self.content).splitlines()
+        y = getattr(event, "y", None)
+        if lines and y is not None and y == len(lines) - 1 and (
+                "show more" in lines[-1] or "show less" in lines[-1]):
+            self.toggle_expanded()
+            return
+        self.app.call_later(self.app.run_action, "inspect_agents")
 
     def tick(self, main_active: bool, main_elapsed: float) -> None:
         self._main = (main_active, main_elapsed)
@@ -1595,7 +2228,7 @@ class AgentsPanel(Static):
             return
         self.display = True
         width = content_width(self) or max(20, self.app.size.width - 2)
-        key = (width, int(main_elapsed), main_active, int(now),
+        key = (width, int(main_elapsed), main_active, int(now), self.expanded,
                tuple((k, r["status"], r["tokens"], "done_at" in r) for k, r in self._agents.items()))
         if key != self._painted:
             self.update(self._render_rows(width, main_active, main_elapsed, now))
@@ -1628,24 +2261,35 @@ class AgentsPanel(Static):
         out = Text(no_wrap=True, overflow="ellipsis")
         out.append("● ", style=palette["blue"])
         out.append("main", style=f"bold {palette['blue']}")
-        state = f"working · {format_elapsed(main_elapsed)}" if main_active else "waiting for agents"
+        # The working line under the chat carries the live clock.
+        del main_elapsed
+        state = "working" if main_active else "waiting for agents"
         out.append(f"  {state}", style=palette["muted"])
         rows = sorted(self._agents.items(), key=lambda item: ("done_at" in item[1], item[1]["started"]))
-        budget = self.MAX_ROWS - 1
-        shown, hidden = (rows, []) if len(rows) <= budget else (rows[: budget - 1], rows[budget - 1:])
+        shown, hidden = rows[:self.MAX_VISIBLE_AGENTS], rows[self.MAX_VISIBLE_AGENTS:]
+        overflow = bool(hidden)
+        if self.expanded and hidden:
+            shown, hidden = rows, []
+        elif not hidden:
+            self.expanded = False
         names = self._names()
         name_width = min(28, max((cell_len(names[k]) for k, _ in shown), default=8))
         for task_id, row in shown:
             finished = "done_at" in row
             elapsed = row["elapsed"] if finished else now - row["started"]
             meta = format_elapsed(elapsed) + (f" · ↓ {self._tokens(row['tokens'])} tokens" if row["tokens"] else "")
-            # An agent that ended in error says so in its own reply; the panel
-            # stays calm (no red cross), like tool rows.
-            glyph, ink = ("✓", palette["muted"]) if finished else ("◯", palette["blue"])
+            # Finished agents: green check, or red cross and a short reason.
+            if finished:
+                glyph, ink = ("×", palette["coral"]) if row["error"] else ("✓", palette["green"])
+            else:
+                glyph, ink = ("◯", palette["blue"])
             name = names[task_id]
             if cell_len(name) > name_width:
                 name = name[: max(1, name_width - 1)] + "…"
-            status = "Done" if finished else row["status"] or "Working…"
+            if finished:
+                status = (row["status"] or "Stopped") if row["error"] else "Done"
+            else:
+                status = row["status"] or "Working…"
             left = 2 + name_width + 2
             room = max(0, width - left - cell_len(meta) - 2)
             if cell_len(status) > room:
@@ -1661,7 +2305,11 @@ class AgentsPanel(Static):
         if hidden:
             running = sum("done_at" not in row for _, row in hidden)
             out.append("\n")
-            out.append(f"  +{len(hidden)} more agents ({running} running)", style=palette["muted"])
+            out.append(f"  ▸ show more (+{len(hidden)}) · +{len(hidden)} more agents ({running} running)"
+                       " · F7 or click to expand, F8 to inspect", style=palette["muted"])
+        elif overflow:
+            out.append("\n")
+            out.append("  ▴ show less · F7 or click to collapse", style=palette["muted"])
         return out
 
 
@@ -1692,6 +2340,9 @@ class UpdateOffer(Static):
     def on_click(self) -> None:
         self.app.call_later(self.app.run_action, "update")
 
+    def snapshot_record(self) -> BlockRecord | None:
+        return static_record(self)
+
 
 class SystemNote(Static):
     DEFAULT_CSS = """
@@ -1717,6 +2368,10 @@ class SystemNote(Static):
         super().__init__(text, markup=True)
         if level in {"warning", "error", "success", "quiet"}:
             self.add_class(f"-{level}")
+
+    def snapshot_record(self) -> BlockRecord | None:
+        # Passing notes leave on their own timer; they are never virtualized.
+        return None if getattr(self, "transient", False) else static_record(self)
 
 
 class SubagentCard(Static):
@@ -1752,6 +2407,62 @@ class SubagentCard(Static):
         self.update(f"{glyph} ⑂ [b]{escape(label)}[/b]{model_md}{it}  {status}")
         self.set_class(bool(done and not error), "-done")
         self.set_class(bool(error), "-error")
+
+
+class PromptEcho(Static):
+    """A closed question or permission, kept in the chain: ``? question`` /
+    ``→ answer``, or ``✓ Allowed: ...``."""
+
+    DEFAULT_CSS = """
+    PromptEcho {
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0 1;
+        color: $text-muted;
+        background: $background;
+    }
+    AssistantMessage > PromptEcho { padding: 0; }
+    """
+
+    def __init__(self, rows: list[tuple[str, str, str]]) -> None:
+        # rows: (glyph, palette ink, text). External text is never markup.
+        text = Text()
+        for index, (glyph, ink, body) in enumerate(rows):
+            if index:
+                text.append("\n")
+            text.append(f"{glyph} ", style=ink)
+            text.append(str(body).strip())
+        super().__init__(text, markup=False)
+        self.echo = "\n".join(f"{glyph} {body}" for glyph, _ink, body in rows)
+
+    def snapshot_record(self) -> BlockRecord | None:
+        return static_record(self)
+
+    @classmethod
+    def choice(cls, question: str, answer: str, *, dark: bool = True) -> PromptEcho:
+        palette = activity_palette(dark)
+        return cls([("?", palette["blue"], question), ("→", palette["muted"], answer or "no answer")])
+
+    @classmethod
+    def approval(cls, allowed: bool, tool: str, action: str, reason: str = "", *, dark: bool = True) -> PromptEcho:
+        palette = activity_palette(dark)
+        subject = " ".join(part for part in (tool, action) if part).strip() or "request"
+        if len(subject) > 120:
+            subject = subject[:119].rstrip() + "…"
+        verdict = "Allowed" if allowed else "Denied"
+        if reason:
+            subject += f" ({reason})"
+        glyph, ink = ("✓", palette["green"]) if allowed else ("×", palette["coral"])
+        return cls([(glyph, ink, f"{verdict}: {subject}")])
+
+
+def _assistant_record_copy(record: BlockRecord) -> str:
+    # Same as AssistantMessage.copy_text, from the record's data.
+    answer = str(record.state["text"]).strip()
+    if answer:
+        return clip_transcript(answer)
+    parts = [ToolCall.from_snapshot(data).copy_text() for _key, data in record.state["tools"]]
+    return clip_transcript("\n\n".join(part for part in parts if part))
 
 
 class AssistantMessage(LocalDisplayStyles, Vertical):
@@ -1792,6 +2503,13 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
     AssistantMessage.-open > .assistant-body {
         display: block;
     }
+    AssistantMessage > .assistant-body.-interim {
+        display: block;
+        margin: 1 0 0 0;
+    }
+    AssistantMessage > .assistant-body.-interim.-first {
+        margin: 0;
+    }
     AssistantMessage > .assistant-foot {
         margin: 0 0 1 0;
         padding: 0;
@@ -1800,14 +2518,31 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         background: $background;
         text-style: none;
     }
+    /* One chain: a blank line after each command or group so runs do not touch;
+       a narration line opens a new group (the two margins collapse into one). */
     AssistantMessage > ReasoningBlock,
-    AssistantMessage > ToolCall,
-    AssistantMessage > ToolCluster,
-    AssistantMessage > ProgressLine,
     AssistantMessage > SubagentCard {
-        margin: 1 0;
+        margin: 0;
+    }
+    AssistantMessage > ToolCall,
+    AssistantMessage > ToolCluster {
+        margin: 0 0 1 0;
+    }
+    AssistantMessage > ProgressLine,
+    AssistantMessage > PromptEcho {
+        margin: 1 0 0 0;
+    }
+    AssistantMessage > ProgressLine.-first,
+    AssistantMessage > PromptEcho.-first {
+        margin: 0;
+    }
+    AssistantMessage.-has-activity > .assistant-body {
+        margin-top: 1;
     }
     AssistantMessage > .assistant-foot.-visible { display: block; }
+    /* Under a finished answer: one click copies the whole report. */
+    AssistantMessage > .assistant-copy { display: none; }
+    AssistantMessage.-copyable > .assistant-copy { display: block; }
     AssistantMessage > .assistant-history-controls {
         display: none;
         height: 1;
@@ -1933,7 +2668,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         self._show_head = show_head
         icon = (bot_icon or "").strip()
         self.bot_icon = "" if icon in {"≈", "~"} else icon
-        self._paint_timer: Timer | None = None
+        self._paint_timer: FrameRequest | None = None
         self._paint_lock = asyncio.Lock()
         self._painted_markdown = ""
         self._buffer: list[str] = []
@@ -1951,17 +2686,149 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         self.finished = False
         self._open = False
         self._composed = asyncio.Event()
+        # Set when this turn is built back from its record (navin.tui.virtual).
+        self._settled: tuple[list[Widget], dict[str, Any]] | None = None
+        self.from_record = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="assistant-history-controls"):
             yield Button("Earlier activity", classes="assistant-history", compact=True)
             yield Button("Recent only", classes="assistant-recent", compact=True)
+        settled, self._settled = self._settled, None
+        if settled is not None:
+            yield from self._compose_settled(*settled)
+            return
         yield Static("", classes="assistant-preview", markup=True)
-        yield TranscriptMarkdown("", classes="assistant-body")
+        yield TranscriptMarkdown("", classes="assistant-body -answer")
+        yield CopyChip(self.copy_text, classes="assistant-copy")
         yield Static("", classes="assistant-foot", markup=True)
+
+    def _compose_settled(self, mount: list[Widget], state: dict[str, Any]) -> ComposeResult:
+        # A finished turn: its visible activity rows, then the answer as one
+        # SettledMarkdown instead of a widget per paragraph, row and cell.
+        yield from mount
+        preview = Static(state["preview"], classes="assistant-preview", markup=True)
+        preview.display = not self._open
+        yield preview
+        body = SettledMarkdown(state["body"], classes="assistant-body -answer")
+        body.display = self._open
+        yield body
+        yield CopyChip(self.copy_text, classes="assistant-copy")
+        foot = Static(state["foot"], classes="assistant-foot", markup=True)
+        foot.set_class(state["foot_visible"], "-visible")
+        yield foot
 
     def on_mount(self) -> None:
         self._composed.set()
+        if self.from_record:
+            self._refresh_history_controls()
+
+    # -- virtualization ---------------------------------------------------
+
+    def snapshot_record(self) -> BlockRecord | None:
+        """This finished turn as data, or None while anything in it is live."""
+        if not self.finished or not self.is_mounted or self._paint_lock.locked():
+            return None
+        if self._paint_timer is not None and self._paint_timer.scheduler.pending(self._paint_timer.key):
+            return None
+        if self._reasoning is not None and not self._reasoning._done:
+            return None
+        if any(tool.phase in {"start", "output"} for tool in self._tools.values()):
+            return None
+        snapshots: dict[int, dict[str, Any]] = {}
+
+        def tool_snapshot(tool: ToolCall) -> dict[str, Any]:
+            data = snapshots.get(id(tool))
+            if data is None:
+                data = snapshots[id(tool)] = tool.snapshot()
+            return data
+
+        activity_ids = {id(block) for block in self._activity_blocks}
+        activity: list[dict[str, Any]] = []
+        for child in self.children:
+            if child is self._progress_line:
+                continue
+            if isinstance(child, ToolCall):
+                entry: dict[str, Any] = {"kind": "tool", "tool": tool_snapshot(child)}
+            elif isinstance(child, ToolCluster):
+                entry = {"kind": "cluster", "cluster": child.snapshot(tool_snapshot)}
+            elif isinstance(child, ReasoningBlock):
+                entry = {"kind": "reasoning", "state": child.snapshot()}
+            elif isinstance(child, (InterimMarkdown, SettledMarkdown)) and "-interim" in child.classes:
+                entry = {"kind": "interim", "text": getattr(child, "narration", None) or child.source}
+            elif isinstance(child, (ProgressLine, PromptEcho, SubagentCard)):
+                entry = {"kind": "static", "type": type(child), "state": static_state(child)}
+            else:
+                continue
+            entry["classes"] = frozenset(child.classes)
+            entry["display"] = bool(child.display)
+            entry["activity"] = id(child) in activity_ids
+            activity.append(entry)
+        foot = self._query_static(".assistant-foot")
+        preview = self._query_static(".assistant-preview")
+        state = {
+            "bot_name": self.bot_name, "bot_icon": self.bot_icon, "show_head": self._show_head,
+            "text": self.text, "body": self._painted_markdown, "open": self._open,
+            "streamed": self.streamed, "activity": activity,
+            "activity_start": self._activity_start, "activity_expanded": self._activity_expanded,
+            "tools": [(key, tool_snapshot(tool)) for key, tool in self._tools.items()],
+            "foot": foot.content if foot is not None else "",
+            "foot_visible": foot is not None and foot.has_class("-visible"),
+            "preview": preview.content if preview is not None and not self._open else "",
+        }
+        return BlockRecord(
+            type(self), state, AssistantMessage._from_record,
+            classes=set(self.classes), copy=_assistant_record_copy,
+        )
+
+    @staticmethod
+    def _from_record(record: BlockRecord) -> AssistantMessage:
+        state = record.state
+        block = record.widget_type(state["bot_name"], state["bot_icon"], show_head=state["show_head"])
+        block.from_record = True
+        block._buffer = [state["text"]] if state["text"] else []
+        block._painted_markdown = state["body"]
+        block._open = state["open"]
+        block.finished = True
+        block.streamed = state["streamed"]
+        built: dict[int, ToolCall] = {}
+
+        def build_tool(data: dict[str, Any]) -> ToolCall:
+            tool = built.get(id(data))
+            if tool is None:
+                tool = built[id(data)] = ToolCall.from_snapshot(data)
+            return tool
+
+        mount: list[Widget] = []
+        activity: list[Widget] = []
+        for entry in state["activity"]:
+            kind = entry["kind"]
+            if kind == "tool":
+                widget: Widget = build_tool(entry["tool"])
+            elif kind == "cluster":
+                widget = ToolCluster.from_snapshot(entry["cluster"], build_tool)
+            elif kind == "reasoning":
+                widget = ReasoningBlock.from_snapshot(entry["state"])
+                block._reasoning = widget
+            elif kind == "interim":
+                widget = SettledMarkdown(entry["text"])
+            else:
+                widget = build_static(entry["type"], entry["state"])
+                if isinstance(widget, SubagentCard):
+                    block._subagents[widget.task_id] = widget
+            widget.set_classes(set(entry["classes"]))
+            if entry["activity"]:
+                activity.append(widget)
+            widget.display = entry["display"]
+            # Older activity behind "Earlier activity" is mounted only when asked.
+            if entry["display"] or not entry["activity"]:
+                mount.append(widget)
+        block._activity_blocks = activity
+        block._activity_start = state["activity_start"]
+        block._activity_expanded = state["activity_expanded"]
+        block._tools = {key: build_tool(data) for key, data in state["tools"]}
+        block._settled = (mount, state)
+        return block
 
     @staticmethod
     def _activity_running(block: Vertical) -> bool:
@@ -1971,10 +2838,13 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             return any(tool.phase in {"start", "output"} for tool in block.tools)
         return isinstance(block, ReasoningBlock) and not block._done
 
-    def _register_activity(self, block: Vertical) -> None:
+    def _register_activity(self, block: Widget) -> None:
+        if not self._activity_blocks:
+            block.add_class("-first")
+            self._set_child_state(True, "-has-activity", "assistant-body")
         self._activity_blocks.append(block)
         if not self._activity_expanded:
-            start = max(0, len(self._activity_blocks) - ACTIVITY_PAGE_SIZE)
+            start = self._recent_activity_start()
             for older in self._activity_blocks[self._activity_start:start]:
                 if self._activity_running(older):
                     self._pinned_activity.add(older)
@@ -1983,6 +2853,29 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             self._activity_start = start
         self._release_finished_activity()
         self._refresh_history_controls()
+
+    @staticmethod
+    def _activity_rows(block: Widget) -> int:
+        if isinstance(block, ToolCluster):
+            return max(1, min(len(block.tools), block._visible_limit))
+        return 1
+
+    def _recent_activity_start(self) -> int:
+        """First activity block of the recent page: about ACTIVITY_PAGE_SIZE rows.
+
+        Counting blocks let a long turn show twenty clusters of twenty rows:
+        hundreds of rows on screen, all reflowed whenever the streamed answer
+        grew by a line. The newest block always stays.
+        """
+        blocks = self._activity_blocks
+        start = len(blocks)
+        rows = 0
+        while start > 0 and len(blocks) - start < ACTIVITY_PAGE_SIZE:
+            rows += self._activity_rows(blocks[start - 1])
+            if rows > ACTIVITY_PAGE_SIZE and start < len(blocks):
+                break
+            start -= 1
+        return start
 
     def _release_finished_activity(self) -> None:
         for block in tuple(self._pinned_activity):
@@ -1999,12 +2892,25 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         controls.query_one(".assistant-recent", Button).display = self._activity_expanded
 
     @on(Button.Pressed, ".assistant-history")
-    def _show_earlier_activity(self, event: Button.Pressed) -> None:
+    async def _show_earlier_activity(self, event: Button.Pressed) -> None:
         event.stop()
         start = max(0, self._activity_start - ACTIVITY_PAGE_SIZE)
         revealed = self._activity_blocks[start:self._activity_start]
+        boundary = self._activity_start
         self._activity_expanded = True
         self._activity_start = start
+        unmounted = [block for block in revealed if not block.is_attached and block.parent is None]
+        if unmounted:
+            # A turn rebuilt from its record keeps older rows as data until
+            # the reader asks for them.
+            anchor = next(
+                (block for block in self._activity_blocks[boundary:] if block.parent is self),
+                self._query_static(".assistant-preview"),
+            )
+            for block in unmounted:
+                block.display = True
+            if anchor is not None:
+                await self.mount_all(unmounted, before=anchor)
         for block in revealed:
             self._pinned_activity.discard(block)
             block.display = True
@@ -2020,7 +2926,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
     def _show_recent_activity(self, event: Button.Pressed) -> None:
         event.stop()
         self._activity_expanded = False
-        start = max(0, len(self._activity_blocks) - ACTIVITY_PAGE_SIZE)
+        start = self._recent_activity_start()
         for older in self._activity_blocks[:start]:
             if self._activity_running(older):
                 self._pinned_activity.add(older)
@@ -2037,7 +2943,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         if not self.is_attached:
             return None
         try:
-            return self.query_one(".assistant-body", Markdown)
+            return self.query_one(".assistant-body.-answer", Markdown)
         except NoMatches:
             return None
 
@@ -2070,6 +2976,14 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             if self._reasoning is not None:
                 self._reasoning.finish()
                 self._release_finished_activity()
+            return
+        current = self._reasoning
+        if (current is not None and current._done and current.is_attached
+                and self._activity_blocks and self._activity_blocks[-1] is current
+                and not self.text.strip()):
+            # Nothing happened since the last thought: keep one row.
+            current.reopen()
+            current.append(text)
             return
         if self._reasoning is None or self._reasoning._done:
             block = ReasoningBlock()
@@ -2168,6 +3082,16 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             return
         key = call_id or f"{name}:{len(self._tools)}"
         widgets = [tool for tool in self._tools.values() if key in tool.call_ids]
+        if not call_id and phase != "start":
+            # No call id: the event belongs to a running row of that tool, not
+            # to a second row. Parallel calls end in call order: the row with
+            # the same arguments, else the oldest one still running.
+            running = [
+                tool for tool in self._tools.values()
+                if tool.tool_name == name and tool.phase in {"start", "output"}
+            ]
+            same = [tool for tool in running if arguments and tool.arguments == arguments]
+            widgets = (same or running)[:1]
         if not widgets and name == "board" and phase == "start" and arguments.get("task_id"):
             # Retrying a completion prerequisite updates its existing card.
             widgets = [tool for tool in self._tools.values() if tool.validation_pending and all(
@@ -2273,16 +3197,50 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         match.apply(phase=phase, error=error)
         self._release_finished_activity()
 
-    async def progress(self, text: str) -> None:
+    async def progress(self, text: str, *, transient: bool = False) -> None:
         if not self.is_attached:
             return
         preview = await self._ready_preview()
         if preview is None:
             return
-        # Interim narration replaces the previous line instead of stacking:
-        # each tool batch would otherwise leave its sentence on screen forever.
+        if not transient:
+            streaming = self.text.strip() if self._buffer else ""
+            if streaming and (
+                streaming == text.strip() or narration_text(streaming) == narration_text(text)
+            ):
+                # The same narration is still on screen as the live stream: the
+                # stream end moves it into the chain. Mounting it now would show
+                # it twice until then.
+                return
+            if is_rich_narration(text):
+                # Tables, lists, headings, bold and code stay rendered, with
+                # the answer's colors, instead of one flattened grey line.
+                source = text.strip()
+                if self._recent_narration(source):
+                    return
+                self._drop_progress_line()
+                note = InterimMarkdown(source)
+                await self.mount(note, before=preview)
+                self._register_activity(note)
+                self._cluster = None
+                self._refresh_preview()
+                return
+            # Narration stays in the chain, one line before the steps it
+            # announces: narration, tools, narration, tools, answer.
+            text = narration_text(text)
+            if self._recent_narration(text):
+                return
+            self._drop_progress_line()
+            line = ProgressLine(text)
+            await self.mount(line, before=preview)
+            self._register_activity(line)
+            self._cluster = None
+            self._refresh_preview()
+            return
+        # A transient hint replaces the previous one instead of stacking.
         if self._progress_line is not None and self._progress_line.is_attached:
             self._progress_line.update(f"· {text}")
+            self._progress_line.narration = text
             self.move_child(self._progress_line, before=preview)
             self._refresh_preview()
             return
@@ -2291,11 +3249,32 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         await self.mount(line, before=preview)
         self._refresh_preview()
 
+    def _recent_narration(self, text: str, window: int = 8) -> bool:
+        """Whether this narration is already in the chain since the last one.
+
+        The stream end and the progress event both deliver the same narration;
+        a tool card mounted between them used to defeat a last-block check and
+        print the line twice.
+        """
+        for block in reversed(self._activity_blocks[-window:]):
+            if isinstance(block, (ProgressLine, InterimMarkdown)):
+                return block.is_attached and narration_text(block.narration) == narration_text(text)
+        return False
+
     def _drop_progress_line(self) -> None:
         line = self._progress_line
         self._progress_line = None
         if line is not None and line.is_attached:
             line.remove()
+
+    async def prompt_echo(self, echo: PromptEcho) -> None:
+        """Keep a closed question or permission in this turn's chain."""
+        preview = await self._ready_preview()
+        if preview is None:
+            return
+        self._cluster = None
+        await self.mount(echo, before=preview)
+        self._register_activity(echo)
 
     async def subagent(
         self,
@@ -2330,13 +3309,35 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         raw = self.text.strip()
         return len(raw) > PREVIEW_CHARS or len(raw.split()) > 28
 
+    def _set_child_state(self, add: bool, name: str, *child_classes: str) -> None:
+        """Toggle a state class read only by direct children with ``child_classes``.
+
+        A class change restyles the whole subtree by default: on a long turn
+        (dozens of tool rows, a long answer) each toggle froze the CLI for up
+        to a second (freeze log: ``add_class("-open")`` in ``delta``,
+        ``remove_class`` in ``stream_end``; ``-copyable`` cost 220 ms per
+        finish). Only the children named here read these classes, so only
+        they are restyled.
+        """
+        if self.has_class(name) == add:
+            return
+        self.set_class(add, name, update=False)
+        if not self.is_attached:
+            return
+        targets = [child for child in self.children if any(child.has_class(c) for c in child_classes)]
+        if targets:
+            self.app.stylesheet.update_nodes(targets, animate=False)
+
+    def _set_open_class(self, add: bool) -> None:
+        self._set_child_state(add, "-open", "assistant-preview", "assistant-body")
+
     def _sync_layers(self) -> None:
         """Keep preview and body from painting on the same cells (Windows Terminal)."""
         if not self.is_mounted:
             return
         try:
             preview = self.query_one(".assistant-preview", Static)
-            body = self.query_one(".assistant-body", Markdown)
+            body = self.query_one(".assistant-body.-answer", Markdown)
         except Exception:  # noqa: BLE001
             return
         preview.display = not self._open
@@ -2347,21 +3348,20 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
     async def reveal(self) -> None:
         """Show the full answer (end of turn, or a question to the user)."""
         self._open = True
-        self.set_class(True, "-open")
+        self._set_open_class(True)
         self._sync_layers()
         await self._paint_body(force=True)
 
     def _preview_markup(self) -> str:
         raw = self.text.strip()
         if not raw:
-            mark = "◌" if not self.finished else "✓"
-            return f"[$accent]{mark}[/] [dim]…[/dim]"
+            return ""
         preview = assistant_preview(raw)
-        mark = "◌" if not self.finished else "✓"
-        line = f"[$accent]{mark}[/] {_markup_escape(preview)}"
+        line = _markup_escape(preview)
         if not self._folded():
             return line
-        hidden = raw[len(preview.rstrip("…")):] if len(raw) > len(preview) else ""
+        plain = " ".join(markdown_plain(raw).split())
+        hidden = plain[len(preview.rstrip("…")):] if len(plain) > len(preview) else ""
         hint = f"+{token_label(hidden)} · click" if hidden.strip() else "click"
         return f"{line}  [$text-muted]{hint}[/]"
 
@@ -2372,7 +3372,8 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             preview = self.query_one(".assistant-preview", Static)
         except Exception:  # noqa: BLE001
             return
-        if self._open or (self._progress_line is not None and not self.text.strip()):
+        if self._open or not self.text.strip():
+            # No "◌ …" placeholder: the working line says the turn is live.
             if preview.content:
                 preview.update("")
             preview.display = False
@@ -2382,7 +3383,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
 
     def toggle_body(self) -> None:
         self._open = not self._open
-        self.set_class(self._open, "-open")
+        self._set_open_class(self._open)
         self._sync_layers()
         if self._open and self.text.strip():
             self.run_worker(self._paint_body(force=True), exclusive=True, group="assistant-body")
@@ -2392,6 +3393,11 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         if target is None:
             return
         classes = set(getattr(target, "classes", ()) or ())
+        # Only the folded one-line preview opens the answer. A click (or the
+        # end of a drag selection) on an open answer never folds it back into
+        # its raw preview line.
+        if self._open or self.screen.get_selected_text():
+            return
         if "assistant-preview" in classes or target is self:
             self.toggle_body()
             event.stop()
@@ -2423,13 +3429,20 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             # The full source stays in the buffer while a modal is open.
             # Mounting hidden paragraphs would still reflow the background
             # screen and delay navigation in the foreground.
-            self._paint_timer = self.set_timer(0.1, self._flush_stream)
+            self._paint_timer = schedule_paint(self, "stream", self._flush_stream, delay=0.1)
+            return
+        if self._painted_markdown and self._open and not on_screen(self):
+            # Scrolled out of view (parallel answers above the followed
+            # one): each grown paragraph would reflow the whole screen for
+            # nothing visible. The text stays buffered and paints as soon
+            # as this answer is back in view, or when it finishes.
+            self._paint_timer = schedule_paint(self, "stream", self._flush_stream, delay=0.25)
             return
         count = len(self._buffer)
         try:
             if not self._open and looks_like_client_prompt(self.text):
                 self._open = True
-                self.add_class("-open")
+                self._set_open_class(True)
                 self._sync_layers()
             await self._paint_body()
             transcript = self.parent
@@ -2438,7 +3451,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         finally:
             self._paint_timer = None
         if len(self._buffer) != count and self.is_attached:
-            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
+            self._paint_timer = schedule_paint(self, "stream", self._flush_stream, delay=stream_paint_delay(self))
 
     async def delta(self, text: str) -> None:
         if not text or not self.is_attached:
@@ -2446,20 +3459,36 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         await self._composed.wait()
         if self.finished:
             self.finished = False
+            # More text is coming: the copy icon returns with the new end.
+            self._set_child_state(False, "-copyable", "assistant-copy")
         self._drop_progress_line()
         self.streamed = True
         self._buffer.append(text)
         if len(self._buffer) == 1 and not self._open:
             self._open = True
-            self.add_class("-open")
+            self._set_open_class(True)
             self._sync_layers()
         if self._paint_timer is None:
-            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
+            self._paint_timer = schedule_paint(self, "stream", self._flush_stream, delay=stream_paint_delay(self))
 
-    async def stream_end(self, *, resuming: bool = False) -> None:
+    async def stream_end(self, *, resuming: bool = False, discarded: bool = False) -> None:
         if self._paint_timer is not None:
             self._paint_timer.stop()
             self._paint_timer = None
+        if discarded:
+            # A mid-stream retry streams the whole answer again: drop the
+            # partial text outright, it must not linger as narration above it.
+            body = await self._ready_body()
+            async with self._paint_lock:
+                self._buffer.clear()
+                self._painted_markdown = ""
+                self._open = False
+                self._set_open_class(False)
+                self._sync_layers()
+                if body is not None:
+                    await body.update("")
+            self._refresh_preview()
+            return
         if resuming:
             body = await self._ready_body()
             if body is None:
@@ -2470,11 +3499,13 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
                 self._buffer.clear()
                 self._painted_markdown = ""
                 self._open = False
-                self.remove_class("-open")
+                self._set_open_class(False)
                 self._sync_layers()
                 await body.update("")
             if narration:
-                await self.progress(assistant_preview(narration))
+                # The whole narration stays in the chain (wrapped, or rendered
+                # when it carries Markdown), not just its first sentence.
+                await self.progress(narration)
             else:
                 self._refresh_preview()
             return
@@ -2501,7 +3532,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
                     else text
                 )
                 self._open = True
-                self.set_class(True, "-open")
+                self._set_open_class(True)
                 self._sync_layers()
                 await body.update(text)
                 self._painted_markdown = text
@@ -2537,7 +3568,11 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         self._drop_progress_line()
         if not self.is_attached:
             return
+        if self._reasoning is not None and not self._reasoning._done:
+            self._reasoning.finish()
         self.finished = True
+        # Only a written answer gets the icon; tool rows copy on their own.
+        self._set_child_state(bool(self.text.strip()), "-copyable", "assistant-copy")
         await self.reveal()
         if not self.is_attached:
             return
@@ -2802,21 +3837,25 @@ class ChoiceCard(Vertical):
             return
         self.post_message(self.Answered(self.request_id, option_id, skipped, custom_text))
 
+    def chosen_label(self, option_id: str = "", skipped: bool = False, custom_text: str = "") -> str:
+        """The answer as the user saw it (same id fallback as the options)."""
+        if skipped:
+            return "skipped"
+        if custom_text:
+            return custom_text
+        for idx, opt in enumerate(self.options, start=1):
+            if str(opt.get("id") or opt.get("value") or idx) == option_id:
+                return str(opt.get("label") or opt.get("title") or option_id)
+        return option_id or "no answer"
+
     def close(self, option_id: str = "", skipped: bool = False, custom_text: str = "") -> None:
         self.closed = True
         self.add_class("-closed")
-        if skipped:
-            chosen = "skipped"
-        elif custom_text:
-            chosen = custom_text
-        else:
-            chosen = option_id
-            for opt in self.options:
-                if str(opt.get("id") or opt.get("value") or "") == option_id:
-                    chosen = str(opt.get("label") or option_id)
+        self.answer_label = self.chosen_label(option_id, skipped, custom_text)
         title = Text(f"✓ {self.question}  ")
-        title.append(f"→ {chosen}", style="dim")
-        self.query_one(".card-title", Static).update(title)
+        title.append(f"→ {self.answer_label}", style="dim")
+        with contextlib.suppress(NoMatches):
+            self.query_one(".card-title", Static).update(title)
 
 
 # ---------------------------------------------------------------------------
@@ -2909,9 +3948,13 @@ class PromptQueue(Vertical):
     class Resumed(Message):
         pass
 
+    class ParallelRequested(Message):
+        """Run every queued prompt now, each in its own parallel agent."""
+
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield Static("", id="queue-title", markup=False)
+            yield Button("Run in parallel (F6)", id="queue-parallel", compact=True)
             yield Button("Resume queue", id="queue-resume", compact=True)
         yield VerticalScroll(id="queue-items")
 
@@ -2921,6 +3964,7 @@ class PromptQueue(Vertical):
         self.display = bool(items)
         self.query_one("#queue-title", Static).update(
             f"Queued {len(items)} · {'paused' if paused else 'after current reply'}"
+            " · Alt+Enter sends to the running task"
         )
         self.query_one("#queue-resume", Button).display = paused
         body = self.query_one("#queue-items", VerticalScroll)
@@ -2943,18 +3987,107 @@ class PromptQueue(Vertical):
         event.stop()
         self.post_message(self.Resumed())
 
+    @on(Button.Pressed, "#queue-parallel")
+    def run_parallel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ParallelRequested())
+
+
+class StarField(Widget):
+    """A row of small stars drifting slowly under the prompt.
+
+    The app's status tick calls ``advance``; the row owns no timer. Only this
+    one-row strip repaints, so the motion costs a few hundred bytes a step.
+    """
+
+    DEFAULT_CSS = """
+    StarField {
+        height: 1;
+        width: 1fr;
+        background: $background;
+    }
+    """
+
+    GLYPHS = ("·", "·", "∙", "⋆", "✦")
+    #: Brightness per twinkle step: mostly faint, a short glint.
+    TWINKLE = (0, 0, 1, 2, 3, 2, 1, 0, 0, 0)
+    #: One star per this many cells.
+    DENSITY = 9
+
+    def __init__(self, seed: int, *, id: str | None = None, classes: str | None = None) -> None:
+        super().__init__(id=id, classes=classes)
+        self._seed = seed
+        self._stars: list[tuple[int, int, int, str]] = []
+        self._stars_width = -1
+        self.frame = 0
+
+    def advance(self) -> None:
+        self.frame += 1
+        self.refresh()
+
+    def _layout_stars(self, width: int) -> list[tuple[int, int, int, str]]:
+        if width != self._stars_width:
+            import random
+
+            rng = random.Random(self._seed * 7919 + width)
+            self._stars = [
+                (rng.randrange(width), rng.choice((2, 3, 5)), rng.randrange(len(self.TWINKLE)), rng.choice(self.GLYPHS))
+                for _ in range(max(2, width // self.DENSITY))
+            ]
+            self._stars_width = width
+        return self._stars
+
+    def _inks(self) -> tuple[Style, ...]:
+        theme = self.app.current_theme
+        base = self.styles.background
+        ink = Color.parse(theme.foreground or "#E0E0E0")
+        accent = Color.parse(theme.primary or theme.accent or "#5EA8FF")
+        return tuple(
+            Style(color=base.blend(color, amount).rich_color, bgcolor=base.rich_color)
+            for color, amount in ((ink, 0.22), (ink, 0.38), (ink, 0.6), (accent, 0.75))
+        )
+
+    def render_line(self, y: int) -> Strip:
+        width = content_width(self)
+        background = Style(bgcolor=self.styles.background.rich_color)
+        if width <= 0:
+            return Strip.blank(0, background)
+        cells: dict[int, tuple[str, int]] = {}
+        for x0, speed, phase, glyph in self._layout_stars(width):
+            # Drift left at the star's own pace; faster ones read as nearer.
+            x = (x0 - self.frame // speed) % width
+            cells[x] = (glyph, self.TWINKLE[(self.frame + phase) % len(self.TWINKLE)])
+        inks = self._inks()
+        segments: list[Segment] = []
+        gap = 0
+        for x in range(width):
+            star = cells.get(x)
+            if star is None:
+                gap += 1
+                continue
+            if gap:
+                segments.append(Segment(" " * gap, background))
+                gap = 0
+            segments.append(Segment(star[0], inks[star[1]]))
+        if gap:
+            segments.append(Segment(" " * gap, background))
+        return Strip(segments, width)
+
 
 class ComposerShell(Vertical):
-    """Borderless prompt surface with a gutter and quiet model controls."""
+    """The prompt between two gray hairlines, open on both sides, above a
+    row of drifting stars."""
 
     DEFAULT_CSS = """
     ComposerShell {
         height: auto;
-        background: $panel;
-        padding: 1 1;
+        background: $background;
+        padding: 0;
         border: none;
+        border-top: solid $foreground 35%;
+        border-bottom: solid $foreground 35%;
     }
-    ComposerShell > .composer-input { height: auto; background: $panel; }
+    ComposerShell > .composer-input { height: auto; background: $background; padding: 0 1; }
     ComposerShell #composer-prompt { width: 2; height: 1; color: $text-muted; }
     ComposerShell.-focus #composer-prompt { color: $primary; }
     """
@@ -3006,28 +4139,107 @@ class ComposerMeta(Horizontal):
     }
     ComposerMeta #meta-mode {
         width: auto;
-        color: $primary;
-        text-style: bold;
+        color: $primary 75%;
+        text-style: none;
     }
     ComposerMeta #meta-mode:hover { color: $foreground; }
-    /* Mode in its own ink; model, effort, context and path each one step quieter. */
-    ComposerMeta #meta-sep { width: auto; color: $text-muted; padding: 0 1; }
-    ComposerMeta #meta-model { width: auto; min-width: 0; max-width: 36; height: 1; color: $foreground; text-overflow: ellipsis; }
-    ComposerMeta #meta-model:hover { color: $primary; }
+    /* A quiet line: mode in a soft tint, model, effort and path in gray. */
+    ComposerMeta #meta-sep { width: auto; color: $text-muted 60%; padding: 0 1; }
+    ComposerMeta #meta-model { width: auto; min-width: 0; max-width: 36; height: 1; color: $text-muted; text-overflow: ellipsis; }
+    ComposerMeta #meta-model:hover { color: $foreground; }
+    /* Live first, in its own green ink: never mistaken for the mode or model. */
+    ComposerMeta #meta-live { width: auto; height: 1; padding-right: 2; color: $success; text-style: bold; }
+    ComposerMeta #meta-live:hover { color: $foreground; }
+    ComposerMeta #meta-live.-on { color: $background; background: $success; padding: 0 1; margin-right: 1; }
     ComposerMeta #meta-reasoning { width: auto; height: 1; padding-left: 1; color: $text-muted; }
     ComposerMeta #meta-reasoning:hover { color: $foreground; }
-    ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; color: $accent; }
-    ComposerMeta #meta-permission { width: auto; height: 1; padding-left: 2; color: $text-muted; }
-    ComposerMeta #meta-permission:hover { color: $foreground; }
+    ComposerMeta #meta-effort { width: auto; height: 1; padding-left: 1; color: $text-muted 70%; }
+    /* Effort in the activity palette: green, mustard, blue, lavender. */
+    ComposerMeta #meta-reasoning.-lvl-1, ComposerMeta #meta-effort.-lvl-1 { color: #8FBC8F; }
+    ComposerMeta #meta-reasoning.-lvl-2, ComposerMeta #meta-effort.-lvl-2 { color: #D6BC78; }
+    ComposerMeta #meta-reasoning.-lvl-3, ComposerMeta #meta-effort.-lvl-3 { color: #5EA8FF; }
+    ComposerMeta #meta-reasoning.-lvl-4, ComposerMeta #meta-effort.-lvl-4 { color: #C6AFE3; }
+    ComposerMeta #meta-reasoning.-lvl-1:light, ComposerMeta #meta-effort.-lvl-1:light { color: #2D6A4F; }
+    ComposerMeta #meta-reasoning.-lvl-2:light, ComposerMeta #meta-effort.-lvl-2:light { color: #795B13; }
+    ComposerMeta #meta-reasoning.-lvl-3:light, ComposerMeta #meta-effort.-lvl-3:light { color: #3D82FF; }
+    ComposerMeta #meta-reasoning.-lvl-4:light, ComposerMeta #meta-effort.-lvl-4:light { color: #705393; }
+    ComposerMeta #meta-reasoning.-glow { text-style: bold; }
+    ComposerMeta #meta-reasoning.-lvl-0.-glow { color: $primary; }
     """
 
+    #: Bars per effort level; Auto shows none.
+    EFFORT_LEVELS = {"none": 0, "minimal": 1, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 4}
+    EFFORT_BARS = "▂▄▆█"
+    #: The new level fills one bar per frame, glows, then settles.
+    EFFORT_FRAME_S = 0.07
+    EFFORT_GLOW_FRAMES = 12
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._effort: str | None = None
+        self._effort_frame = 0
+        self._effort_timer: Timer | None = None
+
     def compose(self) -> ComposeResult:
+        from navin.tui.live_voice import cli_live_enabled
+
+        if cli_live_enabled():
+            yield Static("◉ Live", id="meta-live", markup=False)
         yield Static("", id="meta-mode", markup=True)
         yield Static("", id="meta-sep", markup=True)
         yield Static("", id="meta-model", markup=True)
         yield Static("Auto", id="meta-reasoning", markup=False)
-        yield Static("Context --", id="meta-context", markup=False)
-        yield Static("", id="meta-permission", markup=False)
+        yield Static("", id="meta-effort", markup=False)
+
+    def _effort_level(self) -> int:
+        return self.EFFORT_LEVELS.get((self._effort or "").lower(), 0)
+
+    def _effort_bars(self, count: int | None = None) -> str:
+        level = self._effort_level()
+        return self.EFFORT_BARS[: level if count is None else min(level, count)]
+
+    def _tint_effort(self) -> None:
+        tint = {f"-lvl-{self._effort_level()}"}
+        every = {f"-lvl-{level}" for level in range(len(self.EFFORT_BARS) + 1)}
+        for widget_id in ("#meta-reasoning", "#meta-effort"):
+            swap_classes(self.query_one(widget_id, Static), every - tint, tint)
+
+    def _show_effort(self, effort: str) -> None:
+        """Paint the effort level; a change animates its bars in."""
+        changed = self._effort is not None and effort != self._effort
+        self._effort = effort
+        self._tint_effort()
+        if self._effort_timer is not None:
+            self._effort_timer.stop()
+            self._effort_timer = None
+        if changed and self.is_attached and self.app.animation_level != "none":
+            self._effort_frame = 0
+            self._effort_step()
+            self._effort_timer = self.set_interval(self.EFFORT_FRAME_S, self._effort_step)
+            return
+        self._settle_effort()
+
+    def _effort_step(self) -> None:
+        self._effort_frame += 1
+        reasoning_w = self.query_one("#meta-reasoning", Static)
+        effort_w = self.query_one("#meta-effort", Static)
+        reasoning_w.add_class("-glow")
+        effort_w.add_class("-glow")
+        effort_w.update(self._effort_bars(self._effort_frame))
+        if self._effort_frame >= len(self.EFFORT_BARS) + self.EFFORT_GLOW_FRAMES:
+            if self._effort_timer is not None:
+                self._effort_timer.stop()
+                self._effort_timer = None
+            self._settle_effort()
+
+    def _settle_effort(self) -> None:
+        reasoning_w = self.query_one("#meta-reasoning", Static)
+        effort_w = self.query_one("#meta-effort", Static)
+        reasoning_w.remove_class("-glow")
+        effort_w.remove_class("-glow")
+        bars = self._effort_bars()
+        if effort_w.content != bars:
+            effort_w.update(bars)
 
     def set_meta(
         self,
@@ -3048,31 +4260,29 @@ class ComposerMeta(Horizontal):
                 widget.update(value)
 
         name, _slug_provider = split_model_slug(model)
+        if is_bedrock_model_id(name):
+            name = bedrock_display_name(name)  # "Claude Sonnet 5.5", not the profile ID
         mode_w = self.query_one("#meta-mode", Static)
         sep_w = self.query_one("#meta-sep", Static)
         model_w = self.query_one("#meta-model", Static)
-        context_w = self.query_one("#meta-context", Static)
         reasoning_w = self.query_one("#meta-reasoning", Static)
         update(reasoning_w, reasoning or "Auto")
-        if permission is not None:
-            permission_w = self.query_one("#meta-permission", Static)
-            update(permission_w, permission)
-            permission_w.tooltip = "Permissions: /permission auto | ask | always"
         reasoning_w.tooltip = "Choose native reasoning effort (Ctrl+Shift+R)"
-        if context_window > 0:
-            percent = max(0, min(100, round(context_used * 100 / context_window)))
-            update(context_w, f"Context {percent}%")
-            context_w.tooltip = f"{context_used:,} / {context_window:,} tokens used in the latest request"
-        else:
-            update(context_w, "Context --")
-            context_w.tooltip = "Context usage is not available yet"
-        prefix = f"{wave_frame(spin)} " if busy else ""
+        if reasoning != self._effort:
+            self._show_effort(reasoning)
+        # Context use and the permission posture stay off the footer: full
+        # access is the default and /permission changes it.
+        del context_used, context_window, permission
+        # The working line under the chat is the one live status; the
+        # footer stays still while a turn runs.
+        del busy, spin
+        prefix = ""
         if extra:
             update(mode_w, extra)
             update(sep_w, "")
             update(model_w, "")
             return
-        update(mode_w, f"[$primary]{prefix}{escape(mode)}[/]")
+        update(mode_w, f"{prefix}{escape(mode)}")
         if name:
             update(sep_w, "·")
             update(model_w, escape(name))
@@ -3080,14 +4290,27 @@ class ComposerMeta(Horizontal):
             update(sep_w, "·")
             update(model_w, "no model")
 
+    def set_live(self, on: bool) -> None:
+        """The Live call next to the model: click to call, click to hang up."""
+        try:
+            live_w = self.query_one("#meta-live", Static)
+        except Exception:  # noqa: BLE001 - the terminal Live is switched off
+            return
+        label = "● Live" if on else "◉ Live"
+        if live_w.content != label:
+            live_w.update(label)
+        live_w.set_class(on, "-on")
+        live_w.tooltip = "Hang up the Live call (/live)" if on else "Start a Live voice call (/live)"
+
     def on_click(self, event: events.Click) -> None:
         target = event.widget
-        if isinstance(target, Static) and target.id == "meta-reasoning":
+        if isinstance(target, Static) and target.id == "meta-live":
+            event.stop()
+            self.app.call_later(self.app.run_action, "toggle_live")
+            return
+        if isinstance(target, Static) and target.id in {"meta-reasoning", "meta-effort"}:
             event.stop()
             self.app.call_later(self.app.run_action, "pick_reasoning")
-            return
-        if isinstance(target, Static) and target.id == "meta-context":
-            event.stop()
             return
         if isinstance(target, Static) and target.id == "meta-model":
             self.app.call_later(self.app.run_action, "pick_model")
@@ -3107,7 +4330,7 @@ class Composer(TextArea):
         max-height: 12;
         min-height: 1;
         border: none !important;
-        background: $panel;
+        background: $background;
         color: $foreground;
         padding: 0 0 0 0;
         scrollbar-size-vertical: 1;
@@ -3117,10 +4340,15 @@ class Composer(TextArea):
     """
 
     BINDINGS = [
+        # Most terminals send Ctrl+Enter as a plain Enter, so the message was
+        # only queued and the running agent never saw it. Alt+Enter reaches the
+        # app in every terminal; Alt+S covers Windows Terminal, where Alt+Enter
+        # toggles full screen.
         Binding("ctrl+enter", "send_now", "Send now", show=False),
+        Binding("alt+enter", "send_now", "Send now", show=False),
+        Binding("alt+s", "send_now", "Send now", show=False),
         Binding("ctrl+j", "newline", "Newline", show=False),
         Binding("shift+enter", "newline", "Newline", show=False),
-        Binding("alt+enter", "newline", "Newline", show=False),
         Binding("ctrl+a", "select_all", "Select all", show=False),
         Binding("super+a", "select_all", "Select all", show=False),
         Binding("ctrl+v", "paste_any", "Paste", show=False, priority=True),
@@ -3132,6 +4360,9 @@ class Composer(TextArea):
         Binding("shift+insert", "paste_any", "Paste", show=False),
         Binding("ctrl+alt+v", "paste_any", "Paste", show=False),
         Binding("super+alt+v", "paste_any", "Paste", show=False),
+        # Windows Terminal keeps Ctrl+V for itself and sends nothing when the
+        # clipboard holds only an image: Alt+V reaches the app and attaches it.
+        Binding("alt+v", "paste_image", "Paste image", show=False, priority=True),
         Binding("ctrl+f", "find", "Find", show=False),
         Binding("super+f", "find", "Find", show=False),
         Binding("pageup", "page_chat", "Page up", show=False, priority=True),
@@ -3263,9 +4494,17 @@ class Composer(TextArea):
         event.stop()
         # Bracketed paste contains literal newlines, not Enter key events.
         # Trust its payload instead of replacing it with an older local copy.
-        self._insert_paste(event.text or "", source="terminal")
+        if not (event.text or "").strip():
+            # Windows Terminal, iTerm and most emulators catch Ctrl+V themselves:
+            # with only an image in the clipboard they send an empty paste. Read
+            # the OS clipboard so the image is still attached, like Codex does.
+            self.run_worker(self._paste_from_clipboard(), group="clipboard", exclusive=True)
+            return
+        self._insert_paste(event.text, source="terminal")
 
     async def _on_key(self, event: events.Key) -> None:
+        # Live command logs hold their (costly) repaints while the user types.
+        note_input(self.app)
         if event.key == "enter":
             event.prevent_default()
             event.stop()
@@ -3331,25 +4570,57 @@ class Composer(TextArea):
         """Paste OS clipboard (Windows / WSL) or the in-app clipboard."""
         self.run_worker(self._paste_from_clipboard(), group="clipboard", exclusive=True)
 
-    async def _paste_from_clipboard(self) -> None:
+    def action_paste_image(self) -> None:
+        """Attach the clipboard image first (Alt+V), else paste its text."""
+        self.run_worker(self._paste_from_clipboard(prefer_image=True), group="clipboard", exclusive=True)
+
+    async def _attach_clipboard_image(self, generation: int, snapshot: object) -> bool | None:
+        """True when attached, False when no image, None when the prompt moved on."""
+        from navin.tui.images import image_token, save_clipboard_image
+
+        try:
+            image = await asyncio.to_thread(save_clipboard_image)
+        except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
+            image = None
+        if generation != self._paste_generation or snapshot != (self.text, self.selection):
+            return None
+        if image is None:
+            return False
+        self.insert(image_token(image) + " ")
+        self.notify("Image attached - the model will see it.", timeout=3)
+        return True
+
+    async def _paste_from_clipboard(self, prefer_image: bool = False) -> None:
         from navin.tui.clipboard import pick_paste_text, read_clipboard
 
-        if getattr(self.app, "_copy_running", False) and self.app.clipboard:
+        if not prefer_image and getattr(self.app, "_copy_running", False) and self.app.clipboard:
             self._insert_paste(self.app.clipboard)
             return
         generation = self._paste_generation
         snapshot = (self.text, self.selection)
+        tried_image = False
+        if prefer_image:
+            attached = await self._attach_clipboard_image(generation, snapshot)
+            if attached is not False:
+                return
+            tried_image = True
         try:
             os_text = await asyncio.to_thread(read_clipboard)
         except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
             os_text = ""
         if generation != self._paste_generation or snapshot != (self.text, self.selection):
             return
-        text = pick_paste_text(self.app.clipboard, os_text)
+        text = pick_paste_text(self.app.clipboard, os_text) if os_text else ""
+        if not text:
+            if not tried_image:
+                attached = await self._attach_clipboard_image(generation, snapshot)
+                if attached is not False:
+                    return
+            text = pick_paste_text(self.app.clipboard, "")
         if text:
             self._insert_paste(text)
         else:
-            self.notify("No clipboard text available. Use your terminal's Paste command.", timeout=3)
+            self.notify("No clipboard text or image available. Use your terminal's Paste command.", timeout=3)
 
     def action_find(self) -> None:
         self.post_message(self.FindRequested())
@@ -3554,32 +4825,70 @@ class Transcript(LocalDisplayStyles, VerticalScroll):
         align-vertical: bottom;
         padding: 0;
         background: $background;
-        /* No bar: the wheel, PageUp/PageDown and drag selection scroll. */
+        /* Its own bar stays hidden: EdgeScrollbar draws a thin one on the
+           screen edge, past the sidebar. */
         scrollbar-size-vertical: 0;
     }
     """
 
     auto_follow = reactive(True)
     has_older = False
-    loading_history = False
     history_generation = 0
 
-    # Textual arranges every displayed widget on each layout, visible or not.
-    # A long chat therefore slows every paint, keystroke and scroll. Blocks
-    # far above the viewport are hidden (display: none) and come back when
-    # the reader scrolls up, so the cost follows the screen, not the session.
-    WINDOW_SCREENS = 4
-    WINDOW_MIN_LINES = 160
-    WINDOW_MIN_BLOCKS = 6
+    # Virtualization (navin.tui.virtual). Textual styles, arranges and keeps
+    # alive every mounted widget, so the chat keeps only what is near the
+    # viewport as widgets: one screen of margin on each side. Finished blocks
+    # farther away become records in a RecordGap as tall as they were, and
+    # are built again (cheaply) when the reader scrolls back to them.
+    MARGIN_SCREENS = 1
+    DROP_SCREENS = 2
+    MIN_MARGIN_LINES = 24
+    # The newest blocks always stay widgets: live code follows the tail.
+    KEEP_TAIL_BLOCKS = 2
+    # Records built per pass; a pass repeats until the margin is covered.
+    MAX_BUILD_PER_PASS = 24
+    MAX_PASSES = 8
     TRIM_DELAY_S = 0.3
+    PREFETCH_SCREENS = 1
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._windowed: list[Widget] = []
-        self._trim_timer: Timer | None = None
-        self._reveal_pending = False
+        self._loading_history = False
+        self._sync_timer: Timer | None = None
+        self._sync_due = 0.0
+        self._sync_running = False
+        self._sync_again = False
+        self._adjusting_scroll = False
+        self.records_built = 0
+        self.records_made = 0
+
+    class FollowChanged(Message):
+        """The reader left the tail (scrolled up) or came back to it."""
+
+        def __init__(self, transcript: Transcript, following: bool) -> None:
+            super().__init__()
+            self.transcript = transcript
+            self.following = following
+
+    @property
+    def loading_history(self) -> bool:
+        return self._loading_history
+
+    @loading_history.setter
+    def loading_history(self, value: bool) -> None:
+        was = self._loading_history
+        self._loading_history = bool(value)
+        if was and not value:
+            # Pages painted meanwhile were kept as widgets; settle them now.
+            self.schedule_sync(self.TRIM_DELAY_S)
+
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        # No Navin rule depends on the chat's own focus. The default restyled
+        # every block of the conversation (seconds on a long session).
+        restyle_focus(self)
 
     def watch_auto_follow(self, follow: bool) -> None:
+        self.post_message(self.FollowChanged(self, follow))
         if self.is_attached:
             if follow:
                 # scroll_y watchers run inside the animator's frame callback.
@@ -3594,126 +4903,426 @@ class Transcript(LocalDisplayStyles, VerticalScroll):
         if self.is_attached and self.auto_follow:
             self.anchor()
 
-    # -- windowing --------------------------------------------------------
+    # -- blocks and records -------------------------------------------------
+
+    def blocks(self) -> Iterator[Any]:
+        """Every block in reading order: widgets, and records standing in for
+        blocks out of view (find, copy and export see the whole chat)."""
+        for child in list(self.children):
+            if isinstance(child, RecordGap):
+                yield from list(child.records)
+            else:
+                yield child
+
+    def _gaps(self) -> list[RecordGap]:
+        return [child for child in self.children if isinstance(child, RecordGap)]
 
     @property
     def windowed_count(self) -> int:
-        return len(self._windowed)
+        """Blocks currently held as records instead of widgets."""
+        return sum(len(gap.records) for gap in self._gaps())
 
-    def _window_budget(self, screens: int) -> int:
-        return max(self.WINDOW_MIN_LINES, self.outer_size.height * screens)
+    def mounted_block_count(self) -> int:
+        return sum(1 for child in self.children if not isinstance(child, RecordGap))
 
-    @staticmethod
-    def _block_height(child: Widget) -> int:
-        # Last laid-out size: reading region/size would rebuild the full map.
-        return child.outer_size.height + child.styles.margin.height
+    # -- scheduling ---------------------------------------------------------
 
-    @staticmethod
-    def _can_window(child: Widget) -> bool:
-        # Pending prompts wait for an answer; never hide them.
-        return not isinstance(child, (ApprovalCard, ChoiceCard))
+    def schedule_sync(self, delay: float = 0.0) -> None:
+        if not self.is_attached:
+            return
+        if self._sync_running:
+            self._sync_again = True
+            return
+        # Textual timers divide by their interval: never schedule zero.
+        delay = max(0.001, delay)
+        due = time.monotonic() + delay
+        if self._sync_timer is not None:
+            if self._sync_due <= due:
+                return
+            self._sync_timer.stop()
+        self._sync_due = due
+        self._sync_timer = self.set_timer(delay, self._run_sync)
 
     def schedule_trim(self) -> None:
-        if self._trim_timer is None and self.is_attached:
-            self._trim_timer = self.set_timer(self.TRIM_DELAY_S, self._trim)
+        self.schedule_sync(self.TRIM_DELAY_S)
 
     def _trim(self) -> None:
-        self._trim_timer = None
-        if not self.is_attached or not self.auto_follow or self.loading_history:
-            return
-        children = self.children
-        windowed = {child for child in self._windowed if child.parent is self}
-        budget = self._window_budget(self.WINDOW_SCREENS)
-        used = kept = 0
-        cut: int | None = None
-        for index in range(len(children) - 1, -1, -1):
-            child = children[index]
-            if child in windowed:
-                break
-            if not child.display:
-                continue
-            used += self._block_height(child)
-            kept += 1
-            if used > budget and kept >= self.WINDOW_MIN_BLOCKS:
-                cut = index
-                break
-        if cut is None:
-            return
-        hidden = False
-        for child in children[:cut]:
-            if child.display and child not in windowed and self._can_window(child):
-                child.display = False
-                windowed.add(child)
-                hidden = True
-        if hidden:
-            self._windowed = [child for child in children if child in windowed]
+        """Settle the window soon (compatibility entry point)."""
+        self.schedule_sync(0)
 
-    def reveal_windowed(self, through: Widget | None = None) -> bool:
-        """Show hidden blocks above the viewport, keeping the reading position.
+    async def _run_sync(self) -> None:
+        self._sync_timer = None
+        await self.sync_window()
 
-        With ``through``, every hidden block from that one down is shown
-        (find, jump to a message). Otherwise about two screens are revealed.
-        """
-        self._windowed = [child for child in self._windowed if child.parent is self]
-        if not self._windowed:
+    def _can_sync(self) -> bool:
+        if not self.is_attached or self._loading_history:
             return False
-        if through is not None:
-            if through not in self._windowed:
+        try:
+            screen = self.screen
+            if screen is not self.app.screen:
                 return False
-            chunk = self._windowed[self._windowed.index(through):]
-        else:
-            budget = self._window_budget(2)
-            used = 0
-            start = len(self._windowed)
-            while start > 0 and used < budget:
-                start -= 1
-                used += self._block_height(self._windowed[start])
-            chunk = self._windowed[start:]
-        del self._windowed[len(self._windowed) - len(chunk):]
-        anchor = next(
-            (child for child in self.children if child.display and child not in chunk
-             and self.children.index(child) > self.children.index(chunk[-1])),
-            None,
-        )
-        self.auto_follow = False
-        old_y = anchor.virtual_region.y if anchor is not None else 0
-        scroll_y = self.scroll_y
+        except Exception:  # noqa: BLE001 - detached mid-pass
+            return False
+        # A drag selection holds widgets; keep them until the button is up.
+        return not getattr(screen, "_selecting", False)
+
+    async def sync_window(self) -> bool:
+        """Build records near the viewport back into widgets, and turn finished
+        blocks far from it into records. Returns whether anything changed."""
+        if self._sync_running:
+            self._sync_again = True
+            return False
+        self._sync_running = True
+        changed = False
+        retry = False
+        try:
+            for _ in range(self.MAX_PASSES):
+                self._sync_again = False
+                if not self._can_sync():
+                    retry = self.is_attached and not self._loading_history
+                    break
+                step = await self._sync_pass()
+                changed = changed or step
+                if not step:
+                    break
+        except Exception:  # noqa: BLE001 - a failed pass must not end the app
+            from loguru import logger
+
+            logger.opt(exception=True).warning("transcript window sync failed")
+        finally:
+            self._sync_running = False
+        if self._sync_again:
+            self.schedule_sync(0.02)
+        elif retry:
+            # A modal or a drag selection holds the window; look again later.
+            self.schedule_sync(0.5)
+        return changed
+
+    # -- geometry -----------------------------------------------------------
+
+    def _region(self, widget: Widget) -> Region | None:
+        if not widget.display:
+            return None
+        try:
+            return widget.virtual_region
+        except Exception:  # noqa: BLE001 - not laid out yet
+            return None
+
+    def _viewport(self) -> tuple[int, int, int]:
+        height = self.scrollable_content_region.height or self.outer_size.height
+        margin = max(self.MIN_MARGIN_LINES, height * self.MARGIN_SCREENS)
+        return round(self.scroll_y), height, margin
+
+    def _selected_roots(self) -> set[int]:
+        roots: set[int] = set()
+        try:
+            selections = self.screen.selections
+        except Exception:  # noqa: BLE001
+            return roots
+        for widget in list(selections):
+            node = widget
+            while node is not None and node.parent is not self:
+                node = node.parent
+            if node is not None:
+                roots.add(id(node))
+        return roots
+
+    def _pinned(self, child: Widget, index: int, count: int, selected: set[int]) -> bool:
+        if index >= count - self.KEEP_TAIL_BLOCKS or not child.display:
+            return True
+        if isinstance(child, (ApprovalCard, ChoiceCard)) or id(child) in selected:
+            return True
+        app = self.app
+        # Blocks the app still writes to or removes later stay widgets.
+        if child is getattr(app, "_current", None):
+            return True
+        if any(child is bubble for bubble in getattr(app, "_parked_bubbles", ()) or ()):
+            return True
+        if any(getattr(app, name, None) is child for name in ("_display_error_note", "_retry_wait_note")):
+            return True
+        focused = app.focused
+        return focused is not None and (focused is child or child in focused.ancestors)
+
+    # -- passes -------------------------------------------------------------
+
+    async def _sync_pass(self) -> bool:
+        top, height, margin = self._viewport()
+        if height <= 0:
+            return False
+        keep_lo, keep_hi = top - margin, top + height + margin
+        children = list(self.children)
+        for gap in children:
+            if not isinstance(gap, RecordGap) or not gap.records:
+                continue
+            region = self._region(gap)
+            if region is None:
+                continue
+            span = self._build_span(gap, region.y, keep_lo, keep_hi, top, height)
+            if span is not None:
+                return await self._build(gap, *span)
+        return await self._drop(children, top, height, margin)
+
+    def _build_span(self, gap: RecordGap, gap_y: int, low: int, high: int,
+                    top: int, height: int) -> tuple[int, int] | None:
+        offsets = gap.offsets()
+        hits = [
+            index for index, (offset, record) in enumerate(zip(offsets, gap.records))
+            if gap_y + offset + max(1, record.height) > low and gap_y + offset < high
+        ]
+        if not hits:
+            return None
+        start, end = hits[0], hits[-1] + 1
+        limit = self.MAX_BUILD_PER_PASS
+        if end - start > limit:
+            if gap_y + gap.total_height <= top:
+                start = end - limit  # above the viewport: nearest first
+            elif gap_y >= top + height:
+                end = start + limit
+            else:
+                at = next((i for i in hits if gap_y + offsets[i] + max(1, gap.records[i].height) > top), start)
+                start = max(start, at - limit // 2)
+                end = min(end, start + limit)
+        return start, end
+
+    def _anchor(self, skip: set[int]) -> tuple[Widget, int] | None:
+        """The first block on screen that this pass leaves as it is."""
+        if self.auto_follow:
+            return None
+        top, height, _margin = self._viewport()
+        for child in self.children:
+            if id(child) in skip or isinstance(child, RecordGap):
+                continue
+            region = self._region(child)
+            if region is not None and region.bottom > top and region.y < top + height:
+                return child, region.y
+        return None
+
+    def _settle(self, anchor: tuple[Widget, int] | None) -> None:
+        """Lay out now and keep the anchor where the reader saw it."""
+        self.screen._refresh_layout()
+        if anchor is None:
+            return
+        widget, old_y = anchor
+        if not widget.is_attached:
+            return
+        new_y = widget.virtual_region.y
+        if new_y != old_y:
+            self._adjusting_scroll = True
+            try:
+                self.scroll_to(y=self.scroll_y + new_y - old_y, animate=False, immediate=True)
+            finally:
+                self._adjusting_scroll = False
+
+    async def _build(self, gap: RecordGap, start: int, end: int, *, jump_to: BlockRecord | None = None) -> bool:
+        records = gap.records[start:end]
+        widgets: list[Widget] = []
+        for record in records:
+            widget = record.build()
+            widget.display = False
+            widgets.append(widget)
+        tail = gap.records[end:]
+        tail_gap = RecordGap(tail) if tail else None
+        if tail_gap is not None:
+            tail_gap.display = False
+        try:
+            await self.mount_all([*widgets, *([tail_gap] if tail_gap else [])], after=gap)
+        except Exception:  # noqa: BLE001 - the gap left meanwhile (chat cleared)
+            return False
+        if not gap.is_attached:
+            return False
+        # The anchor is measured now: the new widgets are still out of layout.
+        anchor = self._anchor(skip=set())
+        if anchor is None and not self.auto_follow and jump_to is None:
+            region = self._region(gap)
+            offsets = gap.offsets()
+            top, height, _margin = self._viewport()
+            if region is not None:
+                for widget, record, offset in zip(widgets, records, offsets[start:end]):
+                    if region.y + offset + max(1, record.height) > top:
+                        anchor = (widget, region.y + offset)
+                        break
         with self.app.batch_update():
-            for child in chunk:
-                child.display = True
-            self.screen._refresh_layout()
-            if anchor is not None and anchor.is_attached:
-                self.scroll_to(
-                    y=scroll_y + anchor.virtual_region.y - old_y, animate=False, immediate=True,
-                )
+            head = gap.records[:start]
+            gap.set_records(head)
+            if not head:
+                gap.display = False
+            for widget in widgets:
+                widget.display = True
+            if tail_gap is not None:
+                tail_gap.display = True
+            self._settle(anchor)
+            if jump_to is not None:
+                target = widgets[records.index(jump_to)] if jump_to in records else None
+                if target is not None:
+                    self.scroll_to_widget(target, animate=False)
+        self.records_built += len(widgets)
+        if not head:
+            await gap.remove()
         return True
 
-    def _reveal_older(self) -> None:
-        self._reveal_pending = False
-        if self.is_attached:
-            self.reveal_windowed()
+    async def _drop(self, children: list[Widget], top: int, height: int, margin: int) -> bool:
+        drop_lo = top - margin * self.DROP_SCREENS
+        drop_hi = top + height + margin * self.DROP_SCREENS
+        selected = self._selected_roots()
+        count = len(children)
+        runs: list[list[tuple[Widget, BlockRecord]]] = []
+        previous = -2
+        for index, child in enumerate(children):
+            if isinstance(child, RecordGap) or self._pinned(child, index, count, selected):
+                continue
+            region = self._region(child)
+            if region is None or (region.bottom > drop_lo and region.y < drop_hi):
+                continue
+            snapshot = getattr(child, "snapshot_record", None)
+            record = snapshot() if callable(snapshot) else None
+            if record is None:
+                continue
+            record.classes.discard("-find")
+            following = children[index + 1] if index + 1 < count else None
+            next_region = self._region(following) if following is not None else None
+            if next_region is not None and next_region.y > region.y:
+                record.height = next_region.y - region.y
+            else:
+                record.height = region.height + child.styles.margin.bottom
+            if index != previous + 1 or not runs:
+                runs.append([])
+            runs[-1].append((child, record))
+            previous = index
+        if not runs:
+            return False
+        dropped = [child for run in runs for child, _record in run]
+        placements: list[tuple[RecordGap, list[BlockRecord], str]] = []
+        for run in runs:
+            first, last = run[0][0], run[-1][0]
+            records = [record for _child, record in run]
+            index = children.index(first)
+            before = children[index - 1] if index > 0 else None
+            after_index = children.index(last) + 1
+            after = children[after_index] if after_index < count else None
+            if isinstance(before, RecordGap):
+                placements.append((before, records, "append"))
+            elif isinstance(after, RecordGap):
+                placements.append((after, records, "prepend"))
+            else:
+                gap = RecordGap([])
+                gap.display = False
+                try:
+                    await self.mount(gap, before=first)
+                except Exception:  # noqa: BLE001
+                    return False
+                placements.append((gap, records, "new"))
+        if any(child.parent is not self for child in dropped):
+            return False
+        anchor = self._anchor(skip={id(child) for child in dropped})
+        with self.app.batch_update():
+            for gap, records, mode in placements:
+                if mode == "append":
+                    gap.set_records(gap.records + records)
+                elif mode == "prepend":
+                    gap.set_records(records + gap.records)
+                else:
+                    gap.set_records(records)
+                    gap.display = True
+            for child in dropped:
+                child.display = False
+            self._settle(anchor)
+        self.records_made += len(dropped)
+        await super().remove_children(dropped)
+        await self._merge_gaps()
+        return True
+
+    async def _merge_gaps(self) -> None:
+        merged: list[Widget] = []
+        previous: Widget | None = None
+        for child in list(self.children):
+            if isinstance(child, RecordGap) and isinstance(previous, RecordGap):
+                previous.set_records(previous.records + child.records)
+                child.display = False
+                merged.append(child)
+                continue
+            previous = child
+        if merged:
+            await super().remove_children(merged)
+
+    # -- reading older blocks ----------------------------------------------
+
+    def _gap_above(self) -> bool:
+        for child in self.children:
+            if isinstance(child, RecordGap):
+                if child.records:
+                    return True
+                continue
+            return False
+        return False
+
+    def reveal_windowed(self, through: Any = None) -> bool:
+        """Bring blocks held as records back, keeping the reading position.
+
+        With ``through`` (a record from ``blocks()``: find, jump to a
+        message), that block is built and scrolled into view. Otherwise the
+        blocks above the viewport are built.
+        """
+        if through is None:
+            if not self._gap_above():
+                return False
+            self.auto_follow = False
+            self.schedule_sync(0)
+            return True
+        if not isinstance(through, BlockRecord):
+            return False
+        self.auto_follow = False
+        self.run_worker(self._reveal_record(through), group="transcript-reveal", exclusive=True)
+        return True
+
+    async def _reveal_record(self, record: BlockRecord) -> None:
+        while self._sync_running:
+            await asyncio.sleep(0.01)
+        self._sync_running = True
+        try:
+            for gap in self._gaps():
+                if any(item is record for item in gap.records):
+                    index = next(i for i, item in enumerate(gap.records) if item is record)
+                    start = max(0, index - 2)
+                    await self._build(gap, start, min(len(gap.records), index + 3), jump_to=record)
+                    break
+        finally:
+            self._sync_running = False
+        self.schedule_sync(self.TRIM_DELAY_S)
+
+    def scroll_to_widget(self, widget: Any, *args: Any, **kwargs: Any) -> bool:
+        if isinstance(widget, BlockRecord):
+            # Its widget does not exist yet: reveal_windowed() builds it and
+            # scrolls to it.
+            return False
+        return super().scroll_to_widget(widget, *args, **kwargs)
 
     def request_older(self) -> None:
-        if self._windowed:
-            # Scroll watchers run inside the animator; reveal on the next tick.
-            if not self._reveal_pending:
-                self._reveal_pending = True
-                self.call_later(self._reveal_older)
+        if self._gap_above():
+            self.schedule_sync(0)
             return
         if self.has_older and not self.loading_history:
             self.loading_history = True
             self.auto_follow = False
             self.post_message(self.OlderRequested(self.history_generation))
 
+    def _near_top(self, y: float) -> bool:
+        # The reader scrolling up fetches older blocks a screen ahead, so they
+        # are there before the top instead of stopping the scroll on it.
+        # Relayouts (resize, reveal) keep the strict top check in watch_scroll_y.
+        return y <= max(3, self.outer_size.height * self.PREFETCH_SCREENS)
+
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        if self.scroll_y <= 3:
+        if self._near_top(self.scroll_y):
             self.request_older()
 
     def on_resize(self) -> None:
         self.follow()
+        self.schedule_sync(0.05)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
+        if self._adjusting_scroll:
+            return
         # Only a move up leaves the tail. A frame of a smooth scroll toward the
         # end lands short of it too, and used to drop follow for the turn.
         if self.is_vertical_scroll_end:
@@ -3722,11 +5331,13 @@ class Transcript(LocalDisplayStyles, VerticalScroll):
             self.auto_follow = False
         if new_value < old_value and new_value <= 3:
             self.request_older()
+        if self.windowed_count:
+            self.schedule_sync(0.01)
 
     def nudge(self, delta: int) -> None:
         if not delta:
             return
-        if delta < 0 and self.scroll_y + delta <= 3:
+        if delta < 0 and self._near_top(self.scroll_y + delta):
             self.request_older()
         self.scroll_relative(y=delta, animate=False)
         self.auto_follow = self.is_vertical_scroll_end
@@ -3745,6 +5356,170 @@ class Transcript(LocalDisplayStyles, VerticalScroll):
             # content, instead of painting and scrolling in separate frames.
             self.anchor()
             self.schedule_trim()
+
+
+class EdgeScrollbar(Widget):
+    """A thin scrollbar for the conversation, on the screen's right edge.
+
+    The transcript hides its own bar so the chat keeps its columns. This one
+    sits against the terminal border, past the sidebar when it is open, and
+    spans the rows of the conversation (the composer rows stay blank). Drag
+    the thumb, click the track to jump there, or use the wheel over it.
+    """
+
+    ALLOW_SELECT = False
+    can_focus = False
+    COMPONENT_CLASSES = {"edge-scrollbar--track", "edge-scrollbar--thumb"}
+    TRACK_GLYPH = "▕"
+    THUMB_GLYPH = "▐"
+    WHEEL_LINES = 3
+
+    DEFAULT_CSS = """
+    EdgeScrollbar {
+        width: 1;
+        height: 1fr;
+        background: $background;
+    }
+    EdgeScrollbar > .edge-scrollbar--track { color: $scrollbar; }
+    EdgeScrollbar > .edge-scrollbar--thumb { color: $scrollbar-active; }
+    EdgeScrollbar:hover > .edge-scrollbar--thumb,
+    EdgeScrollbar.-dragging > .edge-scrollbar--thumb { color: $foreground; }
+    """
+
+    def __init__(self, target: str = "#transcript", *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._target_selector = target
+        self._target: Transcript | None = None
+        self._shape: tuple[int, int, int] = (0, -1, 0)
+        self._grab: int | None = None
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """(track rows, thumb start, thumb rows); start is -1 when nothing scrolls."""
+        return self._shape
+
+    def on_mount(self) -> None:
+        if not self._bind():
+            self.call_after_refresh(self._bind)
+
+    def _bind(self) -> bool:
+        if self._target is not None:
+            return True
+        if not self.is_attached:
+            return False
+        try:
+            target = self.screen.query_one(self._target_selector, Transcript)
+        except NoMatches:
+            return False
+        self._target = target
+        self.watch(target, "scroll_y", self.sync, init=False)
+        self.watch(target, "virtual_size", self.sync, init=False)
+        # Resizes, the sidebar and the composer growing change the track.
+        self.screen.screen_layout_refresh_signal.subscribe(self, self._on_layout)
+        self.sync()
+        return True
+
+    def _on_layout(self, _screen: object) -> None:
+        self.sync()
+
+    def _measure(self) -> tuple[int, int, int]:
+        target = self._target
+        if target is None or not target.is_attached or not target.display:
+            return (0, -1, 0)
+        # The chat column starts on this bar's first row; last laid-out sizes
+        # avoid rebuilding the compositor map on every scroll frame.
+        track = max(0, min(self.outer_size.height, target.outer_size.height))
+        max_scroll = target.max_scroll_y
+        virtual = target.virtual_size.height
+        if not track or max_scroll <= 0 or virtual <= 0:
+            return (track, -1, 0)
+        view = max(1, virtual - max_scroll)
+        size = min(track, max(1, round(track * view / virtual)))
+        ratio = min(1.0, max(0.0, target.scroll_y / max_scroll))
+        return (track, round((track - size) * ratio), size)
+
+    def sync(self) -> None:
+        shape = self._measure()
+        if shape != self._shape:
+            self._shape = shape
+            self.refresh()
+
+    def render_line(self, y: int) -> Strip:
+        width = content_width(self)
+        base = self.visual_style.rich_style
+        track, start, size = self._shape
+        if width <= 0 or start < 0 or not 0 <= y < track:
+            return Strip.blank(width, base)
+        thumb = start <= y < start + size
+        style = self.get_component_rich_style(
+            "edge-scrollbar--thumb" if thumb else "edge-scrollbar--track"
+        )
+        glyph = self.THUMB_GLYPH if thumb else self.TRACK_GLYPH
+        segments = [Segment(glyph, style)]
+        if width > 1:
+            segments.insert(0, Segment(" " * (width - 1), base))
+        return Strip(segments, width)
+
+    # -- pointer ----------------------------------------------------------
+
+    def _drag_to(self, y: int) -> None:
+        target = self._target
+        track, _start, size = self._shape
+        if target is None or self._grab is None:
+            return
+        span = track - size
+        max_scroll = target.max_scroll_y
+        if span <= 0 or max_scroll <= 0:
+            return
+        start = min(span, max(0, y - self._grab))
+        target.scroll_to(y=max_scroll * start / span, animate=False, immediate=True)
+        self.sync()
+
+    def _end_drag(self) -> None:
+        self._grab = None
+        self.remove_class("-dragging")
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        track, start, size = self._shape
+        y = int(event.y)
+        if event.button != 1 or start < 0 or not 0 <= y < track:
+            return
+        event.stop()
+        if start <= y < start + size:
+            self._grab = y - start
+        else:
+            # A click on the track brings the thumb's middle there.
+            self._grab = size // 2
+            self._drag_to(y)
+        self.add_class("-dragging")
+        self.capture_mouse()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self._grab is None:
+            return
+        event.stop()
+        self._drag_to(int(event.y))
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._grab is None:
+            return
+        event.stop()
+        self._end_drag()
+        self.release_mouse()
+
+    def on_mouse_release(self, _event: events.MouseRelease) -> None:
+        self._end_drag()
+
+    def _wheel(self, event: events.MouseEvent, lines: int) -> None:
+        event.stop()
+        if self._target is not None and self._target.is_attached:
+            self._target.nudge(lines)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._wheel(event, -self.WHEEL_LINES)
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self._wheel(event, self.WHEEL_LINES)
 
 
 def compact_shortcut(key: str) -> str:
@@ -3770,7 +5545,7 @@ class DockHint(Static):
         width: auto;
         height: 1;
         padding: 0 2 0 0;
-        color: $text-muted;
+        color: $text-muted 80%;
     }
     DockHint:hover { color: $foreground; }
     """
@@ -3789,7 +5564,7 @@ class DockHint(Static):
     def _paint(self) -> None:
         if self.key:
             shown = compact_shortcut(self.key)
-            self.update(f"[$primary]{escape(shown)}[/] {escape(self.label)}")
+            self.update(f"[$primary 70%]{escape(shown)}[/] {escape(self.label)}")
         elif self.action:
             self.update(escape(self.label))
         else:
@@ -3844,10 +5619,9 @@ class DockBar(Horizontal):
         width: 1fr;
         height: 1;
         padding: 0 2 0 4;
-        color: $accent 70%;
+        color: $text-muted 70%;
         overflow: hidden;
     }
-    DockBar > #dock-path:hover { color: $accent; }
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -3892,11 +5666,6 @@ class DockBar(Horizontal):
         else:
             shown = leaf[: max(1, width - 1)] + "…"
         slot.update(escape(shown))
-
-    def on_click(self, event: events.Click) -> None:
-        if getattr(event.widget, "id", None) == "dock-path":
-            event.stop()
-            self.app.call_later(self.app.run_action, "pick_project")
 
 
 _KEY_WIDTH = 8  # "ctrl+b  " - every key column in the panel is this wide
@@ -4053,7 +5822,13 @@ class SideAction(Static):
 
     def _render_row(self) -> None:
         tail = f"  [$text-muted]{escape(self._value)}[/]" if self._value else ""
-        self.update(f"{_key_markup(self.key)}{escape(self.label)}{tail}")
+        markup = f"{_key_markup(self.key)}{escape(self.label)}{tail}"
+        if markup == getattr(self, "_painted_markup", None):
+            return
+        self._painted_markup = markup
+        # One fixed row whose width never follows the text: a repaint is enough.
+        # The live activity line changes with every tool step.
+        self.update(markup, layout=not self.is_mounted)
 
     def on_click(self) -> None:
         if self.action:
@@ -4168,7 +5943,7 @@ class Sidebar(Vertical):
         border-left: vkey $border;
         padding: 2 2 0 2;
         display: none;
-        background: $panel;
+        background: $background;
         overflow: hidden;
     }
     Sidebar.-visible { display: block; }
@@ -4194,7 +5969,7 @@ class Sidebar(Vertical):
     Sidebar > #side-foot {
         height: auto;
         padding: 1 0 0 0;
-        background: $panel;
+        background: $background;
     }
     Sidebar > #side-foot > #side-split {
         height: 1;

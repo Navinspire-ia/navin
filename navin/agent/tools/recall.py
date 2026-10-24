@@ -13,6 +13,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from navin.agent.error_registry import find_errors, format_errors
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.context import current_request_context, is_heartbeat_turn
 from navin.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
@@ -100,6 +101,12 @@ class RecallTool(Tool):
             count = DEFAULT_LIMIT
         count = max(1, min(MAX_LIMIT, count))
         hits, notes = await asyncio.to_thread(self._search, project, text, count)
+        known = find_errors(project, text)
+        if known:
+            return (
+                "Known errors (symptom, cause, fix). Apply the recorded fix before "
+                "trying a new one:\n" + format_errors(known)
+            )
         if not hits and not notes:
             return (
                 f"No past turn or memory note matches '{text}'. The journal only "

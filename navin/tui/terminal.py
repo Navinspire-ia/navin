@@ -58,3 +58,39 @@ def prepare_terminal_env() -> None:
     forced = detect_color_system()
     if forced:
         os.environ["TEXTUAL_COLOR_SYSTEM"] = forced
+
+
+# Terminals that draw a frame atomically between ``CSI ? 2026 h`` and
+# ``CSI ? 2026 l`` (synchronized output). Textual only turns the mode on
+# when the terminal answers its DECRQM query in time, and the answer often
+# does not come back through WSL, ssh or a slow first frame. Without it a
+# frame that rewrites the whole chat (every streamed line moves the view up)
+# is shown half old, half new: the same lines twice for a few milliseconds.
+_SYNC_OUTPUT_MARKERS = (
+    "WT_SESSION",  # Windows Terminal (also visible inside WSL)
+    "KITTY_WINDOW_ID",
+    "ALACRITTY_WINDOW_ID",
+    "WEZTERM_PANE",
+    "ITERM_SESSION_ID",
+    "GHOSTTY_RESOURCES_DIR",
+)
+SYNC_OUTPUT_ENV = "NAVIN_SYNC_OUTPUT"
+
+
+def forces_synchronized_output(env: Mapping[str, str] | None = None) -> bool:
+    """Whether to send synchronized-output frames without waiting for DECRQM.
+
+    A terminal that does not know mode 2026 ignores it (unknown DEC private
+    modes are no-ops), so the only cost of a wrong guess is a few bytes.
+    ``NAVIN_SYNC_OUTPUT=1`` / ``=0`` forces the choice either way. Inside tmux
+    or screen the multiplexer redraws on its own: leave it to detection.
+    """
+    env = os.environ if env is None else env
+    choice = env.get(SYNC_OUTPUT_ENV, "").strip().lower()
+    if choice in {"1", "true", "yes", "on"}:
+        return True
+    if choice in {"0", "false", "no", "off"}:
+        return False
+    if env.get("TMUX") or env.get("STY"):
+        return False
+    return any(env.get(marker) for marker in _SYNC_OUTPUT_MARKERS)

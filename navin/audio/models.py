@@ -28,6 +28,12 @@ OPENAI_TTS_VOICES = (
     "sage", "shimmer", "verse", "marin", "cedar",
 )
 GROK_TTS_VOICES = ("eve", "ara", "rex", "sal", "leo")
+# Amazon Polly (AWS Bedrock provider): French first, then English and Arabic.
+POLLY_NEURAL_VOICES = (
+    "Lea", "Remi", "Gabrielle", "Liam", "Joanna", "Matthew", "Ruth", "Stephen",
+    "Amy", "Brian", "Arthur", "Hala", "Zayd",
+)
+POLLY_GENERATIVE_VOICES = ("Lea", "Remi", "Ruth", "Matthew", "Stephen", "Danielle", "Joanna", "Amy")
 
 
 def known_voices(model: str) -> tuple[str, ...]:
@@ -40,6 +46,14 @@ def known_voices(model: str) -> tuple[str, ...]:
             return voices
     if "grok-voice" in slug:
         return GROK_TTS_VOICES
+    if slug.startswith("qwen3-tts"):
+        from navin.providers.qwen_media import QWEN_TTS_VOICES
+
+        return QWEN_TTS_VOICES
+    if slug == "polly-neural":
+        return POLLY_NEURAL_VOICES
+    if slug == "polly-generative":
+        return POLLY_GENERATIVE_VOICES
     if slug in {"tts-1", "tts-1-hd"}:
         return ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
     if "gpt" in slug and "tts" in slug:

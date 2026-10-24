@@ -38,6 +38,18 @@ class PluginError(ValueError):
     pass
 
 
+def plugin_allowed(name: str) -> bool:
+    from navin.agent.managed_policy import plugin_allowed as allowed
+
+    return allowed(name)
+
+
+def mcp_server_allowed(name: str) -> bool:
+    from navin.agent.managed_policy import mcp_server_allowed as allowed
+
+    return allowed(name)
+
+
 def plugins_root() -> Path:
     """Directory holding installed plugin packs."""
     from navin.config.loader import get_config_path
@@ -174,6 +186,85 @@ def enabled_plugin_skill_dirs() -> list[tuple[str, Path]]:
     return dirs
 
 
+def _manifest_paths(manifest: dict[str, Any], kind: str) -> list[str]:
+    """Relative extra paths a manifest declares for *kind* (string or list)."""
+    value = manifest.get(kind)
+    items = value if isinstance(value, list) else [value] if isinstance(value, str) else []
+    paths: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        safe = _safe_relpath(item)
+        if safe:
+            paths.append(safe)
+    return paths
+
+
+def plugin_component_dirs(kind: str) -> list[tuple[str, Path]]:
+    """``(plugin_name, path)`` for a component kind of every enabled plugin.
+
+    *kind* is ``agents`` or ``commands``: the conventional ``<plugin>/<kind>``
+    folder plus every relative path listed under that key in ``plugin.json``.
+    Paths that do not exist are skipped.
+    """
+    root = plugins_root()
+    if not root.is_dir():
+        return []
+    try:
+        rows = PluginManager(root).list()
+    except Exception:  # never break discovery on a corrupt plugin
+        return []
+    found: list[tuple[str, Path]] = []
+    for row in rows:
+        if not row["enabled"]:
+            continue
+        plugin_dir = root / row["name"]
+        candidates = [plugin_dir / kind]
+        candidates += [plugin_dir / rel for rel in _manifest_paths(PluginManager._manifest(plugin_dir), kind)]
+        seen: set[Path] = set()
+        for path in candidates:
+            if path.exists() and path not in seen:
+                seen.add(path)
+                found.append((row["name"], path))
+    return found
+
+
+_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_plugin_vars(value: Any, plugin_dir: Path) -> Any:
+    """Replace ``${NAVIN_PLUGIN_ROOT}`` and ``${VAR}`` (environment) in strings.
+
+    Unknown variables are left as written so a missing export stays visible.
+    """
+    if isinstance(value, str):
+        def sub(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name == "NAVIN_PLUGIN_ROOT":
+                return str(plugin_dir)
+            return os.environ.get(name, match.group(0))
+
+        return _VAR_RE.sub(sub, value)
+    if isinstance(value, list):
+        return [expand_plugin_vars(item, plugin_dir) for item in value]
+    if isinstance(value, dict):
+        return {key: expand_plugin_vars(item, plugin_dir) for key, item in value.items()}
+    return value
+
+
+def _md_names(folders: list[Path]) -> list[str]:
+    names: set[str] = set()
+    for folder in folders:
+        if folder.is_file() and folder.suffix == ".md":
+            names.add(folder.stem)
+        elif folder.is_dir():
+            names.update(
+                p.stem for p in folder.rglob("*.md")
+                if p.is_file() and p.stem.lower() != "readme"
+            )
+    return sorted(names)
+
+
 class PluginManager:
     """File-backed manager for plugin packs."""
 
@@ -242,6 +333,30 @@ class PluginManager:
             raise PluginError("mcp.json must contain an 'mcpServers' object")
         return servers
 
+    @staticmethod
+    def _hook_events(plugin_dir: Path, manifest: dict[str, Any]) -> list[str]:
+        """Events with at least one hook (``hooks/hooks.json`` or manifest)."""
+        tables: list[Any] = []
+        default = plugin_dir / "hooks" / "hooks.json"
+        if default.is_file():
+            with suppress(PluginError):
+                tables.append(_read_json(default))
+        custom = manifest.get("hooks")
+        if isinstance(custom, dict):
+            tables.append(custom)
+        elif isinstance(custom, str) and _safe_relpath(custom):
+            path = plugin_dir / _safe_relpath(custom)
+            if path.is_file() and path != default:
+                with suppress(PluginError):
+                    tables.append(_read_json(path))
+        events: set[str] = set()
+        for table in tables:
+            if isinstance(table, dict) and isinstance(table.get("hooks"), dict):
+                table = table["hooks"]
+            if isinstance(table, dict):
+                events.update(k for k, v in table.items() if isinstance(v, list) and v)
+        return sorted(events)
+
     def list(self) -> list[dict[str, Any]]:
         """List installed plugins with manifest info and component counts."""
         state = self._load_state()
@@ -266,9 +381,14 @@ class PluginManager:
                 ),
                 "homepage": str(manifest.get("homepage") or ""),
                 "source": str(state.get(name, {}).get("source") or ""),
-                "enabled": bool(state.get(name, {}).get("enabled", True)),
+                # Organization policy (allowManagedPluginsOnly) wins over the user's toggle.
+                "enabled": bool(state.get(name, {}).get("enabled", True)) and plugin_allowed(name),
+                "blocked_by_policy": not plugin_allowed(name),
                 "skills": skills,
                 "mcp_servers": sorted(mcp.keys()),
+                "agents": _md_names([plugin_dir / "agents", *(plugin_dir / p for p in _manifest_paths(manifest, "agents"))]),
+                "commands": _md_names([plugin_dir / "commands", *(plugin_dir / p for p in _manifest_paths(manifest, "commands"))]),
+                "hooks": self._hook_events(plugin_dir, manifest),
             })
         return rows
 
@@ -355,7 +475,6 @@ class PluginManager:
         reused = self._reuse_if_installed(plugin_name)
         if reused is not None:
             return reused
-        target = self.root / plugin_name
         tmp = Path(tempfile.mkdtemp(prefix="navin-npx-", dir=str(self.root) if self.root.is_dir() else None))
         try:
             proc = subprocess.run(  # noqa: S603
@@ -525,8 +644,13 @@ class PluginManager:
                 if not isinstance(server_conf, dict):
                     continue
                 key = f"{row['name']}-{server_name}"
+                if not mcp_server_allowed(key):
+                    logger.info("MCP server {} refused by organization policy (mcpAllowlist)", key)
+                    continue
                 try:
-                    desired[key] = MCPServerConfig.model_validate(server_conf)
+                    desired[key] = MCPServerConfig.model_validate(
+                        expand_plugin_vars(server_conf, plugin_dir)
+                    )
                 except ValueError as exc:
                     logger.warning("Plugin {} MCP server {} invalid: {}", row["name"], server_name, exc)
 

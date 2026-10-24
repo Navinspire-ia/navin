@@ -29,7 +29,7 @@
   },
   "components": [
     { "id": "clients", "type": "external", "label": "Navin installs", "sublabel": "Thousands of users", "tag": "virtual keys", "pos": [70, 300], "size": [150, 64] },
-    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.ai", "tag": "LB + TLS", "pos": [340, 300], "size": [160, 64] },
+    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.live", "tag": "LB + TLS", "pos": [340, 300], "size": [160, 64] },
     { "id": "litellm", "type": "backend", "label": "LiteLLM pool", "sublabel": "N stateless replicas", "tag": "/v1", "pos": [620, 300], "size": [170, 64] },
     { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache + RPM", "pos": [900, 140], "size": [170, 64] },
     { "id": "postgres", "type": "database", "label": "Supabase Postgres", "sublabel": "keys + spend", "pos": [900, 300], "size": [170, 64] },

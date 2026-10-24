@@ -11,7 +11,10 @@ export function isReleaseAnnouncement(item: { id: string; kind?: string }): bool
  * refresh cannot bring the same version back two seconds later.
  */
 export const DISMISSED_UPDATE_TOAST_KEY = "navin.update.dismissed-toast";
-export const UPDATE_TOAST_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Later hides the card for one hour: an update keeps coming back until installed. */
+export const UPDATE_TOAST_SNOOZE_MS = 60 * 60 * 1000;
+/** How often the desktop asks the update server while it is open. */
+export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** Only re-check after the window was actually away, not on every focus. */
 export const UPDATE_RECHECK_AFTER_HIDDEN_MS = 30 * 60 * 1000;
 

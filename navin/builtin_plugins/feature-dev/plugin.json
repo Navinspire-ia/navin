@@ -1,0 +1,17 @@
+{
+  "name": "feature-dev",
+  "version": "1.0.0",
+  "description": "Guided feature development: codebase exploration, clarifying questions, competing architectures, implementation and parallel quality review.",
+  "category": "development",
+  "commands": ["feature-dev"],
+  "agents": ["code-explorer", "code-architect", "code-reviewer"],
+  "skills": ["fullstack-dev", "test-generator", "code-reviewer"],
+  "steps": [
+    {"step": "start a new feature", "use": "/feature-dev"},
+    {"step": "understand the existing code", "use": "agent:code-explorer"},
+    {"step": "design the architecture", "use": "agent:code-architect"},
+    {"step": "implement", "use": "skill:fullstack-dev"},
+    {"step": "write the tests", "use": "skill:test-generator"},
+    {"step": "review the result", "use": "agent:code-reviewer"}
+  ]
+}

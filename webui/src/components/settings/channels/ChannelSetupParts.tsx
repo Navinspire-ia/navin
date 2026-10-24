@@ -72,8 +72,8 @@ export function ChannelGuideLink({
         className={cn(
           "inline-flex max-w-full items-center gap-2 border border-border/65 bg-background/90 font-semibold text-foreground shadow-sm transition-colors hover:border-border hover:bg-muted/45",
           compact
-            ? "shrink-0 rounded-full py-1 pl-1 pr-2.5 text-[11.5px]"
-            : "mt-3 rounded-[12px] py-1.5 pl-1.5 pr-3 text-[12px]",
+            ? "shrink-0 rounded-full py-1 ps-1 pe-2.5 text-[11.5px]"
+            : "mt-3 rounded-[12px] py-1.5 ps-1.5 pe-3 text-[12px]",
         )}
       >
         <span
@@ -184,7 +184,7 @@ export function ChannelOfficialLink({
       onClick={() => {
         void openExternalUrl(token, setup.officialUrl!);
       }}
-      className="inline-flex max-w-full shrink-0 items-center gap-2 rounded-full border border-border/65 bg-background/90 py-1 pl-1 pr-2.5 text-[11.5px] font-semibold text-foreground shadow-sm transition-colors hover:border-border hover:bg-muted/45"
+      className="inline-flex max-w-full shrink-0 items-center gap-2 rounded-full border border-border/65 bg-background/90 py-1 ps-1 pe-2.5 text-[11.5px] font-semibold text-foreground shadow-sm transition-colors hover:border-border hover:bg-muted/45"
     >
       <span
         className="grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full border border-border/45 bg-background"
@@ -249,7 +249,7 @@ export function ChannelSetupActions({
             }
           }}
         >
-          {action.copyText ? <Clipboard className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : null}
+          {action.copyText ? <Clipboard className="me-1.5 h-3.5 w-3.5" aria-hidden /> : null}
           {action.label}
         </Button>
       ))}
@@ -438,7 +438,7 @@ export function ChannelSetupSteps({
           <span className="font-medium text-foreground">
             {tx("settings.channels.tryIt", "Try it")}
           </span>
-          <span className="ml-2">
+          <span className="ms-2">
             {t(`settings.channels.items.${featureName}.setup.tryIt`, { defaultValue: tryIt })}
           </span>
         </div>

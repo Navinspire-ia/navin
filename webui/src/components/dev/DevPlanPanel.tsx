@@ -7,13 +7,15 @@ import { useTranslation } from "react-i18next";
 
 import { MarkdownText, preloadMarkdownText } from "@/components/MarkdownText";
 import {
-  fetchBoard,
   type BoardMission,
   type BoardTask,
   type SessionPlan,
 } from "@/lib/api";
 import { formatSessionPlanMarkdown } from "@/lib/plan-markdown";
 import { cn } from "@/lib/utils";
+import { fetchBoardShared } from "@/lib/board-fetch";
+import { setVisibleInterval } from "@/lib/visible-interval";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 /** Same cadence as the chat plan card: a missed board_updated still heals. */
@@ -35,6 +37,9 @@ export function DevPlanPanel({
   onClose?: () => void;
 }) {
   const { client, token } = useClient();
+  // Read at call time: a token rotation is not a reason to reload the plan.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const { t } = useTranslation();
   const tx = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }),
@@ -47,7 +52,7 @@ export function DevPlanPanel({
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
-    if (!token || !sessionKey) {
+    if (!hasToken || !sessionKey) {
       setPlan(null);
       setTasks([]);
       setMission(null);
@@ -55,7 +60,7 @@ export function DevPlanPanel({
     }
     setLoading(true);
     try {
-      const board = await fetchBoard(token, sessionKey);
+      const board = await fetchBoardShared(tokenRef.current, sessionKey);
       setPlan(board.session_plan ?? null);
       setTasks(board.tasks ?? []);
       setMission(board.mission ?? null);
@@ -64,7 +69,7 @@ export function DevPlanPanel({
     } finally {
       setLoading(false);
     }
-  }, [sessionKey, token]);
+  }, [hasToken, sessionKey, tokenRef]);
 
   useEffect(() => {
     void load();
@@ -72,10 +77,10 @@ export function DevPlanPanel({
 
   useEffect(() => {
     const unsubscribe = client.onBoardUpdate(() => void load());
-    const interval = window.setInterval(() => void load(), POLL_MS);
+    const stopPolling = setVisibleInterval(() => void load(), POLL_MS);
     return () => {
       unsubscribe();
-      window.clearInterval(interval);
+      stopPolling();
     };
   }, [client, load]);
 
@@ -85,7 +90,9 @@ export function DevPlanPanel({
 
   const planMarkdown = useMemo(() => {
     if (!plan) return "";
-    return formatSessionPlanMarkdown(plan, tasks, mission, {
+    // The project ledger belongs to the chat that runs it: the server only
+    // puts `goal` on this chat's plan when it works on that mission.
+    return formatSessionPlanMarkdown(plan, tasks, plan.goal ? mission : null, {
       overview: tx("thread.plan.md.overview", "Overview"),
       steps: tx("thread.plan.md.steps", "Plan"),
       acceptance: tx("thread.plan.md.acceptance", "Acceptance criteria"),

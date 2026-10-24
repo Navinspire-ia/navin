@@ -33,7 +33,9 @@ def test_the_recap_lists_edits_and_commands_of_this_run_only() -> None:
     assert "`src/Sidebar.tsx`" in recap and "`src/globals.css`" in recap
     assert "old.py" not in recap
     assert "Commands run: 1, 1 tool call(s) failed" in recap
-    assert "continue" in recap
+    # Never ask the user to type "continue": turn recovery resumes on its own.
+    assert "nothing done so far is lost" in recap
+    assert "continue" not in recap.lower() and "resend" not in recap.lower()
 
 
 def test_nothing_to_say_when_nothing_was_done() -> None:

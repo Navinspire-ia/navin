@@ -20,10 +20,26 @@ _PRIMARY_COOLDOWN_S = 60
 _MISSING = object()
 
 #: Extra attempts on the chosen model before the switch. The operator's rule:
-#: a model that blocks is asked again twice, then the next model of the list
-#: takes the step. Only failures that clear in seconds use the budget; a
-#: definitive refusal or a timeout switches at once (fallback_policy).
-PRIMARY_STICKY_RETRIES = 2
+#: a model that blocks is asked again up to three times, then the next model
+#: of the list takes the step. Only failures that clear in seconds use the
+#: budget; a definitive refusal or a timeout switches at once (fallback_policy).
+PRIMARY_STICKY_RETRIES = 3
+
+
+# Fallback models their provider refused (403 "not available for this
+# account", 404, 401), skipped until the refusal cooldown ends. Shared by every
+# FallbackProvider: a broken model must not be retried on each new turn.
+_REFUSED_UNTIL: dict[str, float] = {}
+
+
+def _refused_recently(model: str) -> bool:
+    until = _REFUSED_UNTIL.get(model)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        _REFUSED_UNTIL.pop(model, None)
+        return False
+    return True
 
 
 class FallbackProvider(LLMProvider):
@@ -215,6 +231,8 @@ class FallbackProvider(LLMProvider):
                     "provider asked to come back later"
                     if getattr(response, "error_retry_after_s", None)
                     or getattr(response, "retry_after", None)
+                    else "no access to this model"
+                    if getattr(response, "error_status_code", None) in (401, 403, 404)
                     else "account out of credit",
                 )
             elif self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
@@ -230,6 +248,11 @@ class FallbackProvider(LLMProvider):
         primary_skipped = not primary_was_attempted
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
+            if _refused_recently(fallback_model):
+                # Refused by its provider a moment ago (no access, unknown
+                # model): asking again would only add a failed call.
+                logger.debug("Fallback '{}' skipped: refused recently", fallback_model)
+                continue
             if has_streamed is not None and has_streamed[0]:
                 can_hop = last_response is not None and self._should_fallback(
                     last_response
@@ -301,6 +324,9 @@ class FallbackProvider(LLMProvider):
                 return fallback_response
 
             last_response = fallback_response
+            refusal_s = circuit_cooldown_s(fallback_response)
+            if refusal_s is not None and getattr(fallback_response, "error_status_code", None) in (401, 403, 404):
+                _REFUSED_UNTIL[fallback_model] = time.monotonic() + refusal_s
             logger.warning(
                 "Fallback '{}' also failed: {}",
                 fallback_model,

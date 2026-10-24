@@ -108,6 +108,14 @@ def _clean_str(value: Any, *, max_len: int) -> str | None:
     return cleaned[:max_len]
 
 
+def _check_expected_status(task: dict[str, Any], expected_status: str | None) -> None:
+    if expected_status is not None and task.get("status") != expected_status:
+        raise BoardError(
+            f"task {task.get('id')} is {task.get('status')}, expected {expected_status}",
+            status=409,
+        )
+
+
 def _clean_actor(actor: Any, actor_type: Any) -> dict[str, str]:
     name = _clean_str(actor, max_len=_MAX_NAME_LEN) or "unknown"
     kind = actor_type if actor_type in ACTOR_TYPES else "human"
@@ -467,7 +475,10 @@ class ProjectBoardStore:
         actor: str,
         actor_type: str,
         fields: dict[str, Any],
+        expected_status: str | None = None,
     ) -> dict[str, Any]:
+        """Apply *fields*. With *expected_status*, refuse (409) when the task's
+        status changed since the caller read it, checked under the store lock."""
         allowed = {
             "title",
             "description",
@@ -549,6 +560,7 @@ class ProjectBoardStore:
             tasks = self.read_tasks()
             task = self._find(tasks, task_id)
             old_status = task["status"]
+            _check_expected_status(task, expected_status)
             merged = {**task, **fields, "updated_at": _now_iso()}
             cleaned = _clean_task(merged, set())
             if cleaned is None:
@@ -577,12 +589,17 @@ class ProjectBoardStore:
         *,
         actor: str,
         actor_type: str,
+        expected_status: str | None = None,
     ) -> dict[str, Any]:
-        """Assign the task to *actor* and move it to in_progress."""
+        """Assign the task to *actor* and move it to in_progress.
+
+        With *expected_status*, refuse (409) when the status changed since the
+        caller read it, checked under the store lock."""
         who = _clean_actor(actor, actor_type)
         with self._lock:
             tasks = self.read_tasks()
             task = self._find(tasks, task_id)
+            _check_expected_status(task, expected_status)
             task["assignee"] = who
             if task["status"] in ("backlog", "planned", "fix", "audit", "review"):
                 task["status"] = "in_progress"

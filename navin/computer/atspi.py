@@ -12,8 +12,6 @@ the binding. Applications only publish their tree when accessibility is on
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import json
 import shutil
 import subprocess
@@ -21,6 +19,7 @@ import sys
 from typing import Any
 
 from navin.computer.base import ComputerError, UIElement
+from navin.utils.proc import no_window_kwargs
 
 _INTERACTIVE_ROLES = {
     "push button",

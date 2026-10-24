@@ -1,10 +1,26 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { UIMessage } from "../lib/types";
-import { assistantSpeechCounts, claimSpeechKey } from "./useLiveVoice";
+import { assistantSpeechCounts, claimSpeechKey, liveDictationEnabled, setLiveDictation } from "./useLiveVoice";
+
+describe("live dictation setting", () => {
+  it("is off by default and persists when toggled", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    expect(liveDictationEnabled()).toBe(false);
+    setLiveDictation(true);
+    expect(liveDictationEnabled()).toBe(true);
+    setLiveDictation(false);
+    expect(liveDictationEnabled()).toBe(false);
+  });
+});
 
 const strings = { codeOmitted: "code omitted", restInChat: "The rest is in the chat.", link: "link" };
 

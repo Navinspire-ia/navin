@@ -1,6 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatUsagePercent, usagePercent } from "@/lib/usage-percent";
+import { intlLocale } from "@/i18n/intl";
 import { useTranslation } from "react-i18next";
 
 import { useAccount } from "@/hooks/useAccount";
@@ -17,7 +19,7 @@ export function HeaderUsageIndicator({
   onClick?: () => void;
   className?: string;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { account } = useAccount();
 
   const plan = (account?.plan || "").trim().toLowerCase();
@@ -32,7 +34,8 @@ export function HeaderUsageIndicator({
     return null;
   }
 
-  const percent = Math.min(100, Math.max(0, Math.round(usage.used_percent ?? 0)));
+  const percent = usagePercent(usage);
+  const percentLabel = formatUsagePercent(percent);
   const barClass =
     percent >= 95
       ? "bg-red-500"
@@ -41,16 +44,16 @@ export function HeaderUsageIndicator({
         : "bg-foreground/85";
   const periodEndSec = usage.period_end || account.period_end || null;
   const renewalLabel = periodEndSec
-    ? new Date(periodEndSec * 1000).toLocaleDateString(i18n.language || undefined)
+    ? new Date(periodEndSec * 1000).toLocaleDateString(intlLocale())
     : null;
   const usageLabel = t("quotaLimit.monthlyUsage", {
     defaultValue: "Monthly usage",
   });
   const title = renewalLabel
-    ? `${usageLabel} : ${percent}% · ${t("quotaLimit.renewal", {
+    ? `${usageLabel} : ${percentLabel}% · ${t("quotaLimit.renewal", {
         defaultValue: "Renewal",
       })} ${renewalLabel}`
-    : `${usageLabel} : ${percent}%`;
+    : `${usageLabel} : ${percentLabel}%`;
 
   return (
     <button
@@ -72,7 +75,7 @@ export function HeaderUsageIndicator({
       <span
         className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-muted"
         role="progressbar"
-        aria-valuenow={percent}
+        aria-valuenow={Math.round(percent)}
         aria-valuemin={0}
         aria-valuemax={100}
       >
@@ -81,7 +84,7 @@ export function HeaderUsageIndicator({
           style={{ width: `${percent}%` }}
         />
       </span>
-      <span className="tabular-nums">{percent}%</span>
+      <span className="tabular-nums">{percentLabel}%</span>
     </button>
   );
 }

@@ -97,7 +97,7 @@ export function CrmConvertDialog({
             });
           })}
         >
-          <DialogHeader className="text-left">
+          <DialogHeader className="text-start">
             <DialogTitle>{tx("crm.convertLeadTitle", "Convertir le lead")}</DialogTitle>
             <DialogDescription>
               {tx(
@@ -214,7 +214,7 @@ export function CrmConvertDialog({
           ) : null}
           {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
 
-          <DialogFooter className="gap-2 sm:space-x-0">
+          <DialogFooter className="gap-2 sm:space-x-0 rtl:space-x-reverse">
             <Button type="button" variant="outline" onClick={onClose}>
               {tx("crm.cancel", "Annuler")}
             </Button>
@@ -268,7 +268,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1.5 text-left">
+    <label className="grid gap-1.5 text-start">
       <span className="text-[12px] font-medium text-foreground">
         {label}
         {required ? <span className="text-destructive"> *</span> : null}

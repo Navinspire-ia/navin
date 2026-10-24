@@ -83,3 +83,63 @@ def test_settings_stay_available_when_engine_startup_has_failed(tmp_path):
             assert app.screen._section.id == "models"
             assert app.runtime.bus.inbound_size == 0
     asyncio.run(run())
+
+
+def test_bare_permission_opens_a_picker_that_applies_the_choice(tmp_path, monkeypatch):
+    from navin.tui.screens import PickerScreen
+    from navin.webui import exec_policy_api
+
+    monkeypatch.setattr(exec_policy_api, "exec_policy_payload", lambda: {"approval_mode": "always"})
+
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await app.submit_text("/permission")
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if isinstance(app.screen, PickerScreen):
+                    break
+            assert isinstance(app.screen, PickerScreen)
+            assert app.runtime.bus.inbound_size == 0, "opening the picker sends nothing"
+            options = app.screen.query_one("#options")
+            titles = [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
+            assert any("every command" in t and "current" in t for t in titles), titles
+            await pilot.press("down", "enter")
+            sent = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+            assert sent.content.startswith("/permission ")
+            assert not isinstance(app.screen, PickerScreen)
+    asyncio.run(run())
+
+
+def test_permission_picker_cancelled_or_unreadable_changes_nothing(tmp_path, monkeypatch):
+    from navin.tui.screens import PickerScreen
+    from navin.webui import exec_policy_api
+
+    def unreadable():
+        raise OSError("config locked")
+
+    monkeypatch.setattr(exec_policy_api, "exec_policy_payload", unreadable)
+
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await app.submit_text("/permission")
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if isinstance(app.screen, PickerScreen):
+                    break
+            # An unreadable setting still offers the three choices, none marked current.
+            assert isinstance(app.screen, PickerScreen)
+            options = app.screen.query_one("#options")
+            titles = [str(options.get_option_at_index(i).prompt) for i in range(options.option_count)]
+            assert len(titles) == 3 and not any("current" in t for t in titles), titles
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, PickerScreen)
+            assert app.runtime.bus.inbound_size == 0, "a cancelled picker sends nothing"
+            # With an argument the command still goes straight to the engine.
+            await app.submit_text("/permission always")
+            sent = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+            assert sent.content == "/permission always"
+            assert not isinstance(app.screen, PickerScreen)
+    asyncio.run(run())

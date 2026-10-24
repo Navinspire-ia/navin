@@ -201,7 +201,7 @@ export function DocumentTemplatePreviewDialog({
                 )}
                 data-testid="document-template-preview-prev"
               >
-                <ChevronLeft className="h-4 w-4" aria-hidden />
+                <ChevronLeft className="rtl:-scale-x-100 h-4 w-4" aria-hidden />
               </button>
               <span className="min-w-[4.5rem] text-center text-[12.5px] tabular-nums text-muted-foreground">
                 {index + 1} / {total}
@@ -221,7 +221,7 @@ export function DocumentTemplatePreviewDialog({
                 )}
                 data-testid="document-template-preview-next"
               >
-                <ChevronRight className="h-4 w-4" aria-hidden />
+                <ChevronRight className="rtl:-scale-x-100 h-4 w-4" aria-hidden />
               </button>
             </div>
           </>

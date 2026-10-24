@@ -66,6 +66,13 @@ _EXPECTED = {
         "set_mode": "set_composer_mode(mode=debug)",
         "shown": "The editor already shows Debug mode",
     },
+    "/reverse": {
+        "mode": "reverse",
+        "role": "deep",
+        "report": "reverse-report-",
+        "set_mode": "set_composer_mode(mode=reverse)",
+        "shown": "The editor already shows Reverse mode",
+    },
 }
 
 
@@ -93,7 +100,7 @@ class ExpertWorkflowWiringTest(unittest.TestCase):
     def test_expert_sets_are_consistent(self) -> None:
         self.assertEqual(
             _EXPERT_REPORT_WORKFLOWS,
-            frozenset({"/inspect", "/fortify", "/debug"}),
+            frozenset({"/inspect", "/fortify", "/debug", "/reverse"}),
         )
         self.assertTrue(_EXPERT_REPORT_WORKFLOWS <= _HTML_REPORT_WORKFLOWS)
         self.assertTrue(_EXPERT_REPORT_WORKFLOWS <= _DELIVERY_WORKFLOWS)
@@ -118,20 +125,22 @@ class ExpertWorkflowWiringTest(unittest.TestCase):
                 # must not spend a model round-trip re-asking for it.
                 self.assertNotIn(expect["set_mode"], brief)
                 self.assertIn(expect["shown"], brief)
-                if command != "/debug":
+                if command not in ("/debug", "/reverse"):
                     self.assertIn("file:line", brief)
                 else:
-                    self.assertIn("REAL evidence", brief)
+                    self.assertIn("REAL", brief)
 
     def test_composer_modes_stay_on_the_named_target_and_hand_off(self) -> None:
         # A review of one task kept widening into an audit of everything, and
         # Plan kept reaching for step 1 instead of handing the next move back.
         self.assertEqual(
             _STAY_ON_ASK_WORKFLOWS,
-            frozenset({"/ask", "/blueprint", "/forge", "/inspect", "/fortify", "/debug"}),
+            frozenset(
+                {"/ask", "/blueprint", "/forge", "/inspect", "/fortify", "/debug", "/reverse"}
+            ),
         )
         # "auth module" is not a build/ask target, so only these reach the brief.
-        for command in ("/blueprint", "/inspect", "/fortify", "/debug"):
+        for command in ("/blueprint", "/inspect", "/fortify", "/debug", "/reverse"):
             with self.subTest(command=command):
                 content, _, _ = _run_brief(command)
                 self.assertIn(_STAY_ON_ASK_CLAUSE, content)
@@ -141,6 +150,39 @@ class ExpertWorkflowWiringTest(unittest.TestCase):
         self.assertIn("the user decides", plan)
         self.assertIn("Do not start, claim or try to execute step 1", plan)
         self.assertIn("run only the phases that apply to that target", _WORKFLOW_BRIEFS["/fortify"][2])
+
+    def test_reverse_brief_is_static_first_and_keeps_evidence_on_disk(self) -> None:
+        brief = _WORKFLOW_BRIEFS["/reverse"][2]
+        self.assertIn("STATIC FIRST", brief)
+        self.assertIn("approves", brief)
+        self.assertIn(".navin/reverse/<id>/evidence.json", brief)
+        self.assertIn("rea-agents@6.5.0", brief)
+        self.assertIn("authorized", brief)
+        self.assertIn("navin.reverse.inventory --doctor", brief)
+        self.assertIn("EXHAUSTIVE INVENTORY", brief)
+        self.assertIn("never sample", brief)
+        self.assertIn("navin.reverse.toolchain install --for", brief)
+        self.assertIn("do not hand it to the user", brief)
+        self.assertIn("Never execute the target itself", brief)
+        for needle in ("navin.reverse.repo inventory", "navin.reverse.repo plan",
+                       "navin.reverse.repo next-batch", "navin.reverse.repo parity",
+                       "never stop between batches", "license", "--id supabase"):
+            self.assertIn(needle, brief)
+        self.assertIn("reverse-report-", _HTML_REPORT_CLAUSE)
+        self.assertNotRegex(brief, "[\u2013\u2014]")
+        from navin.command.builtin import BUILTIN_COMMAND_SPECS
+
+        spec = {s.command: s for s in BUILTIN_COMMAND_SPECS}["/reverse"]
+        self.assertEqual(spec.icon, "scan-search")
+        self.assertEqual(spec.lifecycle, "agent_turn")
+        self.assertTrue(spec.accepts_args)
+
+    def test_reverse_is_shareable_and_evidence_only(self) -> None:
+        from navin.command.modules import metadata_requests_evidence_only
+        from navin.share.host import SAFE_SLASH
+
+        self.assertIn("/reverse", SAFE_SLASH)
+        self.assertTrue(metadata_requests_evidence_only({"composer_mode": "reverse"}))
 
     def test_handler_injects_all_clauses_skills_and_delivery(self) -> None:
         for command, expect in _EXPECTED.items():
@@ -332,6 +374,19 @@ class WebsocketComposerModePayloadTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+        # Every real mode must reach the editor; an unknown one is dropped.
+        # Montage was once missing from this allowlist and silently vanished.
+        for mode in ("reverse", "montage", "debug"):
+            await channel.send_composer_mode_request(
+                "chat-1", ComposerModeRequestedEvent(mode=mode)
+            )
+            self.assertEqual(json.loads(sent[-1])["mode"], mode)
+        count = len(sent)
+        await channel.send_composer_mode_request(
+            "chat-1", ComposerModeRequestedEvent(mode="explore")
+        )
+        self.assertEqual(len(sent), count)
+
 
 class SetComposerModeToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_emits_outbound_event_on_websocket(self) -> None:
@@ -354,6 +409,45 @@ class SetComposerModeToolTest(unittest.IsolatedAsyncioTestCase):
         tool = SetComposerModeTool(bus=MagicMock())
         result = await tool.execute(mode="ask")
         self.assertTrue(getattr(result, "is_error", False) or "Error" in str(result))
+
+    async def test_reverse_is_a_switchable_mode(self) -> None:
+        outbound: queue.Queue = queue.Queue()
+        tool = SetComposerModeTool(bus=SimpleNamespace(outbound=outbound))
+        self.assertIn("reverse", tool.parameters["properties"]["mode"]["enum"])
+        token = bind_request_context(
+            RequestContext(channel="websocket", chat_id="c1", sender_id="u1")
+        )
+        try:
+            result = await tool.execute(mode="Reverse")
+            unknown = await tool.execute(mode="explore")
+        finally:
+            reset_request_context(token)
+        self.assertIn("Reverse", str(result))
+        self.assertEqual(outbound.get_nowait().event.mode, "reverse")
+        self.assertIn("Error", str(unknown))
+        self.assertTrue(outbound.empty())
+
+
+class ReverseModeSwitchTest(unittest.TestCase):
+    def test_switch_to_reverse_lifts_the_build_allowlist(self) -> None:
+        from navin.agent.runner import AgentRunner
+        from navin.agent.tool_surface import denied_tools_for_composer_mode
+
+        spec = SimpleNamespace(
+            composer_mode="agent",
+            denied_tools=frozenset(),
+            locked_denied_tools=frozenset(),
+            allowed_tools=frozenset({"read_file", "apply_patch"}),
+            plan_read_only=False,
+            read_only_tools=False,
+        )
+        AgentRunner._apply_composer_mode_switch(spec, {"mode": "reverse"})
+        self.assertEqual(spec.composer_mode, "reverse")
+        self.assertIsNone(spec.allowed_tools)
+        self.assertFalse(spec.plan_read_only)
+        self.assertIn("generate_image", spec.denied_tools)
+        self.assertEqual(spec.denied_tools, denied_tools_for_composer_mode("reverse"))
+        self.assertNotIn("exec", spec.denied_tools)
 
 
 if __name__ == "__main__":

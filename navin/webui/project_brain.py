@@ -11,12 +11,12 @@ files for the Project Home Brain panel.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from navin.security.workspace_access import WorkspaceScope
+from navin.utils.git_argv import git_argv
 from navin.utils.helpers import ensure_project_scaffold
 from navin.utils.proc import no_window_kwargs
 
@@ -146,13 +146,12 @@ def _constraint_tokens(constraint: str) -> list[str]:
 
 
 def _run_git(root: Path, *args: str) -> tuple[int, str, str]:
-    git = shutil.which("git")
+    git = git_argv(root)
     if not git:
         return 1, "", "git not found"
     try:
         completed = subprocess.run(  # noqa: S603
-            [git, *args],
-            cwd=str(root),
+            [*git, *args],
             capture_output=True,
             text=True,
             encoding="utf-8",

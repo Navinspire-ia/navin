@@ -42,12 +42,15 @@ const sheetVariants = cva(
           "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
         ),
         left: cn(
-          "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm",
-          "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+          "inset-y-0 start-0 h-full w-3/4 border-e sm:max-w-sm",
+          // "left"/"right" are the inline start/end edges: they swap in RTL.
+          "ltr:data-[state=closed]:slide-out-to-left ltr:data-[state=open]:slide-in-from-left",
+          "rtl:data-[state=closed]:slide-out-to-right rtl:data-[state=open]:slide-in-from-right",
         ),
         right: cn(
-          "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm",
-          "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+          "inset-y-0 end-0 h-full w-3/4 border-s sm:max-w-sm",
+          "ltr:data-[state=closed]:slide-out-to-right ltr:data-[state=open]:slide-in-from-right",
+          "rtl:data-[state=closed]:slide-out-to-left rtl:data-[state=open]:slide-in-from-left",
         ),
       },
     },
@@ -81,7 +84,7 @@ const SheetContent = React.forwardRef<
     >
       {children}
       {showCloseButton ? (
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+        <DialogPrimitive.Close className="absolute end-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

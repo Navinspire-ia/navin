@@ -77,7 +77,7 @@ def routing_snapshot(tasks: dict[str, str], *, env_flag: str, profile: dict[str,
         from navin.config.loader import load_config
 
         config = load_config()
-        routes = dict(config.model_routes)
+        routes = dict(config.model_routes) if config.model_routing_enabled else {}
     except Exception:
         enabled = False
     rows = []

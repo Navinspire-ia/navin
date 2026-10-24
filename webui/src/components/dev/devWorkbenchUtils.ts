@@ -10,6 +10,11 @@ import type { FilePreviewPayload, FileTreeEntry, ReviewChangeStatus } from "@/li
 
 export const PREVIEW_URL_STORAGE_KEY = "navin.dev.previewUrl";
 
+/** One remembered preview per project: another project's app never shows up here. */
+export function previewUrlKey(project?: string | null): string {
+  return project ? `${PREVIEW_URL_STORAGE_KEY}:${project}` : PREVIEW_URL_STORAGE_KEY;
+}
+
 export const GIT_STATUS_LETTERS: Record<string, string> = {
   modified: "M",
   added: "A",
@@ -50,9 +55,10 @@ export function movePathKey<T>(
 }
 
 /** Last URL that successfully opened in Preview (hint for rediscovery only). */
-export function readStoredPreviewUrl(): string | null {
+export function readStoredPreviewUrl(project?: string | null): string | null {
+  const key = previewUrlKey(project);
   try {
-    const raw = localStorage.getItem(PREVIEW_URL_STORAGE_KEY)?.trim();
+    const raw = localStorage.getItem(key)?.trim();
     if (!raw || !/^https?:\/\//i.test(raw)) return null;
     try {
       const parsed = new URL(raw);
@@ -61,7 +67,7 @@ export function readStoredPreviewUrl(): string | null {
       // is shared with preview-url.ts and covers the desktop shell's ports and
       // whatever dynamic port actually served this page.
       if (isNavinOwnPort(port) || port === "5173") {
-        localStorage.removeItem(PREVIEW_URL_STORAGE_KEY);
+        localStorage.removeItem(key);
         return null;
       }
     } catch {
@@ -73,23 +79,24 @@ export function readStoredPreviewUrl(): string | null {
   }
 }
 
-export function persistPreviewUrl(url: string): void {
+export function persistPreviewUrl(url: string, project?: string | null): void {
+  const key = previewUrlKey(project);
   try {
     if (!url.trim()) {
-      localStorage.removeItem(PREVIEW_URL_STORAGE_KEY);
+      localStorage.removeItem(key);
       return;
     }
     try {
       const parsed = new URL(/^https?:\/\//i.test(url) ? url : `http://${url}`);
       const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
       if (isNavinOwnPort(port)) {
-        localStorage.removeItem(PREVIEW_URL_STORAGE_KEY);
+        localStorage.removeItem(key);
         return;
       }
     } catch {
       // keep going and store the raw value
     }
-    localStorage.setItem(PREVIEW_URL_STORAGE_KEY, url);
+    localStorage.setItem(key, url);
   } catch {
     // ignore
   }

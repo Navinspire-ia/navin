@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import { useNavinStream } from "@/hooks/useNavinStream";
-import type { NavinClient } from "@/lib/navin-client";
+import { NavinClient } from "@/lib/navin-client";
 import type { ConnectionStatus, InboundEvent } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { TurnWorkingStatus } from "./TurnWorkingStatus";
@@ -133,4 +133,139 @@ describe("persistent turn activity", () => {
     tick(9000);
     expect(screen.queryByTestId("turn-working-status")).toBeNull();
   });
+});
+
+describe("compacting the context", () => {
+  it("says it beside Working instead of a silent spinner", () => {
+    render(<TurnWorkingStatus active startedAt={null} activityText="Compacting context…" compacting />);
+    expect(screen.getByRole("status", { name: "Working" })).toBeTruthy();
+    expect(screen.getByTestId("turn-compacting").textContent).toBe("Compacting context…");
+    expect(screen.queryByTestId("turn-activity-text")).toBeNull();
+  });
+});
+
+describe("waiting on the user", () => {
+  it("says it waits for an answer, without a spinner, and pauses the clock", () => {
+    const started = Date.now() / 1000 - 10;
+    const { rerender } = render(<TurnWorkingStatus active startedAt={started} activityText="Running tests" />);
+    expect(screen.getByRole("timer").textContent).toBe("10s");
+    rerender(<TurnWorkingStatus active startedAt={started} activityText="Running tests" waiting="choice" />);
+    expect(screen.getByRole("status", { name: "Waiting for your answer" })).toBeTruthy();
+    expect(screen.getByTestId("turn-waiting-icon")).toBeTruthy();
+    expect(screen.queryByTestId("turn-activity-text")).toBeNull();
+    expect(document.querySelector(".animate-spin")).toBeNull();
+    tick(7 * 60_000);
+    expect(screen.getByRole("timer").textContent).toBe("10s");
+    rerender(<TurnWorkingStatus active startedAt={started} activityText="Running tests" />);
+    expect(screen.getByRole("timer").textContent).toBe("10s");
+    tick(3000);
+    expect(screen.getByRole("timer").textContent).toBe("13s");
+    expect(screen.getByTestId("turn-activity-text").textContent).toBe("Running tests");
+  });
+
+  it("says it waits for an approval and wins over thinking", () => {
+    render(<TurnWorkingStatus active startedAt={null} thinking waiting="approval" />);
+    expect(screen.getByRole("status", { name: "Waiting for your approval" })).toBeTruthy();
+    tick(5000);
+    expect(screen.getByRole("timer").textContent).toBe("0s");
+  });
+
+  it("forgets earlier pauses when a new turn starts", () => {
+    const first = Date.now() / 1000 - 5;
+    const { rerender } = render(<TurnWorkingStatus active startedAt={first} waiting="choice" />);
+    tick(60_000);
+    rerender(<TurnWorkingStatus active startedAt={first} />);
+    expect(screen.getByRole("timer").textContent).toBe("5s");
+    const second = Date.now() / 1000 - 2;
+    rerender(<TurnWorkingStatus active startedAt={second} />);
+    expect(screen.getByRole("timer").textContent).toBe("2s");
+  });
+});
+
+class FakeSocket {
+  readyState = 0;
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  send(data: string): void { this.sent.push(data); }
+  close(): void { this.readyState = 3; this.onclose?.({ code: 1000 }); }
+  open(): void { this.readyState = 1; this.onopen?.(); }
+  serverClose(code: number): void { this.readyState = 3; this.onclose?.({ code }); }
+}
+
+describe("switching chats while a turn runs", () => {
+  function setupChats() {
+    const socket = new FakeSocket();
+    const client = new NavinClient({ url: "ws://host/ws", socketFactory: () => socket as unknown as WebSocket, reconnect: false });
+    client.connect();
+    socket.open();
+    function Chat({ chatId }: { chatId: string }) {
+      const turn = useNavinStream(chatId);
+      return <TurnWorkingStatus active={turn.isStreaming} startedAt={turn.runStartedAt} activityText={turn.activityText} />;
+    }
+    const view = render(<ClientProvider client={client} token=""><Chat chatId="chat-a" /></ClientProvider>);
+    return {
+      socket,
+      open: (chatId: string) => view.rerender(<ClientProvider client={client} token=""><Chat chatId={chatId} /></ClientProvider>),
+      server: (event: object) => act(() => { socket.onmessage?.({ data: JSON.stringify(event) } as MessageEvent); }),
+    };
+  }
+
+  it("keeps the server clock and live activity of a chat after A, B, then A again", () => {
+    const app = setupChats();
+    const started = Date.now() / 1000;
+    app.server({ event: "goal_status", chat_id: "chat-a", status: "running", started_at: started });
+    app.server({ event: "message", chat_id: "chat-a", kind: "progress", text: "Running tests" });
+    tick(120_000);
+    expect(screen.getByRole("timer").textContent).toBe("2m 0s");
+
+    app.open("chat-b");
+    expect(screen.queryByTestId("turn-working-status")).toBeNull();
+    tick(30_000);
+    app.server({ event: "message", chat_id: "chat-a", kind: "progress", text: "Building the app" });
+    tick(5_000);
+
+    app.open("chat-a");
+    expect(screen.getByRole("timer").textContent).toBe("2m 35s");
+    expect(screen.getByTestId("turn-activity-text").textContent).toBe("Building the app");
+    // The server answers the re-attach with its replay, then keeps streaming.
+    app.server({ event: "attached", chat_id: "chat-a" });
+    app.server({ event: "goal_status", chat_id: "chat-a", status: "running", started_at: started });
+    app.server({ event: "message", chat_id: "chat-a", kind: "progress", text: "Linting" });
+    tick(5_000);
+    expect(screen.getByRole("timer").textContent).toBe("2m 40s");
+    expect(screen.getByTestId("turn-activity-text").textContent).toBe("Linting");
+  });
+
+  it.each(["overflow", "reconnect", "slice", "unknown-start"])(
+    "keeps the clock across a chat switch with %s while away",
+    (variant) => {
+      const app = setupChats();
+      const started = Date.now() / 1000;
+      if (variant !== "unknown-start") {
+        app.server({ event: "goal_status", chat_id: "chat-a", status: "running", started_at: started });
+      }
+      app.server({ event: "message", chat_id: "chat-a", kind: "progress", text: "Running tests" });
+      tick(120_000);
+      expect(screen.getByRole("timer").textContent).toBe("2m 0s");
+      app.open("chat-b");
+      if (variant === "overflow") {
+        for (let i = 0; i < 2100; i += 1) app.server({ event: "delta", chat_id: "chat-a", text: "x" });
+      }
+      if (variant === "reconnect") {
+        act(() => { app.socket.serverClose(1006); });
+      }
+      if (variant === "slice") {
+        app.server({ event: "turn_end", chat_id: "chat-a" });
+        app.server({ event: "goal_status", chat_id: "chat-a", status: "running", started_at: started });
+      }
+      app.server({ event: "message", chat_id: "chat-a", kind: "progress", text: "Building the app" });
+      tick(30_000);
+      app.open("chat-a");
+      expect(screen.getByRole("timer").textContent).toBe("2m 30s");
+      expect(screen.getByTestId("turn-activity-text").textContent).toBe("Building the app");
+    },
+  );
 });

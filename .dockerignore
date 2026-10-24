@@ -17,3 +17,9 @@ os/
 node_modules/
 bridge/dist/
 workspace/
+**/node_modules/
+
+# Google Cloud service account keys (Vertex AI tests): never commit or ship them.
+*_vertex.json
+*-service-account*.json
+*service_account*.json

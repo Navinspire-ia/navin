@@ -86,6 +86,15 @@ class StdinGuardVerdictTest(unittest.IsolatedAsyncioTestCase):
             await guard.check("rm -rf ./build\n", session_command="bash")
         )
 
+    async def test_an_allowed_prefix_does_not_exempt_a_chained_command(self) -> None:
+        guard = StdinCommandGuard.from_config(
+            _FakeExecCfg(deny=[r"rm\s+-rf"], allow=[r"git\s+status.*"]),
+            _FakeApprovalsCfg(),
+        )
+        self.assertIsNone(await guard.check("git status\n", session_command="bash"))
+        refusal = await guard.check("git status && rm -rf src\n", session_command="bash")
+        self.assertIsNotNone(refusal)
+
     async def test_builtin_approvable_rule_goes_through_the_approval_gate(self) -> None:
         guard = StdinCommandGuard.from_config(
             _FakeExecCfg(builtins=True), _FakeApprovalsCfg(enabled=True),

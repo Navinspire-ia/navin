@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import threading
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from navin.config.schema import Config
@@ -13,6 +17,7 @@ from navin.plan_limits import (
     DEFAULT_TURN_ITERATION_CAP,
     FREE_CONCURRENT_AGENTS,
     FREE_STEPS_PER_TASK,
+    ResizableSemaphore,
     apply_limits_from_response,
     apply_to_agent_loop,
     clamp_concurrent_agents,
@@ -260,6 +265,84 @@ class TurnIterationCapTest(unittest.TestCase):
 
     def test_sustained_goals_keep_the_full_entitlement(self) -> None:
         self.assertEqual(effective_turn_iterations(80, goal_active=True), 80)
+
+
+class ConcurrencyGateResizeTest(unittest.IsolatedAsyncioTestCase):
+    """The parent-turn gate is resized in place, never swapped under holders."""
+
+    def setUp(self) -> None:
+        env = mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("NAVIN_MAX_CONCURRENT_REQUESTS", None)
+
+    def _loop(self, gate, agents: int = 4):
+        subagents = SimpleNamespace(
+            max_iterations=30,
+            max_concurrent_subagents=agents,
+            max_total_concurrent_subagents=agents,
+        )
+        return SimpleNamespace(max_iterations=30, subagents=subagents, _concurrency_gate=gate)
+
+    def _apply(self, loop, agents: int) -> None:
+        with mock.patch("navin.plan_limits.effective_concurrent_agents", return_value=agents):
+            apply_to_agent_loop(loop, Config())
+
+    async def test_unchanged_limit_keeps_the_same_gate(self):
+        loop = self._loop(None)
+        self._apply(loop, 4)
+        gate = loop._concurrency_gate
+        for _ in range(3):
+            self._apply(loop, 4)
+        self.assertIs(gate, loop._concurrency_gate)
+        self.assertEqual(4, gate.capacity)
+
+    async def test_plain_semaphore_is_upgraded_in_place_with_its_holders(self):
+        plain = asyncio.Semaphore(4)
+        await plain.acquire()
+        await plain.acquire()
+        loop = self._loop(plain, agents=4)
+        self._apply(loop, 2)
+        self.assertIs(plain, loop._concurrency_gate)
+        self.assertIsInstance(plain, ResizableSemaphore)
+        # Two holders already use the whole new capacity.
+        self.assertTrue(plain.locked())
+        plain.release()
+        plain.release()
+        await plain.acquire()
+        await plain.acquire()
+        self.assertTrue(plain.locked())
+
+    async def test_shrinking_while_held_enforces_the_new_cap(self):
+        gate = ResizableSemaphore(3)
+        for _ in range(3):
+            await gate.acquire()
+        self.assertTrue(gate.request_limit(1))
+        for _ in range(3):
+            gate.release()
+        await gate.acquire()
+        self.assertTrue(gate.locked(), "cap of 1 must hold after shrinking")
+        gate.release()
+
+    async def test_growing_wakes_queued_waiters(self):
+        gate = ResizableSemaphore(1)
+        await gate.acquire()
+        waiter = asyncio.create_task(gate.acquire())
+        await asyncio.sleep(0)
+        self.assertFalse(waiter.done())
+        gate.request_limit(2)
+        await asyncio.wait_for(waiter, 1)
+
+    async def test_resize_from_another_thread_lands_on_the_loop(self):
+        gate = ResizableSemaphore(1)
+        await gate.acquire()
+        waiter = asyncio.create_task(gate.acquire())
+        await asyncio.sleep(0)  # binds the semaphore to this loop
+        worker = threading.Thread(target=gate.request_limit, args=(2,))
+        worker.start()
+        worker.join()
+        await asyncio.wait_for(waiter, 1)
+        self.assertEqual(2, gate.capacity)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,22 @@ PRODUCT_MODULE_METADATA_KEY = "product_module"
 # SKILL.md bodies and nudge when a delivery turn finishes with zero tools.
 PRELOAD_SKILLS_METADATA_KEY = "preload_skills"
 REQUIRES_TOOL_DELIVERY_METADATA_KEY = "requires_tool_delivery"
+# Set when a workflow's intent gate held a greeting or chit-chat back. The
+# turn then gets no orientation context (project map, board, git, ...): the
+# model reads those as work to resume and starts it on a "bonjour".
+CONVERSATIONAL_TURN_METADATA_KEY = "conversational_turn"
+ORIENTATION_CONTEXT_SOURCES = frozenset({
+    "agent_context_pack",
+    "board",
+    "cli_apps",
+    "continuity",
+    "git",
+    "metagraph",
+    "policy",
+    "project_commands",
+    "skills",
+    "world-model",
+})
 # Build/Code turns (/forge, /cruise): nudge once if the model claims done
 # without running verify / lint / test_run.
 REQUIRES_VERIFY_BEFORE_DONE_METADATA_KEY = "requires_verify_before_done"
@@ -38,11 +54,10 @@ CODE_VERIFY_FAIL_NUDGE_LIMIT = 3
 READ_ONLY_TOOLS_METADATA_KEY = "read_only_tools"
 # Legacy metadata key (prompt preference). Runner no longer hard-blocks
 # write_file/edit_file; Agent modes may create and edit freely except Ask.
-APPLY_PATCH_ONLY_METADATA_KEY = "apply_patch_only"
-# Review / Security / Debug: inject evidence-only system rules; no invented findings.
+# Review / Security / Debug / Reverse: inject evidence-only system rules; no invented findings.
 EVIDENCE_ONLY_METADATA_KEY = "evidence_only"
 EVIDENCE_ONLY_COMPOSER_MODES: frozenset[str] = frozenset(
-    {"review", "security", "debug"}
+    {"review", "security", "debug", "reverse"}
 )
 # When set, Active Skills list names only. The model loads one SKILL.md per
 # phase with `skill action=read`. Cuts 10-40k tokens/turn.
@@ -101,6 +116,7 @@ ProductModule = Literal[
     "ops",
     "notes",
     "crm",
+    "campaigns",
 ]
 
 VALID_PRODUCT_MODULES: frozenset[str] = frozenset(
@@ -120,6 +136,7 @@ VALID_PRODUCT_MODULES: frozenset[str] = frozenset(
         "ops",
         "notes",
         "crm",
+        "campaigns",
     }
 )
 
@@ -180,6 +197,7 @@ _VIEW_TO_MODULE: dict[str, str] = {
     "ads": "ads",
     "seo": "seo",
     "leads": "leads",
+    "campaigns": "campaigns",
     "meeting": "meeting",
     "ops": "ops",
     "notes": "notes",

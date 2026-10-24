@@ -12,8 +12,11 @@ Each job ships the desktop app plus the CLI archive needed for signed updates.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -138,12 +141,98 @@ class ReleaseWorkflowTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("ln -s /Applications", script)
-        self.assertIn('hdiutil create -volname "Navin" -srcfolder "$stage"', script)
+        self.assertIn('create -volname "Navin" -srcfolder "$stage"', script)
         self.assertIn(
-            'hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$dmg"',
+            'convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$dmg"',
             script,
         )
-        self.assertIn("hdiutil convert busy, retrying", script)
+
+    def _run_pack_dmg(self, create_busy: int) -> tuple[subprocess.CompletedProcess, Path, list[str]]:
+        """Run the script's real hdiutil_retry + pack_dmg against a fake hdiutil.
+
+        The fake answers `create` with the runner's "Resource busy" error for
+        the first ``create_busy`` calls, then behaves.
+        """
+        sh = shutil.which("sh")
+        if not sh:
+            self.skipTest("needs a POSIX sh")
+        script = (REPO_ROOT / "packaging" / "macos" / "build-desktop.sh").read_text(
+            encoding="utf-8"
+        )
+        functions = []
+        for name in ("hdiutil_retry", "pack_dmg"):
+            match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", script, re.M | re.S)
+            self.assertIsNotNone(match, f"{name} missing from build-desktop.sh")
+            functions.append(match.group(0))
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "hdiutil").write_text(
+            "#!/bin/sh\n"
+            'echo "$*" >> "$FAKE_LOG"\n'
+            'for last; do :; done\n'
+            'case "$1" in\n'
+            "  create)\n"
+            '    n=$(cat "$FAKE_STATE" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_STATE"\n'
+            '    if [ "$n" -le "$CREATE_BUSY" ]; then echo "hdiutil: create failed - Resource busy" >&2; exit 1; fi\n'
+            '    : > "$last" ;;\n'
+            '  attach) printf "/dev/disk4\\tApple_HFS\\t/Volumes/Navin\\n" ;;\n'
+            '  convert) : > "$last" ;;\n'
+            "esac\n",
+            encoding="utf-8",
+        )
+        (bin_dir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        for tool in bin_dir.iterdir():
+            tool.chmod(0o755)
+        stage = tmp / "stage" / "Navin.app"
+        stage.mkdir(parents=True)
+        (stage / "Info.plist").write_text("x", encoding="utf-8")
+        out_dir = tmp / "dmg"
+        out_dir.mkdir()
+        dmg = out_dir / "Navin_2.3.2_arm64.dmg"
+        log = tmp / "hdiutil.log"
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "FAKE_LOG": str(log),
+            "FAKE_STATE": str(tmp / "creates"),
+            "CREATE_BUSY": str(create_busy),
+            "NAVIN_DMG_STYLED": "0",
+        }
+        body = "set -eu\n" + "".join(functions) + 'pack_dmg "$1" "$2" Navin.app\n'
+        result = subprocess.run(
+            [sh, "-c", body, "sh", str(stage.parent), str(dmg)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return result, dmg, calls
+
+    def test_a_busy_disk_image_helper_does_not_fail_the_dmg(self):
+        """`hdiutil create` failed the macOS arm64 job with "Resource busy".
+
+        Only `convert` was retried; the first `create` right after signing
+        killed the build. Both now go through the same busy retry.
+        """
+        result, dmg, calls = self._run_pack_dmg(create_busy=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(dmg.is_file(), "no DMG produced after the busy retries")
+        self.assertFalse((dmg.parent / "rw.navin-stage.dmg").exists())
+        self.assertEqual(sum(c.startswith("create ") for c in calls), 3)
+        self.assertEqual(sum(c.startswith("convert ") for c in calls), 1)
+        self.assertIn("hdiutil create busy, retrying (1/5)", result.stderr)
+        self.assertIn("hdiutil create busy, retrying (2/5)", result.stderr)
+
+    def test_a_disk_image_helper_that_stays_busy_still_fails(self):
+        result, dmg, calls = self._run_pack_dmg(create_busy=99)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(dmg.exists())
+        self.assertEqual(sum(c.startswith("create ") for c in calls), 5)
+        self.assertIn("hdiutil create failed after 5 attempts", result.stderr)
 
     def test_the_macos_sidecar_is_version_stamped(self):
         """The sidecar build must stamp the version the frozen binary reports.

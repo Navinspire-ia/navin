@@ -29,7 +29,7 @@ tools:
     concurrency: 8         # parallel workers (1-32)
     timeout_seconds: 30
     max_bytes: 5242880     # 5 MiB per response
-    user_agent: "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.ai) AppleWebKit/537.36"
+    user_agent: "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.live) AppleWebKit/537.36"
     proxy: null            # optional HTTP(S) proxy
     respect_same_domain: true
     assisted: true         # pause + ask user on captcha/CF/paywall/login (no bypass)

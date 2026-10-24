@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from navin.crm.db import connect, crm_root, project_lock, sqlite_path, wal_status
+from navin.crm.db import connect, crm_root, project_lock, wal_status
 from navin.crm.schema import (
     ACTIVITY_KINDS,
     CONTACT_STATUSES,

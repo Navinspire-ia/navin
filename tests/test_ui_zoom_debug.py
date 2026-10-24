@@ -21,7 +21,6 @@ import types
 import unittest
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Stubbed helpers used by handle_ui_zoom_debug
 # ---------------------------------------------------------------------------
@@ -96,8 +95,9 @@ def _build_stubs() -> tuple[types.ModuleType, types.ModuleType]:
     return http_utils, file_preview
 
 
-from navin.webui import ui_zoom_debug
-from navin.webui.ui_zoom_debug import (
+# Imported after the stand-in helpers above on purpose (see the module docstring).
+from navin.webui import ui_zoom_debug  # noqa: E402
+from navin.webui.ui_zoom_debug import (  # noqa: E402
     ALLOWED_ACTIONS,
     ALLOWED_TARGETS,
     _build_command_from_body,

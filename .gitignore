@@ -105,8 +105,8 @@ SHA256SUMS*.txt
 /packaging/windows/signing.env
 # Inno Setup GUI wrappers: they hardcode one machine's staging paths.
 /packaging/windows/*.local.iss
-/navin/update/public_key.txt
-/navin/update/default_base_url.txt
+# navin/update/public_key.txt and default_base_url.txt are TRACKED: public
+# values every build embeds. The private UPDATE_SIGNING_KEY stays in .env.
 # Written by the packaging scripts: the extras compiled into that build.
 /navin/bundled_extras.txt
 # Shared desktop OAuth registration, imported locally or staged by release CI.
@@ -204,3 +204,14 @@ templates/media/assets/
 # Local /install mirror (make local-releases). README stays.
 site/front/public/downloads/v*/
 site/front/public/downloads/releases.json
+
+# Live share guest page (webui: npm run build:guest), built into the relay image.
+navin/share/guest/
+
+# Google Cloud service account keys (Vertex AI tests): never commit or ship them.
+*_vertex.json
+*-service-account*.json
+*service_account*.json
+
+# Kubernetes secrets filled from deploy/k8s/secrets.example.yaml
+/deploy/k8s/secrets.yaml

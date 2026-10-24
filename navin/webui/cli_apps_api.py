@@ -112,7 +112,8 @@ def _payload_sync(manager: CliAppManager, *, installed_only: bool) -> dict[str, 
 
 
 async def cli_apps_payload(*, installed_only: bool = False) -> dict[str, Any]:
-    manager = _manager()
+    # Reading the config (decrypting config.json) is disk work too: off the loop.
+    manager = await asyncio.to_thread(_manager)
     # Payload building probes PATH per catalog app (slow on WSL2) - keep it
     # off the event loop so the gateway stays responsive.
     payload = await asyncio.to_thread(

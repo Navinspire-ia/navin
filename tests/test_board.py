@@ -217,12 +217,22 @@ class RealRunGateTest(_StoreTestBase):
     def test_a_lint_only_pass_is_not_enough_for_validation_test(self):
         from navin.quality.verification_log import record_verification
 
+        # The project has a test suite, so validation=test means tests ran.
+        (Path(self.project) / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        (Path(self.project) / "tests").mkdir(exist_ok=True)
         record_verification(
             self.project, source="verify", ok=True, tests_ran=False,
         )
         with self.assertRaises(BoardError) as ctx:
             self._close(self._gated_task(validation="test"))
         self.assertIn("did not run any tests", str(ctx.exception))
+
+    def test_validation_test_without_any_test_suite_closes_on_a_green_verify(self):
+        from navin.quality.verification_log import record_verification
+
+        record_verification(self.project, source="verify", ok=True, tests_ran=False)
+        closed = self._close(self._gated_task(validation="test"))
+        self.assertEqual(closed["status"], "done")
 
     def test_humans_close_cards_without_a_recorded_run(self):
         task = self._gated_task()

@@ -1,0 +1,151 @@
+/* Navin motion base styles. Brand values arrive as CSS variables set by navin-motion.js. */
+
+/* Inter (SIL OFL 1.1, see fonts/LICENSE-inter-OFL.txt), vendored so renders never hit a CDN. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: block;
+  font-weight: 100 900;
+  src: url("fonts/inter-latin-wght-normal.woff2") format("woff2-variations"), url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: block;
+  font-weight: 100 900;
+  src: url("fonts/inter-latin-ext-wght-normal.woff2") format("woff2-variations"), url("fonts/inter-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+:root {
+  --c-primary: #6366F1;
+  --c-secondary: #22D3EE;
+  --c-accent: #F472B6;
+  --c-bg: #0A0B14;
+  --c-text: #F5F7FF;
+  --c-on-primary: #FFFFFF;
+  --c-on-accent: #0A0B14;
+  --c-muted: rgba(245, 247, 255, 0.66);
+  --c-line: rgba(245, 247, 255, 0.14);
+  --c-glass: rgba(245, 247, 255, 0.07);
+  --font-heading: "Inter", "SF Pro Display", "Segoe UI", "Helvetica Neue", "Noto Sans", "DejaVu Sans", Arial, sans-serif;
+  --font-body: var(--font-heading);
+  --u: 1px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  font-kerning: normal;
+  font-feature-settings: "kern" 1, "liga" 1, "tnum" 0;
+}
+
+html.nm-transparent, html.nm-transparent body { background: transparent !important; }
+
+#stage { position: absolute; inset: 0; overflow: hidden; }
+
+.nm-layer { position: absolute; inset: 0; }
+.nm-gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.nm-center { display: flex; align-items: center; justify-content: center; flex-direction: column; }
+
+.nm-heading {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  margin: 0;
+}
+
+.nm-sub {
+  font-family: var(--font-body);
+  font-weight: 500;
+  color: var(--c-muted);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.nm-eyebrow {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: calc(var(--u) * 22);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--c-accent);
+}
+
+.nm-mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding: 0.08em 0.03em 0.14em;
+  margin: -0.08em -0.03em -0.14em;
+}
+.nm-word, .nm-char { display: inline-block; }
+
+.nm-wordmark {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+.nm-logo-img { display: block; object-fit: contain; }
+
+.nm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 12);
+  padding: calc(var(--u) * 14) calc(var(--u) * 26);
+  border-radius: 999px;
+  background: var(--c-primary);
+  color: var(--c-on-primary);
+  font-weight: 700;
+  font-size: calc(var(--u) * 28);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.nm-glass {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--c-line);
+  box-shadow: 0 calc(var(--u) * 30) calc(var(--u) * 80) rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.nm-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+  background-size: calc(var(--u) * 240) calc(var(--u) * 240);
+}
+
+.nm-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.45) 100%);
+}
+
+.nm-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 60% at 20% 15%, color-mix(in srgb, var(--c-primary) 45%, transparent), transparent 70%),
+    radial-gradient(55% 55% at 85% 85%, color-mix(in srgb, var(--c-secondary) 30%, transparent), transparent 70%),
+    var(--c-bg);
+}
+html.nm-transparent .nm-backdrop, html.nm-transparent .nm-grain, html.nm-transparent .nm-vignette { display: none; }

@@ -669,7 +669,7 @@ export function DevMobilePreview({
               title={tx("dev.mobile.back", "Back")}
               aria-label={tx("dev.mobile.back", "Back")}
             >
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+              <ArrowLeft className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
             </Button>
             <Button
               type="button"
@@ -746,9 +746,9 @@ export function DevMobilePreview({
           </div>
         ) : null}
 
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="ms-auto flex shrink-0 items-center gap-1.5">
           {running ? (
-            <div className="mr-1 hidden items-center gap-2 font-mono text-[11px] text-muted-foreground sm:flex">
+            <div className="me-1 hidden items-center gap-2 font-mono text-[11px] text-muted-foreground sm:flex">
               {backend ? <span>{backend}</span> : null}
               <span>
                 {metrics.width}x{metrics.height}
@@ -791,9 +791,9 @@ export function DevMobilePreview({
             }
           >
             {showLogs ? (
-              <PanelRightClose className="h-3.5 w-3.5" aria-hidden />
+              <PanelRightClose className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
             ) : (
-              <PanelRightOpen className="h-3.5 w-3.5" aria-hidden />
+              <PanelRightOpen className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
             )}
           </Button>
           {!running ? (
@@ -892,7 +892,7 @@ export function DevMobilePreview({
               )}
           </p>
           {(status.recommendations ?? []).length ? (
-            <ul className="list-disc space-y-0.5 pl-4 text-amber-100/85">
+            <ul className="list-disc space-y-0.5 ps-4 text-amber-100/85">
               {status.recommendations!.map((line) => (
                 <li key={line}>{line}</li>
               ))}
@@ -977,7 +977,7 @@ export function DevMobilePreview({
                 </Button>
               )}
               {status?.adb && !status.ready && status.help ? (
-                <details className="w-full max-w-md text-left">
+                <details className="w-full max-w-md text-start">
                   <summary className="cursor-pointer text-[12px] text-muted-foreground/90 hover:text-foreground">
                     {tx("dev.mobile.connectHelp", "How to connect a device on this system")}
                   </summary>
@@ -1011,7 +1011,7 @@ export function DevMobilePreview({
           )}
         </div>
         {showLogs ? (
-          <aside className="flex w-[min(22rem,40%)] shrink-0 flex-col border-l border-border/50 bg-background/60">
+          <aside className="flex w-[min(22rem,40%)] shrink-0 flex-col border-s border-border/50 bg-background/60">
             <div className="flex items-center justify-between gap-2 border-b border-border/40 px-2 py-1.5">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {tx("dev.mobile.logs", "Logcat")}
@@ -1036,7 +1036,7 @@ export function DevMobilePreview({
                   onClick={() => persistShowLogs(false)}
                   title={tx("dev.mobile.hideLogsTitle", "Hide logcat panel")}
                 >
-                  <PanelRightClose className="h-3.5 w-3.5" aria-hidden />
+                  <PanelRightClose className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
                   {tx("dev.mobile.hideLogs", "Hide logs")}
                 </Button>
               </div>

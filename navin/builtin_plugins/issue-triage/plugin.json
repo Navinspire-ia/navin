@@ -1,0 +1,14 @@
+{
+  "name": "issue-triage",
+  "version": "1.0.0",
+  "description": "Issue maintenance: find likely duplicates and comment them, triage an issue by applying only labels that exist.",
+  "category": "productivity",
+  "commands": ["dedupe", "triage-issue"],
+  "agents": [],
+  "skills": ["issue-triage", "github"],
+  "steps": [
+    {"step": "find duplicates of an issue", "use": "/dedupe"},
+    {"step": "label a new or updated issue", "use": "/triage-issue"},
+    {"step": "triage a whole backlog", "use": "skill:issue-triage"}
+  ]
+}

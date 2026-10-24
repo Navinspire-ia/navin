@@ -114,7 +114,7 @@ export function CareerCvPanel({
             type="button"
             onClick={() => setCvPath("import")}
             className={cn(
-              "min-h-24 rounded-2xl px-5 py-4 text-left outline outline-1",
+              "min-h-24 rounded-2xl px-5 py-4 text-start outline outline-1",
               cvPath === "import"
                 ? "bg-indigo-600/10 outline-indigo-500"
                 : "outline-black/10 hover:bg-muted/40 dark:outline-white/10",
@@ -129,7 +129,7 @@ export function CareerCvPanel({
             type="button"
             onClick={() => setCvPath("create")}
             className={cn(
-              "min-h-24 rounded-2xl px-5 py-4 text-left outline outline-1",
+              "min-h-24 rounded-2xl px-5 py-4 text-start outline outline-1",
               cvPath === "create"
                 ? "bg-indigo-600/10 outline-indigo-500"
                 : "outline-black/10 hover:bg-muted/40 dark:outline-white/10",

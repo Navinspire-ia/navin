@@ -88,7 +88,7 @@ export function CrmOutreach({ contact, opportunity, channels, tx, onOutreach }: 
           showCloseButton
           className="max-h-[90vh] max-w-md overflow-y-auto rounded-[22px] border-border/70 bg-popover p-5 shadow-2xl"
         >
-          <DialogHeader className="text-left">
+          <DialogHeader className="text-start">
             <DialogTitle>{tx("crm.outreach", "Ecrire")}</DialogTitle>
             <DialogDescription>
               {tx("crm.outreachHelp", "Compose un email, WhatsApp ou Teams. Le message s'ouvre dans cette fenetre.")}
@@ -137,7 +137,7 @@ export function CrmOutreach({ contact, opportunity, channels, tx, onOutreach }: 
             />
             {notice ? <p className="text-[11px] text-muted-foreground">{notice}</p> : null}
           </div>
-          <DialogFooter className="gap-2 sm:flex-wrap sm:space-x-0">
+          <DialogFooter className="gap-2 sm:flex-wrap sm:space-x-0 rtl:space-x-reverse">
             <Button
               type="button"
               size="sm"

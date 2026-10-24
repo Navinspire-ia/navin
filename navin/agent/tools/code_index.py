@@ -166,6 +166,54 @@ _SYMBOL_KINDS = [
 ]
 
 
+# Mirrors navin.index.graph_rank.TASKS without importing the index at tool
+# load time; a test keeps the two in step.
+_RANK_TASKS = ("code_relevance", "impact_analysis", "test_relevance")
+
+
+def _split_list(raw: str | None) -> list[str]:
+    """Comma- or newline-separated values, trimmed, empties dropped."""
+    if not raw:
+        return []
+    return [item.strip() for item in raw.replace("\n", ",").split(",") if item.strip()]
+
+
+def _render_rank(result: Any, notes: tuple[str, ...], history_commits: int) -> str:
+    """Readable ranking: score, file, evidence path, then the honest caveats."""
+    lines: list[str] = [f"Seed note: {note}" for note in notes]
+    if not result.files:
+        lines.append(
+            f"No graph ranking for {result.task}: {result.fallback}. Fall back to "
+            "action=text or action=semantic for candidates, then action=impact "
+            "or callers on the symbols you find."
+        )
+        return "\n".join(lines)
+    from navin.index.graph_rank import PROFILES
+
+    lines.append(
+        f"{result.task} ({PROFILES[result.task].summary}), "
+        f"seeds: {', '.join(result.seeds)}"
+    )
+    for position, item in enumerate(result.files, start=1):
+        tags = [tag for tag, on in (("test", item.is_test), ("seed", item.is_seed)) if on]
+        suffix = f" [{', '.join(tags)}]" if tags else ""
+        lines.append(f"{position:>2}. {item.path}  score {item.score:.2f}{suffix}")
+        for step in item.evidence:
+            lines.append(f"      {step.render()}")
+    history = (
+        f"co-changes from {history_commits} commit(s)"
+        if history_commits
+        else "no git history used"
+    )
+    lines.append("")
+    lines.append(
+        f"{result.reached} file(s) reached; {history}; model {result.model_version}. "
+        "Advice for planning, not a verdict: read a file before editing it, and "
+        "remember dynamic calls, config and SQL are not in this graph."
+    )
+    return "\n".join(lines)
+
+
 def _truncate(items: list[str], limit: int, label: str) -> list[str]:
     if len(items) <= limit:
         return items
@@ -198,7 +246,10 @@ class CodeIndexTool(_FsTool):
             "(transitive callers + tests at risk - run before changing a "
             "shared signature), members/container, search (fuzzy symbol "
             "name), semantic (find code by what it does when you do not know "
-            "the identifier), outline/file (one file's symbols and imports), "
+            "the identifier), rank (files, tests and impact around seed "
+            "symbols/paths/a request, ranked over call, import, test and "
+            "co-change links with the path that justifies each), "
+            "outline/file (one file's symbols and imports), "
             "overview, refresh. Prefer this over grep for 'where is X "
             "defined', 'what calls X', 'what breaks if I change X': answers "
             "come from parsed code, not string matches."
@@ -218,7 +269,7 @@ class CodeIndexTool(_FsTool):
                     "enum": [
                         "overview", "definition", "references", "callers",
                         "callees", "impact", "members", "container", "search",
-                        "text", "semantic", "outline", "file", "refresh",
+                        "text", "semantic", "rank", "outline", "file", "refresh",
                     ],
                     "description": (
                         "overview: project stats and hubs; "
@@ -234,6 +285,9 @@ class CodeIndexTool(_FsTool):
                         "docs - best terms first, snippets included; "
                         "semantic: meaning-based search for when the identifier "
                         "is unknown; "
+                        "rank: structural ranking from seeds (name, path and/or "
+                        "query) for a task: which files to read, what a change "
+                        "affects, which tests to run; "
                         "outline: all symbols of one file; "
                         "file: symbols + imports + importers of one file; "
                         "refresh: force a full reindex (rarely needed; every "
@@ -245,7 +299,18 @@ class CodeIndexTool(_FsTool):
                     "description": (
                         "Symbol name for definition/references/callers/callees/"
                         "impact/members/container. Accepts 'Class.method' to "
-                        "disambiguate."
+                        "disambiguate. For action=rank, one or more seed "
+                        "symbols, comma-separated."
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "enum": list(_RANK_TASKS),
+                    "description": (
+                        "For action=rank: code_relevance (files worth reading "
+                        "around the seeds, default), impact_analysis (files a "
+                        "change to the seeds is likely to affect), "
+                        "test_relevance (tests to run after the change)"
                     ),
                 },
                 "calls_only": {
@@ -257,7 +322,10 @@ class CodeIndexTool(_FsTool):
                 },
                 "depth": {
                     "type": "integer",
-                    "description": "Caller levels to walk (action=impact)",
+                    "description": (
+                        "Caller levels to walk (action=impact); graph hops "
+                        "from the seeds (action=rank, default 3)"
+                    ),
                     "minimum": 1,
                     "maximum": 4,
                 },
@@ -267,14 +335,16 @@ class CodeIndexTool(_FsTool):
                         "For action=search, a fuzzy symbol name fragment. For "
                         "action=semantic, a description of the behaviour you are "
                         "looking for, in words - a full question works better "
-                        "than keywords."
+                        "than keywords. For action=rank, request words used to "
+                        "find extra seed files."
                     ),
                 },
                 "path": {
                     "type": "string",
                     "description": (
                         "Project-relative file path (for action=outline/file). "
-                        "A bare filename is resolved when unambiguous."
+                        "A bare filename is resolved when unambiguous. For "
+                        "action=rank, one or more seed files, comma-separated."
                     ),
                 },
                 "kind": {
@@ -313,6 +383,7 @@ class CodeIndexTool(_FsTool):
         limit: int | None = None,
         calls_only: bool = False,
         depth: int | None = None,
+        task: str | None = None,
         **kwargs: Any,
     ) -> str:
         try:
@@ -327,6 +398,10 @@ class CodeIndexTool(_FsTool):
             return f"Index rebuilt: {index.stats.summary()}"
         if action == "semantic":
             result = await self._semantic(index, query, limit)
+        elif action == "rank":
+            result = await asyncio.to_thread(
+                self._rank, index, task, name, path, query, limit, depth,
+            )
         else:
             result = await asyncio.to_thread(
                 self._query_index, index, action, name, query, path, kind,
@@ -439,6 +514,40 @@ class CodeIndexTool(_FsTool):
         if indexed:
             lines.append(f"({indexed} file(s) (re)indexed this call)")
         return "\n".join(lines)
+
+    # -- graph ranking -----------------------------------------------------
+
+    def _rank(
+        self, index: Any, task: str | None, name: str | None, path: str | None,
+        query: str | None, limit: int | None, depth: int | None,
+    ) -> str:
+        from navin.index import graph_rank
+
+        chosen = (task or "code_relevance").strip()
+        if chosen not in graph_rank.PROFILES:
+            return ToolResult.error(
+                f"Error: unknown task {chosen!r}; use one of {', '.join(graph_rank.TASKS)}"
+            )
+        symbols = _split_list(name)
+        paths = _split_list(path)
+        text = (query or "").strip()
+        if not (symbols or paths or text):
+            return ToolResult.error(
+                "Error: action=rank needs seeds: 'name' (symbols), 'path' (files) "
+                "or 'query' (request words)"
+            )
+        with index._lifecycle_lock:
+            seeds = graph_rank.resolve_seeds(index, paths=paths, symbols=symbols, query=text)
+            graph = graph_rank.graph_for(index)
+            result = graph_rank.rank(
+                graph,
+                seeds.weights,
+                task=chosen,
+                max_hops=depth or 3,
+                limit=limit or 15,
+                exclude=seeds.explicit,
+            )
+        return _render_rank(result, seeds.notes, graph.history_commits)
 
     # -- semantic ----------------------------------------------------------
 

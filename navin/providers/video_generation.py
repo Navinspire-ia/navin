@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from navin.optional_live import live_modules_available
 from navin.providers.image_generation import (
     image_path_to_data_url,
     image_path_to_inline_data,
@@ -703,7 +704,11 @@ class OpenRouterVideoGenerationClient(VideoGenerationProvider):
 
 
 class NavinVideoGenerationClient(OpenRouterVideoGenerationClient):
-    """Video generation via the managed Navin OpenRouter key (Seedance, etc.)."""
+    """Video generation via the managed Navin key (Seedance, etc.).
+
+    On the Navin gateway (LiteLLM) it speaks the standard OpenAI ``/videos``
+    API instead of OpenRouter's, with the same key and base.
+    """
 
     provider_name = "navin"
     missing_key_message = (
@@ -711,9 +716,19 @@ class NavinVideoGenerationClient(OpenRouterVideoGenerationClient):
         "or switch Video settings to your own provider."
     )
 
+    def __new__(cls, *args: Any, **kwargs: Any):  # type: ignore[misc]
+        from navin.providers.gateway import navin_managed_base
+
+        # The subscription is served by the Navin gateway only, never by
+        # OpenRouter: an empty or OpenRouter base resolves to the gateway.
+        kwargs["api_base"] = navin_managed_base(kwargs.get("api_base"))
+        client = OpenAIVideoGenerationClient(*args, **kwargs)
+        client.provider_name = "navin"
+        client.missing_key_message = cls.missing_key_message
+        return client
+
 
 register_video_gen_provider(OpenRouterVideoGenerationClient)
-from navin.optional_live import live_modules_available
 
 if live_modules_available():
     register_video_gen_provider(NavinVideoGenerationClient)
@@ -790,3 +805,160 @@ class LmStudioVideoGenerationClient(LocalOpenAICompatibleVideoGenerationClient):
 register_video_gen_provider(OllamaVideoGenerationClient)
 register_video_gen_provider(VllmVideoGenerationClient)
 register_video_gen_provider(LmStudioVideoGenerationClient)
+
+
+class XaiVideoGenerationClient(VideoGenerationProvider):
+    """Grok Imagine video with the user's own xAI key: ``POST /v1/videos/generations``
+    then ``GET /v1/videos/{request_id}`` until ``done``; the video URL is temporary,
+    so it is downloaded at once."""
+
+    provider_name = "xai"
+    missing_key_message = "xAI API key is not configured. Set providers.xai.apiKey."
+    _ASPECT_RATIOS = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+
+    def _default_base_url(self) -> str:
+        return "https://api.x.ai/v1"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_image: str | None = None,
+        aspect_ratio: str | None = None,
+        duration_seconds: int | None = None,
+        resolution: str | None = None,
+    ) -> GeneratedVideoResponse:
+        if not self.api_key:
+            raise VideoGenerationError(self.missing_key_message)
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", **self.extra_headers}
+        body: dict[str, Any] = {"model": (model or "grok-imagine-video-1.5").removeprefix("xai/"), "prompt": prompt}
+        if aspect_ratio in self._ASPECT_RATIOS:
+            body["aspect_ratio"] = aspect_ratio
+        if duration_seconds:
+            body["duration"] = max(1, min(15, int(duration_seconds)))
+        wanted = (resolution or "").strip().lower()
+        if wanted in {"480p", "720p", "1080p"}:
+            body["resolution"] = wanted
+        if reference_image:
+            from navin.providers.image_generation import image_path_to_data_url
+
+            body["image"] = {"url": image_path_to_data_url(reference_image)}
+        body.update(self.extra_body)
+
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            start = await self._request(client, "POST", f"{self.api_base}/videos/generations",
+                                        headers=headers, json_body=body, error_label="xAI video generation")
+            request_id = (start.json() or {}).get("request_id")
+            if not request_id:
+                raise VideoGenerationError(f"xAI did not return a request id: {start.text[:500]}")
+
+            async def check():
+                status = await self._request(client, "GET", f"{self.api_base}/videos/{request_id}",
+                                             headers=headers, error_label="xAI video status polling")
+                data = status.json() or {}
+                state = str(data.get("status") or "")
+                if state == "done":
+                    return data
+                if state in {"failed", "expired"}:
+                    detail = (data.get("error") or {}).get("message") if isinstance(data.get("error"), dict) else state
+                    raise VideoGenerationError(f"xAI video generation failed: {detail or state}")
+                return None
+
+            data = await self._poll(check, error_label="xAI video generation")
+            url = str(((data.get("video") or {}).get("url")) or "")
+            if not url:
+                raise VideoGenerationError(f"xAI returned no video URL: {str(data)[:500]}")
+            content = await self._request(client, "GET", url, headers={}, error_label="xAI video download")
+            raw = content.content
+        return GeneratedVideoResponse(video=raw, mime=_detect_video_mime(raw), raw=data)
+
+
+register_video_gen_provider(XaiVideoGenerationClient)
+
+
+class QwenVideoGenerationClient(VideoGenerationProvider):
+    """Wan video with the user's own Alibaba key: an async DashScope task on the
+    Qwen provider's host, polled until it succeeds; the 24-hour video URL is
+    downloaded at once. A reference image switches a text-to-video model to its
+    image-to-video sibling."""
+
+    provider_name = "qwen"
+    missing_key_message = "Qwen (Alibaba) API key is not configured. Set providers.qwen.apiKey."
+    _RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4"}
+    _SIZES = {"16:9": "1280*720", "9:16": "720*1280", "1:1": "960*960", "4:3": "1088*832", "3:4": "832*1088"}
+
+    def _resolve_base_url(self, api_base: str | None) -> str:
+        from navin.providers.qwen_media import native_host
+
+        return native_host(api_base)
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_image: str | None = None,
+        aspect_ratio: str | None = None,
+        duration_seconds: int | None = None,
+        resolution: str | None = None,
+    ) -> GeneratedVideoResponse:
+        from navin.providers.qwen_media import api_key_or_env
+
+        key = api_key_or_env(self.api_key)
+        if not key:
+            raise VideoGenerationError(self.missing_key_message)
+        clean = (model or "wan2.6-t2v").removeprefix("qwen/")
+        body_input: dict[str, Any] = {"prompt": prompt}
+        if reference_image:
+            from navin.providers.image_generation import image_path_to_data_url
+
+            clean = clean.replace("-t2v", "-i2v")
+            body_input["img_url"] = image_path_to_data_url(reference_image)
+        parameters: dict[str, Any] = {"prompt_extend": True, "watermark": False}
+        if duration_seconds:
+            parameters["duration"] = max(2, min(15, int(duration_seconds)))
+        ratio = aspect_ratio if aspect_ratio in self._RATIOS else "16:9"
+        wanted = (resolution or "").strip().upper()
+        if clean.startswith("wan2.7") or reference_image:
+            parameters["resolution"] = wanted if wanted in {"480P", "720P", "1080P"} else "720P"
+            if not reference_image:
+                parameters["ratio"] = ratio
+        else:
+            parameters["size"] = self._SIZES[ratio]
+        body: dict[str, Any] = {"model": clean, "input": body_input, "parameters": parameters}
+        body.update(self.extra_body)
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                   "X-DashScope-Async": "enable", **self.extra_headers}
+
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            start = await self._request(
+                client, "POST", f"{self.api_base}/api/v1/services/aigc/video-generation/video-synthesis",
+                headers=headers, json_body=body, error_label="Wan video generation",
+            )
+            task_id = ((start.json() or {}).get("output") or {}).get("task_id")
+            if not task_id:
+                raise VideoGenerationError(f"Wan did not return a task id: {start.text[:500]}")
+            poll_headers = {"Authorization": f"Bearer {key}"}
+
+            async def check():
+                status = await self._request(client, "GET", f"{self.api_base}/api/v1/tasks/{task_id}",
+                                             headers=poll_headers, error_label="Wan task polling")
+                output = (status.json() or {}).get("output") or {}
+                state = str(output.get("task_status") or "")
+                if state == "SUCCEEDED":
+                    return output
+                if state in {"FAILED", "CANCELED", "UNKNOWN"}:
+                    raise VideoGenerationError(f"Wan video generation failed: {output.get('message') or state}")
+                return None
+
+            output = await self._poll(check, error_label="Wan video generation")
+            url = str(output.get("video_url") or "")
+            if not url:
+                raise VideoGenerationError(f"Wan returned no video URL: {str(output)[:500]}")
+            content = await self._request(client, "GET", url, headers={}, error_label="Wan video download")
+            raw = content.content
+        return GeneratedVideoResponse(video=raw, mime=_detect_video_mime(raw), raw=output)
+
+
+register_video_gen_provider(QwenVideoGenerationClient)

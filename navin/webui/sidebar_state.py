@@ -60,6 +60,7 @@ _ALLOWED_CHAT_MODULES = frozenset(
         "ops",
         "notes",
         "crm",
+        "campaigns",
     }
 )
 

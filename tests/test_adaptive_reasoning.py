@@ -29,7 +29,7 @@ class PolicyTest(unittest.TestCase):
         )
 
     def test_agent_mode_preserves_configured_effort(self) -> None:
-        self.assertEqual("none", adaptive_reasoning_effort(None, composer_mode="agent"))
+        self.assertEqual("medium", adaptive_reasoning_effort(None, composer_mode="agent"))
         self.assertEqual("low", adaptive_reasoning_effort("low", composer_mode="agent"))
         self.assertEqual("high", adaptive_reasoning_effort("high", composer_mode="agent"))
 

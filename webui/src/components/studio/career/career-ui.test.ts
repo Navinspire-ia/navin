@@ -141,7 +141,7 @@ describe("career catalog URLs leave the IDE", () => {
     expect(header).not.toContain("flex-wrap");
     expect(header.indexOf('tx("trackFreelance"')).toBeLessThan(header.indexOf('data-testid="career-navigation"'));
     expect(header).toContain("headerButtons.slice(visibleHeaderButtons)");
-    expect(header).toContain("order-last ml-auto");
+    expect(header).toContain("order-last ms-auto");
     expect(desk).toContain("career-offer-panel");
     expect(desk).toContain("career-offer-facts");
     expect(desk).toContain("selectOffer");

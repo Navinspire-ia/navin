@@ -34,14 +34,27 @@ def test_restart_restores_queue_and_long_draft_before_clean_shutdown(tmp_path):
             await second._refresh_queue()
             await pilot.pause()
             assert second.composer.expand_for_submit() == draft
-            assert len(second.query(QueuedPromptRow)) == 1
-            assert second.runtime.bus.inbound_size == 0
-            await pilot.click("#queue-resume")
+            # Restored queue goes out on its own after a restart (no manual Resume).
             message = await asyncio.wait_for(second.runtime.bus.consume_inbound(), 2)
             assert message.content == "/forge queued task"
             await pilot.pause()
+            assert len(second.query(QueuedPromptRow)) == 0
+            assert "cli:direct" not in second._queue_paused
+            await second._flush_unsent_work()
             assert second._session_store.load("cli:direct")["queue"] == []
             assert second.composer.expand_for_submit() == draft
+    asyncio.run(run())
+
+
+def test_explicit_pause_without_queue_survives_restart(tmp_path):
+    async def run():
+        store = TuiSessionStore(make_app(tmp_path)._session_store.root, tmp_path)
+        store.save("cli:direct", draft="", queue=[], paused=True)
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            assert "cli:direct" in app._queue_paused
+            assert app.runtime.bus.inbound_size == 0
     asyncio.run(run())
 
 

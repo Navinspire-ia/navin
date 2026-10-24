@@ -43,6 +43,7 @@ MOBILE_TOOL = "mobile"
 NOTEBOOK_TOOL = "notebook_edit"
 WRITE_STDIN_TOOL = "write_stdin"
 LIST_EXEC_SESSIONS_TOOL = "list_exec_sessions"
+MCP_MANAGE_TOOL = "mcp"
 
 #: Withheld until the turn, the repository or a live session asks for them.
 ON_DEMAND_TOOLS: frozenset[str] = frozenset(
@@ -58,8 +59,11 @@ ON_DEMAND_TOOLS: frozenset[str] = frozenset(
 )
 
 # Nouns and slash commands that name each tool's subject. Narrow on purpose:
-# a false positive only costs prompt tokens, but it costs them on every step
-# of the turn.
+# a lifted tool stays for the conversation and changes the tool list, which
+# leads the prompt, so a false positive costs tokens on every step and the
+# whole prompt cache once. Code words ("session", "heartbeat", "dom", "tabs",
+# "forms") are left out: the repository and live exec sessions lift these
+# tools when they are actually relevant (see on_demand_tools_for_facts).
 _TOOL_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         BOARD_TOOL,
@@ -80,13 +84,11 @@ _TOOL_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"(https?://|\b("
             r"browser|navigateur|chrome|chromium|firefox|webkit|"
-            r"onglets?|tabs?|"
             r"screenshots?|captures? d ecran|"
             r"selecteurs?|selectors?|css selector|xpath|"
-            r"dom|devtools|cdp|"
+            r"devtools|cdp|"
             r"clique[rz]?|click|scroll|"
             r"pages? web|web ?pages?|localhost|127 0 0 1|"
-            r"formulaires?|forms?|"
             r"playwright|puppeteer|selenium"
             r")\b)"
         ),
@@ -103,8 +105,7 @@ _TOOL_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"toutes les (?:heures|semaines|minutes)|"
             r"every (?:day|morning|hour|week|month|monday)|"
             r"daily|weekly|hourly|"
-            r"periodiques?|recurrents?|recurring|"
-            r"heartbeats?"
+            r"crontabs?"
             r")\b"
         ),
     ),
@@ -138,14 +139,19 @@ _TOOL_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"\b("
             r"stdin|"
             r"arriere ?plans?|background|"
-            r"sessions?|"
-            r"repl|interactifs?|interactive|"
+            r"repl|"
             r"processus (?:en cours|de fond)|long running|"
             r"watche(?:rs?|z)|watch mode|"
             r"serveurs? de dev|dev servers?|"
             r"tail|logs? en direct|follow the logs?"
             r")\b"
         ),
+    ),
+    # Not withheld (it is a regular deferred tool), but a turn that says "MCP"
+    # gets its schema from the first step instead of a tool_search detour.
+    (
+        MCP_MANAGE_TOOL,
+        re.compile(r"\b(mcp|mcps|mcpservers|model context protocol)\b"),
     ),
 )
 
@@ -306,6 +312,28 @@ def on_demand_tools_for_facts(
     return frozenset(wanted)
 
 
+def on_demand_tools_for_session(session_key: str | None) -> frozenset[str]:
+    """On-demand tools this conversation already depends on.
+
+    A chat that filed a plan keeps ``board`` on every following turn, whatever
+    the text says: the plan panel only advances when the model can claim and
+    close its steps, and "continue" or a code-only follow-up never names the
+    board. Cheap: one in-memory lookup of the session's focused task ids.
+    """
+    key = (session_key or "").strip()
+    if not key:
+        return frozenset()
+    try:
+        from navin.board import session_focus
+
+        if session_focus.touched(key):
+            return frozenset({BOARD_TOOL})
+    except Exception:
+        # A broken focus file must not hide a tool the plan needs.
+        return frozenset({BOARD_TOOL})
+    return frozenset()
+
+
 def exec_sessions_are_open() -> bool:
     """True when a background ``exec`` session is alive in this process."""
     try:
@@ -322,6 +350,7 @@ __all__ = [
     "clear_project_facts_cache",
     "exec_sessions_are_open",
     "on_demand_tools_for_facts",
+    "on_demand_tools_for_session",
     "on_demand_tools_for_text",
     "project_facts",
 ]

@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import type { MarketingConnector, MarketingContent, MarketingQueue } from "@/lib/marketing-api";
 
 /** Every content channel the desk knows, in the order the UI shows them. */
@@ -165,7 +166,7 @@ export function formatWhen(ts?: number | null, locale = "en"): string {
   const value = Number(ts || 0);
   if (!value) return "";
   try {
-    return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value * 1000));
+    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value * 1000));
   } catch {
     return new Date(value * 1000).toISOString();
   }

@@ -80,6 +80,14 @@ def is_file_edit_tool(tool_name: str | None) -> bool:
 
 def display_file_edit_path(path: Path, workspace: Path | None) -> str:
     if workspace is not None:
+        # Lexical first: two resolve() calls per edit crossed the 9P bridge on
+        # a WSL project seen from Windows, on the event loop. A path with ".."
+        # or a different spelling of the root still goes through resolve().
+        if path.is_absolute() and workspace.is_absolute() and ".." not in path.parts:
+            try:
+                return path.relative_to(workspace).as_posix()
+            except ValueError:
+                pass
         try:
             return path.resolve().relative_to(workspace.resolve()).as_posix()
         except Exception:
@@ -384,8 +392,11 @@ def resolve_file_edit_paths(
         ]
     if tool_name not in {"write_file", "edit_file"}:
         return []
-    path = _resolve_single_path(tool, workspace, params.get("path"))
-    return [path] if path is not None else []
+    raw_paths = [params.get("path")]
+    if tool_name == "write_file" and isinstance(params.get("files"), list):
+        raw_paths.extend(item.get("path") for item in params["files"] if isinstance(item, dict))
+    resolved = [_resolve_single_path(tool, workspace, raw) for raw in raw_paths if raw]
+    return [path for path in resolved if path is not None]
 
 
 def _resolve_manage_paths(tool: Any, workspace: Path | None, params: dict[str, Any]) -> list[Path]:

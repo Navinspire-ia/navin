@@ -1,0 +1,21 @@
+{
+  "name": "plugin-dev",
+  "version": "1.0.0",
+  "description": "Toolkit to build Navin plugins: skills, agents, slash commands, hooks, MCP servers and settings, with guided creation and validation.",
+  "category": "development",
+  "commands": ["create-plugin"],
+  "agents": ["agent-creator", "plugin-validator", "skill-reviewer"],
+  "skills": ["plugin-structure", "skill-development", "agent-development", "command-development", "hook-development", "mcp-integration", "plugin-settings"],
+  "steps": [
+    {"step": "create a plugin end to end", "use": "/create-plugin"},
+    {"step": "lay out a plugin", "use": "skill:plugin-structure"},
+    {"step": "write a skill", "use": "skill:skill-development"},
+    {"step": "write an agent", "use": "agent:agent-creator"},
+    {"step": "write a slash command", "use": "skill:command-development"},
+    {"step": "write a hook", "use": "skill:hook-development"},
+    {"step": "add an MCP server", "use": "skill:mcp-integration"},
+    {"step": "add plugin settings", "use": "skill:plugin-settings"},
+    {"step": "validate a plugin", "use": "agent:plugin-validator"},
+    {"step": "review a skill", "use": "agent:skill-reviewer"}
+  ]
+}

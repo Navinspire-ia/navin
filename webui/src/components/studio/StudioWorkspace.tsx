@@ -55,6 +55,8 @@ import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
 import { opsGroups, opsSeedText } from "@/components/studio/opsCatalog";
 import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import { MarketingQA } from "@/components/studio/MarketingQA";
+import { SeoDesk } from "@/components/studio/seo/SeoDesk";
+import { AdsDesk } from "@/components/studio/ads/AdsDesk";
 
 const ONBOARDING_DISMISSED_KEY = "navin.studio.onboarding.dismissed";
 
@@ -932,19 +934,19 @@ function seoGroups(tx: Tx): StudioGroup[] {
           "techAudit",
           "Technical audit",
           "Crawlability, speed hints, structured data, meta.",
-          "Run a senior technical SEO audit under studio-expert-contract: fetch homepage, robots.txt, sitemap, and a sample of key pages; check indexability, canonicals, meta/headings, structured data, redirects, internal links. Order Critical/Important/Nice-to-have with URL+evidence; score with audit_score.py when useful. CWV only with PSI data or mark requires measurement. Save seo/ + seo-report-*.html; expert gate.",
+          "Run a senior technical SEO audit under studio-expert-contract: call the seo tool with action=pipeline and the site URL (crawl, on-page, structured data, robots.txt, declared sitemap, PSI/CrUX when keys exist, health score). Then review its findings, order Critical/Important/Nice-to-have with URL+evidence, and add fixes. CWV only from the pipeline's PSI/CrUX data, otherwise state the data gap. Save seo/ + seo-report-*.html; expert gate.",
         ),
         card(
           "onPageAudit",
           "On-page audit (URL)",
           "Deep audit of a single page vs its target query.",
-          "On-page audit one URL: fetch the page and top 3 SERP peers; evaluate title/meta/H-structure, intent match, content gaps, internal links, media, schema. Deliver before→after rewrites in a prioritized table; save seo/on-page-*.md.",
+          "On-page audit one URL: run the seo tool (action=crawl with max_pages=1, then action=audit and action=schema on it), fetch the top 3 SERP peers (seo action=serp_snapshot when a provider is configured); evaluate title/meta/H-structure, intent match, content gaps, internal links, media, schema. Deliver before→after rewrites in a prioritized table; save seo/on-page-*.md.",
         ),
         card(
           "seoCompetitors",
           "Competitor analysis",
           "Compare rankings strategy, content and gaps.",
-          "Analyze SERP competitors (who ranks, not only business rivals): fetch key pages, compare content/IA/strengths, produce beatable gap opportunities with evidence URLs. Never invent DR/backlink counts without seo-data-provider. Save seo/competitor-analysis-*.md.",
+          "Analyze SERP competitors (who ranks, not only business rivals): use seo action=serp_snapshot for the target keywords when a provider is configured (otherwise say rankings need DataForSEO or Semrush), fetch key pages, compare content/IA/strengths, produce beatable gap opportunities with evidence URLs. Never invent DR/backlink counts without seo-data-provider. Save seo/competitor-analysis-*.md.",
         ),
         card(
           "contentAudit",
@@ -998,13 +1000,13 @@ function seoGroups(tx: Tx): StudioGroup[] {
           "metaTags",
           "Meta & tags optimization",
           "Rewritten titles, descriptions, OG tags.",
-          "Optimize meta for given URLs after fetching them: CTR-focused titles (length), meta descriptions, OG/Twitter, heading notes. Before/after tables with uniqueness checks; save seo/meta-*.md.",
+          "Optimize meta for given URLs after crawling them with seo action=crawl: CTR-focused titles (length), meta descriptions, OG/Twitter, heading notes. Before/after tables with uniqueness checks; save seo/meta-*.md.",
         ),
         card(
           "schemaMarkup",
           "Schema.org markup",
           "Structured data ready to paste (JSON-LD).",
-          "Generate valid JSON-LD for the fetched pages (Organization, Product, Article, FAQ, Breadcrumb, LocalBusiness as relevant) with placement instructions. Prefer facts from the live page; mark unknowns. Save seo/schema-*.json.md.",
+          "Generate valid JSON-LD for the fetched pages (Organization, Product, Article, FAQ, Breadcrumb, LocalBusiness as relevant) with placement instructions, and validate each block with seo action=schema before delivering. Prefer facts from the live page; mark unknowns. Save seo/schema-*.json.md.",
         ),
         card(
           "linkStrategy",
@@ -1759,6 +1761,9 @@ export function StudioWorkspace({
   const [marketingPane, setMarketingPane] = useState<"templates" | "actions" | "qa">(
     "templates",
   );
+  // SEO and Ads open on their desk; the prompt cards stay one click away.
+  const hasDesk = module === "seo" || module === "ads";
+  const [deskPane, setDeskPane] = useState<"desk" | "actions">("desk");
   const [showOnboarding, setShowOnboarding] = useState(
     () => !readDismissedOnboarding().has(module),
   );
@@ -1977,7 +1982,8 @@ export function StudioWorkspace({
   const showMarketingLibrary =
     module === "marketing" && marketingPane === "templates";
   const showMarketingQA = module === "marketing" && marketingPane === "qa";
-  const showStudioActions = module !== "marketing" || marketingPane === "actions";
+  const showStudioActions =
+    (module !== "marketing" || marketingPane === "actions") && !(hasDesk && deskPane === "desk");
 
   const seedMediaTemplate = useCallback(
     (items: MediaTemplateItem[]) => {
@@ -2063,6 +2069,30 @@ export function StudioWorkspace({
               </button>
             ))}
           </nav>
+        ) : hasDesk ? (
+          <nav className="flex items-center gap-0.5" data-testid="studio-desk-tabs">
+            {(
+              [
+                { id: "desk" as const, label: tx("studio.deskPane.desk", "Desk") },
+                { id: "actions" as const, label: tx("studio.deskPane.actions", "Ask the agent") },
+              ]
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setDeskPane(item.id)}
+                aria-pressed={deskPane === item.id}
+                className={cn(
+                  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11.5px] font-medium transition-colors active:scale-[0.96]",
+                  deskPane === item.id
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
         ) : (
           <span />
         )}
@@ -2121,6 +2151,14 @@ export function StudioWorkspace({
       ) : null}
 
       {showMarketingQA ? <MarketingQA projectPath={projectPath} /> : null}
+
+      {hasDesk && deskPane === "desk" && token ? (
+        module === "seo" ? (
+          <SeoDesk token={token} onAskAgent={onSeed ? (prompt) => onSeed(prompt, undefined, { replace: true }) : undefined} />
+        ) : (
+          <AdsDesk token={token} />
+        )
+      ) : null}
 
       {showStudioActions && showOnboarding ? (
         <div className="shrink-0 border-b border-border/55 bg-muted/20 px-5 py-3">
@@ -2280,7 +2318,7 @@ export function StudioWorkspace({
                       type="button"
                       onClick={() => openCard(card)}
                       className={cn(
-                        "group flex flex-col gap-1.5 rounded-xl border border-border/60 bg-background p-3.5 text-left transition-colors hover:bg-muted/30",
+                        "group flex flex-col gap-1.5 rounded-xl border border-border/60 bg-background p-3.5 text-start transition-colors hover:bg-muted/30",
                         isMarketing
                           ? "hover:border-violet-500/60"
                           : "hover:border-foreground/40",
@@ -2310,7 +2348,7 @@ export function StudioWorkspace({
                           </span>
                         ) : (
                           <ArrowRight
-                            className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                            className="rtl:-scale-x-100 h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
                             aria-hidden
                           />
                         )}
@@ -2496,7 +2534,7 @@ export function StudioWorkspace({
                         stretched row can be squeezed by the max height, and the
                         cards clip their overflow, which turns the thumbnails
                         into thin strips. */}
-                    <div className="grid max-h-[280px] auto-rows-min grid-cols-2 items-start gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+                    <div className="grid max-h-[280px] auto-rows-min grid-cols-2 items-start gap-2 overflow-y-auto pe-1 sm:grid-cols-3">
                       {!designTemplateRequired ? (
                         <button
                           type="button"
@@ -2548,7 +2586,7 @@ export function StudioWorkspace({
                                   return template;
                                 })
                               }
-                              className="flex w-full flex-col text-left"
+                              className="flex w-full flex-col text-start"
                               data-testid={`studio-template-${template.name}`}
                             >
                               {template.preview_url ? (
@@ -2575,7 +2613,7 @@ export function StudioWorkspace({
                               </span>
                             </button>
                             {selected ? (
-                              <span className="pointer-events-none absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                              <span className="pointer-events-none absolute end-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
                                 <Check className="h-3 w-3" aria-hidden />
                               </span>
                             ) : null}
@@ -2594,7 +2632,7 @@ export function StudioWorkspace({
                                 "Preview the full template",
                               )}
                               className={cn(
-                                "absolute left-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full",
+                                "absolute start-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full",
                                 "bg-black/55 text-white opacity-0 shadow backdrop-blur-sm transition-opacity",
                                 "hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100",
                               )}

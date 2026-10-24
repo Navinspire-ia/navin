@@ -236,6 +236,12 @@ def _format_summary(summary: _PatchSummary) -> str:
             description="Validate and summarize the patch without writing files.",
             default=False,
         ),
+        verify=BooleanSchema(
+            description=(
+                "Also run verify action=check on the edited files and return its "
+                "verdict in this same call (saves a separate verify step)"
+            ),
+        ),
         required=["edits"],
     )
 )
@@ -267,6 +273,7 @@ class ApplyPatchTool(_FsTool):
         self,
         edits: list[dict] | None = None,
         dry_run: bool = False,
+        verify: bool | None = None,
         **kwargs: Any,
     ) -> str:
         try:
@@ -450,6 +457,8 @@ class ApplyPatchTool(_FsTool):
                 "Patch applied:\n"
                 + "\n".join(_format_summary(summary) for summary in summaries),
             )
+            if verify:
+                return await self._with_verify(applied, list(writes))
             return await self._with_diagnostics(applied, list(writes))
         except PermissionError as exc:
             return ToolResult.error(f"Error: {exc}")

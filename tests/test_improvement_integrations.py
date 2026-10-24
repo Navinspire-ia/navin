@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console
+
 pytest.importorskip("typer.testing")
 from typer.testing import CliRunner  # noqa: E402
 

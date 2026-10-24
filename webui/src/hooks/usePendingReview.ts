@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchReviewChanges, postReviewAction } from "@/lib/api";
 import type { ReviewChangeEntry } from "@/lib/types";
@@ -9,6 +9,12 @@ import { useClient } from "@/providers/ClientProvider";
 
 /** Same cadence as the Dev Workbench: fast enough to feel live, cheap enough. */
 const POLL_MS = 5_000;
+
+/**
+ * The chat's pending agent edits, for the journal: files a subagent wrote never
+ * reach the parent turn's own edit events, only this list.
+ */
+export const PendingChangesContext = createContext<ReviewChangeEntry[]>([]);
 
 export type PendingReview = {
   changes: ReviewChangeEntry[];

@@ -25,22 +25,28 @@ result.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 
 from loguru import logger
 
 from navin.index.store import (
+    SKIP_DIRS,
     RefreshStats,
     discover_files,
+    flush_pending_save,
+    gc_paused,
     indexable,
     load_cache,
     load_refs_cache,
     save_cache,
+    save_cache_soon,
     save_refs_cache,
 )
 from navin.index.symbols import (
@@ -99,7 +105,51 @@ def _builtin_names() -> frozenset[str]:
 _BUILTINS = _builtin_names()
 
 
-def _iter_stats(root: Path, files: list[str]):
+def _builtin_member_names() -> frozenset[str]:
+    """Method names of the runtimes' own types (``str.join``, ``Array.map``...).
+
+    An attribute call is recorded under its attribute name alone, so
+    ``row.items()`` reads as a call to "items". When one project file happens to
+    define an ``items``, a bare-name match would make it a dependency of every
+    file that iterates a dict.
+    """
+    names: set[str] = set()
+    for kind in (str, bytes, list, dict, set, frozenset, tuple, int, float, object):
+        names.update(dir(kind))
+    names |= {
+        "push", "pop", "shift", "unshift", "map", "filter", "reduce", "forEach",
+        "find", "findIndex", "some", "every", "includes", "indexOf", "slice",
+        "splice", "concat", "join", "split", "trim", "replace", "then", "catch",
+        "finally", "keys", "values", "entries", "has", "get", "set", "delete",
+        "add", "clear", "toString", "apply", "call", "bind", "log", "error",
+        "warn", "info", "debug", "close", "open", "read", "write", "send", "emit",
+    }
+    return frozenset(names)
+
+
+_BUILTIN_MEMBERS = _builtin_member_names()
+
+
+# A WSL project opened from Windows (``\\wsl.localhost\<distro>\...``): every
+# stat crosses the 9P bridge, and a background pass over thousands of files
+# saturated it, stalling every other call of the desktop. On such a root the
+# index is refreshed less often, at a capped rate, and an agent edit re-stats
+# only the file it wrote.
+_BRIDGED_REVALIDATE_TTL_S = 120.0
+_BRIDGED_STAT_BURST = 200
+_BRIDGED_STAT_PAUSE_S = 0.01
+
+
+def is_bridged_root(root: Path | str) -> bool:
+    """True for a WSL project reached from Windows through the 9P bridge."""
+    if sys.platform != "win32":
+        return False
+    from navin.utils import wsl
+
+    return wsl.is_unc(str(root))
+
+
+def _iter_stats(root: Path, files: list[str], *, paced: bool = False):
     """Yield ``(rel, mtime_ns, size)`` for every indexable file that stats.
 
     The change detector compares these two numbers against the cached
@@ -108,9 +158,23 @@ def _iter_stats(root: Path, files: list[str]):
     all happen in one parallel Rust pass; the values are identical to what
     ``os.stat`` reports, so cached fingerprints stay valid either way. Files
     that cannot be stat'd are skipped, matching the ``OSError`` fallback.
+
+    ``paced`` (a bridged WSL root) stats one file at a time and pauses after
+    each burst, so the pass leaves room on the bridge for foreground calls.
     """
     rels = [rel for rel in files if indexable(rel)]
-    core = native()
+    if paced:
+        # One stat inside the distribution instead of one 9P round trip each.
+        from navin.utils import wsl_bulk
+
+        stamps = wsl_bulk.stat_files(root, rels)
+        if stamps is not None:
+            for rel in rels:
+                pair = stamps.get(rel)
+                if pair is not None:
+                    yield rel, pair[0], pair[1]
+            return
+    core = None if paced else native()
     if core is not None:
         pairs: dict[str, tuple[int, int]] | None
         try:
@@ -123,7 +187,9 @@ def _iter_stats(root: Path, files: list[str]):
                 if pair is not None:
                     yield rel, pair[0], pair[1]
             return
-    for rel in rels:
+    for count, rel in enumerate(rels, 1):
+        if paced and count % _BRIDGED_STAT_BURST == 0:
+            time.sleep(_BRIDGED_STAT_PAUSE_S)
         try:
             stat = (root / rel).stat()
         except OSError:
@@ -147,7 +213,8 @@ def _extract_batch(
     in Python either way and the entries produced are identical.
     """
     core = native()
-    if core is None or len(items) < _BATCH_READ_MIN:
+    bridged = is_bridged_root(root) and len(items) >= _BATCH_READ_MIN
+    if not bridged and (core is None or len(items) < _BATCH_READ_MIN):
         return {rel: read_and_extract(root, rel) for rel, _, _ in items}
 
     out: dict[str, FileEntry | None] = {}
@@ -164,6 +231,19 @@ def _extract_batch(
             )
         else:
             readable.append((rel, mtime_ns, size))
+    if bridged:
+        # A WSL project from Windows: every content in one tar stream read
+        # inside the distribution, not one 9P open per file.
+        from navin.utils import wsl_bulk
+
+        contents = wsl_bulk.read_files(root, [rel for rel, _, _ in readable])
+        for rel, mtime_ns, size in readable:
+            data = None if contents is None else contents.get(rel)
+            out[rel] = (
+                read_and_extract(root, rel) if data is None
+                else extract_from_bytes(rel, data, mtime_ns=mtime_ns, size=size)
+            )
+        return out
     try:
         blobs = core.read_files(
             [str(root / rel) for rel, _, _ in readable], max_bytes=MAX_PARSE_BYTES
@@ -276,16 +356,40 @@ class CodeIndex:
         self._lifecycle_lock = threading.RLock()
         self._revalidated_at = 0.0
         self._dirty = False
+        self.bridged = is_bridged_root(self.root)
+        # Files written since the last walk, on a bridged root only: they are
+        # re-stat'd one by one instead of walking the whole tree again.
+        self._dirty_paths: set[str] = set()
 
     # -- lifecycle ---------------------------------------------------------
 
-    def mark_dirty(self) -> None:
-        """Force the next :meth:`ensure` to re-stat the tree (bypass the TTL).
+    def _revalidate_ttl(self) -> float:
+        return _BRIDGED_REVALIDATE_TTL_S if self.bridged else self._REVALIDATE_TTL_S
+
+    def mark_dirty(self, path: Path | str | None = None) -> None:
+        """Force the next :meth:`ensure` to see a fresh tree (bypass the TTL).
 
         Called after agent file edits so an immediately following lookup sees
-        the new code instead of a throttled snapshot.
+        the new code instead of a throttled snapshot. On a bridged WSL root a
+        known ``path`` is queued alone, so one edit costs one stat instead of a
+        walk of the whole project through the bridge.
         """
+        if self.bridged and path is not None:
+            rel = self._relative(path)
+            if rel is not None:
+                self._dirty_paths.add(rel)
+                return
         self._dirty = True
+
+    def _relative(self, path: Path | str) -> str | None:
+        try:
+            rel = Path(path).relative_to(self.root).as_posix()
+        except ValueError:
+            return None
+        rel = normalize_relative_path(rel)
+        if not rel or rel == ".":
+            return None
+        return rel
 
     def ensure(self, *, force: bool = False) -> RefreshStats:
         """Refresh the index if needed and return the last refresh stats."""
@@ -313,9 +417,12 @@ class CodeIndex:
 
     def _revalidate_locked(self) -> bool:
         now = time.monotonic()
-        if not self._dirty and now - self._revalidated_at < self._REVALIDATE_TTL_S:
+        if not self._dirty and now - self._revalidated_at < self._revalidate_ttl():
+            if self._dirty_paths:
+                return self._revalidate_paths_locked()
             return False
         self._dirty = False
+        self._dirty_paths.clear()
         self._revalidated_at = now
         files, discovery, truncated = discover_files(self.root)
         self.all_files = files
@@ -325,7 +432,7 @@ class CodeIndex:
         parsed = 0
         present: set[str] = set()
         changed: list[tuple[str, int, int]] = []
-        for rel, mtime_ns, size in _iter_stats(self.root, files):
+        for rel, mtime_ns, size in _iter_stats(self.root, files, paced=self.bridged):
             present.add(rel)
             previous = entries.get(rel)
             if (
@@ -343,8 +450,82 @@ class CodeIndex:
             parsed += 1
 
         gone = [rel for rel in entries if rel not in present]
+        return self._commit_changes_locked(
+            entries, fresh, gone, parsed, discovery=discovery, truncated=truncated
+        )
+
+    def _revalidate_paths_locked(self) -> bool:
+        """Re-stat only the files written since the last walk (bridged roots).
+
+        The next full walk, at most one TTL later, still reconciles anything
+        this misses (a file the discovery would have ignored, a rename).
+        """
+        paths = sorted(self._dirty_paths)
+        self._dirty_paths.clear()
+        entries = dict(self.entries)
+        known = set(self.all_files)
+        changed: list[tuple[str, int, int]] = []
+        gone: list[str] = []
+        added: list[str] = []
+        vanished: set[str] = set()
+        for rel in paths:
+            parts = rel.split("/")
+            if any(part in SKIP_DIRS or part.startswith(".") for part in parts[:-1]):
+                continue
+            try:
+                info = (self.root / rel).stat()
+            except OSError:
+                vanished.add(rel)
+                if rel in entries:
+                    gone.append(rel)
+                continue
+            if not S_ISREG(info.st_mode):
+                continue
+            if rel not in known:
+                added.append(rel)
+            if not indexable(rel):
+                continue
+            previous = entries.get(rel)
+            if (
+                previous is not None
+                and previous.mtime_ns == info.st_mtime_ns
+                and previous.size == info.st_size
+            ):
+                continue
+            changed.append((rel, info.st_mtime_ns, info.st_size))
+        if vanished or added:
+            self.all_files = [rel for rel in self.all_files if rel not in vanished] + added
+
+        fresh: set[str] = set()
+        parsed = 0
+        for rel, entry in _extract_batch(self.root, changed).items():
+            if entry is None:
+                continue
+            entries[rel] = entry
+            fresh.add(rel)
+            parsed += 1
+        stats = self.stats
+        return self._commit_changes_locked(
+            entries,
+            fresh,
+            gone,
+            parsed,
+            discovery=stats.discovery if stats else "",
+            truncated=stats.truncated if stats else False,
+        )
+
+    def _commit_changes_locked(
+        self,
+        entries: dict[str, FileEntry],
+        fresh: set[str],
+        gone: list[str],
+        parsed: int,
+        *,
+        discovery: str,
+        truncated: bool,
+    ) -> bool:
         for rel in gone:
-            del entries[rel]
+            entries.pop(rel, None)
 
         if not fresh and not gone:
             return False
@@ -354,9 +535,17 @@ class CodeIndex:
         # previous contents are now wrong, so the lazy reference state is dropped
         # rather than patched.
         self._refs_ready = (self._refs_ready - set(gone) - fresh) | fresh
+        refs_were_loaded = self._refs_loaded
         self._refs_by_name = {}
         self._refs_loaded = False
-        self._build_derived()
+        with gc_paused():
+            self._build_derived()
+        if refs_were_loaded:
+            # A session that asked "who calls" once will ask again; rebuild
+            # the map now (it waits for this lock) rather than on that query.
+            threading.Thread(
+                target=self.warm_refs, daemon=True, name="index-refs-warmer"
+            ).start()
 
         previous_stats = self.stats
         self.stats = RefreshStats(
@@ -368,7 +557,7 @@ class CodeIndex:
             duration_ms=previous_stats.duration_ms if previous_stats else 0,
             discovery=discovery,
         )
-        save_cache(
+        save_cache_soon(
             self.root,
             entries,
             {
@@ -386,8 +575,10 @@ class CodeIndex:
     def _refresh_locked(self, *, force: bool = False) -> RefreshStats:
         started = time.monotonic()
         self._dirty = False
+        self._dirty_paths.clear()
         self._revalidated_at = started
         files, discovery, truncated = discover_files(self.root)
+        flush_pending_save(self.root)
         cached = {} if force else load_cache(self.root)
 
         entries: dict[str, FileEntry] = {}
@@ -395,7 +586,7 @@ class CodeIndex:
         parsed = reused = 0
         order: list[str] = []
         stale: list[tuple[str, int, int]] = []
-        for rel, mtime_ns, size in _iter_stats(self.root, files):
+        for rel, mtime_ns, size in _iter_stats(self.root, files, paced=self.bridged):
             order.append(rel)
             previous = cached.get(rel)
             if (
@@ -426,7 +617,8 @@ class CodeIndex:
         self._refs_ready = fresh
         self._refs_by_name = {}
         self._refs_loaded = False
-        self._build_derived()
+        with gc_paused():
+            self._build_derived()
         self._loaded = True
 
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -507,30 +699,54 @@ class CodeIndex:
         self.ensure()
         if self._refs_loaded:
             return
-        cached = load_refs_cache(self.root)
+        with self._lifecycle_lock:
+            # A background warm may have finished while this caller waited.
+            if not self._refs_loaded:
+                self._build_refs_locked()
+
+    def warm_refs(self) -> None:
+        """Build the reference state ahead of the first "who calls" query.
+
+        Built lazily it cost the first ``references`` call seconds (15s on
+        this repository after edits); the warmer pays it off the turn path.
+        """
+        try:
+            self._ensure_refs()
+        except Exception as exc:  # advisory warm-up, never fatal
+            logger.debug("reference warm failed for {}: {}", self.root, exc)
+
+    def _build_refs_locked(self) -> None:
         stale = False
-        for rel, entry in self.entries.items():
-            payload = cached.get(rel)
-            if rel in self._refs_ready:
-                # Parsed this session: the references are correct in memory but
-                # the cache may predate them.
-                if payload is None or int(payload.get("mtime_ns", -1)) != entry.mtime_ns:
-                    stale = True
-                continue
-            if payload is not None and entry.load_refs_json(payload):
-                self._refs_ready.add(rel)
-                continue
-            reparsed = read_and_extract(self.root, rel)
+        missing: list[tuple[str, int, int]] = []
+        # Millions of Reference objects: see gc_paused for why the collector waits.
+        with gc_paused():
+            cached = load_refs_cache(self.root)
+            for rel, entry in self.entries.items():
+                payload = cached.get(rel)
+                if rel in self._refs_ready:
+                    # Parsed this session: the references are correct in memory but
+                    # the cache may predate them.
+                    if payload is None or int(payload.get("mtime_ns", -1)) != entry.mtime_ns:
+                        stale = True
+                    continue
+                if payload is not None and entry.load_refs_json(payload):
+                    self._refs_ready.add(rel)
+                    continue
+                missing.append((rel, entry.mtime_ns, entry.size))
+            del cached
+        # One batched read (one stream on a WSL project), not one open per file.
+        for rel, reparsed in _extract_batch(self.root, missing).items():
             if reparsed is not None:
-                entry.refs = reparsed.refs
+                self.entries[rel].refs = reparsed.refs
             self._refs_ready.add(rel)
             stale = True
 
         refs_by_name: dict[str, list[tuple[str, Reference]]] = defaultdict(list)
-        for rel, entry in self.entries.items():
-            for ref in entry.refs:
-                refs_by_name[ref.name].append((rel, ref))
-        self._refs_by_name = dict(refs_by_name)
+        with gc_paused():
+            for rel, entry in self.entries.items():
+                for ref in entry.refs:
+                    refs_by_name[ref.name].append((rel, ref))
+            self._refs_by_name = dict(refs_by_name)
         self._refs_loaded = True
         if stale:
             save_refs_cache(self.root, self.entries)
@@ -1153,6 +1369,62 @@ class CodeIndex:
         self.ensure()
         return sorted(self._edges)
 
+    def file_call_edges(self) -> list[tuple[str, str, str, int, tuple[str, ...]]]:
+        """Cross-file call-graph edges as ``(source, target, kind, count, names)``.
+
+        ``kind`` is one of :data:`CALL_KINDS` (call, base, decorator) and
+        ``names`` holds up to three of the symbols linking the two files, as
+        evidence. A use counts when the calling file imports the defining file
+        (one hop through re-exports). Without that link it counts only when one
+        file defines the name, as a function or class rather than a method, and
+        the name is neither a runtime builtin nor a method of a builtin type:
+        stricter than :meth:`callees`, because one false edge here is weighted
+        into every ranking that crosses it. Same-file uses are dropped: this is
+        the file-level view of the call graph.
+        """
+        self._ensure_refs()
+        with self._lifecycle_lock:
+            # name -> (defining files, whether a bare-name match may stand)
+            defining: dict[str, tuple[list[str], bool]] = {}
+            counts: dict[tuple[str, str, str], int] = defaultdict(int)
+            names: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+            for rel, entry in self.entries.items():
+                reachable = self._import_scope(rel)
+                for ref in entry.refs:
+                    if ref.kind not in CALL_KINDS:
+                        continue
+                    known = defining.get(ref.name)
+                    if known is None:
+                        found = self._callable_definitions(ref.name)
+                        files = sorted({target for target, _ in found})
+                        standalone = (
+                            len(files) == 1
+                            and ref.name not in _BUILTINS
+                            and ref.name not in _BUILTIN_MEMBERS
+                            and all(symbol.kind != "method" for _, symbol in found)
+                        )
+                        known = (files, standalone)
+                        defining[ref.name] = known
+                    targets, standalone = known
+                    if not targets:
+                        continue
+                    resolved = [target for target in targets if target in reachable]
+                    if not resolved:
+                        if not standalone:
+                            continue
+                        resolved = targets
+                    for target in resolved:
+                        if target == rel:
+                            continue
+                        key = (rel, target, ref.kind)
+                        counts[key] += 1
+                        if len(names[key]) < 3:
+                            names[key].add(ref.name)
+            return [
+                (source, target, kind, count, tuple(sorted(names[(source, target, kind)])))
+                for (source, target, kind), count in sorted(counts.items())
+            ]
+
     def hubs(self, limit: int = 15) -> list[tuple[str, int, int]]:
         """Most connected files as ``(path, in_degree, out_degree)``."""
         self.ensure()
@@ -1230,7 +1502,11 @@ _instances: dict[str, CodeIndex] = {}
 
 def get_index(root: Path | str) -> CodeIndex:
     """Return the shared :class:`CodeIndex` for ``root``."""
-    resolved = Path(root).expanduser().resolve(strict=False)
+    from navin.utils.resolve_cache import resolve_root
+
+    # Cached: on a \\wsl.localhost root each resolve() is a 9P round trip, and
+    # every index tool and Graph refresh goes through here.
+    resolved = resolve_root(root)
     key = str(resolved)
     index = _instances.get(key)
     if index is None:

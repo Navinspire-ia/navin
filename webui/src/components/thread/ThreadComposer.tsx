@@ -16,7 +16,7 @@ import {
 } from "react";
 
 import { MarkdownText, preloadMarkdownText } from "@/components/MarkdownText";
-import { TurnWorkingStatus } from "@/components/thread/TurnWorkingStatus";
+import { TurnWorkingStatus, type TurnWaitingReason } from "@/components/thread/TurnWorkingStatus";
 import {
   CliAppMentionToken,
   FileMentionToken,
@@ -65,6 +65,7 @@ import {
   Paperclip,
   RotateCw,
   Route,
+  ScanSearch,
   Search,
   SearchCode,
   Shield,
@@ -82,6 +83,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import { TeamBotAvatar } from "@/components/team/TeamBotAvatar";
 import { useTranslation } from "react-i18next";
 
 import { FileTypeIcon, FolderTypeIcon } from "@/components/dev/FileTypeIcon";
@@ -307,6 +309,27 @@ export interface ComposerModelRouting {
   auto: boolean;
   swaps: Array<{ role: string; roleLabel: string; presetName: string; modelLabel: string }>;
   onOpenRouting?: () => void;
+  /** Task routing on for every chat; off, no route applies anywhere. */
+  enabled?: boolean;
+  onToggle?: (enabled: boolean) => void;
+}
+
+/** Collaboration Mode as the composer shows it: switch, team faces, Team view. */
+export interface ComposerTeamMode {
+  /** Team mode on for every chat (Settings > Team). */
+  enabled: boolean;
+  /** This chat's team id, or "off". */
+  teamId: string;
+  teams: Array<{ id: string; name: string }>;
+  /** Enabled teammates of this chat's team. */
+  members: Array<{ name: string; title?: string; avatar?: string; color?: string }>;
+  onToggle: (enabled: boolean) => void;
+  onSelectTeam: (teamId: string) => void;
+  /** Open (or close) the split Team view beside the chat. */
+  onOpenTeam?: () => void;
+  teamOpen?: boolean;
+  /** Teammates working right now (pulse on their faces). */
+  activeNames?: string[];
 }
 
 interface ThreadComposerProps {
@@ -351,6 +374,8 @@ interface ThreadComposerProps {
   onModelSelect?: (presetName: string) => void;
   /** Task routing state for this chat; null when no route changes the model. */
   modelRouting?: ComposerModelRouting | null;
+  /** Collaboration Mode switch and team (Settings > Team). */
+  teamMode?: ComposerTeamMode | null;
   /** Hide a preset from this picker (same as Settings "Hide in chat"). */
   onHideModel?: (presetName: string) => void;
   /** Fired when the model dropdown opens/closes (sync catalog on open). */
@@ -359,6 +384,9 @@ interface ThreadComposerProps {
   effortValue?: string;
   effortOptions?: string[];
   onEffortSelect?: (effort: string) => void;
+  /** Context window of the active model, in tokens. */
+  contextWindowValue?: number | null;
+  onContextWindowSelect?: (tokens: number) => void;
   effortBusy?: boolean;
   variant?: "thread" | "hero";
   slashCommands?: SlashCommand[];
@@ -383,6 +411,12 @@ interface ThreadComposerProps {
   /** Unix seconds from server; turn elapsed timer above input while set. */
   runStartedAt?: number | null;
   activityText?: string | null;
+  /** The model is streaming reasoning: the status reads "Thinking...". */
+  isThinking?: boolean;
+  /** The turn waits on the user (open approval / question): status says so and the clock pauses. */
+  waitingFor?: TurnWaitingReason | null;
+  /** The context is being summarized right now. */
+  isCompacting?: boolean;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
   goalState?: GoalStateWsPayload;
   workspaceScope?: WorkspaceScopePayload | null;
@@ -426,6 +460,7 @@ const COMMAND_ICONS: Record<string, LucideIcon> = {
   package: Package,
   "rotate-cw": RotateCw,
   route: Route,
+  "scan-search": ScanSearch,
   "search-code": SearchCode,
   shield: Shield,
   "shield-check": ShieldCheck,
@@ -486,7 +521,7 @@ function VoiceRecordingMeter({
           />
         ))}
       </span>
-      <span className="min-w-[2.1rem] text-right text-[12px] font-medium tabular-nums text-muted-foreground">
+      <span className="min-w-[2.1rem] text-end text-[14px] font-medium tabular-nums text-muted-foreground">
         {elapsedLabel}
       </span>
     </div>
@@ -822,7 +857,7 @@ function GoalStatusStrip({
           aria-labelledby="navin-goal-panel-title"
           tabIndex={-1}
           className={cn(
-            "absolute bottom-[calc(100%+8px)] left-3 right-3 z-[50] flex max-w-none flex-col overflow-hidden",
+            "absolute bottom-[calc(100%+8px)] start-3 end-3 z-[50] flex max-w-none flex-col overflow-hidden",
             "rounded-2xl border border-black/[0.08] bg-card shadow-[0_12px_40px_rgba(15,23,42,0.14)]",
             "backdrop-blur-sm dark:border-white/[0.1] dark:shadow-[0_16px_48px_rgba(0,0,0,0.45)]",
           )}
@@ -831,7 +866,7 @@ function GoalStatusStrip({
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] px-3 py-2 dark:border-white/[0.08]">
             <h2
               id="navin-goal-panel-title"
-              className="min-w-0 truncate text-[13px] font-semibold tracking-tight text-foreground"
+              className="min-w-0 truncate text-[14.5px] font-semibold tracking-tight text-foreground"
             >
               {t("thread.composer.goalStateSheetTitle")}
             </h2>
@@ -852,7 +887,7 @@ function GoalStatusStrip({
             id="navin-goal-panel-scroll"
             className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 pt-2"
           >
-            <MarkdownText className="max-w-none text-[13.5px] leading-relaxed text-foreground/90">
+            <MarkdownText className="max-w-none text-[14.5px] leading-relaxed text-foreground/90">
               {markdownBody}
             </MarkdownText>
           </div>
@@ -864,7 +899,7 @@ function GoalStatusStrip({
         aria-label={ariaLabel}
       >
         <Target className="h-4 w-4 shrink-0 text-primary/75" aria-hidden />
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-foreground/75">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[14px] font-medium text-foreground/75">
           {displayShowGoal ? (
             <span className="truncate">
               {t("thread.composer.goalStateStrip", { label: displayStripLabel })}
@@ -910,15 +945,18 @@ function ThreadComposerImpl({
   modelProviderLabel = null,
   modelNeedsSetup = false,
   onModelBadgeClick,
-  modelOptions = [],
+  modelOptions: allModelOptions = [],
   budgetFilterPercent = null,
   onModelSelect,
   modelRouting = null,
+  teamMode = null,
   onHideModel,
   onModelPickerOpenChange,
   effortValue = "",
   effortOptions = [],
   onEffortSelect,
+  contextWindowValue,
+  onContextWindowSelect,
   variant = "thread",
   slashCommands = [],
   cliApps = [],
@@ -933,6 +971,9 @@ function ThreadComposerImpl({
   liveVoice = null,
   runStartedAt = null,
   activityText = null,
+  isThinking = false,
+  waitingFor = null,
+  isCompacting = false,
   goalState,
   workspaceScope = null,
   workspaceDefaultScope = null,
@@ -953,6 +994,12 @@ function ThreadComposerImpl({
   turnMode: turnModeProp,
   onTurnModeChange,
 }: ThreadComposerProps) {
+  // The picker lists the models the configured providers can run; a model
+  // whose provider has no key stays out (the active one is kept).
+  const modelOptions = useMemo(
+    () => allModelOptions.filter((option) => option.active || !option.needsKey),
+    [allModelOptions],
+  );
   const { t } = useTranslation();
   const [value, setValue] = useState("");
   const [pastes, setPastes] = useState<PastedContentMap>({});
@@ -2409,10 +2456,10 @@ function ThreadComposerImpl({
     // get the compact thread size.
     isHero
       ? cn(
-          "min-h-[78px] px-4 text-[16px] leading-6 sm:px-5 sm:text-[14px] sm:leading-[22px]",
+          "min-h-[78px] px-4 text-[16px] leading-6 sm:px-5 sm:text-[14.5px] sm:leading-[24px]",
           relaxedHeroInput ? "pb-2 pt-[27px]" : "pb-1.5 pt-4",
         )
-      : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4 sm:text-[13px] sm:leading-[20px]",
+      : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4 sm:text-[14.5px] sm:leading-[22px]",
   );
 
   // Attach + document template sit on the right of the workspace row when that
@@ -2461,7 +2508,15 @@ function ThreadComposerImpl({
       onDrop={onDrop}
       className={cn("relative w-full", isHero ? "px-0" : "px-1 pb-1.5 pt-1 sm:px-0")}
     >
-      <TurnWorkingStatus active={isStreaming} startedAt={runStartedAt} activityText={activityText} wide={isHero} />
+      <TurnWorkingStatus
+        active={isStreaming}
+        startedAt={runStartedAt}
+        activityText={activityText}
+        thinking={isThinking}
+        waiting={waitingFor}
+        compacting={isCompacting}
+        wide={isHero}
+      />
       {showSlashMenu ? (
         <SlashCommandPalette
           commands={filteredSlashCommands}
@@ -2578,7 +2633,7 @@ function ThreadComposerImpl({
             {selectedMediaTemplates.map((mediaRef) => (
               <span
                 key={mediaRef.id}
-                className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/30 px-2.5 py-1 text-[12px]"
+                className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/30 px-2.5 py-1 text-[14px]"
                 data-testid="media-template-chip"
               >
                 {mediaRef.title || mediaRef.id}
@@ -2600,7 +2655,7 @@ function ThreadComposerImpl({
               </span>
             ))}
             {selectedMediaTemplates.length > 1 ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[13px] text-muted-foreground">
                 {selectedMediaTemplates.length}/6
               </span>
             ) : null}
@@ -2613,7 +2668,7 @@ function ThreadComposerImpl({
               onRemove={() => setSelectedDocumentTemplate(null)}
             />
             <label className="flex min-w-[13rem] flex-1 items-center gap-2 rounded-xl border border-border/60 bg-muted/25 px-2.5 py-1.5">
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+              <span className="shrink-0 text-[13px] font-medium text-muted-foreground">
                 {t("thread.composer.documentTemplate.languageLabel", {
                   defaultValue: "Language",
                 })}
@@ -2628,7 +2683,7 @@ function ThreadComposerImpl({
                 placeholder={t("thread.composer.documentTemplate.languagePlaceholder", {
                   defaultValue: "French, Arabic, Turkish…",
                 })}
-                className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/65"
+                className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-muted-foreground/65"
                 required
                 aria-label={t("thread.composer.documentTemplate.languageLabel", {
                   defaultValue: "Document language",
@@ -2795,8 +2850,55 @@ function ThreadComposerImpl({
               compact={toolbarCompact}
               onChange={setTurnMode}
             />
-            {!voiceRecorder.isRecording ? (
-              <ComposerPermissionMenu disabled={disabled} compact={toolbarCompact} />
+            {liveVoice && !voiceRecorder.isRecording ? (
+              <TooltipProvider delayDuration={220} skipDelayDuration={80}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={disabled || liveVoice.disabled || liveVoice.state === "starting"}
+                      aria-label={liveVoiceLabel}
+                      aria-pressed={liveVoiceActive}
+                      data-live-voice-toggle
+                      onClick={liveVoice.toggle}
+                      className={cn(
+                        "relative h-7 shrink-0 gap-1.5 rounded-lg border-transparent px-2 text-[12.5px] font-medium text-muted-foreground hover:bg-muted/65 hover:text-foreground",
+                        liveVoiceActive &&
+                          "rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(37,99,235,0.28)] hover:bg-primary hover:text-primary-foreground",
+                      )}
+                    >
+                      {liveVoice.state === "starting" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AudioLines className="h-3.5 w-3.5" />
+                      )}
+                      <span>{t("thread.composer.liveVoice.short", { defaultValue: "Live" })}</span>
+                      {liveVoiceActive && liveVoice.state === "listening" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/35 motion-reduce:hidden"
+                        />
+                      ) : null}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align="center"
+                    className="max-w-[16rem] rounded-xl border border-border/70 bg-background px-3 py-2 text-[12px] text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.13)] dark:border-white/10 dark:bg-neutral-900 dark:text-white"
+                  >
+                    <span className="block font-medium">{liveVoiceLabel}</span>
+                    {!liveVoiceActive ? (
+                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                        {t("thread.composer.liveVoice.hint", {
+                          defaultValue:
+                            "Talk with the agent: it listens, explains what it will do, asks when unsure and tells you when it is done.",
+                        })}
+                      </span>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             ) : null}
             {modelLabel && !voiceRecorder.isRecording ? (
               !modelNeedsSetup && onModelSelect && modelOptions.length > 0 ? (
@@ -2808,6 +2910,7 @@ function ThreadComposerImpl({
                   compact={toolbarCompact}
                   options={modelOptions}
                   routing={modelRouting}
+                  team={teamMode}
                   budgetFilterPercent={budgetFilterPercent}
                   disabled={disabled}
                   onSelect={onModelSelect}
@@ -2827,6 +2930,9 @@ function ThreadComposerImpl({
                 />
               )
             ) : null}
+            {!voiceRecorder.isRecording && teamMode?.enabled && teamMode.teamId !== "off" && teamMode.members.length > 0 ? (
+              <ComposerTeamChip team={teamMode} compact={toolbarCompact} />
+            ) : null}
             {!voiceRecorder.isRecording && onEffortSelect && effortOptions.length > 1 ? (
               <ComposerEffortPicker
                 value={effortValue}
@@ -2835,6 +2941,15 @@ function ThreadComposerImpl({
                 isHero={isHero}
                 compact={toolbarCompact}
                 onSelect={onEffortSelect}
+              />
+            ) : null}
+            {!voiceRecorder.isRecording && onContextWindowSelect ? (
+              <ComposerContextPicker
+                value={contextWindowValue ?? null}
+                disabled={disabled || modelNeedsSetup}
+                isHero={isHero}
+                compact={toolbarCompact}
+                onSelect={onContextWindowSelect}
               />
             ) : null}
             {voiceRecorder.isRecording ? (
@@ -2857,6 +2972,9 @@ function ThreadComposerImpl({
               onChange={onFilePick}
             />
             {workspaceRowVisible ? null : attachmentTools}
+            {!voiceRecorder.isRecording ? (
+              <ComposerPermissionMenu disabled={disabled} iconOnly />
+            ) : null}
             {showVoiceButton ? (
               <TooltipProvider delayDuration={220} skipDelayDuration={80}>
                 <Tooltip>
@@ -2898,56 +3016,6 @@ function ThreadComposerImpl({
                       <kbd className="rounded-full bg-muted px-2 py-0.5 font-sans text-[12px] font-semibold leading-none text-muted-foreground dark:bg-white/10 dark:text-white/80">
                         {voiceShortcutLabel}
                       </kbd>
-                    ) : null}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : null}
-            {liveVoice && !voiceRecorder.isRecording ? (
-              <TooltipProvider delayDuration={220} skipDelayDuration={80}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      disabled={disabled || liveVoice.disabled || liveVoice.state === "starting"}
-                      aria-label={liveVoiceLabel}
-                      aria-pressed={liveVoiceActive}
-                      data-live-voice-toggle
-                      onClick={liveVoice.toggle}
-                      className={cn(
-                        "relative h-7 w-7 shrink-0 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
-                        liveVoiceActive &&
-                          "rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(37,99,235,0.28)] hover:bg-primary hover:text-primary-foreground",
-                      )}
-                    >
-                      {liveVoice.state === "starting" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <AudioLines className="h-3.5 w-3.5" />
-                      )}
-                      {liveVoiceActive && liveVoice.state === "listening" ? (
-                        <span
-                          aria-hidden
-                          className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/35 motion-reduce:hidden"
-                        />
-                      ) : null}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    align="center"
-                    className="max-w-[16rem] rounded-xl border border-border/70 bg-background px-3 py-2 text-[12px] text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.13)] dark:border-white/10 dark:bg-neutral-900 dark:text-white"
-                  >
-                    <span className="block font-medium">{liveVoiceLabel}</span>
-                    {!liveVoiceActive ? (
-                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
-                        {t("thread.composer.liveVoice.hint", {
-                          defaultValue:
-                            "Talk with the agent: it listens, explains what it will do, asks when unsure and tells you when it is done.",
-                        })}
-                      </span>
                     ) : null}
                   </TooltipContent>
                 </Tooltip>
@@ -3129,7 +3197,7 @@ export function QueuedPromptStack({
       style={{ "--composer-strip-max-height": `${stripMaxHeight}px` } as CSSProperties}
       aria-label={labels.label}
     >
-      <div className="flex h-8 items-center gap-1 pl-3 pr-1.5">
+      <div className="flex h-8 items-center gap-1 ps-3 pe-1.5">
         <button
           type="button"
           onClick={() => setCollapsed((value) => !value)}
@@ -3137,7 +3205,7 @@ export function QueuedPromptStack({
           title={collapsed ? labels.expand : labels.collapse}
           data-testid="composer-queue-toggle"
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left",
+            "flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-start",
             "text-[13px] font-medium text-foreground/80 transition-colors hover:text-foreground",
           )}
         >
@@ -3323,7 +3391,7 @@ function QueuedPromptRow({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "queued-prompt-row group/queued flex h-[26px] items-center gap-2 rounded-[7px] pl-2 pr-1",
+        "queued-prompt-row group/queued flex h-[26px] items-center gap-2 rounded-[7px] ps-2 pe-1",
         "text-[13px] transition-colors hover:bg-muted/60 focus-within:bg-muted/60",
         "dark:hover:bg-white/[0.06] dark:focus-within:bg-white/[0.06]",
         isHero && "text-[13.5px]",
@@ -3384,11 +3452,11 @@ function QueuedPromptRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[10rem] text-[12.5px]">
             <DropdownMenuItem disabled={!canMoveUp} onSelect={() => onMove(prompt.id, -1)}>
-              <ChevronUp className="mr-2 h-3.5 w-3.5" aria-hidden />
+              <ChevronUp className="me-2 h-3.5 w-3.5" aria-hidden />
               {labels.moveUp}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={!canMoveDown} onSelect={() => onMove(prompt.id, 1)}>
-              <ChevronDown className="mr-2 h-3.5 w-3.5" aria-hidden />
+              <ChevronDown className="me-2 h-3.5 w-3.5" aria-hidden />
               {labels.moveDown}
             </DropdownMenuItem>
             {canClearAll ? (
@@ -3398,7 +3466,7 @@ function QueuedPromptRow({
                   className="text-destructive focus:text-destructive"
                   onSelect={onClearAll}
                 >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  <Trash2 className="me-2 h-3.5 w-3.5" aria-hidden />
                   {labels.clearAll}
                 </DropdownMenuItem>
               </>
@@ -3452,13 +3520,54 @@ function ModelOptionLogo({
       </span>
       {byok ? (
         <span
-          className="absolute -bottom-0.5 -right-0.5 grid h-3 w-3 place-items-center rounded-full border border-background bg-muted text-foreground"
+          className="absolute -bottom-0.5 -end-0.5 grid h-3 w-3 place-items-center rounded-full border border-background bg-muted text-foreground"
           title="BYOK"
         >
           <KeyRound className="h-2 w-2" />
         </span>
       ) : null}
     </span>
+  );
+}
+
+/** Team mode is on: the team's faces; a click opens the split Team view. */
+function ComposerTeamChip({ team, compact }: { team: ComposerTeamMode; compact?: boolean }) {
+  const { t } = useTranslation();
+  const faces = team.members.slice(0, compact ? 3 : 4);
+  const active = new Set(team.activeNames ?? []);
+  const label = team.teams.find((option) => option.id === team.teamId)?.name
+    ?? t("thread.team.chip", { defaultValue: "Team" });
+  return (
+    <button
+      type="button"
+      onClick={team.onOpenTeam}
+      aria-pressed={team.teamOpen ? true : undefined}
+      title={t("thread.team.chipHint", {
+        defaultValue: "Team mode is on: call teammates by name ({{names}}). Click to show the Team view.",
+        names: team.members.map((member) => member.name).join(", "),
+      })}
+      data-testid="composer-team-chip"
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-1.5 pe-2.5 text-[12px] font-medium transition-colors",
+        team.teamOpen
+          ? "bg-[#1d6af0]/12 text-[#1d6af0] dark:text-[#7aa7ff]"
+          : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+      )}
+    >
+      <span className="flex -space-x-1.5 rtl:space-x-reverse">
+        {faces.map((member) => (
+          <TeamBotAvatar
+            key={member.name}
+            avatar={member.avatar}
+            color={member.color}
+            size={20}
+            active={active.has(member.name)}
+            className="ring-2 ring-background"
+          />
+        ))}
+      </span>
+      {compact ? null : <span>{label}</span>}
+    </button>
   );
 }
 
@@ -3470,6 +3579,7 @@ function ComposerModelPicker({
   compact = false,
   options,
   routing = null,
+  team = null,
   budgetFilterPercent = null,
   disabled,
   onSelect,
@@ -3484,6 +3594,7 @@ function ComposerModelPicker({
   compact?: boolean;
   options: ComposerModelOption[];
   routing?: ComposerModelRouting | null;
+  team?: ComposerTeamMode | null;
   budgetFilterPercent?: number | null;
   disabled?: boolean;
   onSelect: (presetName: string) => void;
@@ -3508,7 +3619,8 @@ function ComposerModelPicker({
   // Auto: no pin, Task routing may swap the default model per task. Say it on
   // the trigger, otherwise the user reads "GLM" here and "Nemotron" in the
   // trace and has no idea why.
-  const routingAuto = Boolean(routing?.auto && routing.swaps.length);
+  const routingOn = routing?.enabled !== false;
+  const routingAuto = Boolean(routingOn && routing?.auto && routing.swaps.length);
   const autoWord = t("thread.composer.modelAuto", { defaultValue: "Auto-route" });
   const routesSummary = routing
     ? routing.swaps
@@ -3600,7 +3712,10 @@ function ComposerModelPicker({
                 width: 16,
               }}
             >
-              {logoUrl ? (
+              {routingAuto ? (
+                // Auto: the model changes per task, so no model logo here.
+                <Route className="h-2.5 w-2.5 text-foreground/75" />
+              ) : logoUrl ? (
                 <img
                   src={logoUrl}
                   alt=""
@@ -3621,17 +3736,15 @@ function ComposerModelPicker({
                 <Brain className="h-2.5 w-2.5 text-muted-foreground/65" />
               )}
             </span>
-            {byokActive ? (
-              <span className="absolute -bottom-0.5 -right-0.5 grid h-2.5 w-2.5 place-items-center rounded-full border border-background bg-muted text-foreground">
+            {byokActive && !routingAuto ? (
+              <span className="absolute -bottom-0.5 -end-0.5 grid h-2.5 w-2.5 place-items-center rounded-full border border-background bg-muted text-foreground">
                 <KeyRound className="h-1.5 w-1.5" />
               </span>
             ) : null}
           </span>
           {routingAuto ? (
-            <span className="flex min-w-0 items-baseline gap-1">
-              <span className="shrink-0">{autoWord}</span>
-              <span className="truncate text-muted-foreground">· {label}</span>
-            </span>
+            // The model changes per task: say "auto routing", the default model is in the tooltip.
+            <span className="truncate">{autoWord}</span>
           ) : (
             <span className="truncate">{label}</span>
           )}
@@ -3739,6 +3852,90 @@ function ComposerModelPicker({
               {routingAuto ? <Check className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden /> : null}
             </DropdownMenuItem>
           ) : null}
+          {routing?.onToggle ? (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                routing.onToggle?.(!routingOn);
+              }}
+              className="mb-1 flex min-h-[40px] cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5"
+              data-testid="composer-routing-toggle"
+            >
+              <Route className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                {t("thread.composer.routingSwitch", { defaultValue: "Task routing" })}
+              </span>
+              <span
+                role="switch"
+                aria-checked={routingOn}
+                className={cn(
+                  "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+                  routingOn ? "bg-[#1d6af0]" : "bg-foreground/20",
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3 w-3 rounded-full bg-white shadow transition-transform",
+                    routingOn ? "translate-x-3.5" : "translate-x-0.5",
+                  )}
+                />
+              </span>
+            </DropdownMenuItem>
+          ) : null}
+          {team && !query ? (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                team.onToggle(!team.enabled);
+              }}
+              className="mb-1 flex min-h-[40px] cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5"
+              data-testid="composer-team-toggle"
+            >
+              <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                {t("thread.team.switch", { defaultValue: "Team mode" })}
+              </span>
+              <span
+                role="switch"
+                aria-checked={team.enabled}
+                className={cn(
+                  "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+                  team.enabled ? "bg-[#1d6af0]" : "bg-foreground/20",
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3 w-3 rounded-full bg-white shadow transition-transform",
+                    team.enabled ? "translate-x-3.5" : "translate-x-0.5",
+                  )}
+                />
+              </span>
+            </DropdownMenuItem>
+          ) : null}
+          {team?.enabled && !query ? (
+            <div className="mb-1.5 ms-6 border-s border-border/60 ps-2" data-testid="composer-team-picker">
+              <p className="px-1.5 pb-0.5 pt-0.5 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                {t("thread.team.thisChat", { defaultValue: "Team for this chat" })}
+              </p>
+              {[...team.teams, { id: "off", name: t("thread.team.none", { defaultValue: "No team" }) }].map((option) => {
+                const selected = team.teamId === option.id;
+                return (
+                  <DropdownMenuItem
+                    key={option.id}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      if (!selected) team.onSelectTeam(option.id);
+                    }}
+                    data-active={selected ? "true" : undefined}
+                    className="flex min-h-[32px] cursor-default items-center gap-2 rounded-lg px-1.5 py-1"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[12.5px]">{option.name}</span>
+                    {selected ? <Check className="h-3.5 w-3.5 shrink-0 text-foreground/80" aria-hidden /> : null}
+                  </DropdownMenuItem>
+                );
+              })}
+            </div>
+          ) : null}
           {visibleOptions.length === 0 ? (
             <p className="px-2.5 py-3 text-[12.5px] text-muted-foreground">
               {t("thread.composer.noMatchingModels", {
@@ -3806,7 +4003,7 @@ function ComposerModelPicker({
                       {option.modality && option.modality !== "text" ? (
                         <span
                           className={cn(
-                            "ml-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
+                            "ms-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
                             modalityBadgeClass(option.modality),
                           )}
                           title={t("thread.composer.mediaModelNotDefault", {
@@ -3818,7 +4015,7 @@ function ComposerModelPicker({
                       ) : isVisionChatModel(option.model) ? (
                         <span
                           className={cn(
-                            "ml-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
+                            "ms-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
                             visionBadgeClass(),
                           )}
                           title={t("thread.composer.visionModel", {
@@ -3875,12 +4072,12 @@ function ComposerModelPicker({
                         event.stopPropagation();
                         onHide(option.name);
                       }}
-                      className="mr-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted-foreground/75 transition-colors hover:bg-foreground/8 hover:text-foreground"
+                      className="me-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted-foreground/75 transition-colors hover:bg-foreground/8 hover:text-foreground"
                     >
                       <EyeOff className="h-3.5 w-3.5" aria-hidden />
                     </button>
                   ) : (
-                    <span className="mr-1 h-7 w-7 shrink-0" aria-hidden />
+                    <span className="me-1 h-7 w-7 shrink-0" aria-hidden />
                   )
                 ) : null}
               </div>
@@ -4019,6 +4216,102 @@ function ComposerEffortPicker({
             >
               <span className="min-w-0 flex-1 truncate">
                 {reasoningEffortShortLabel(option, tx)}
+              </span>
+              {active ? <Check className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden /> : null}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The context sizes the composer offers; Settings keeps the full ladder. */
+export const COMPOSER_CONTEXT_WINDOW_OPTIONS = [200_000, 500_000, 1_000_000] as const;
+
+export function contextWindowShortLabel(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return Number.isInteger(millions) ? `${millions}M` : `${millions.toFixed(1)}M`;
+  }
+  return `${Math.round(tokens / 1_000)}K`;
+}
+
+function ComposerContextPicker({
+  value,
+  disabled,
+  isHero,
+  compact = false,
+  onSelect,
+}: {
+  value: number | null;
+  disabled?: boolean;
+  isHero: boolean;
+  compact?: boolean;
+  onSelect: (tokens: number) => void;
+}) {
+  const { t } = useTranslation();
+  const [pending, setPending] = useState<number | null>(null);
+  useEffect(() => {
+    setPending(null);
+  }, [value]);
+  const shown = pending ?? value;
+  const dense = compact || isHero;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild disabled={disabled}>
+        <button
+          type="button"
+          data-testid="composer-context-picker"
+          title={t("thread.composer.contextPickerTitle", { defaultValue: "Context window" })}
+          aria-label={t("thread.composer.contextPickerAria", { defaultValue: "Choose the context window" })}
+          className={cn(
+            "inline-flex shrink-0 items-center rounded-[10px] border border-transparent bg-transparent font-medium text-foreground/85",
+            "outline-none transition-colors",
+            "cursor-pointer hover:bg-foreground/[0.045] hover:text-foreground focus-visible:outline-none dark:hover:bg-white/[0.06]",
+            "disabled:pointer-events-none disabled:opacity-55",
+            dense ? "h-7 gap-1 px-1.5 text-[12px]" : "h-8 gap-1 px-2 text-[12.5px]",
+          )}
+        >
+          <span className="truncate">
+            {shown ? contextWindowShortLabel(shown) : t("thread.composer.contextSection", { defaultValue: "Context" })}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        side="top"
+        sideOffset={8}
+        className="w-[min(12rem,calc(100vw-2rem))] rounded-2xl"
+      >
+        <div className="px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("thread.composer.contextSection", { defaultValue: "Context" })}
+        </div>
+        {COMPOSER_CONTEXT_WINDOW_OPTIONS.map((option) => {
+          const active = option === shown;
+          const pick = () => {
+            if (active) return;
+            setPending(option);
+            onSelect(option);
+          };
+          return (
+            <DropdownMenuItem
+              key={option}
+              onPointerDown={(event) => {
+                commitOnPointerDown(event, pick);
+              }}
+              onSelect={() => {
+                commitOnSelect(pick);
+              }}
+              className="flex h-9 cursor-default items-center gap-2 rounded-xl px-2.5 text-[13px]"
+              data-testid={`composer-context-${option}`}
+            >
+              <span className="min-w-0 flex-1 truncate tabular-nums">
+                {t("thread.composer.contextTokens", {
+                  defaultValue: "{{size}} tokens",
+                  size: contextWindowShortLabel(option),
+                })}
               </span>
               {active ? <Check className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden /> : null}
             </DropdownMenuItem>
@@ -4199,8 +4492,15 @@ function useSelectedOptionScroll(selectedIndex: number) {
     const option = container.querySelector<HTMLElement>(
       `[data-palette-index="${selectedIndex}"]`,
     );
-    if (typeof option?.scrollIntoView === "function") {
-      option.scrollIntoView({ block: "nearest" });
+    if (!option) return;
+    // Scroll the list only. scrollIntoView also scrolls every ancestor, which
+    // moved the thread under the composer and broke following the tail.
+    const box = container.getBoundingClientRect();
+    const rect = option.getBoundingClientRect();
+    if (rect.top < box.top) {
+      container.scrollTop -= box.top - rect.top;
+    } else if (rect.bottom > box.bottom) {
+      container.scrollTop += rect.bottom - box.bottom;
     }
   }, [selectedIndex]);
 
@@ -4275,7 +4575,7 @@ function CliAppMentionPalette({
                 onChoose(candidate);
               }}
               className={cn(
-                "flex min-h-10 w-full items-center gap-2.5 rounded-[13px] px-2.5 py-1.5 text-left transition-colors",
+                "flex min-h-10 w-full items-center gap-2.5 rounded-[13px] px-2.5 py-1.5 text-start transition-colors",
                 selected
                   ? "bg-foreground/[0.055] text-foreground"
                   : "text-foreground/90 hover:bg-foreground/[0.04]",
@@ -4283,16 +4583,16 @@ function CliAppMentionPalette({
             >
               <MentionCandidateLogo candidate={candidate} selected={selected} />
               <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                <span className="min-w-0 truncate text-[15px] font-medium tracking-normal text-foreground">
+                <span className="min-w-0 truncate text-[14.5px] font-medium tracking-normal text-foreground">
                   {displayName}
                 </span>
-                <span className="truncate text-[15px] font-normal tracking-normal text-muted-foreground/72">
+                <span className="truncate text-[14.5px] font-normal tracking-normal text-muted-foreground/72">
                   @{name}
                 </span>
               </span>
               <span
                 className={cn(
-                  "ml-2 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-normal",
+                  "ms-2 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-normal",
                   "bg-muted text-muted-foreground",
                 )}
               >
@@ -4405,7 +4705,7 @@ function SlashCommandPalette({
         isHero ? "max-w-[58rem]" : "max-w-[49.5rem]",
       )}
     >
-      <div ref={listRef} className="overflow-y-auto pr-0.5" style={{ maxHeight: listMaxHeight }}>
+      <div ref={listRef} className="overflow-y-auto pe-0.5" style={{ maxHeight: listMaxHeight }}>
         {commands.map((command, index) => {
           const Icon = COMMAND_ICONS[command.icon] ?? CircleHelp;
           const selected = index === selectedIndex;
@@ -4429,7 +4729,7 @@ function SlashCommandPalette({
                 onChoose(command);
               }}
               className={cn(
-                "flex min-h-[44px] w-full items-center gap-3 rounded-[13px] px-3 py-2 text-left transition-colors",
+                "flex min-h-[44px] w-full items-center gap-3 rounded-[13px] px-3 py-2 text-start transition-colors",
                 selected
                   ? "bg-foreground/[0.065] text-foreground dark:bg-white/[0.09]"
                   : "text-foreground/86 hover:bg-foreground/[0.045] dark:hover:bg-white/[0.065]",
@@ -4451,7 +4751,7 @@ function SlashCommandPalette({
                   {command.detail || description}
                 </span>
               </span>
-              <span className="ml-2 flex max-w-[42%] shrink-0 items-center gap-1.5 sm:max-w-none">
+              <span className="ms-2 flex max-w-[42%] shrink-0 items-center gap-1.5 sm:max-w-none">
                 {command.badge || command.recent ? (
                   <span className="hidden rounded-full bg-foreground/[0.055] px-2 py-1 text-[11px] font-medium text-muted-foreground sm:inline-flex">
                     {command.badge ?? t("thread.composer.slash.badges.recent")}
@@ -4557,7 +4857,7 @@ function AttachmentChip({
         onKeyDown={onKeyDown}
         aria-label={labelRemove}
         className={cn(
-          "ml-1 grid h-5 w-5 flex-none place-items-center rounded-full",
+          "ms-1 grid h-5 w-5 flex-none place-items-center rounded-full",
           "text-muted-foreground/80 hover:bg-foreground/8 hover:text-foreground",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/30",
         )}

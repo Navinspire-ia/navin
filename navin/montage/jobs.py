@@ -218,7 +218,7 @@ def list_jobs(
     return rows[: max(1, min(int(limit), 500))]
 
 
-class _JobCancelled(Exception):
+class _JobCancelledError(Exception):
     """Raised inside the step loop when the user stopped the job."""
 
 
@@ -300,19 +300,19 @@ async def run_job(
                 started = time.monotonic()
                 try:
                     if context.cancelled:
-                        raise _JobCancelled()
+                        raise _JobCancelledError()
                     result = handler(dict(manifest.get("payload") or {}), manifest)
                     if inspect.isawaitable(result):
                         result = await result
                     output = dict(result) if isinstance(result, Mapping) else {"value": result}
                     step["result"] = output
                     if output.get("cancelled") or (output.get("ok") is False and context.cancelled):
-                        raise _JobCancelled()
+                        raise _JobCancelledError()
                     if output.get("ok") is False:
                         raise MontageJobError(str(output.get("error") or "step failed"))
                     step["cost"] = float(output.get("cost") or output.get("cost_usd") or 0.0)
                     step["status"] = "completed"
-                except _JobCancelled:
+                except _JobCancelledError:
                     step["status"] = "cancelled"
                     step["error"] = "cancelled"
                     manifest["status"] = "cancelled"

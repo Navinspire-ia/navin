@@ -919,7 +919,7 @@ class ComputerTool(Tool):
             focused = await session.run(backend.focus_window, window.id)
             if not focused:
                 raise ComputerError(f"could not focus window {window.title!r}; take a new screenshot")
-            return f"focused window {window.id} {window.title!r}"
+            return f"focused window {window.id} {window.title!r}{_route_hint(window.title, window.app)}"
         raise ValueError(f"unsupported action {action}")
 
     def _target(
@@ -990,9 +990,18 @@ class ComputerTool(Tool):
     async def _policy_verdict(
         self, session: ComputerSession, action: str, kwargs: dict[str, Any]
     ) -> Verdict:
-        if not self._policy.needs_window:
+        from navin.computer.permissions import AppPermissions
+
+        perms = AppPermissions.load()
+        if not self._policy.needs_window and not perms.rules:
             return Verdict(True)
         active, known = await self._active_window(session)
+        if perms.rules and active is not None:
+            pv = perms.check(action, active.app or active.title)
+            if not pv.allowed:
+                return Verdict(False, pv.reason, rule=pv.rule)
+        if not self._policy.needs_window:
+            return Verdict(True)
         target: WindowInfo | None = None
         if action == "focus_window":
             try:
@@ -1269,6 +1278,17 @@ class ComputerTool(Tool):
                 fix = f" -> {check.fix}" if check.fix else ""
                 lines.append(f"[{mark}] {check.name}: {check.detail}{fix}")
         return "\n".join(lines)
+
+
+def _route_hint(*intents: str) -> str:
+    """Suffix naming an installed CLI worth trying before screen control, or ''."""
+    from navin.computer.route_first import route
+
+    for intent in intents:
+        found = route(intent or "")
+        if found.kind == "cli":
+            return f"\nHint: prefer the CLI `{found.command}` ({found.reason}) before driving the screen."
+    return ""
 
 
 def _public_args(kwargs: dict[str, Any]) -> dict[str, Any]:

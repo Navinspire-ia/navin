@@ -17,6 +17,7 @@ import json
 import mimetypes
 import re
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -43,8 +44,10 @@ from navin.cron.recurrence import RecurrenceError, recurrence_from_payload
 from navin.cron.session_turns import is_bound_cron_job
 from navin.cron.types import CronJob, CronLimits, CronSchedule
 from navin.dap.session import DebugSessionError
+from navin.instance import health_payload
 from navin.optional_live import live_modules_available
 from navin.runtime_context import public_history_messages
+from navin.share.site import SiteError
 from navin.templates.apps.install import AppTemplateError
 from navin.triggers.local_types import LocalTrigger
 from navin.utils.document_templates import (
@@ -87,6 +90,13 @@ from navin.webui.board_api import (
     github_issues_payload,
     github_issues_repo_payload,
     github_pr_sync_payload,
+)
+from navin.webui.computer_permissions_api import (
+    ComputerPermissionsError,
+    audit_payload,
+    delete_rule,
+    list_rules,
+    upsert_rule,
 )
 from navin.webui.continuity_api import (
     ContinuityApiError,
@@ -654,7 +664,8 @@ class GatewayHTTPHandler:
     ) -> Any | None:
         # Health probe (same port as WebSocket / WebUI HTTP)
         if got == "/health":
-            return _http_json_response({"status": "ok"})
+            # The id tells a launcher this Navin from another one on the same port (WSL...).
+            return _http_json_response(health_payload())
 
         # Localhost debug route: drive CSS zoom / layout on the desktop webview.
         # It is unauthenticated by design (the webview polls it), so it must
@@ -1007,8 +1018,23 @@ class GatewayHTTPHandler:
             return await self._handle_browser_bridge(request, connection)
         if re.match(r"^/api/accounts$", got):
             return await self._handle_accounts(request)
+        if re.match(r"^/api/browser-credentials$", got):
+            return await self._handle_browser_credentials(request)
         if re.match(r"^/api/leads$", got):
             return await self._handle_leads(request)
+        if re.match(r"^/api/campaigns$", got):
+            return await self._handle_campaigns(request)
+        m = re.match(r"^/api/campaigns/t/([ocu])/([A-Za-z0-9_.-]{8,400})$", got)
+        if m:
+            # Public by design: opens, clicks and unsubscribes come from
+            # recipients' mail clients. Tokens are HMAC-signed per send.
+            return await self._handle_campaign_tracking(request, m.group(1), m.group(2))
+        if re.match(r"^/api/seo$", got):
+            return await self._handle_studio_desk(request, "seo")
+        if re.match(r"^/api/ads$", got):
+            return await self._handle_studio_desk(request, "ads")
+        if re.match(r"^/api/bench$", got):
+            return await self._handle_bench(request)
         if re.match(r"^/api/trading$", got):
             return await self._handle_trading(request)
         if re.match(r"^/api/marketing$", got):
@@ -1099,7 +1125,7 @@ class GatewayHTTPHandler:
         if m:
             return await self._handle_review_prompt(request, m.group(1))
 
-        m = re.match(r"^/api/sessions/([^/]+)/checkpoints(?:/(create|diff|restore))?$", got)
+        m = re.match(r"^/api/sessions/([^/]+)/checkpoints(?:/(create|diff|restore|timeline|mission-restore|mission-diff|mission-replay|mission-compare))?$", got)
         if m:
             return await self._handle_checkpoints(request, m.group(1), m.group(2) or "list")
 
@@ -1232,6 +1258,13 @@ class GatewayHTTPHandler:
             raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
             if isinstance(raw_messages, list):
                 session_messages = [m for m in raw_messages if isinstance(m, dict)]
+            meta = session_data.get("metadata") if isinstance(session_data, dict) else None
+            if session_messages and isinstance(meta, dict) and meta.get("imported_from"):
+                from navin.webui.transcript import drop_stale_rebuilt_transcript
+
+                # Chats imported before tool steps were rebuilt opened with the
+                # prompt and the last answer only: rebuild them once.
+                drop_stale_rebuilt_transcript(decoded_key, session_messages)
         query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
         limit: int | None = None
@@ -1257,6 +1290,29 @@ class GatewayHTTPHandler:
             direction=direction,
             before=before,
         )
+        if data is None and session_messages and not before:
+            # An imported chat (a .navin-session, Cursor, Claude Code, Codex...)
+            # has its conversation in the session but no display transcript: it
+            # opened empty. The transcript is rebuilt from the session once.
+            from navin.webui.transcript import write_session_messages_as_transcript
+
+            try:
+                write_session_messages_as_transcript(decoded_key, session_messages)
+                data = build_webui_thread_response(
+                    decoded_key,
+                    augment_user_media=self.media.augment_transcript_media,
+                    augment_assistant_media=self.media.augment_transcript_media,
+                    augment_assistant_text=lambda text: self.media.rewrite_local_markdown_images(
+                        text,
+                        workspace_path=scope.project_path,
+                    ),
+                    session_messages=session_messages,
+                    limit=limit,
+                    direction=direction,
+                    before=before,
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning("could not rebuild the transcript of {}: {}", decoded_key, exc)
         if data is None:
             # A chat where nothing has been said yet has an empty thread, not a
             # missing one. Answering 404 made every new session, and every poll
@@ -2700,6 +2756,116 @@ class GatewayHTTPHandler:
             return _http_error(500, str(exc) or "leads desk failed")
         return _http_json_response(payload)
 
+    async def _handle_bench(self, request: WsRequest) -> Response:
+        """Navin Bench results: latest mission_bench report."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        action = (_query_first(_parse_query(request.path), "action") or "latest").strip()
+        from navin.webui.bench_api import BenchError, handle_bench_action
+
+        try:
+            payload = await asyncio.to_thread(handle_bench_action, action, {})
+        except BenchError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
+
+    async def _handle_studio_desk(self, request: WsRequest, desk: str) -> Response:
+        """SEO and Ads desks: same engines as the agent tools, global books."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        action = (_query_first(query, "action") or "snapshot").strip()
+        body: dict[str, Any] = {}
+        try:
+            raw = file_body_from_headers(request.headers) or ""
+            if raw.strip():
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    body = parsed
+        except WebUIFilePreviewError as exc:
+            if exc.message != "missing file content":
+                return _http_error(exc.status, exc.message)
+        except ValueError:
+            return _http_error(400, f"invalid {desk} payload")
+        for key in ("site", "audit_id", "format", "keyword", "status"):
+            value = _query_first(query, key)
+            if value and key not in body:
+                body[key] = value
+        if desk == "seo":
+            from navin.webui.seo_api import SeoDeskError as DeskError
+            from navin.webui.seo_api import handle_seo_action as handler
+        else:
+            from navin.webui.ads_api import AdsDeskError as DeskError
+            from navin.webui.ads_api import handle_ads_action as handler
+        try:
+            payload = await asyncio.to_thread(handler, action, body)
+        except DeskError as exc:
+            return _http_error(exc.status, exc.message)
+        except Exception as exc:
+            self._log.exception("{} desk failed action={}", desk, action)
+            return _http_error(500, str(exc) or f"{desk} desk failed")
+        return _http_json_response(payload)
+
+    async def _handle_campaigns(self, request: WsRequest) -> Response:
+        """Campaigns Studio: lists, templates, email/WhatsApp campaigns, replies."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        action = (_query_first(query, "action") or "dashboard").strip()
+        body: dict[str, Any] = {}
+        try:
+            raw = file_body_from_headers(request.headers) or ""
+            if raw.strip():
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    body = parsed
+        except WebUIFilePreviewError as exc:
+            if exc.message != "missing file content":
+                return _http_error(exc.status, exc.message)
+        except ValueError:
+            return _http_error(400, "invalid campaigns payload")
+        flat = {key: _query_first(query, key) for key in query}
+        crm_project = None
+        session_key = flat.get("session_key") or ""
+        if session_key and action.startswith("crm."):
+            try:
+                scope = self.workspaces.scope_for_session_key(_decode_api_key(session_key))
+                project = getattr(scope, "project_path", None)
+                crm_project = Path(project).resolve() if project and Path(project).is_dir() else None
+            except Exception:  # noqa: BLE001 - no project: the action says so
+                crm_project = None
+        from navin.campaigns.store import CampaignError
+        from navin.webui.campaigns_api import handle_campaigns_action
+
+        try:
+            payload = await asyncio.to_thread(
+                handle_campaigns_action, action, body, flat, crm_project=crm_project,
+            )
+        except CampaignError as exc:
+            return _http_error(exc.status, exc.message)
+        except Exception as exc:
+            self._log.exception("campaigns desk failed action={}", action)
+            return _http_error(500, str(exc) or "campaigns desk failed")
+        # Some actions return a JSON array (lists.list, templates.list...), as the contract says.
+        return _http_json_response(payload)
+
+    async def _handle_campaign_tracking(self, request: WsRequest, kind: str, token: str) -> Response:
+        from navin.webui.campaigns_api import track
+
+        query = _parse_query(request.path)
+        try:
+            result, payload = await asyncio.to_thread(track, kind, token, _query_first(query, "u") or "")
+        except Exception:
+            self._log.exception("campaign tracking failed")
+            result, payload = ("html", "<!doctype html><p>Unavailable</p>")
+        headers = [("Cache-Control", "no-store, no-cache, must-revalidate"), ("Referrer-Policy", "no-referrer")]
+        if result == "pixel":
+            return _http_response(payload, content_type="image/gif", extra_headers=headers)
+        if result == "redirect":
+            return _http_response(b"", status=302, extra_headers=[("Location", payload), *headers])
+        return _http_response(str(payload).encode("utf-8"), content_type="text/html; charset=utf-8",
+                              extra_headers=headers)
+
     async def _handle_accounts(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -2719,6 +2885,35 @@ class GatewayHTTPHandler:
             return _http_error(exc.status, exc.message)
         except (ValueError, WebUIFilePreviewError):
             return _http_error(400, "invalid account payload")
+
+    async def _handle_browser_credentials(self, request: WsRequest) -> Response:
+        """Site logins for browser capture. Values go in; only names come back."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.accounts.store import AccountError
+        from navin.browser_credentials import (
+            BrowserCredentialError,
+            handle_browser_credentials_action,
+        )
+
+        query = _parse_query(request.path)
+        action = (_query_first(query, "action") or "list").strip()
+        try:
+            try:
+                raw = file_body_from_headers(request.headers) or "{}"
+            except WebUIFilePreviewError as exc:
+                if exc.message != "missing file content":
+                    raise
+                raw = "{}"
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                return _http_error(400, "invalid credential payload")
+            payload = await asyncio.to_thread(handle_browser_credentials_action, action, body)
+            return _http_json_response(payload)
+        except (BrowserCredentialError, AccountError) as exc:
+            return _http_error(exc.status, exc.message)
+        except (ValueError, WebUIFilePreviewError):
+            return _http_error(400, "invalid credential payload")
 
     async def _handle_browser_bridge(self, request: WsRequest, connection: Any = None) -> Response:
         from navin.career.errors import CareerError
@@ -3540,6 +3735,37 @@ class GatewayHTTPHandler:
                 payload = await asyncio.to_thread(
                     checkpoints_api.diff_checkpoint, root, checkpoint_id
                 )
+            elif action == "timeline":
+                payload = await asyncio.to_thread(checkpoints_api.mission_timeline, root)
+            elif action == "mission-restore":
+                payload = await asyncio.to_thread(
+                    checkpoints_api.mission_restore,
+                    root,
+                    (_query_first(query, "version") or "").strip(),
+                    (_query_first(query, "reason") or "").strip()[:200],
+                )
+            elif action == "mission-diff":
+                payload = await asyncio.to_thread(
+                    checkpoints_api.mission_diff,
+                    root,
+                    (_query_first(query, "a") or "").strip(),
+                    (_query_first(query, "b") or "").strip(),
+                )
+            elif action == "mission-replay":
+                payload = await asyncio.to_thread(
+                    checkpoints_api.mission_replay,
+                    root,
+                    (_query_first(query, "step") or "").strip(),
+                    (_query_first(query, "version") or "").strip(),
+                    (_query_first(query, "reason") or "").strip()[:200],
+                )
+            elif action == "mission-compare":
+                payload = await asyncio.to_thread(
+                    checkpoints_api.mission_compare,
+                    root,
+                    (_query_first(query, "a") or "").strip(),
+                    (_query_first(query, "b") or "").strip(),
+                )
             elif action == "restore":
                 checkpoint_id = (_query_first(query, "id") or "").strip()
                 payload = await asyncio.to_thread(
@@ -3675,8 +3901,16 @@ class GatewayHTTPHandler:
                 project_path=project_path,
             )
 
+        # Keyed on the config file version: a context size saved in Settings
+        # must show on the next poll, not after the TTL.
+        try:
+            from navin.config.loader import _file_signature, get_config_path
+
+            version = _file_signature(get_config_path())
+        except Exception:
+            version = None
         payload = await self.route_cache.get(
-            f"context-usage:{decoded_key}",
+            f"context-usage:{decoded_key}:{version}",
             _compute,
             ttl=_CONTEXT_USAGE_CACHE_TTL_S,
         )
@@ -4114,6 +4348,8 @@ class GatewayHTTPHandler:
             return self._handle_commands(request)
         if got == "/api/workspaces":
             return self._handle_workspaces(connection, request)
+        if got in {"/api/live/realtime/status", "/api/live/docs"}:
+            return await self._handle_live(request, got)
         if got == "/api/webui/app-templates":
             return self._handle_webui_app_templates(request)
         if got == "/api/webui/app-templates/install":
@@ -4152,9 +4388,23 @@ class GatewayHTTPHandler:
                 connection, request
             )
         if got == "/api/webui/sessions/import":
-            return await self._handle_webui_session_import(
+            response = await self._handle_webui_session_import(
                 connection, request, "import"
             )
+            # New sessions on disk: the cached list must not hide them from
+            # the refresh the import dialog runs right after.
+            self.route_cache.invalidate("webui:sessions")
+            return response
+        if got.startswith("/api/webui/share/"):
+            return await self._handle_webui_share(connection, request, got.rsplit("/", 1)[-1])
+        if got == "/api/webui/sessions/bundle/export":
+            return await self._handle_webui_session_bundle(connection, request, "export")
+        if got in ("/api/webui/sessions/bundle/open", "/api/webui/sessions/bundle/upload"):
+            response = await self._handle_webui_session_bundle(
+                connection, request, got.rsplit("/", 1)[-1]
+            )
+            self.route_cache.invalidate("webui:sessions")
+            return response
         if got == "/api/webui/preview-proxy/start":
             return await self._handle_webui_preview_proxy_start(connection, request)
         if got == "/api/webui/preview-screenshot":
@@ -4204,6 +4454,24 @@ class GatewayHTTPHandler:
             return await self._handle_webui_git_status(request)
         if got == "/api/webui/git/clone":
             return await self._handle_webui_git_clone(request)
+        if got == "/api/webui/git/accounts":
+            return await self._handle_webui_git_accounts(request, "accounts")
+        if got == "/api/webui/git/test":
+            return await self._handle_webui_git_accounts(request, "test")
+        if got == "/api/webui/git/device/start":
+            return await self._handle_webui_git_accounts(request, "device_start")
+        if got == "/api/webui/git/device/poll":
+            return await self._handle_webui_git_accounts(request, "device_poll")
+        if got == "/api/webui/git/machine":
+            return await self._handle_webui_git_setup(request, "machine")
+        if got == "/api/webui/git/setup":
+            return await self._handle_webui_git_setup(request, "setup")
+        if got == "/api/webui/git/identity":
+            return await self._handle_webui_git_setup(request, "identity")
+        if got == "/api/webui/git/helper":
+            return await self._handle_webui_git_setup(request, "helper")
+        if got == "/api/webui/git/remote-https":
+            return await self._handle_webui_git_setup(request, "remote_https")
         if got == "/api/webui/diagnostics/workspace":
             return await self._handle_webui_workspace_diagnostics(request)
         if got == "/api/webui/diagnostics":
@@ -4240,22 +4508,30 @@ class GatewayHTTPHandler:
             return self._handle_webui_onboarding_update(request)
         if got == "/api/webui/exec-policy":
             return self._handle_webui_exec_policy(request)
+        if got in {
+            "/api/webui/computer-permissions",
+            "/api/webui/computer-permissions/update",
+            "/api/webui/computer-permissions/delete",
+        }:
+            return self._handle_webui_computer_permissions(request, got.rsplit("/", 1)[-1])
+        if got == "/api/webui/computer-audit":
+            return await self._handle_webui_computer_audit(request)
         if got == "/api/webui/exec-policy/update":
             return await self._handle_webui_exec_policy_update(request)
         if got == "/api/webui/account":
             return await self._handle_webui_account(request)
         if got == "/api/webui/account/connect-url":
-            return self._handle_webui_account_connect_url(request)
+            return await self._handle_webui_account_connect_url(request)
         if got == "/api/webui/account/activate":
             return await self._handle_webui_account_activate(request)
         if got == "/api/webui/account/logout":
             return await self._handle_webui_account_logout(request)
         if got == "/api/webui/openrouter/connect-url":
-            return self._handle_webui_openrouter_connect_url(request)
+            return await self._handle_webui_openrouter_connect_url(request)
         if got == "/api/webui/openrouter/status":
             return await self._handle_webui_openrouter_status(request)
         if got == "/api/webui/open-url":
-            return self._handle_webui_open_url(request)
+            return await self._handle_webui_open_url(request)
         if got == "/api/webui/runtime/health":
             return self._handle_webui_runtime_health(request)
         if got == "/api/webui/montage/status":
@@ -4368,7 +4644,11 @@ class GatewayHTTPHandler:
             return _http_error(401, "Unauthorized")
         query = _parse_query(request.path)
         module = _query_first(query, "module")
-        return _http_json_response({"commands": builtin_command_palette(module)})
+        raw_workspace = _query_first(query, "workspace")
+        workspace = Path(raw_workspace).expanduser() if raw_workspace else None
+        if workspace is not None and not workspace.is_dir():
+            workspace = None
+        return _http_json_response({"commands": builtin_command_palette(module, workspace)})
 
     def _handle_workspaces(self, connection: Any, request: WsRequest) -> Response:
         if not self.check_api_token(request):
@@ -4669,6 +4949,226 @@ class GatewayHTTPHandler:
             return _http_error(exc.status, exc.message)
         return _http_json_response(payload)
 
+    async def _handle_webui_share(self, connection: Any, request: WsRequest, action: str) -> Response:
+        """Live share of a chat with remote guests (navin/share/host.py). Localhost only."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not self.workspace_controls_available(connection):
+            return _http_error(403, "live sharing is localhost-only")
+        manager = getattr(self, "share_manager", None)
+        if manager is None:
+            return _http_error(503, "sharing unavailable")
+        query = _parse_query(request.path)
+        chat_id = (_query_first(query, "chat_id") or "").strip()
+        share_id = (_query_first(query, "share_id") or "").strip()
+
+        def flag(name: str) -> bool | None:
+            raw = (_query_first(query, name) or "").strip().lower()
+            return None if not raw else raw in {"1", "true", "yes"}
+
+        if action == "list":
+            if not chat_id:
+                return _http_error(400, "chat_id required")
+            return _http_json_response({"shares": manager.for_chat(chat_id)})
+        if action == "create":
+            if not chat_id or not all(ch.isalnum() or ch in "-_" for ch in chat_id):
+                return _http_error(400, "invalid chat id")
+            ttl = (_query_first(query, "ttl") or "24h").strip()
+            try:
+                max_guests = int(_query_first(query, "max_guests") or 5)
+            except ValueError:
+                return _http_error(400, "max_guests must be a number")
+            access = (_query_first(query, "access") or "read").strip()
+            scope = (_query_first(query, "scope") or "session").strip()
+            created = manager.create(chat_id, ttl=ttl, max_guests=max_guests, access=access, scope=scope)
+            site_only = created["scope"] == "site"
+            if not flag("site") and not site_only:
+                return _http_json_response(created)
+            try:
+                return _http_json_response(
+                    await manager.set_site(created["share_id"], True, (_query_first(query, "site_url") or "").strip())
+                )
+            except SiteError as exc:
+                if site_only:
+                    # An app link without the app would open on nothing: no link at all.
+                    await manager.revoke(created["share_id"])
+                    return _http_json_response({"site_error": exc.code})
+                # A session link exists either way; the site that cannot be shared is told, not hidden.
+                return _http_json_response({**created, "site_error": exc.code})
+        if action == "site":
+            try:
+                return _http_json_response(
+                    await manager.set_site(share_id, bool(flag("enabled")), (_query_first(query, "url") or "").strip())
+                )
+            except KeyError:
+                return _http_error(404, "unknown share")
+            except SiteError as exc:
+                # The share stays as it was; the panel says why (no site running, not local...).
+                return _http_json_response({**manager.describe(share_id), "site_error": exc.code})
+        if action == "access":
+            if not await manager.set_access(share_id, (_query_first(query, "access") or "").strip()):
+                return _http_error(400, "unknown share or access level")
+            return _http_json_response(manager.describe(share_id))
+        if action == "revoke":
+            return _http_json_response({"revoked": await manager.revoke(share_id)})
+        if action == "guest":
+            guest_id = (_query_first(query, "guest_id") or "").strip()
+            done = await manager.set_guest(
+                share_id, guest_id, drive=flag("drive"), download=flag("download"), remove=bool(flag("remove")),
+            )
+            if not done:
+                return _http_error(404, "guest not found")
+            return _http_json_response(manager.describe(share_id) if share_id in manager.shares else {})
+        return _http_error(404, "unknown share action")
+
+    async def _handle_live(self, request: WsRequest, got: str) -> Response:
+        """Live voice helpers: realtime availability, and Navin docs search."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.config.loader import load_config
+
+        if got == "/api/live/realtime/status":
+            from navin.live.realtime import realtime_status
+
+            config = await asyncio.to_thread(load_config)
+            return _http_json_response(realtime_status(config))
+        query = (_query_first(_parse_query(request.path), "q") or "").strip()[:300]
+        if not query:
+            return _http_error(400, "q required")
+        from navin.live.docs_search import search_docs
+
+        return _http_json_response({"results": await asyncio.to_thread(search_docs, query)})
+
+    async def _handle_webui_session_bundle(
+        self, connection: Any, request: WsRequest, action: str
+    ) -> Response:
+        """Share a chat as a .navin-session file, or open one shared with you.
+
+        Both work on local paths (the desktop picks them with its native
+        dialog): a bundle holds a whole project and is too large for the
+        header-chunked request bodies this HTTP layer carries. Localhost only.
+        """
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not self.workspace_controls_available(connection):
+            return _http_error(403, "session sharing is localhost-only")
+        if self.session_manager is None:
+            return _http_error(503, "sessions unavailable")
+        from navin.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+        from navin.session.bundle import (
+            BUNDLE_SUFFIX,
+            BundleError,
+            export_session_bundle,
+            import_session_bundle,
+        )
+
+        query = _parse_query(request.path)
+        sessions_workspace = Path(self.session_manager.workspace)
+        try:
+            if action == "export":
+                chat_id = (_query_first(query, "chat_id") or "").strip()
+                if not chat_id or not all(ch.isalnum() or ch in "-_" for ch in chat_id):
+                    return _http_error(400, "invalid chat id")
+                key = f"websocket:{chat_id}"
+                project_root = Path(self.workspaces.scope_for_session_key(key).project_path)
+                folder = Path(_query_first(query, "dir") or (Path.home() / "Downloads")).expanduser()
+                if not folder.is_absolute():
+                    return _http_error(400, "dir must be an absolute folder")
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                output = folder / f"{project_root.name or 'navin'}-{stamp}{BUNDLE_SUFFIX}"
+                result = await asyncio.to_thread(
+                    export_session_bundle, sessions_workspace, key, output, project_root=project_root,
+                    # The Share dialog's file goes to someone else: no USER.md / SOUL.md.
+                    for_someone_else=True,
+                )
+                return _http_json_response({
+                    "path": str(result.path),
+                    "project_mode": result.project_mode,
+                    "files": result.files,
+                    "excluded_secrets": result.excluded_secrets,
+                    "skipped_large": result.skipped_large,
+                })
+            if action == "upload":
+                # The browser cannot hand over a local path: the file comes in
+                # ~1 MB slices (request bodies travel in headers here), in order.
+                upload_id = (_query_first(query, "upload_id") or "").strip()
+                try:
+                    index = int(_query_first(query, "index") or "-1")
+                except ValueError:
+                    index = -1
+                if not _BUNDLE_UPLOAD_ID.fullmatch(upload_id) or index < 0:
+                    return _http_error(400, "invalid upload")
+                from navin.webui.file_preview import WebUIFilePreviewError, binary_body_from_headers
+
+                try:
+                    data = binary_body_from_headers(request.headers)
+                except WebUIFilePreviewError as exc:
+                    return _http_error(400, str(exc))
+                part = _bundle_upload_path(upload_id)
+                part.parent.mkdir(parents=True, exist_ok=True)
+                received = part.stat().st_size if part.exists() and index > 0 else 0
+                if index > 0 and not part.exists():
+                    return _http_error(400, "upload slices out of order; start again")
+                if received + len(data) > _BUNDLE_UPLOAD_MAX_BYTES:
+                    part.unlink(missing_ok=True)
+                    return _http_error(400, "file too large")
+                with part.open("ab" if index > 0 else "wb") as handle:
+                    handle.write(data)
+                return _http_json_response({"received": received + len(data)})
+            upload_id = (_query_first(query, "upload_id") or "").strip()
+            uploaded: Path | None = None
+            if upload_id:
+                if not _BUNDLE_UPLOAD_ID.fullmatch(upload_id):
+                    return _http_error(400, "invalid upload")
+                uploaded = _bundle_upload_path(upload_id)
+                if not uploaded.is_file():
+                    return _http_error(400, "the upload did not arrive; try again")
+                bundle = uploaded
+            else:
+                bundle = Path(_query_first(query, "path") or "").expanduser()
+            if not bundle.is_absolute() or not bundle.is_file():
+                return _http_error(400, "choose a .navin-session file")
+            raw_into = (_query_first(query, "into") or "").strip()
+            into = Path(raw_into).expanduser() if raw_into else None
+            if into is not None and not into.is_absolute():
+                return _http_error(400, "into must be an absolute folder")
+            if into is None:
+                stem = (_query_first(query, "name") or "").strip() if uploaded else ""
+                stem = re.sub(r"[^\w.-]+", "-", stem.removesuffix(BUNDLE_SUFFIX))[:80].strip("-.") or None
+                into = Path.home() / "Navin" / (stem or bundle.name.removesuffix(BUNDLE_SUFFIX))
+                # The same session opened again: a fresh folder beside the first
+                # (name-2, name-3...), never an error about a folder the user did not choose.
+                base, n = into, 2
+                while into.exists() and any(into.iterdir()):
+                    into = base.with_name(f"{base.name}-{n}")
+                    n += 1
+            new_chat = uuid.uuid4().hex
+
+            def link(project_dir: Path) -> dict[str, Any]:
+                return {
+                    "webui": True,
+                    WORKSPACE_SCOPE_METADATA_KEY: {"project_path": str(project_dir), "access_mode": "restricted"},
+                }
+
+            result = await asyncio.to_thread(
+                import_session_bundle, bundle, into,
+                sessions_workspace=sessions_workspace, session_key=f"websocket:{new_chat}", metadata=link,
+            )
+        except BundleError as exc:
+            return _http_error(400, str(exc))
+        except OSError as exc:
+            return _http_error(400, f"cannot write there: {exc}")
+        finally:
+            if action == "open" and upload_id and _BUNDLE_UPLOAD_ID.fullmatch(upload_id):
+                _bundle_upload_path(upload_id).unlink(missing_ok=True)
+        return _http_json_response({
+            "chat_id": result.session_key.split(":", 1)[1],
+            "project_dir": str(result.project_dir),
+            "project_mode": result.project_mode,
+            "excluded_secrets": result.excluded_secrets,
+            "notes": result.notes,
+        })
+
     async def _handle_webui_session_import(
         self, connection: Any, request: WsRequest, action: str
     ) -> Response:
@@ -4742,6 +5242,12 @@ class GatewayHTTPHandler:
         except ValueError:
             return _http_error(400, "port is required")
         try:
+            # Navin itself (the editor, its engine on any port, a second Navin)
+            # is never previewed: the Browser would show Navin inside Navin.
+            from navin.agent.tools.preview_server import url_looks_like_navin
+
+            if await asyncio.to_thread(url_looks_like_navin, f"http://127.0.0.1:{port}"):
+                return _http_json_response({"error": "navin_self"}, status=409)
             proxy_port = await PROXIES.ensure(port)
         except PreviewProxyError as exc:
             return _http_error(400, str(exc))
@@ -4875,11 +5381,20 @@ class GatewayHTTPHandler:
         from navin.agent.tools.preview_server import (
             discover_running_project_url,
             http_reachable,
+            is_navin_reserved_port,
+            listener_workspace_match,
             url_looks_like_navin,
         )
 
         query = _parse_query(request.path)
         preferred_url = (_query_first(query, "url") or "").strip() or None
+        # The project open in the workbench: only its own app is previewed.
+        raw_workspace = (_query_first(query, "workspace") or "").strip()
+        workspace: Path | None = None
+        if raw_workspace:
+            candidate = Path(raw_workspace).expanduser()
+            if candidate.is_dir():
+                workspace = candidate
         preferred_port: int | None = None
         raw_port = (_query_first(query, "preferred_port") or "").strip()
         if raw_port:
@@ -4899,15 +5414,29 @@ class GatewayHTTPHandler:
                     preferred_port = parsed.port
             except Exception:
                 pass
+            # A URL remembered on a reserved Navin port (5173...) is never kept.
+            if is_navin_reserved_port(preferred_port):
+                preferred_url = None
+                preferred_port = None
+        if preferred_url:
             if await asyncio.to_thread(http_reachable, preferred_url):
-                if await asyncio.to_thread(url_looks_like_navin, preferred_url):
+                foreign = bool(
+                    workspace is not None
+                    and preferred_port
+                    and await asyncio.to_thread(listener_workspace_match, preferred_port, workspace) is False
+                )
+                # A remembered URL of another project (or Navin itself) is not this one's preview.
+                if foreign or await asyncio.to_thread(url_looks_like_navin, preferred_url):
                     preferred_url = None
+                    preferred_port = None
                 else:
                     return _http_json_response({"url": preferred_url, "source": "preferred"})
 
         url = await asyncio.to_thread(
             discover_running_project_url,
             preferred_port=preferred_port,
+            workspace=workspace,
+            allow_unproven=True,
         )
         return _http_json_response({"url": url, "source": "discover" if url else None})
 
@@ -5054,12 +5583,113 @@ class GatewayHTTPHandler:
                 default_parent=default_parent,
             )
         except GitCloneError as exc:
+            if exc.code:
+                # Coded failures (auth_required, not_found...) let the picker
+                # open Settings > Git & GitHub on the right host.
+                return _http_json_response(exc.payload(), status=exc.status)
             return _http_error(exc.status, exc.message)
         except Exception as exc:
             # Never return an empty 500: the picker only shows the body text.
             logger.exception("git clone failed for url={!r}", url)
             detail = str(exc).strip() or exc.__class__.__name__
             return _http_error(500, f"git clone failed: {detail[:400]}")
+        return _http_json_response(payload)
+
+    async def _handle_webui_git_accounts(self, request: WsRequest, action: str) -> Response:
+        """Forge accounts, token test and GitHub device sign-in (Settings > Git & GitHub).
+
+        Every answer names hosts, logins and token sources, never a token.
+        """
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui import git_accounts
+
+        query = _parse_query(request.path)
+        if action == "accounts":
+            call = partial(git_accounts.list_accounts)
+        elif action == "test":
+            call = partial(git_accounts.test_account, _query_first(query, "host") or "")
+        elif action == "device_start":
+            call = partial(
+                git_accounts.start_device_flow, _query_first(query, "host") or "github.com"
+            )
+        else:
+            call = partial(git_accounts.poll_device_flow, _query_first(query, "flow_id") or "")
+        try:
+            # Each call crosses the network to a forge: keep it off the
+            # shared to_thread pool, like the other remote routes.
+            payload = await asyncio.get_running_loop().run_in_executor(_REMOTE_EXECUTOR, call)
+        except git_accounts.GitAccountError as exc:
+            return _http_json_response(
+                {"error": exc.message, "message": exc.message, "code": exc.code},
+                status=exc.status,
+            )
+        return _http_json_response(payload)
+
+    def _git_setup_root(self, query: Any) -> str | None:
+        """Project root of the ``session`` a Git setup call is about, if any.
+
+        Without one the report covers the host git (Settings); with one it
+        covers the git that serves that project, a WSL distribution included.
+        """
+        raw = _query_first(query, "session") or ""
+        if not raw:
+            return None
+        key = _decode_api_key(raw)
+        if key is None or not _is_websocket_channel_session_key(key):
+            return None
+        try:
+            scope = self.workspaces.scope_for_session_key(key)
+        except (OSError, ValueError):
+            # An unreadable session falls back to the host git.
+            return None
+        path = getattr(scope, "project_path", None)
+        return str(path) if path else None
+
+    async def _handle_webui_git_setup(self, request: WsRequest, action: str) -> Response:
+        """This machine's git (Settings > Git & GitHub, Dev Git panel) and its fixes.
+
+        ``machine`` reports; ``setup`` tests an account and fills a missing
+        commit identity from it; ``identity`` / ``helper`` / ``remote_https``
+        are the explicit fixes. Never returns a token.
+        """
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui import git_accounts, git_setup
+
+        query = _parse_query(request.path)
+        root = self._git_setup_root(query)
+        host = _query_first(query, "host") or ""
+        if action == "machine":
+            call = partial(git_setup.machine_report, root)
+        elif action == "setup":
+            call = partial(git_setup.setup_account, host, root=root)
+        elif action == "identity":
+            call = partial(
+                git_setup.set_identity,
+                _query_first(query, "name"),
+                _query_first(query, "email"),
+                root=root,
+            )
+        elif action == "helper":
+            call = partial(git_setup.store_in_helper, host, root=root)
+        else:
+            if root is None:
+                return _http_error(400, "session is required")
+            call = partial(git_setup.use_https_remote, _query_first(query, "remote") or "", root=root)
+        try:
+            if action == "setup":
+                # Crosses the network to a forge: off the shared to_thread pool,
+                # like the other remote routes.
+                payload = await asyncio.get_running_loop().run_in_executor(_REMOTE_EXECUTOR, call)
+            else:
+                # Local git calls only (wsl.exe for a WSL project), still blocking.
+                payload = await asyncio.to_thread(call)
+        except (git_setup.GitSetupError, git_accounts.GitAccountError) as exc:
+            return _http_json_response(
+                {"error": exc.message, "message": exc.message, "code": exc.code},
+                status=exc.status,
+            )
         return _http_json_response(payload)
 
     async def _handle_webui_diagnostics(self, request: WsRequest) -> Response:
@@ -5434,7 +6064,22 @@ class GatewayHTTPHandler:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         query = _parse_query(request.path)
-        refresh = _query_first(query, "refresh") == "1"
+        mode = _query_first(query, "refresh")
+        refresh = mode in {"1", "background"}
+
+        def _load() -> Any:
+            return asyncio.get_running_loop().run_in_executor(
+                _REMOTE_EXECUTOR,
+                partial(self.account.status_payload, refresh=refresh),
+            )
+
+        if mode == "background":
+            # Focus and periodic syncs: answer with what is known now and
+            # validate against navin.live behind it (about a second). A plan or
+            # status change is pushed to every window when it lands.
+            known = self.route_cache.revalidate("webui:account", _load, ttl=_ACCOUNT_CACHE_TTL_S)
+            if known is not None:
+                return _http_json_response(known)
         # validate() does network I/O against navin.live; keep the loop free.
         # Never 500 here: the sidebar poller would otherwise toast a raw
         # route + HTTP code in front of the user.
@@ -5443,13 +6088,7 @@ class GatewayHTTPHandler:
             # validate for five minutes, but nothing stopped three windows from
             # stampeding the network the moment that cache expired.
             payload = await self.route_cache.get(
-                "webui:account",
-                lambda: asyncio.get_running_loop().run_in_executor(
-                    _REMOTE_EXECUTOR,
-                    partial(self.account.status_payload, refresh=refresh),
-                ),
-                ttl=_ACCOUNT_CACHE_TTL_S,
-                force=refresh,
+                "webui:account", _load, ttl=_ACCOUNT_CACHE_TTL_S, force=refresh,
             )
         except Exception:
             logger.exception("webui account status failed")
@@ -5944,7 +6583,7 @@ class GatewayHTTPHandler:
             )
         return _http_json_response({"setup": result, "status": status})
 
-    def _handle_webui_account_connect_url(self, request: WsRequest) -> Response:
+    async def _handle_webui_account_connect_url(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         if self.account is None:
@@ -5968,14 +6607,14 @@ class GatewayHTTPHandler:
         if _query_first(query, "open") == "1":
             from navin.utils.open_browser import open_external_url
 
-            opened = open_external_url(url)
+            opened = await asyncio.to_thread(open_external_url, url)
         # Background claim: poll the site for the ticket - no 127.0.0.1 tab.
         state = self.account.connect_state_from_url(url)
         if state:
             self.account.start_background_claim(state)
         return _http_json_response({"url": url, "opened": opened})
 
-    def _handle_webui_open_url(self, request: WsRequest) -> Response:
+    async def _handle_webui_open_url(self, request: WsRequest) -> Response:
         """Open an http(s) URL in the OS browser (WebView ``window.open`` is unreliable)."""
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -5983,7 +6622,7 @@ class GatewayHTTPHandler:
         raw = (_query_first(query, "url") or "").strip()
         from navin.utils.open_browser import open_external_url
 
-        opened = open_external_url(raw)
+        opened = await asyncio.to_thread(open_external_url, raw)
         if not opened and not raw.startswith(("http://", "https://")):
             return _http_error(400, "invalid url")
         return _http_json_response({"opened": opened, "url": raw})
@@ -6067,7 +6706,7 @@ class GatewayHTTPHandler:
 
     # -- OpenRouter OAuth PKCE (Free onboarding path) ------------------------
 
-    def _handle_webui_openrouter_connect_url(self, request: WsRequest) -> Response:
+    async def _handle_webui_openrouter_connect_url(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         host = _safe_host_header(_case_insensitive_header(request.headers, "Host"))
@@ -6083,7 +6722,7 @@ class GatewayHTTPHandler:
         if _query_first(query, "open") == "1":
             from navin.utils.open_browser import open_external_url
 
-            opened = open_external_url(url)
+            opened = await asyncio.to_thread(open_external_url, url)
         return _http_json_response({"url": url, "opened": opened})
 
     async def _handle_webui_openrouter_status(self, request: WsRequest) -> Response:
@@ -6161,6 +6800,43 @@ class GatewayHTTPHandler:
         except OpenRouterOAuthError as e:
             return _page(False, e.status, e.message)
         return _page(True, 200)
+
+    def _handle_webui_computer_permissions(self, request: WsRequest, op: str) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        app = (_query_first(query, "app") or "").strip()
+        try:
+            if op == "update":
+                return _http_json_response(upsert_rule(app, _query_first(query, "level") or ""))
+            if op == "delete":
+                return _http_json_response(delete_rule(app))
+            return _http_json_response(list_rules())
+        except ComputerPermissionsError as e:
+            return _http_error(400, e.message)
+        except OSError:
+            self._log.exception("failed to save computer permissions")
+            return _http_error(500, "failed to save computer permissions")
+
+    async def _handle_webui_computer_audit(self, request: WsRequest) -> Response:
+        """Desktop audit trail: session list, or one session's steps (``?session=``)."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        session = (_query_first(query, "session") or "").strip()
+        raw_last = (_query_first(query, "last") or "200").strip()
+        try:
+            last = int(raw_last)
+        except ValueError:
+            return _http_error(400, f"invalid last {raw_last!r}")
+        try:
+            payload = await asyncio.to_thread(audit_payload, session, last)
+        except ComputerPermissionsError as e:
+            return _http_error(404 if e.message.startswith("no such session") else 400, e.message)
+        except OSError:
+            self._log.exception("failed to read the computer audit trail")
+            return _http_error(500, "failed to read the computer audit trail")
+        return _http_json_response(payload)
 
     def _handle_webui_exec_policy(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
@@ -6422,3 +7098,14 @@ def _positive_int(value: Any) -> int | None:
 
 def _is_websocket_channel_session_key(key: str) -> bool:
     return key.startswith("websocket:")
+
+
+_BUNDLE_UPLOAD_ID = re.compile(r"[0-9a-f]{16,64}")
+_BUNDLE_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def _bundle_upload_path(upload_id: str) -> Path:
+    """Where an uploaded .navin-session is reassembled before it is opened."""
+    from navin.config.paths import get_runtime_subdir
+
+    return get_runtime_subdir("tmp") / "bundle-uploads" / f"{upload_id}.navin-session"

@@ -136,12 +136,13 @@ def _reject_navin_editor_url(url: str) -> str | None:
 
 
 def _resolve_workspace(explicit: Path | None) -> Path | None:
-    if explicit is not None:
-        return explicit
+    # The conversation's own project first: the tool is built once with the
+    # agent's default folder (~/NavinProjects on the desktop), and starting
+    # that folder's app from another project's chat previews the wrong site.
     ctx = current_request_context()
     if ctx is not None and ctx.workspace is not None:
-        return ctx.workspace
-    return None
+        return Path(str(ctx.workspace))
+    return explicit
 
 
 class OpenPreviewTool(Tool):

@@ -8,6 +8,8 @@ import { useTranslation } from "react-i18next";
 
 import { MarkdownText } from "@/components/MarkdownText";
 import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
+import { useThemeValue } from "@/hooks/useTheme";
+import { isCanvasHtml, prepareCanvasDocument } from "@/lib/canvas-theme";
 import type { ArtifactRecord } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -37,8 +39,29 @@ function normalizeType(type: string | undefined): string {
 
 function ArtifactBody({ artifact }: { artifact: ArtifactRecord }) {
   const { t } = useTranslation();
+  const theme = useThemeValue();
   const kind = normalizeType(artifact.type);
   const content = artifact.content ?? "";
+  const canvas = kind === "html" && isCanvasHtml(content);
+  const canvasDoc = useMemo(
+    () => (canvas ? prepareCanvasDocument(content, theme) : ""),
+    [canvas, content, theme],
+  );
+
+  if (canvas) {
+    // Navin canvas: runs its own inlined kit script in an opaque origin (no
+    // allow-same-origin) behind a default-src 'none' CSP, themed like the app.
+    return (
+      <iframe
+        title={artifact.title || "Canvas"}
+        sandbox="allow-scripts"
+        srcDoc={canvasDoc}
+        className="h-full w-full border-0 bg-background"
+        data-testid="artifact-canvas-html"
+        data-canvas="true"
+      />
+    );
+  }
 
   if (kind === "html") {
     return (
@@ -134,7 +157,7 @@ export function ArtifactCanvas({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         className={cn(
-          "flex h-11 shrink-0 items-center gap-2 border-b border-border/60 pl-3",
+          "flex h-11 shrink-0 items-center gap-2 border-b border-border/60 ps-3",
           NOTIFICATION_GUTTER,
         )}
       >
@@ -208,7 +231,7 @@ export function ArtifactCanvas({
         "--artifact-canvas-slot-width": !entered || isClosing ? "0px" : `${desktopWidth}px`,
       } as CSSProperties}
       className={cn(
-        "absolute inset-y-0 right-0 z-30 w-[min(100vw,var(--artifact-canvas-slot-width))] overflow-hidden",
+        "absolute inset-y-0 end-0 z-30 w-[min(100vw,var(--artifact-canvas-slot-width))] overflow-hidden",
         "transition-[width] duration-300 ease-out will-change-[width]",
         "md:relative md:z-auto md:w-[var(--artifact-canvas-slot-width)] md:min-w-0 md:shrink-0",
         isClosing && "pointer-events-none",
@@ -218,10 +241,10 @@ export function ArtifactCanvas({
     >
       <div
         className={cn(
-          "absolute inset-y-0 right-0 flex w-[min(100vw,var(--artifact-canvas-width))] flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:w-[var(--artifact-canvas-width)] md:pb-0",
-          "border-l border-border/70 bg-background shadow-2xl md:shadow-none",
+          "absolute inset-y-0 end-0 flex w-[min(100vw,var(--artifact-canvas-width))] flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:w-[var(--artifact-canvas-width)] md:pb-0",
+          "border-s border-border/70 bg-background shadow-2xl md:shadow-none",
           "transition-[opacity,transform] duration-300 ease-out will-change-transform",
-          !entered || isClosing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100",
+          !entered || isClosing ? "translate-x-full rtl:-translate-x-full opacity-0" : "translate-x-0 opacity-100",
           "motion-reduce:translate-x-0",
         )}
       >
@@ -230,7 +253,7 @@ export function ArtifactCanvas({
             type="button"
             aria-label={t("artifactCanvas.resize", { defaultValue: "Resize artifact canvas" })}
             className={cn(
-              "group absolute inset-y-0 left-0 z-20 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none md:flex",
+              "group absolute inset-y-0 start-0 z-20 hidden w-3 -translate-x-1/2 rtl:translate-x-1/2 cursor-col-resize touch-none md:flex",
               "items-stretch justify-center focus-visible:outline-none",
             )}
             onPointerDown={onResizeStart}

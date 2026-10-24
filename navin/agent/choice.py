@@ -182,6 +182,15 @@ class ChoiceBroker:
         )
         self._pending[request_id] = entry
         route = {"channel": channel, "chat_id": chat_id, "session_key": session_key}
+        close_route = {
+            **route,
+            # The closer restates the exchange in the chat, so it needs the
+            # question and the turn it belongs to.
+            "question": request.question,
+            "turn_metadata": _turn_metadata(ctx),
+            # How long the turn waited on the user, so it is not billed as work.
+            "opened_at": time.monotonic(),
+        }
         try:
             await self._publish(
                 request_id,
@@ -202,13 +211,13 @@ class ChoiceBroker:
             await self._notify_closed(
                 request_id,
                 _fallback(request, reason=STOPPED),
-                route,
+                close_route,
             )
             raise
         finally:
             self._pending.pop(request_id, None)
 
-        await self._notify_closed(request_id, answer, route)
+        await self._notify_closed(request_id, answer, close_route)
         return answer
 
     async def _notify_closed(
@@ -277,6 +286,68 @@ class ChoiceBroker:
             count += 1
             self._pending.pop(request_id, None)
         return count
+
+
+class SubagentChoiceBroker(ChoiceBroker):
+    """Forward a subagent's question to the chat that spawned it.
+
+    A subagent runs in a background task: the turn that spawned it may be over,
+    or it may have been spawned outside any turn (Multitask prompt, resume
+    after a restart), so the parent's broker is captured when the subagent
+    starts instead of read from the context at ask time. The card is shown
+    on the parent's chat with the subagent named in the question, stays until
+    the user answers, and falls back to the recommended option on timeout like
+    any other card. With no broker to forward to, the subagent gets the
+    unattended wording and reports the question back instead of guessing.
+    """
+
+    def __init__(self, parent: ChoiceBroker | None, *, label: str) -> None:
+        super().__init__()
+        self._parent = parent
+        self._label = str(label or "").strip()
+
+    async def ask(self, request: ChoiceRequest) -> ChoiceAnswer:
+        if self._parent is None:
+            return _unattended(request)
+        named = request
+        if self._label and not request.question.startswith("["):
+            named = ChoiceRequest(
+                question=f"[{self._label}] {request.question}",
+                options=request.options,
+                allow_skip=request.allow_skip,
+            )
+        return await self._parent.ask(named)
+
+    def open_requests(self, session_key: str | None = None) -> list[dict[str, Any]]:
+        return self._parent.open_requests(session_key) if self._parent else []
+
+    def cancel_session(self, session_key: str, reason: str) -> int:
+        return self._parent.cancel_session(session_key, reason) if self._parent else 0
+
+
+def _turn_metadata(ctx: Any) -> dict[str, Any]:
+    from navin.webui.metadata import WEBUI_TURN_METADATA_KEY
+
+    metadata = getattr(ctx, "metadata", None)
+    if not isinstance(metadata, dict):
+        return {}
+    turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+    if isinstance(turn_id, str) and turn_id:
+        return {WEBUI_TURN_METADATA_KEY: turn_id}
+    return {}
+
+
+def choice_closed_fields(answer: ChoiceAnswer) -> dict[str, Any]:
+    """What a UI needs to restate the answer in the chat after the card closes."""
+    stopped = bool(answer.reason) and not (answer.skipped or answer.timed_out)
+    return {
+        "option_id": answer.option_id,
+        "label": "" if answer.custom else answer.label,
+        "custom_text": answer.detail if answer.custom else "",
+        "skipped": answer.skipped or answer.timed_out,
+        "timed_out": answer.timed_out,
+        "stopped": stopped,
+    }
 
 
 def _fallback(

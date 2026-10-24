@@ -250,7 +250,7 @@ export function DatabasePane({ token, onOpenNote }: DatabasePaneProps) {
           {t("notes.database.newView", { defaultValue: "New view" })}
         </button>
         {activeView ? (
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ms-auto flex shrink-0 items-center gap-1">
             {confirmDeleteView ? (
               <button
                 type="button"
@@ -354,7 +354,7 @@ function TableView({
     <div className="min-h-0 flex-1 overflow-auto">
       <table className="w-full border-collapse text-[12.5px]">
         <thead className="sticky top-0 z-10 bg-background">
-          <tr className="border-b border-border/60 text-left">
+          <tr className="border-b border-border/60 text-start">
             <th className="min-w-56 px-4 py-2 font-semibold text-muted-foreground">
               {t("notes.database.titleColumn", { defaultValue: "Title" })}
             </th>
@@ -378,7 +378,7 @@ function TableView({
                 <button
                   type="button"
                   onClick={() => onOpenNote(note.id)}
-                  className="max-w-full truncate text-left font-medium hover:underline"
+                  className="max-w-full truncate text-start font-medium hover:underline"
                 >
                   {note.title}
                 </button>
@@ -454,7 +454,7 @@ function PropCell({
             setEditing(true);
           }}
           className={cn(
-            "block h-6 w-full min-w-24 truncate rounded px-1.5 text-left transition-colors hover:bg-muted/50",
+            "block h-6 w-full min-w-24 truncate rounded px-1.5 text-start transition-colors hover:bg-muted/50",
             initial ? "" : "text-muted-foreground/40",
           )}
         >

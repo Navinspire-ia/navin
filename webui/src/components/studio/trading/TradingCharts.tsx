@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
@@ -77,18 +78,18 @@ export function PriceChart({
   const move = first ? ((Number(active.c) - first) / first) * 100 : 0;
   const bodyW = Math.max(1.5, scale.step * 0.62);
   const dateOf = (bar: TradingBar) =>
-    new Date(Number(bar.t) * 1000).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" });
+    new Date(Number(bar.t) * 1000).toLocaleDateString(intlLocale(), { day: "2-digit", month: "short", year: "2-digit" });
 
   return (
     <div className={cn("select-none", className)} data-testid="trading-price-chart">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1 text-xs tabular-nums">
         <p className="font-medium">
           {formatMoney(Number(active.c), currency)}
-          <span className={cn("ml-2", move >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+          <span className={cn("ms-2", move >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
             {move >= 0 ? "+" : ""}
             {move.toFixed(2)}%
           </span>
-          <span className="ml-2 text-muted-foreground">{dateOf(active)}</span>
+          <span className="ms-2 text-muted-foreground">{dateOf(active)}</span>
         </p>
         <p className="text-muted-foreground">
           O {Number(active.o).toFixed(2)} · H {Number(active.h).toFixed(2)} · L {Number(active.l).toFixed(2)} · C{" "}
@@ -301,7 +302,7 @@ export function QuoteBars({
                 style={{ width: `${width}%` }}
               />
             </div>
-            <span className={cn("w-12 shrink-0 text-right tabular-nums", pct >= 0 ? "text-amber-600" : "text-red-600")}>
+            <span className={cn("w-12 shrink-0 text-end tabular-nums", pct >= 0 ? "text-amber-600" : "text-red-600")}>
               {pct.toFixed(1)}%
             </span>
           </li>

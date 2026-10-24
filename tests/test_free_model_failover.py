@@ -67,7 +67,7 @@ class AutoFreeFallbackTest(unittest.TestCase):
 
     def test_free_primary_without_presets_uses_bundled_catalog(self) -> None:
         config = Config()
-        primary = _preset("openai/gpt-oss-20b:free", provider="navin")
+        primary = _preset("openai/gpt-oss-20b:free", provider="openrouter")
 
         chain = _resolve_fallback_presets(config, primary)
 
@@ -76,7 +76,13 @@ class AutoFreeFallbackTest(unittest.TestCase):
         for preset in chain:
             self.assertTrue(preset.model.endswith(":free"))
             self.assertNotEqual(preset.model, FREE_VISION_MODEL)
-            self.assertEqual(preset.provider, "navin")
+            self.assertEqual(preset.provider, "openrouter")
+
+    def test_subscription_never_fails_over_to_openrouter_free_models(self) -> None:
+        config = Config()
+        primary = _preset("openai/gpt-oss-20b:free", provider="navin")
+
+        self.assertEqual(_resolve_fallback_presets(config, primary), [])
 
     def test_byok_primary_continues_on_the_other_configured_models(self) -> None:
         # The operator's rule: a model that blocks hands the step to the next
@@ -182,7 +188,7 @@ class AutoFreeFallbackTest(unittest.TestCase):
         self.assertEqual(fallback.context_window_tokens, 200_000)
         self.assertEqual(fallback.max_tokens, 8192)
         self.assertEqual(fallback.temperature, 0.3)
-        self.assertIsNone(fallback.reasoning_effort)
+        self.assertEqual(fallback.reasoning_effort, primary.reasoning_effort)
 
     def test_non_text_and_disabled_presets_never_enter_the_chain(self) -> None:
         config = _config_with_keys("navin")
@@ -229,18 +235,25 @@ class AutoFreeFallbackTest(unittest.TestCase):
             self.assertEqual(preset.provider, "navin")
             self.assertFalse(preset.model.endswith(":free"))
 
-    def test_managed_primary_without_presets_uses_bundled_catalog(self) -> None:
+    def test_managed_primary_without_presets_has_no_bundled_openrouter_chain(self) -> None:
+        # The bundled catalog lists OpenRouter models; the subscription fails
+        # over only across its own synced catalog.
         config = _config_with_keys("navin")
+        primary = _preset("deepseek/deepseek-v4-flash", provider="navin")
+
+        self.assertEqual(_resolve_fallback_presets(config, primary), [])
+
+    def test_managed_chain_skips_openrouter_free_presets(self) -> None:
+        config = _config_with_keys("navin")
+        config.model_presets["glm"] = _preset("z-ai/glm-5.2", provider="navin")
+        config.model_presets["super"] = _preset(
+            "nvidia/nemotron-3-super-120b-a12b:free", provider="navin"
+        )
         primary = _preset("deepseek/deepseek-v4-flash", provider="navin")
 
         chain = _resolve_fallback_presets(config, primary)
 
-        self.assertTrue(chain)
-        self.assertLessEqual(len(chain), _MAX_AUTO_PRESET_FALLBACKS)
-        self.assertNotIn(primary.model, [preset.model for preset in chain])
-        for preset in chain:
-            self.assertFalse(preset.model.endswith(":free"))
-            self.assertEqual(preset.provider, "navin")
+        self.assertEqual([preset.model for preset in chain], ["z-ai/glm-5.2"])
 
     def test_a_lone_model_has_no_chain(self) -> None:
         config = _config_with_keys("openrouter")

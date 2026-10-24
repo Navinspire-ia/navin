@@ -119,3 +119,38 @@ class RuntimeRejectionRetryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GrokAndBedrockWordingTest(unittest.TestCase):
+    def test_grok_4_never_gets_temperature(self) -> None:
+        for model in ("x-ai/grok-4.7", "global.xai.grok-4.7", "grok-5"):
+            with self.subTest(model=model):
+                self.assertFalse(OpenAICompatProvider._supports_temperature(model, "none"))
+        self.assertTrue(OpenAICompatProvider._supports_temperature("x-ai/grok-3", None))
+
+    def test_bedrock_refusal_wording_arms_the_retry(self) -> None:
+        provider = OpenAICompatProvider(
+            api_key="test", api_base="https://example.invalid/v1", default_model="vendor/m",
+        )
+        error = Exception(
+            'BedrockException - {"message":"This model doesn\'t support the temperature field. '
+            'Remove temperature and try again."}'
+        )
+        self.assertTrue(provider._register_temperature_rejection("vendor/m", error))
+        self.assertFalse(provider._register_temperature_rejection("vendor/m", error))
+
+
+class TemperatureRefusalSurvivesRestartTest(unittest.TestCase):
+    def test_a_new_provider_for_the_same_endpoint_skips_temperature_at_once(self) -> None:
+        def provider(base: str = "https://example.invalid/v1") -> OpenAICompatProvider:
+            return OpenAICompatProvider(api_key="test", api_base=base, default_model="vendor/some-model")
+
+        exc = RuntimeError('{"error":{"message":"`temperature` is deprecated for this model."}}')
+        self.assertTrue(provider()._register_temperature_rejection("vendor/some-model", exc))
+        messages = [{"role": "user", "content": "hi"}]
+        after_restart = provider()._build_kwargs(messages, None, "vendor/some-model", 256, 0.7, None, None)
+        self.assertNotIn("temperature", after_restart)
+        other_endpoint = provider("https://other.invalid/v1")._build_kwargs(
+            messages, None, "vendor/some-model", 256, 0.7, None, None,
+        )
+        self.assertIn("temperature", other_endpoint)

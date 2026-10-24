@@ -24,6 +24,9 @@ LEGACY_ERROR = (
 
 def test_real_board_gate_does_not_throttle_retries_and_still_requires_tests(tmp_path):
     async def run():
+        # A project with a test suite: validation=test then really needs tests.
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
         store = ProjectBoardStore(tmp_path)
         task = store.create_task(
             title="Required checks", actor="agent", actor_type="agent",

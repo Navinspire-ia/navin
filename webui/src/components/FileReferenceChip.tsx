@@ -159,6 +159,7 @@ export function FileReferenceChip({
             >
               <FileReferenceIcon kind={kind} />
               <span
+                dir="ltr"
                 data-sheen-text={active ? displayText : undefined}
                 className={cn(
                   "min-w-0 max-w-full [overflow-wrap:anywhere] sm:truncate",
@@ -189,12 +190,12 @@ export function FileReferenceChip({
               "shadow-lg backdrop-blur",
             )}
           >
-            {fullPath}
+            <span dir="ltr">{fullPath}</span>
           </TooltipContent>
         </Tooltip>
         {showActionBar ? (
           <span
-            className="ml-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/55 bg-muted/40 p-0.5 align-middle"
+            className="ms-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/55 bg-muted/40 p-0.5 align-middle"
             data-testid="inline-file-actions"
           >
             {canPreview ? (

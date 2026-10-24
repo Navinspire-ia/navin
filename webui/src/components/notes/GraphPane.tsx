@@ -168,7 +168,7 @@ export function GraphPane({
             defaultValue: "{{notes}} note(s), {{links}} lien(s)",
           })}
         </span>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ms-auto flex items-center gap-1">
           <button
             type="button"
             onClick={() => setShowTags((current) => !current)}

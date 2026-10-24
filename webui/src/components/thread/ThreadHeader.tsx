@@ -22,6 +22,7 @@ interface ThreadHeaderProps {
   findAction?: ReactNode;
   graphAction?: ReactNode;
   planAction?: ReactNode;
+  agentsAction?: ReactNode;
   reviewAction?: ReactNode;
 }
 
@@ -38,6 +39,7 @@ export function ThreadHeader({
   findAction,
   graphAction,
   planAction,
+  agentsAction,
   reviewAction,
 }: ThreadHeaderProps) {
   const { t } = useTranslation();
@@ -45,12 +47,12 @@ export function ThreadHeader({
   return (
     <div
       className={cn(
-        "relative z-10 flex items-center justify-between gap-3 border-b border-border/60 bg-background/80 py-2.5 pl-3 backdrop-blur-md",
+        "relative z-10 flex items-center justify-between gap-3 border-b border-border/60 bg-background/80 py-2.5 ps-3 backdrop-blur-md",
         // Fixed notification bell sits over the top-right; keep session/prompt
         // controls clear of it (same gutter as workbench / file preview).
         NOTIFICATION_GUTTER,
         minimal && "h-11",
-        !minimal && hostChromeTitleInset && "lg:pl-[128px]",
+        !minimal && hostChromeTitleInset && "lg:ps-[128px]",
       )}
     >
       <div className="relative flex min-w-0 items-center gap-2">
@@ -75,8 +77,9 @@ export function ThreadHeader({
         {presenceAction}
       </div>
 
-      <div data-testid="thread-review-header" className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1">
+      <div data-testid="thread-review-header" className="ms-auto flex min-w-0 flex-1 items-center justify-end gap-1">
         {planAction}
+        {agentsAction}
         {reviewAction}
         {graphAction}
         {findAction}

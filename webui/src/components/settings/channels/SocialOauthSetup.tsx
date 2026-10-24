@@ -201,11 +201,11 @@ export function SocialOauthSetup({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => void saveApp()}>
-          {busy === "save" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+          {busy === "save" ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
           {tx("settings.channels.oauth.saveApp", "Save application")}
         </Button>
         <Button type="button" size="sm" disabled={Boolean(busy)} onClick={() => void connect()}>
-          {busy === "connect" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+          {busy === "connect" ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
           {connected
             ? tx("settings.channels.oauth.reconnect", "Reconnect")
             : tx("settings.channels.oauth.connect", "Connect account")}

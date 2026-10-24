@@ -1319,3 +1319,25 @@ class HotPathIsolationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatteryMatchesRuntimeRulesTest(unittest.TestCase):
+    def test_no_bundled_case_teaches_a_call_the_runtime_refuses(self) -> None:
+        # The browser stays off unless the user asks for it, and page reads go
+        # to web_fetch. A battery that taught browser reads failed every web
+        # case since that rule landed, and a policy trained on it would steer
+        # the agent into refusals.
+        import json
+
+        from navin.policy.battery import BATTERY_FILE
+
+        data = json.loads(Path(BATTERY_FILE).read_text(encoding="utf-8"))
+        tools = {
+            step.get("tool")
+            for suite in data["suites"]
+            for case in suite["cases"]
+            for step in case.get("script", [])
+            if step.get("tool")
+        }
+        self.assertNotIn("browser", tools)
+        self.assertIn("web_fetch", tools)

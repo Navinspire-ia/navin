@@ -77,9 +77,11 @@ class StartAppTool(Tool):
             preferred = f"http://{preferred}"
 
         ctx = current_request_context()
+        # The conversation's project wins over the folder the tool was built
+        # with (the agent default), like open_preview and project.
         workspace = self._workspace
-        if workspace is None and ctx is not None and ctx.workspace is not None:
-            workspace = ctx.workspace
+        if ctx is not None and ctx.workspace is not None:
+            workspace = Path(str(ctx.workspace))
         owner_key = ctx.session_key if ctx else None
 
         url, err = await ensure_project_preview_url(

@@ -258,3 +258,34 @@ def supports_grounding(
     if not base or any(marker in base for marker in _TEXT_ONLY_OVERRIDES):
         return False
     return any(marker in base for marker in _GROUNDING_FAMILY_MARKERS)
+
+
+# -- prompt caching minimums ---------------------------------------------------
+
+# Smallest cached prefix per family (Anthropic: a breakpoint on a shorter
+# prefix is not cached). Newer and unknown Claude models take the strictest
+# published value, so a breakpoint is never placed where it cannot work.
+_CACHE_MIN_TOKENS: tuple[tuple[str, int], ...] = (
+    ("claude-3-haiku", 2048),
+    ("claude-3-5-haiku", 2048),
+    ("claude-3.5-haiku", 2048),
+    ("claude-3-7-sonnet", 1024),
+    ("claude-3.7-sonnet", 1024),
+    ("claude-sonnet-4-5", 1024),
+    ("claude-sonnet-4.5", 1024),
+    ("claude-sonnet-4", 1024),
+    ("claude-opus-4-1", 1024),
+    ("claude-opus-4.1", 1024),
+    ("claude-opus-4-2", 1024),
+    ("claude-opus-4", 1024),
+)
+DEFAULT_CACHE_MIN_TOKENS = 4096
+
+
+def prompt_cache_min_tokens(slug: str | None) -> int:
+    """Minimum prefix (tokens) for a prompt-cache breakpoint on this model."""
+    name = _normalize(slug).rsplit("/", 1)[-1]
+    for marker, minimum in _CACHE_MIN_TOKENS:
+        if name.startswith(marker) and not name.startswith(f"{marker}-5") and not name.startswith(f"{marker}.5"):
+            return minimum
+    return DEFAULT_CACHE_MIN_TOKENS

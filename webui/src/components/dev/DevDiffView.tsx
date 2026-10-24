@@ -317,6 +317,7 @@ export function DevDiffView({
     return (
       <div
         key={`${blockIndex}-${line.oldNo ?? "x"}-${line.newNo ?? "x"}-${line.kind}`}
+        dir="ltr"
         className={cn("flex font-mono text-[12px] leading-[1.45]", lineBgClass(line.kind))}
         data-diff-block={blockIndex}
       >
@@ -324,10 +325,10 @@ export function DevDiffView({
           className={cn("w-1 shrink-0 self-stretch", gutterClass(line.kind))}
           aria-hidden
         />
-        <span className="w-10 shrink-0 select-none px-1.5 text-right text-[10px] text-muted-foreground/70">
+        <span className="w-10 shrink-0 select-none px-1.5 text-end text-[10px] text-muted-foreground/70">
           {line.oldNo ?? ""}
         </span>
-        <span className="w-10 shrink-0 select-none border-r border-border/40 px-1.5 text-right text-[10px] text-muted-foreground/70">
+        <span className="w-10 shrink-0 select-none border-e border-border/40 px-1.5 text-end text-[10px] text-muted-foreground/70">
           {line.newNo ?? ""}
         </span>
         <span className="w-4 shrink-0 select-none text-center text-muted-foreground/80">
@@ -354,7 +355,7 @@ export function DevDiffView({
           key={block.id}
           type="button"
           onClick={() => expandBlock(block.id)}
-          className="flex w-full items-center gap-2 border-y border-border/40 bg-muted/30 px-3 py-1 text-left font-mono text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          className="flex w-full items-center gap-2 border-y border-border/40 bg-muted/30 px-3 py-1 text-start font-mono text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
         >
           <span className="w-1 shrink-0 self-stretch rounded-sm bg-muted-foreground/40" aria-hidden />
           {t("dev.git.diffUnmodifiedCollapsed", {
@@ -385,11 +386,11 @@ export function DevDiffView({
               className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
               data-testid="dev-diff-back"
             >
-              <ArrowLeft className="h-3 w-3" aria-hidden />
+              <ArrowLeft className="rtl:-scale-x-100 h-3 w-3" aria-hidden />
               {tx("dev.diffBack", "Back")}
             </button>
           ) : null}
-          <div className="mr-1 flex items-center rounded-md border border-border/60 p-0.5">
+          <div className="me-1 flex items-center rounded-md border border-border/60 p-0.5">
             <button
               type="button"
               onClick={() => setModePersist("split")}
@@ -452,7 +453,7 @@ export function DevDiffView({
               <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
             </button>
             {menuOpen ? (
-              <div className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md">
+              <div className="absolute end-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md">
                 <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                   {tx("dev.git.diffLayout", "Layout")}
                 </p>
@@ -462,7 +463,7 @@ export function DevDiffView({
                     setModePersist("unified");
                     setMenuOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5">
                     {mode === "unified" ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
@@ -475,7 +476,7 @@ export function DevDiffView({
                     setModePersist("split");
                     setMenuOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5">
                     {mode === "split" ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
@@ -489,7 +490,7 @@ export function DevDiffView({
                     setIgnoreWhitespacePersist(!ignoreWhitespace);
                     setMenuOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5">
                     {ignoreWhitespace ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
@@ -502,7 +503,7 @@ export function DevDiffView({
                     setWordWrapPersist(!wordWrap);
                     setMenuOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5">
                     {wordWrap ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
@@ -513,7 +514,7 @@ export function DevDiffView({
                 <button
                   type="button"
                   onClick={openFind}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5" />
                   <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -522,7 +523,7 @@ export function DevDiffView({
                 <button
                   type="button"
                   onClick={collapseAll}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5" />
                   {tx("dev.git.diffCollapseAll", "Collapse All")}
@@ -533,7 +534,7 @@ export function DevDiffView({
                     setMenuOpen(false);
                     refresh();
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-popover-foreground hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-[12px] text-popover-foreground hover:bg-muted"
                 >
                   <span className="w-3.5" />
                   <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -614,7 +615,7 @@ export function DevDiffView({
               className={wordWrap ? "w-full" : "min-w-max"}
             >
               <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-border/50 bg-muted/40 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
-                <div className="border-r border-border/50 px-3 py-1">
+                <div className="border-e border-border/50 px-3 py-1">
                   {tx("dev.git.diffBefore", "Before")}
                 </div>
                 <div className="px-3 py-1">
@@ -624,11 +625,12 @@ export function DevDiffView({
               {splitRows.map((row, index) => (
                 <div
                   key={index}
+                  dir="ltr"
                   className="grid grid-cols-2 font-mono text-[12px] leading-[1.45]"
                 >
                   <div
                     className={cn(
-                      "flex min-w-0 border-r border-border/40",
+                      "flex min-w-0 border-e border-border/40",
                       sideCellClass(row.kind, "left"),
                     )}
                   >
@@ -641,7 +643,7 @@ export function DevDiffView({
                       )}
                       aria-hidden
                     />
-                    <span className="w-10 shrink-0 select-none px-1.5 text-right text-[10px] text-muted-foreground/70">
+                    <span className="w-10 shrink-0 select-none px-1.5 text-end text-[10px] text-muted-foreground/70">
                       {row.leftNo ?? ""}
                     </span>
                     <span className={cn("min-w-0 flex-1 px-2", wrapClass)}>
@@ -663,7 +665,7 @@ export function DevDiffView({
                       )}
                       aria-hidden
                     />
-                    <span className="w-10 shrink-0 select-none px-1.5 text-right text-[10px] text-muted-foreground/70">
+                    <span className="w-10 shrink-0 select-none px-1.5 text-end text-[10px] text-muted-foreground/70">
                       {row.rightNo ?? ""}
                     </span>
                     <span className={cn("min-w-0 flex-1 px-2", wrapClass)}>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>stats_counter</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .sc-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 64); padding: 0 6%; }
+  .sc-title { font-size: calc(var(--u) * 68); text-align: center; max-width: 22ch; text-wrap: balance; }
+  .sc-grid { display: grid; gap: calc(var(--u) * 28); width: 100%; justify-content: center; }
+  .sc-card {
+    position: relative; overflow: hidden; border-radius: calc(var(--u) * 28);
+    padding: calc(var(--u) * 40) calc(var(--u) * 40) calc(var(--u) * 36);
+    display: flex; flex-direction: column; gap: calc(var(--u) * 14); min-width: 0;
+  }
+  .sc-value {
+    font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.04em; line-height: 1;
+    font-size: calc(var(--u) * 112); font-variant-numeric: tabular-nums; white-space: nowrap;
+    background: linear-gradient(180deg, var(--c-text), color-mix(in srgb, var(--c-text) 70%, var(--c-secondary)));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sc-label { font-size: calc(var(--u) * 30); color: var(--c-muted); font-weight: 500; letter-spacing: -0.005em; }
+  .sc-track { height: calc(var(--u) * 6); border-radius: 99px; background: var(--c-line); overflow: hidden; margin-top: calc(var(--u) * 10); }
+  .sc-bar { height: 100%; width: 100%; border-radius: 99px; transform-origin: left center; background: linear-gradient(90deg, var(--c-primary), var(--c-accent)); }
+  .sc-glow { position: absolute; width: 70%; aspect-ratio: 1; right: -30%; top: -40%; border-radius: 50%; background: radial-gradient(circle, var(--c-primary), transparent 70%); opacity: 0.3; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop"></div>
+  <div class="sc-wrap"><h1 class="nm-heading sc-title"></h1><div class="sc-grid"></div></div>
+  <div class="nm-grain"></div>
+</div>
+<script>
+const NM = window.NavinMotion;
+
+NM.mount({
+  duration: 4.5,
+  setup(nm) {
+    const { canvas, duration } = nm;
+    let stats = nm.prop('stats', []);
+    if (!Array.isArray(stats) || !stats.length) {
+      stats = [{ value: 10, suffix: 'x', label: 'faster' }];
+    }
+    stats = stats.slice(0, 4);
+    const title = document.querySelector('.sc-title');
+    title.textContent = nm.prop('title', '');
+    if (!title.textContent) title.style.display = 'none';
+
+    const n = stats.length;
+    let cols = n;
+    if (canvas.portrait) cols = 1;
+    else if (canvas.square) cols = n === 4 ? 2 : Math.min(n, n === 3 ? 1 : 2);
+    const grid = document.querySelector('.sc-grid');
+    const cardW = canvas.portrait ? canvas.width * 0.8 : Math.min(nm.px(560), (canvas.width * 0.88 - (cols - 1) * nm.px(28)) / cols);
+    grid.style.gridTemplateColumns = `repeat(${cols}, ${cardW}px)`;
+    const valueSize = Math.min(nm.px(cols >= 4 ? 92 : 112), cardW * 0.26);
+
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.nm-backdrop', { scale: 1.1 }, { scale: 1, duration, ease: 'sine.out' }, 0);
+    if (title.textContent) tl.from(nm.split(title, 'words'), { yPercent: 115, duration: 0.85, ease: 'expo.out', stagger: 0.06 }, 0.1);
+
+    const countDur = Math.min(1.8, Math.max(0.8, duration - 1.6));
+    stats.forEach((s, i) => {
+      const card = nm.el('div', 'sc-card nm-glass', null, grid);
+      nm.el('div', 'sc-glow', null, card);
+      const value = nm.el('div', 'sc-value', '', card);
+      value.style.fontSize = valueSize + 'px';
+      nm.el('div', 'sc-label', s.label || '', card);
+      const track = nm.el('div', 'sc-track', null, card);
+      const bar = nm.el('div', 'sc-bar', null, track);
+      const decimals = Number.isInteger(s.decimals) ? s.decimals : (String(s.value).split('.')[1] || '').length;
+      const fmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+      const target = Number(s.value) || 0;
+      const counter = { v: 0 };
+      const write = () => { value.textContent = (s.prefix || '') + fmt.format(counter.v) + (s.suffix || ''); };
+      write();
+      const at = 0.35 + i * 0.18;
+      tl.from(card, { y: nm.px(60), opacity: 0, scale: 0.96, duration: 0.9, ease: 'expo.out' }, at);
+      tl.to(counter, { v: target, duration: countDur, ease: 'expo.out', onUpdate: write }, at + 0.15);
+      tl.fromTo(bar, { scaleX: 0 }, { scaleX: 1, duration: countDur, ease: 'expo.out' }, at + 0.15);
+    });
+    tl.set({}, {}, duration);
+    return { timeline: tl };
+  },
+});
+</script>
+</body>
+</html>

@@ -89,14 +89,14 @@ def _stats_payload(report: Any) -> dict[str, Any]:
         "name": report.name,
         "label": report.label,
         "status": report.status,
-        "discovered": len(report.sessions),
+        "discovered": report.count if report.count is not None else len(report.sessions),
         "note": report.note,
     }
 
 
 def scan_external_sessions() -> dict[str, Any]:
     """Detect external sources and count importable sessions."""
-    reports = discover(resolve_sources("auto"))
+    reports = discover(resolve_sources("auto"), count_only=True)
     return {
         "sources": [_stats_payload(report) for report in reports],
         "saved_roots": load_extra_roots(),

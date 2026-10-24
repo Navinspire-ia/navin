@@ -478,3 +478,55 @@ def restore_checkpoint(
         "safety": safety_sha[:12],
         "deletedFiles": deleted,
     }
+
+
+def mission_timeline(root: Path | str) -> dict[str, Any]:
+    """Mission Time Machine payload (decisions, tool ops, tests, versions)."""
+    from navin.board.timeline import build_timeline
+
+    return build_timeline(root)
+
+
+def mission_restore(root: Path | str, target: str, reason: str = "") -> dict[str, Any]:
+    """Restore the mission registry to a version (or ``coherent``) as a new version."""
+    from navin.board.store import BoardError
+    from navin.board.timeline import restore_mission
+
+    try:
+        return restore_mission(root, target, reason=reason, actor="user")
+    except BoardError as exc:
+        raise CheckpointError(str(exc), status=400, code="mission_restore") from exc
+
+
+def mission_diff(root: Path | str, a: str, b: str) -> dict[str, Any]:
+    """Structured diff between two mission registry versions."""
+    from navin.board.store import BoardError
+    from navin.board.timeline import diff_versions
+
+    try:
+        return diff_versions(root, int(a), int(b))
+    except (BoardError, ValueError) as exc:
+        raise CheckpointError(str(exc), status=400, code="mission_diff") from exc
+
+
+def mission_replay(root: Path | str, step: str, version: str = "", reason: str = "") -> dict[str, Any]:
+    """Replay one mission step (and its dependents), optionally as it was in a version."""
+    from navin.board.store import BoardError
+    from navin.board.timeline import replay_step
+
+    try:
+        source = int(version.strip().lstrip("v")) if version and version.strip() else None
+        return replay_step(root, step, from_version=source, reason=reason, actor="user")
+    except (BoardError, ValueError) as exc:
+        raise CheckpointError(str(exc), status=400, code="mission_replay") from exc
+
+
+def mission_compare(root: Path | str, a: str, b: str) -> dict[str, Any]:
+    """Rank what two mission registry versions (two strategies) achieved."""
+    from navin.board.store import BoardError
+    from navin.board.timeline import compare_strategies
+
+    try:
+        return compare_strategies(root, int(a), int(b))
+    except (BoardError, ValueError) as exc:
+        raise CheckpointError(str(exc), status=400, code="mission_compare") from exc

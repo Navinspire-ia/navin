@@ -17,8 +17,8 @@ import time
 import unittest
 from pathlib import Path
 
-from navin.session.manager import SessionManager
 from navin.session import webui_turns
+from navin.session.manager import SessionManager
 from navin.session.webui_turns import (
     TURN_RUN_STATE_METADATA_KEY,
     persist_turn_run_state,

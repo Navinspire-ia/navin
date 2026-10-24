@@ -11,7 +11,6 @@ messages - rather than raw tool output the model has to interpret.
 from __future__ import annotations
 
 import asyncio
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -49,10 +48,14 @@ def _tracked_modifications(root: Path, paths: list[str] | None) -> list[str]:
     which a git rollback leaves alone, and asking the user about work that is
     not actually at risk would teach them to wave the question through.
     """
-    git = shutil.which("git")
-    if git is None:
+    from navin.utils.git_argv import git_route
+
+    # Routed like the git tool: Windows git refuses a \\wsl.localhost repo, and
+    # an empty answer here would skip the "you have unsaved work" question.
+    route = git_route(root)
+    if route is None:
         return []
-    argv = [git, "-C", str(root), "diff", "--name-only", "HEAD", "--"]
+    argv = [*route.argv, "diff", "--name-only", "HEAD", "--"]
     if paths:
         argv.extend(paths)
     try:
@@ -345,7 +348,9 @@ class TestRunTool(_QualityTool):
             "counts plus each failure's test name, file and assertion message. "
             "Auto-detects the runner (pytest, vitest, jest, go test, cargo "
             "test). The default action is 'run', optionally with 'target' to "
-            "run a single file or test, and 'detect' to see which suites exist. "
+            "run a single file or test, or 'targets' to run several in ONE "
+            "call (each reported under its own heading), and 'detect' to see "
+            "which suites exist. "
             "Prefer this over running tests through exec: failures come back "
             "parsed instead of buried in truncated logs."
         )
@@ -372,6 +377,17 @@ class TestRunTool(_QualityTool):
                         "instead of the whole suite (much faster while iterating)"
                     ),
                 },
+                "targets": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "description": (
+                        "Several test files, directories or test ids to run in "
+                        "ONE call (instead of target). Each is run on its own "
+                        "and reported under its own heading."
+                    ),
+                },
                 "runner": {
                     "type": "string",
                     "description": (
@@ -383,11 +399,14 @@ class TestRunTool(_QualityTool):
             "required": ["action"],
         }
 
+    _MAX_TARGETS = 6
+
     async def execute(
         self,
         action: str = "run",
         target: str | None = None,
         runner: str | None = None,
+        targets: list[str] | None = None,
         **kwargs: Any,
     ) -> str:
         root, error = self._root_or_error()
@@ -395,6 +414,15 @@ class TestRunTool(_QualityTool):
             return error
 
         from navin.quality.testing import detect_suites, run_tests
+
+        if action == "run" and targets:
+            if target:
+                return ToolResult.error("Error: pass either target or targets, not both.")
+            if len(targets) > self._MAX_TARGETS:
+                return ToolResult.error(f"Error: at most {self._MAX_TARGETS} targets per call.")
+            if not all(isinstance(item, str) and item.strip() for item in targets):
+                return ToolResult.error("Error: every entry of targets must be a non-empty string.")
+            return await self._run_many(root, [item.strip() for item in targets], runner)
 
         if action == "detect":
             await emit_tool_output("Detecting test suites…")
@@ -432,6 +460,30 @@ class TestRunTool(_QualityTool):
             )
 
         return self.unknown_action(action)
+
+
+    async def _run_many(self, root: Path, targets: list[str], runner: str | None) -> str:
+        """Run each target on its own, one call for the model, one section each."""
+        from navin.quality.evidence import test_evidence
+        from navin.quality.testing import run_tests
+
+        sections: list[str] = []
+        every_outcome: list[Any] = []
+        for item in targets:
+            await emit_tool_output(f"Running tests on {item}…")
+            outcomes = await asyncio.to_thread(
+                run_tests,
+                root,
+                runners=[runner] if runner else None,
+                target=item,
+                on_output=_test_output_callback(),
+            )
+            _record_test_outcomes(root, outcomes, target=item)
+            every_outcome.extend(outcomes)
+            sections.append(f"=== {item} ===\n" + "\n\n".join(o.render() for o in outcomes))
+        if every_outcome and all(outcome.ran for outcome in every_outcome):
+            await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
+        return ToolResult("\n\n".join(sections), verification=test_evidence(every_outcome))
 
 
 class VerifyTool(_QualityTool):

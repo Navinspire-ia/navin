@@ -14,14 +14,17 @@ import { createPortal } from "react-dom";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { Search, Waypoints } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { ActivityInspector } from "@/components/thread/activity/ActivityInspector";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { FileWorkspaceActionsProvider } from "@/components/FileWorkspaceActionsContext";
+import { ProofRunCard } from "@/components/review/ProofRunCard";
 import { PendingReviewPanel } from "@/components/review/PendingReviewPanel";
 import { ArtifactCanvas } from "@/components/thread/ArtifactCanvas";
 import { MetagraphSidePanel } from "@/components/thread/MetagraphSidePanel";
 import { resolveArtifactPlacement } from "@/lib/artifact-placement";
+import { modelDisplayName } from "@/lib/model-display-name";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import {
   SessionInfoPopover,
@@ -34,14 +37,13 @@ import {
   writeComposerTurnMode,
   type ComposerTurnMode,
 } from "@/components/thread/ComposerModeMenu";
-import { ThreadComposer, type ComposerModelOption } from "@/components/thread/ThreadComposer";
+import { ThreadComposer, type ComposerModelOption, type ComposerTeamMode } from "@/components/thread/ThreadComposer";
 import {
-  FINISHED_CARD_LINGER_MS,
-  ParallelSubagentsPanel,
-  pruneFinishedSubagentCards,
-  upsertSubagentCard,
-  type ParallelSubagentCard,
+  createSubagentCardStore,
+  LiveSubagentsPanel,
 } from "@/components/thread/ParallelSubagentsPanel";
+import { SubagentsButton, SubagentsSidePanel, SubagentJournalContext } from "@/components/thread/SubagentsSidePanel";
+import { useSubagentCardReconcile } from "@/hooks/useSubagentCardReconcile";
 import { ThreadPlanPanel } from "@/components/thread/ThreadPlanPanel";
 import { ConversationFindBar } from "@/components/ConversationFindBar";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
@@ -50,12 +52,19 @@ import { PresenceAvatars } from "@/components/thread/PresenceAvatars";
 import { ViewerReadOnlyBanner } from "@/components/thread/ViewerReadOnlyBanner";
 import { usePresence } from "@/hooks/usePresence";
 import { useOrgRole } from "@/hooks/useOrgRole";
-import { usePendingReview } from "@/hooks/usePendingReview";
+import { usePendingReview, PendingChangesContext } from "@/hooks/usePendingReview";
 import { proveProjectPath } from "@/components/dev/proveChange";
 import { useProveChange } from "@/hooks/useProveChange";
 import { codePanelHref } from "@/lib/code-panel-route";
 import { ApprovalPrompt } from "@/components/thread/ApprovalPrompt";
 import { ChoicePrompt } from "@/components/thread/ChoicePrompt";
+import { CredentialRequestCards } from "@/components/thread/CredentialRequestCard";
+import { WorktreeMergeCards } from "@/components/thread/WorktreeMergeCards";
+import { LiveAvatar } from "@/components/thread/LiveAvatar";
+import { useLiveAvatarDocked } from "@/lib/live-avatar-store";
+import { avatarBodyForVoice } from "@/lib/live-avatar";
+import { transcriptionFormFromPayload, voiceFormFromPayload } from "@/lib/live-voice-forms";
+import { realtimeSessionVoice, realtimeVoiceFor, speechVoiceFor } from "@/lib/live-voices";
 import { LiveVoiceBar } from "@/components/thread/LiveVoiceBar";
 import { LiveVoiceSetupDialog } from "@/components/thread/LiveVoiceSetupDialog";
 import { useLiveVoice } from "@/hooks/useLiveVoice";
@@ -65,7 +74,14 @@ import type { SelectedModelRoute } from "@/components/thread/QuotaLimitCard";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { useNavinStream, type SendAttachment, type SendOptions } from "@/hooks/useNavinStream";
+import {
+  appendReverseIntro,
+  buildReverseIntroMessage,
+  onReverseLaunch,
+} from "@/lib/reverse-launch";
 import { useSessionHistory } from "@/hooks/useSessions";
+import { AppShareHint } from "@/components/thread/AppShareHint";
+import { LIVE_START_EVENT } from "@/lib/live-events";
 import { artifactsNotInEditor } from "@/lib/artifact-dedup";
 import { resolveChipPathFromEdits } from "@/lib/file-chip-paths";
 import {
@@ -82,7 +98,10 @@ import {
   fetchMcpPresets,
   fetchSettings,
   listSlashCommands,
+  setModelRoutingEnabled,
+  setCollabEnabled,
   updateImageGenerationSettings,
+  updateLiveVoiceSettings,
   updateMusicGenerationSettings,
   updateTranscriptionSettings,
   updateModelConfiguration,
@@ -90,6 +109,7 @@ import {
   updateVideoGenerationSettings,
   updateVoiceSettings,
   type SessionPlan,
+  updateLiveShareGuest,
 } from "@/lib/api";
 import {
   canBeChatDefault,
@@ -142,9 +162,12 @@ import { normalizeLegacyLongTaskMessages } from "@/lib/thread-display-compat";
 import { scrubSubagentUiMessages } from "@/lib/subagent-channel-display";
 import { truncateMiddle } from "@/lib/short-path";
 import { formatToolCallTrace } from "@/lib/tool-traces";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
 import { useAccount } from "@/hooks/useAccount";
+import { TeamRoom } from "@/components/team/TeamRoom";
+import { mergeTeamFeed, parseTeamEntry, parseTeamIdentity, type TeamFeedEntry, type TeamIdentity } from "@/lib/team";
 
 function projectWebuiThreadMessages(messages: UIMessage[]): UIMessage[] {
   return scrubSubagentUiMessages(normalizeLegacyLongTaskMessages(messages));
@@ -331,8 +354,7 @@ function toModelBadgeLabel(modelName: string | null): string | null {
   if (!modelName) return null;
   const trimmed = modelName.trim();
   if (!trimmed) return null;
-  const leaf = trimmed.split("/").pop() ?? trimmed;
-  return leaf || trimmed;
+  return modelDisplayName(trimmed) || trimmed;
 }
 
 interface ModelBadgeInfo {
@@ -373,7 +395,7 @@ function presetLabelForSlug(
   const row = named ?? rows[0];
   if (row?.label && !/^default$/i.test(row.label.trim())) return row.label;
   const raw = (slug || row?.model || presetName || "").trim();
-  return raw.split("/").pop()?.replace(/:free$/i, "") || raw;
+  return modelDisplayName(raw).replace(/:free$/i, "") || raw;
 }
 
 function activeModelPreset(settings: SettingsPayload | null): SettingsPayload["model_presets"][number] | null {
@@ -630,7 +652,7 @@ export function ThreadShell({
   onComposerSeedConsumed,
   productModule = null,
 }: ThreadShellProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const chatId = session?.chatId ?? null;
   const historyKey = session?.key ?? null;
   const {
@@ -757,7 +779,6 @@ export function ThreadShell({
   const [artifactCanvasOpen, setArtifactCanvasOpen] = useState(false);
   const [artifactCanvasClosing, setArtifactCanvasClosing] = useState(false);
   const [artifactCanvasWidth, setArtifactCanvasWidth] = useState(ARTIFACT_CANVAS_DEFAULT_WIDTH);
-  const [subagentCards, setSubagentCards] = useState<ParallelSubagentCard[]>([]);
   const shellRef = useRef<HTMLElement | null>(null);
   const filePreviewWidthRef = useRef(FILE_PREVIEW_DEFAULT_WIDTH);
   const filePreviewCloseTimerRef = useRef<number | null>(null);
@@ -815,6 +836,7 @@ export function ThreadShell({
     runStartedAt,
     goalState,
     activityText,
+    isCompacting,
     send,
     transcribeAudio,
     stop,
@@ -827,10 +849,20 @@ export function ThreadShell({
     respondToApproval,
     pendingChoices,
     respondToChoice,
+    isThinking,
   } = useNavinStream(chatId, initial, hasPendingToolCalls, handleTurnEnd, onUserMessage, {
     modelName,
     modelLabel: toModelBadgeInfo(modelName, settings, null).label,
   });
+  // Derived from the live pending lists (restored on reload / chat switch /
+  // second window), not from the ask_user tool-start frame.
+  const turnWaitingFor = isViewer
+    ? null
+    : pendingApprovals.length
+      ? "approval" as const
+      : pendingChoices.length
+        ? "choice" as const
+        : null;
 
   useEffect(() => {
     if (chatId && historyKey) sessionKeyByChatIdRef.current.set(chatId, historyKey);
@@ -890,9 +922,12 @@ export function ThreadShell({
     const node = shellRef.current;
     return !node || node.getClientRects().length > 0;
   });
+  // Keyed by conversation only: the token rotates every few minutes and a
+  // fresh cache made every file chip on screen probe the disk again.
+  const filePreviewTokenRef = useLatestTokenRef();
   const filePreviewAvailabilityCache = useMemo(
     () => new Map<string, FilePreviewAvailabilityCacheEntry>(),
-    [historyKey, token],
+    [historyKey],
   );
   const filePreviewAvailabilityRevision = displayMessages.length;
   const fileSearchRoot = useMemo(() => {
@@ -911,7 +946,7 @@ export function ThreadShell({
       return cached.promise;
     }
     const pending = fetchFilePreviewAvailability(
-      token,
+      filePreviewTokenRef.current,
       historyKey,
       path,
       "",
@@ -942,9 +977,9 @@ export function ThreadShell({
     filePreviewAvailabilityCache,
     filePreviewAvailabilityRevision,
     fileSearchRoot,
+    filePreviewTokenRef,
     historyKey,
     resolveChipPath,
-    token,
   ]);
 
   const showHeroComposer = messages.length === 0 && !loading;
@@ -989,16 +1024,28 @@ export function ThreadShell({
   }, [settings, threadAutoMode, threadModelPreset]);
   // Routes that will swap the default model when this chat has no pin.
   const routingSwaps = useMemo<RouteSwap[]>(() => routeSwaps(settings, t), [settings, t]);
+  const routingEnabled = settings?.model_routing_enabled !== false;
+  const toggleRouting = useCallback(
+    (enabled: boolean) => {
+      void setModelRoutingEnabled(token, enabled)
+        .then(() => refreshModelSettings())
+        .catch(() => undefined);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshModelSettings is declared below
+    [token],
+  );
   const composerRouting = useMemo(
     () =>
       routingSwaps.length
         ? {
-            auto: !threadPresetRow,
+            auto: routingEnabled && !threadPresetRow,
             swaps: routingSwaps,
             onOpenRouting: onOpenModelSettings,
+            enabled: routingEnabled,
+            onToggle: toggleRouting,
           }
         : null,
-    [onOpenModelSettings, routingSwaps, threadPresetRow],
+    [onOpenModelSettings, routingEnabled, routingSwaps, threadPresetRow, toggleRouting],
   );
   const modelBadge = useMemo(
     () => toModelBadgeInfo(modelName, settings, threadPresetRow),
@@ -1413,6 +1460,31 @@ export function ThreadShell({
     [activeEffortPreset?.name, onSettingsChange, settings?.agent.model_preset, token],
   );
 
+  const contextWindowValue =
+    activeEffortPreset?.context_window_tokens ?? settings?.agent.context_window_tokens ?? null;
+  const handleContextWindowSelect = useCallback(
+    (tokens: number) => {
+      const presetName = activeEffortPreset?.name;
+      if (!presetName || !token) return;
+      // Same routing as the effort picker: /settings/update for the active
+      // chat model, the preset itself for a thread pinned to another one.
+      const activeName = settings?.agent.model_preset || "default";
+      const request =
+        presetName === "default" || presetName === activeName
+          ? updateSettings(token, { contextWindowTokens: tokens })
+          : updateModelConfiguration(token, { name: presetName, contextWindowTokens: tokens });
+      void request
+        .then((next) => {
+          setSettings(next);
+          onSettingsChange?.(next);
+        })
+        .catch((err) => {
+          console.error("Failed to update context window", err);
+        });
+    },
+    [activeEffortPreset?.name, onSettingsChange, settings?.agent.model_preset, token],
+  );
+
   const handleEffortSelectSync = useCallback(
     (effort: string) => {
       void handleEffortSelect(effort);
@@ -1577,8 +1649,8 @@ export function ThreadShell({
     if (!chatId) return;
     return client.onSessionUpdate((updatedChatId, scope) => {
       if (updatedChatId !== chatId) return;
-      if (scope === "metadata") return;
-      viewportRef.current?.cancelAutoScroll();
+      if (scope === "metadata" || scope === "title") return;
+      viewportRef.current?.followAfterHydrate();
       pendingCanonicalHydrateRef.current.add(chatId);
       refreshHistory();
     });
@@ -1657,7 +1729,12 @@ export function ThreadShell({
     let cancelled = false;
     (async () => {
       try {
-        const commands = await listSlashCommands(token, "", productModule);
+        const commands = await listSlashCommands(
+          token,
+          "",
+          productModule,
+          workspaceScope?.project_path ?? null,
+        );
         if (!cancelled) setSlashCommands(commands);
       } catch {
         if (!cancelled) setSlashCommands([]);
@@ -1666,7 +1743,7 @@ export function ThreadShell({
     return () => {
       cancelled = true;
     };
-  }, [productModule, token]);
+  }, [productModule, token, workspaceScope?.project_path]);
 
   const handleWelcomeSend = useCallback(
     async (content: string, images?: SendAttachment[], options?: SendOptions) => {
@@ -1725,6 +1802,7 @@ export function ThreadShell({
   // Live voice conversation: microphone in, assistant voice out, question
   // cards answered by speaking. One session per chat, owned here so the bar
   // above the composer and the toolbar toggle share the same state.
+  const liveAvatarDocked = useLiveAvatarDocked();
   const liveVoice = useLiveVoice({
     client,
     chatId,
@@ -1737,7 +1815,54 @@ export function ThreadShell({
     onUtterance: handleThreadSend,
     wantsWav: settings?.transcription?.provider === "xiaomi_mimo",
     disabled: isViewer || !chatId,
+    token,
+    realtimeVoice: settings?.voice?.live_realtime_voice ?? "",
   });
+
+  // The avatar switch: a voice of the other body for both engines, in the
+  // interface language; the avatar follows the voice. A realtime call is
+  // restarted, its voice is set when it starts.
+  const [avatarSwitching, setAvatarSwitching] = useState(false);
+  const restartLiveRef = useRef(false);
+  const switchLiveAvatar = useCallback(async () => {
+    if (!settings || avatarSwitching) return;
+    const realtimeEngine = liveVoice.engine === "realtime";
+    const language = i18n.resolvedLanguage ?? i18n.language ?? "en";
+    const current = realtimeEngine ? realtimeSessionVoice(settings.voice?.live_realtime_voice, liveVoice.realtimeModel, language) : settings.voice?.voice;
+    const next = avatarBodyForVoice(current) === "M" ? "F" : "M";
+    const voiceForm = voiceFormFromPayload(settings);
+    const realtimeVoice = realtimeVoiceFor(next, liveVoice.realtimeModel || voiceForm.liveRealtime, language);
+    const speechVoice = speechVoiceFor(next, settings.voice?.tts_model, language);
+    if (realtimeVoice) voiceForm.liveRealtimeVoice = realtimeVoice;
+    if (speechVoice) voiceForm.voice = speechVoice;
+    setAvatarSwitching(true);
+    try {
+      const inRealtimeCall = realtimeEngine && liveVoice.state !== "off" && liveVoice.state !== "error";
+      setSettings(await updateLiveVoiceSettings(token, transcriptionFormFromPayload(settings), voiceForm));
+      if (inRealtimeCall) {
+        restartLiveRef.current = true;
+        liveVoice.stop();
+      }
+    } catch (error) {
+      notify({
+        level: "error",
+        source: "session",
+        key: "live-avatar-switch",
+        chatId,
+        toast: true,
+        title: t("thread.composer.liveVoice.avatar.switchFailed", { defaultValue: "The voice could not be changed" }),
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setAvatarSwitching(false);
+    }
+  }, [avatarSwitching, chatId, i18n, liveVoice, notify, settings, t, token]);
+  useEffect(() => {
+    if (restartLiveRef.current && liveVoice.state === "off") {
+      restartLiveRef.current = false;
+      liveVoice.toggle();
+    }
+  }, [liveVoice, liveVoice.state]);
   liveVoiceEnabledRef.current = liveVoice.enabled;
   const liveSetup = useLiveVoiceSetup(token, chatId ?? "", (next) => {
     setSettings(next);
@@ -1782,6 +1907,16 @@ export function ThreadShell({
     setWelcomeVoiceStarting(false);
     if (!liveVoice.enabled) liveVoice.toggle();
   }, [chatId, liveVoice]);
+  // Onboarding's "Talk to it now": the call starts here, creating the chat when needed.
+  const startLiveRef = useRef(startLiveVoice);
+  startLiveRef.current = startLiveVoice;
+  useEffect(() => {
+    const onStart = () => {
+      if (!liveVoiceEnabledRef.current) startLiveRef.current();
+    };
+    window.addEventListener(LIVE_START_EVENT, onStart);
+    return () => window.removeEventListener(LIVE_START_EVENT, onStart);
+  }, []);
   const liveVoiceToggle = useMemo(
     () => ({
       state: liveSetup.checking || welcomeVoiceStarting ? ("starting" as const) : liveVoice.state,
@@ -1876,6 +2011,162 @@ export function ThreadShell({
     selectedDocumentTemplate,
   ]);
 
+  // Parallel spawn subagents: a compact header control opens their inspector.
+  // Progress stays in a store
+  // rather than state so a busy wave re-renders the panel, not the thread.
+  // Cleared on chat switch, then refilled by the gateway's replay on attach,
+  // so a subagent still working stays visible across a refresh.
+  const [subagentStore] = useState(createSubagentCardStore);
+  const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const [subagentsIncludeCompleted, setSubagentsIncludeCompleted] = useState(false);
+  useEffect(() => {
+    subagentStore.reset();
+    setSubagentsOpen(false);
+    setSubagentsIncludeCompleted(false);
+  }, [chatId, subagentStore]);
+
+  useSubagentCardReconcile(client, chatId, subagentStore);
+
+  // Fill the header control on chat open: finished agents keep it visible.
+  const [subagentHistory, setSubagentHistory] = useState(false);
+  useEffect(() => {
+    setSubagentHistory(false);
+    if (!chatId) return;
+    let live = true;
+    let attempts = 0;
+    const probe = () => {
+      client.querySubagents<unknown[]>(chatId, "list", { offset: 0, limit: 1 })
+        .then((rows) => { if (live) setSubagentHistory(Array.isArray(rows) && rows.length > 0); })
+        .catch(() => { if (live && ++attempts < 5) window.setTimeout(probe, 2000); });
+    };
+    probe();
+    return () => { live = false; };
+  }, [chatId, client]);
+
+  useEffect(() => {
+    return client.onSubagentProgress((update) => {
+      if (chatId && update.chatId && update.chatId !== chatId) return;
+      subagentStore.upsert(update);
+    });
+  }, [chatId, client, subagentStore]);
+
+  // Collaboration Mode: this chat's team, its live conversation, and the
+  // split Team view beside the chat.
+  const [teamInfo, setTeamInfo] = useState<{
+    enabled: boolean;
+    team: string;
+    teamName: string;
+    members: TeamIdentity[];
+    teams: Array<{ id: string; name: string }>;
+  } | null>(null);
+  const [teamFeed, setTeamFeed] = useState<TeamFeedEntry[]>([]);
+  const [teamOpen, setTeamOpen] = useState(false);
+  // Closed by hand: a new exchange must not pop the view open again.
+  const teamDismissedRef = useRef(false);
+  const applyTeamAnswer = useCallback((answer: unknown) => {
+    if (!answer || typeof answer !== "object") return;
+    const value = answer as Record<string, unknown>;
+    setTeamInfo({
+      enabled: Boolean(value.enabled),
+      team: typeof value.team === "string" ? value.team : "off",
+      teamName: typeof value.team_name === "string" ? value.team_name : "",
+      members: Array.isArray(value.members)
+        ? value.members.map(parseTeamIdentity).filter((m): m is TeamIdentity => Boolean(m))
+        : [],
+      teams: Array.isArray(value.teams)
+        ? (value.teams as Array<{ id?: unknown; name?: unknown }>)
+            .filter((team) => typeof team.id === "string")
+            .map((team) => ({ id: String(team.id), name: String(team.name ?? team.id) }))
+        : [],
+    });
+    if (Array.isArray(value.entries)) {
+      const entries = value.entries
+        .map((raw) => parseTeamEntry(raw, chatId ?? ""))
+        .filter((entry): entry is TeamFeedEntry => Boolean(entry));
+      setTeamFeed((prev) => mergeTeamFeed(prev, entries));
+      if (entries.length && !teamDismissedRef.current) setTeamOpen(true);
+    }
+  }, [chatId]);
+  const reloadTeam = useCallback(() => {
+    if (!chatId) return Promise.resolve();
+    return client.querySubagents<unknown>(chatId, "team_feed").then(applyTeamAnswer);
+  }, [applyTeamAnswer, chatId, client]);
+  useEffect(() => {
+    setTeamInfo(null);
+    setTeamFeed([]);
+    setTeamOpen(false);
+    teamDismissedRef.current = false;
+    if (!chatId) return;
+    let live = true;
+    let attempts = 0;
+    const probe = () => {
+      client.querySubagents<unknown>(chatId, "team_feed")
+        .then((answer) => { if (live) applyTeamAnswer(answer); })
+        .catch(() => { if (live && ++attempts < 5) window.setTimeout(probe, 2000); });
+    };
+    probe();
+    return () => { live = false; };
+  }, [applyTeamAnswer, chatId, client]);
+  useEffect(() => {
+    return client.onTeamMessage((entry) => {
+      if (chatId && entry.chatId && entry.chatId !== chatId) return;
+      setTeamFeed((prev) => mergeTeamFeed(prev, [entry]));
+      if (!teamDismissedRef.current) setTeamOpen(true);
+    });
+  }, [chatId, client]);
+  const collabEnabled = teamInfo?.enabled ?? settings?.collab_enabled === true;
+  const toggleTeamMode = useCallback(
+    (enabled: boolean) => {
+      void setCollabEnabled(token, enabled)
+        .then(() => Promise.all([refreshModelSettings(), reloadTeam()]))
+        .catch(() => undefined);
+    },
+    [refreshModelSettings, reloadTeam, token],
+  );
+  const selectChatTeam = useCallback(
+    (teamId: string) => {
+      if (!chatId) return;
+      void client.querySubagents<unknown>(chatId, "team_select", { target: teamId })
+        .then(applyTeamAnswer)
+        .catch(() => undefined);
+    },
+    [applyTeamAnswer, chatId, client],
+  );
+  const teamActiveNames = useSyncExternalStore(
+    subagentStore.subscribe,
+    () => subagentStore.getSnapshot().cards
+      .filter((card) => card.member && !card.done)
+      .map((card) => card.member!.name)
+      .join("\n"),
+  );
+  const composerTeam = useMemo<ComposerTeamMode | null>(() => {
+    const teams = teamInfo?.teams.length
+      ? teamInfo.teams
+      : (settings?.collab_teams ?? []).map((team) => ({ id: team.id, name: team.name }));
+    if (!teams.length && !(settings?.collab_members?.length)) return null;
+    return {
+      enabled: collabEnabled,
+      teamId: teamInfo?.team ?? settings?.collab_default_team ?? "off",
+      teams,
+      members: (teamInfo?.members ?? []).map((member) => ({
+        name: member.name,
+        title: member.title,
+        avatar: member.avatar,
+        color: member.color,
+      })),
+      onToggle: toggleTeamMode,
+      onSelectTeam: selectChatTeam,
+      onOpenTeam: () => {
+        setTeamOpen((open) => {
+          teamDismissedRef.current = open;
+          return !open;
+        });
+      },
+      teamOpen,
+      activeNames: teamActiveNames ? teamActiveNames.split("\n") : [],
+    };
+  }, [collabEnabled, selectChatTeam, settings, teamActiveNames, teamInfo, teamOpen, toggleTeamMode]);
+
   // Agent tool set_composer_mode (+ workflow auto-emit): sync menu + accent color.
   useEffect(() => {
     return client.onComposerModeRequest((request) => {
@@ -1885,29 +2176,16 @@ export function ThreadShell({
     });
   }, [chatId, client, handleComposerTurnModeChange]);
 
-  // Parallel spawn subagents: live Cursor-style cards in the transcript.
-  // Cleared on chat switch, then refilled by the gateway's replay on attach,
-  // so a subagent still working stays visible across a refresh.
+  // Reverse button of the Code rail: switch the mode, then ask in the journal
+  // which app to reverse, in the user's Navin language.
   useEffect(() => {
-    setSubagentCards([]);
-  }, [chatId]);
-
-  useEffect(() => {
-    return client.onSubagentProgress((update) => {
-      if (chatId && update.chatId && update.chatId !== chatId) return;
-      setSubagentCards((prev) => upsertSubagentCard(prev, update));
+    return onReverseLaunch(() => {
+      handleComposerTurnModeChange("reverse");
+      const intro = buildReverseIntroMessage((key, options) => String(t(key, options)));
+      setMessages((prev) => appendReverseIntro(prev, intro));
+      setScrollToBottomSignal((value) => value + 1);
     });
-  }, [chatId, client]);
-
-  // Drop finished cards once they have been readable for a moment, so the
-  // panel clears without the outcome flashing past.
-  useEffect(() => {
-    if (!subagentCards.some((c) => c.done)) return;
-    const timer = window.setTimeout(() => {
-      setSubagentCards((prev) => pruneFinishedSubagentCards(prev));
-    }, FINISHED_CARD_LINGER_MS);
-    return () => window.clearTimeout(timer);
-  }, [subagentCards]);
+  }, [handleComposerTurnModeChange, setMessages, t]);
 
   const openFilePreviewPanel = useCallback((path: string) => {
     const trimmed = path.trim();
@@ -1989,6 +2267,67 @@ export function ThreadShell({
     };
   }, [chatId, client, openAgentPreview]);
 
+  // Live share: a guest asks to drive or to download. One tap grants it,
+  // even with the share dialog closed.
+  useEffect(() => {
+    if (!client || !chatId) return;
+    return client.onChat(chatId, (ev) => {
+      const frame = ev as unknown as {
+        event?: string;
+        share_id?: string;
+        request?: { guest_id?: string; name?: string; what?: string } | null;
+      };
+      const request = frame.request;
+      if (frame.event !== "share_update" || !request?.guest_id || !frame.share_id) return;
+      const shareId = frame.share_id;
+      const guestId = request.guest_id;
+      const drive = request.what === "drive";
+      notify({
+        level: "info",
+        source: "request",
+        key: `share-request:${shareId}:${guestId}:${request.what}`,
+        chatId,
+        toast: true,
+        title: drive
+          ? t("chat.liveShare.hostRequest.drive", { defaultValue: "{{name}} asks to drive the session", name: request.name || "?" })
+          : t("chat.liveShare.hostRequest.download", { defaultValue: "{{name}} asks to download the session", name: request.name || "?" }),
+        action: {
+          label: drive
+            ? t("chat.liveShare.hostRequest.grantDrive", { defaultValue: "Let them drive" })
+            : t("chat.liveShare.hostRequest.grantDownload", { defaultValue: "Allow download" }),
+          run: async () => {
+            const name = request.name || "?";
+            try {
+              await updateLiveShareGuest(token, shareId, guestId, drive ? { drive: true } : { download: true });
+              notify({
+                level: "success",
+                source: "request",
+                key: `share-request:${shareId}:${guestId}:${request.what}`,
+                chatId,
+                toast: true,
+                title: drive
+                  ? t("chat.liveShare.hostRequest.grantedDrive", { defaultValue: "{{name}} can now drive the session", name })
+                  : t("chat.liveShare.hostRequest.grantedDownload", { defaultValue: "{{name}} is downloading the session", name }),
+              });
+            } catch (error) {
+              const gone = error instanceof Error && /404|not found/i.test(error.message);
+              notify({
+                level: "error",
+                source: "request",
+                key: `share-request:${shareId}:${guestId}:${request.what}`,
+                chatId,
+                toast: true,
+                title: gone
+                  ? t("chat.liveShare.hostRequest.guestGone", { defaultValue: "{{name}} has left the session: they can ask again", name })
+                  : t("chat.liveShare.hostRequest.failed", { defaultValue: "Could not apply the right: {{error}}", error: error instanceof Error ? error.message : String(error) }),
+              });
+            }
+          },
+        },
+      });
+    });
+  }, [chatId, client, notify, t, token]);
+
   // Artifact Canvas: present_artifact + hydrate-on-attach + auto-detect fences.
   useEffect(() => {
     if (!client || !chatId) return;
@@ -2065,6 +2404,9 @@ export function ThreadShell({
     const panel = event.currentTarget.closest<HTMLElement>("[data-artifact-canvas-panel]");
     const shellRect = shellRef.current?.getBoundingClientRect();
     const rightEdge = shellRect?.right ?? window.innerWidth;
+    // In RTL the panel docks on the left edge, so its width grows rightward.
+    const rtl = document.documentElement.dir === "rtl";
+    const leftEdge = shellRect?.left ?? 0;
     const maxWidth = maxArtifactCanvasWidth(shellRect?.width ?? window.innerWidth);
     const originalBodyCursor = document.body.style.cursor;
     const originalBodyUserSelect = document.body.style.userSelect;
@@ -2077,7 +2419,7 @@ export function ThreadShell({
     if (panel) panel.style.transition = "none";
 
     const applyWidth = (clientX: number) => {
-      nextWidth = clampArtifactCanvasWidth(rightEdge - clientX, maxWidth);
+      nextWidth = clampArtifactCanvasWidth(rtl ? clientX - leftEdge : rightEdge - clientX, maxWidth);
       artifactCanvasWidthRef.current = nextWidth;
       if (frame !== null) return;
       frame = window.requestAnimationFrame(() => {
@@ -2168,6 +2510,9 @@ export function ThreadShell({
     const panel = event.currentTarget.closest<HTMLElement>("[data-file-preview-panel]");
     const shellRect = shellRef.current?.getBoundingClientRect();
     const rightEdge = shellRect?.right ?? window.innerWidth;
+    // In RTL the panel docks on the left edge, so its width grows rightward.
+    const rtl = document.documentElement.dir === "rtl";
+    const leftEdge = shellRect?.left ?? 0;
     const maxWidth = maxFilePreviewWidth(shellRect?.width ?? window.innerWidth);
     const originalBodyCursor = document.body.style.cursor;
     const originalBodyUserSelect = document.body.style.userSelect;
@@ -2180,7 +2525,7 @@ export function ThreadShell({
     if (panel) panel.style.transition = "none";
 
     const applyWidth = (clientX: number) => {
-      nextWidth = clampFilePreviewWidth(rightEdge - clientX, maxWidth);
+      nextWidth = clampFilePreviewWidth(rtl ? clientX - leftEdge : rightEdge - clientX, maxWidth);
       filePreviewWidthRef.current = nextWidth;
       if (frame !== null) return;
       frame = window.requestAnimationFrame(() => {
@@ -2300,12 +2645,19 @@ export function ThreadShell({
     return null;
   }, [isStreaming, messages]);
 
-  // Live execution follows the last message and scrolls with the conversation.
-  const transcriptTail = (
-    <>
-      <ParallelSubagentsPanel cards={subagentCards} />
-    </>
+  // Live execution follows the last message and scrolls with the conversation:
+  // running subagents show in the journal (6 cards, then Show more).
+  const subagentJournal = useMemo(
+    () => ({
+      store: subagentStore,
+      openPanel: () => {
+        setSubagentsIncludeCompleted(true);
+        setSubagentsOpen(true);
+      },
+    }),
+    [subagentStore],
   );
+  const agentsAction = <SubagentsButton store={subagentStore} hasHistory={subagentHistory} open={subagentsOpen} onClick={() => { setSubagentsIncludeCompleted(!subagentStore.getSnapshot().cards.some((card) => !card.done)); setSubagentsOpen((open) => !open); }} />;
 
   // The plan is opened from the header; it never follows the transcript tail.
   const planBlock = (
@@ -2332,6 +2684,14 @@ export function ThreadShell({
         window.location.hash = proveHref;
       },
     },
+  );
+
+  // Sub-agents and a running robustness proof read in the conversation, at its end.
+  const transcriptTail = (
+    <>
+      <LiveSubagentsPanel store={subagentStore} />
+      <ProofRunCard prove={proveChange} href={proveHref} />
+    </>
   );
 
   const reviewAction = !isViewer && session && chatId ? (
@@ -2366,6 +2726,7 @@ export function ThreadShell({
       title={title}
       productModule={productModule}
       onCreateLoop={handleCreateLoop}
+      onOpenSubagentHistory={() => { setSubagentsIncludeCompleted(true); setSubagentsOpen(true); }}
       compact
       triggerClassName="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-muted/65 hover:text-foreground [&>svg]:h-3.5 [&>svg]:w-3.5"
     />
@@ -2400,6 +2761,8 @@ export function ThreadShell({
           <ChoicePrompt request={pendingChoices[0]} onRespond={respondToChoice} />
         </div>
       ) : null}
+      {!isViewer ? <CredentialRequestCards chatId={chatId} /> : null}
+      <WorktreeMergeCards chatId={chatId} canManage={!isViewer} onResolve={handleThreadSend} />
       <LiveVoiceSetupDialog open={liveSetup.open} settings={liveSetup.settings}
         busy={liveSetup.checking} failed={liveSetup.failed} onRetry={startLiveVoice}
         onDismiss={liveSetup.dismiss}
@@ -2412,8 +2775,18 @@ export function ThreadShell({
               : "relative mx-auto w-full max-w-[49.5rem]"
           }
         >
-          {!isViewer ? <LiveVoiceBar control={liveVoice} onOpenSettings={onOpenVoiceSettings}
-            voiceLabel={settings?.voice ? `${settings.voice.tts_model} · ${settings.voice.voice}` : undefined} /> : null}
+          {/* Docked in the Code rail, the avatar carries the Live controls;
+              the bar stays for errors (retry, dismiss). */}
+          {!isViewer && !(liveAvatarDocked && liveVoice.state !== "off" && liveVoice.state !== "error")
+            ? <LiveVoiceBar control={liveVoice} onOpenSettings={onOpenVoiceSettings} agentBusy={isStreaming}
+              voiceLabel={settings?.voice ? `${settings.voice.tts_model} · ${settings.voice.voice}` : undefined} />
+            : null}
+          {!isViewer ? <LiveAvatar control={liveVoice} onOpenSettings={onOpenVoiceSettings}
+            onSwitchAvatar={settings ? () => void switchLiveAvatar() : undefined}
+            voice={liveVoice.engine === "realtime"
+              ? realtimeSessionVoice(settings?.voice?.live_realtime_voice, liveVoice.realtimeModel, i18n.resolvedLanguage ?? i18n.language ?? "en")
+              : settings?.voice?.voice} /> : null}
+          {!isViewer ? <AppShareHint chatId={chatId} /> : null}
           <div className="relative z-10">
         <ThreadComposer
           key={chatId}
@@ -2434,11 +2807,14 @@ export function ThreadShell({
           budgetFilterPercent={budgetFilterPercent}
           onModelSelect={handleModelSelect}
           modelRouting={composerRouting}
+          teamMode={composerTeam}
           onHideModel={handleHideModel}
           onModelPickerOpenChange={handleModelPickerOpen}
           effortValue={effortValue ?? ""}
           effortOptions={effortOptions}
           onEffortSelect={handleEffortSelectSync}
+          contextWindowValue={contextWindowValue}
+          onContextWindowSelect={handleContextWindowSelect}
           effortBusy={effortBusy}
           variant={showHeroComposer ? "hero" : "thread"}
           slashCommands={slashCommands}
@@ -2454,6 +2830,9 @@ export function ThreadShell({
           liveVoice={liveVoiceToggle}
           runStartedAt={runStartedAt}
           activityText={activityText}
+          isThinking={isThinking}
+          waitingFor={turnWaitingFor}
+          isCompacting={isCompacting}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}
@@ -2498,11 +2877,14 @@ export function ThreadShell({
           budgetFilterPercent={budgetFilterPercent}
           onModelSelect={handleModelSelect}
           modelRouting={composerRouting}
+          teamMode={composerTeam}
           onHideModel={handleHideModel}
           onModelPickerOpenChange={handleModelPickerOpen}
           effortValue={effortValue ?? ""}
           effortOptions={effortOptions}
           onEffortSelect={handleEffortSelectSync}
+          contextWindowValue={contextWindowValue}
+          onContextWindowSelect={handleContextWindowSelect}
           effortBusy={effortBusy}
           variant="hero"
           slashCommands={slashCommands}
@@ -2515,6 +2897,9 @@ export function ThreadShell({
           skills={skills}
           runStartedAt={runStartedAt}
           activityText={activityText}
+          isThinking={isThinking}
+          waitingFor={turnWaitingFor}
+          isCompacting={isCompacting}
           onTranscribeAudio={transcribeAudio}
           liveVoice={welcomeVoiceToggle}
           goalState={goalState}
@@ -2560,6 +2945,7 @@ export function ThreadShell({
       title={title}
       productModule={productModule}
       onCreateLoop={handleCreateLoop}
+      onOpenSubagentHistory={() => { setSubagentsIncludeCompleted(true); setSubagentsOpen(true); }}
     />
   ) : undefined;
   const promptNavigatorAction = historyKey ? (
@@ -2571,6 +2957,7 @@ export function ThreadShell({
 
   return (
     <section ref={shellRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+      <ActivityInspector />
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {!hideHeader ? (
           <ThreadHeader
@@ -2582,6 +2969,7 @@ export function ThreadShell({
             promptNavigatorAction={promptNavigatorAction}
             sessionInfoAction={sessionInfoAction}
             planAction={planBlock}
+            agentsAction={agentsAction}
             reviewAction={reviewAction}
             graphAction={
               session ? (
@@ -2636,6 +3024,7 @@ export function ThreadShell({
         {hideHeader ? (
           <div data-testid="thread-review-header" className="flex min-w-0 shrink-0 items-center justify-end gap-1 px-3">
             {planBlock}
+            {agentsAction}
             {reviewAction}
           </div>
         ) : null}
@@ -2644,6 +3033,8 @@ export function ThreadShell({
           <FilePreviewAvailabilityProvider
             resolve={historyKey ? resolveFilePreviewAvailability : undefined}
           >
+            <SubagentJournalContext.Provider value={subagentJournal}>
+            <PendingChangesContext.Provider value={pendingReview.changes}>
             <ThreadViewport
               ref={viewportRef}
               messages={displayMessages}
@@ -2672,9 +3063,32 @@ export function ThreadShell({
               onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
               onRevertResubmit={onRevertResubmit ? handleRevertResubmit : undefined}
             />
+            </PendingChangesContext.Provider>
+            </SubagentJournalContext.Provider>
           </FilePreviewAvailabilityProvider>
         </FileWorkspaceActionsProvider>
       </div>
+      {teamOpen && chatId && collabEnabled && teamInfo && teamInfo.team !== "off" ? (
+        <TeamRoom
+          key={chatId}
+          className="hidden w-[46%] min-w-[340px] max-w-[760px] shrink-0 md:flex"
+          team={{ id: teamInfo.team, name: teamInfo.teamName, members: teamInfo.members }}
+          feed={teamFeed}
+          store={subagentStore}
+          canManage={!isViewer}
+          onSend={async (target, content) => {
+            await client.querySubagents(chatId, "team_message", { target, content });
+          }}
+          onAssign={async (target, content) => {
+            await client.querySubagents(chatId, "team_assign", { target, content });
+          }}
+          onClose={() => {
+            teamDismissedRef.current = true;
+            setTeamOpen(false);
+          }}
+        />
+      ) : null}
+      {subagentsOpen && chatId ? <SubagentsSidePanel key={chatId} client={client} chatId={chatId} store={subagentStore} includeCompleted={subagentsIncludeCompleted} canManage={!isViewer} onClose={() => { setSubagentsOpen(false); setSubagentsIncludeCompleted(false); }} /> : null}
       {metagraphPanelOpen ? (
         <MetagraphSidePanel
           sessionKey={historyKey}

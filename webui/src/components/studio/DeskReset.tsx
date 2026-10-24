@@ -1,19 +1,20 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { DESK_PANEL_STYLES } from "./desk-panel";
 import { useState } from "react";
 import { Checkbox, DefaultButton, Panel, PanelType, PrimaryButton, MessageBar, MessageBarType, Stack } from "@fluentui/react";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 import { saveArchive, type ArchiveFile, type DeskArchive } from "@/lib/desk-archive";
 
 export function DeskReset({ open, module, archives, busy, error, onDismiss, onReset, onDownload }: {
   open: boolean; module: "career" | "tenders"; archives: DeskArchive[]; busy: boolean; error: string;
   onDismiss: () => void; onReset: () => Promise<boolean>; onDownload: (id: string) => Promise<ArchiveFile | undefined>;
 }) {
-  const { i18n } = useTranslation();
-  const fr = i18n.language.startsWith("fr");
-  const c = (f: string, e: string) => fr ? f : e;
+  useTranslation(); // re-render on language change
+  const c = (f: string, e: string) => bilingual(f, e);
   const career = module === "career";
   const [confirmed, setConfirmed] = useState(false);
   return <Panel styles={DESK_PANEL_STYLES} isOpen={open} type={PanelType.medium} onDismiss={() => { setConfirmed(false); onDismiss(); }}
@@ -32,7 +33,7 @@ export function DeskReset({ open, module, archives, busy, error, onDismiss, onRe
       <PrimaryButton disabled={busy || !confirmed} text={career ? c("Archiver et vider les offres", "Archive and clear offers") : c("Archiver et recommencer", "Archive and restart")} onClick={async () => { if (await onReset()) setConfirmed(false); }} />
       <h3 className="text-lg font-semibold">{c("Archives conservées", "Saved archives")} ({archives.length})</h3>
       {archives.map(archive => <Stack key={archive.id} tokens={{ childrenGap: 8 }}>
-        <strong>{new Date(archive.at * 1000).toLocaleString(i18n.language)}</strong>
+        <strong>{new Date(archive.at * 1000).toLocaleString(intlLocale())}</strong>
         <p className="break-all text-xs text-muted-foreground">{archive.path}</p>
         <DefaultButton text={c("Télécharger l'archive", "Download archive")} disabled={busy} onClick={async () => { const file = await onDownload(archive.id); if (file) saveArchive(file); }} />
       </Stack>)}

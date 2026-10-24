@@ -293,7 +293,7 @@ export function OllamaSetupPanel({
           <p className="text-[12px] font-medium text-foreground">
             {tx("settings.ollamaSetup.installTitle", "1. Install Ollama")}
           </p>
-          <ol className="list-decimal space-y-1 pl-4 text-[12px] text-muted-foreground">
+          <ol className="list-decimal space-y-1 ps-4 text-[12px] text-muted-foreground">
             {status.install.steps.map((step) => (
               <li key={step}>{step}</li>
             ))}
@@ -314,9 +314,9 @@ export function OllamaSetupPanel({
                 onClick={() => void runAction("install")}
               >
                 {busy === "install" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
-                  <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Download className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 )}
                 {busy === "install"
                   ? tx("settings.ollamaSetup.installing", "Installing...")
@@ -325,7 +325,7 @@ export function OllamaSetupPanel({
             ) : null}
             <Button type="button" size="sm" variant="ghost" className="rounded-full" asChild>
               <a href={status.install.download_url} target="_blank" rel="noreferrer">
-                <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <ExternalLink className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 {tx("settings.ollamaSetup.downloadPage", "Download page")}
               </a>
             </Button>
@@ -353,9 +353,9 @@ export function OllamaSetupPanel({
             onClick={() => void runAction("start")}
           >
             {busy === "start" ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <Play className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <Play className="me-1.5 h-3.5 w-3.5" aria-hidden />
             )}
             {busy === "start"
               ? tx("settings.ollamaSetup.starting", "Starting...")
@@ -381,7 +381,7 @@ export function OllamaSetupPanel({
                   <div className="min-w-0">
                     <p className="truncate text-[12.5px] font-medium text-foreground">
                       {model.label}
-                      <span className="ml-1.5 font-normal text-muted-foreground">
+                      <span className="ms-1.5 font-normal text-muted-foreground">
                         {model.size_hint}
                       </span>
                     </p>
@@ -405,9 +405,9 @@ export function OllamaSetupPanel({
                       onClick={() => void runAction("pull", { model: model.id })}
                     >
                       {pulling ? (
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                        <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                       ) : (
-                        <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        <Download className="me-1.5 h-3.5 w-3.5" aria-hidden />
                       )}
                       {pulling
                         ? tx("settings.ollamaSetup.pulling", "Pulling...")
@@ -426,7 +426,7 @@ export function OllamaSetupPanel({
                       }
                     >
                       {using ? (
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                        <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                       ) : null}
                       {tx("settings.ollamaSetup.useModel", "Use")}
                     </Button>
@@ -457,7 +457,7 @@ export function OllamaSetupPanel({
                 onClick={() => void runAction("pull", { model: customModel.trim() })}
               >
                 {busy === "pull" && activeModel === customModel.trim() ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : null}
                 {busy === "pull" && activeModel === customModel.trim()
                   ? tx("settings.ollamaSetup.pulling", "Pulling...")
@@ -477,7 +477,7 @@ export function OllamaSetupPanel({
                 }
               >
                 {busy === "configure" && activeModel === customModel.trim() ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : null}
                 {tx("settings.ollamaSetup.useModel", "Use")}
               </Button>
@@ -497,9 +497,9 @@ export function OllamaSetupPanel({
             onClick={() => void runAction("configure", { makeActive: false })}
           >
             {busy === "configure" && !activeModel ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <Check className="me-1.5 h-3.5 w-3.5" aria-hidden />
             )}
             {status.configured
               ? tx("settings.ollamaSetup.reconfigure", "Refresh Navin config")

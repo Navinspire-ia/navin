@@ -10,9 +10,12 @@ never reserve them at the OS level; we only report their status.
 
 from __future__ import annotations
 
+import os
 import re
 import socket
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -133,6 +136,62 @@ def port_in_use(host: str, port: int, *, timeout_s: float = 0.25) -> bool:
     return False
 
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "::1")
+_LISTENING_CACHE: list[tuple[float, frozenset[int]]] = []
+
+
+def _windows_listening_ports() -> frozenset[int] | None:
+    """Ports with a TCP listener, from the Windows connection table (psutil).
+
+    A refused loopback connect costs the whole timeout on Windows (it retries
+    the SYN after the reset), so probing closed ports one by one is slow
+    there. None on other systems or when the table cannot be read.
+    """
+    if os.name != "nt":
+        return None
+    now = time.monotonic()
+    if _LISTENING_CACHE and now - _LISTENING_CACHE[0][0] < 0.5:
+        return _LISTENING_CACHE[0][1]
+    try:
+        import psutil
+
+        ports = frozenset(
+            conn.laddr.port
+            for conn in psutil.net_connections(kind="tcp")
+            if conn.status == psutil.CONN_LISTEN and conn.laddr
+        )
+    except Exception:
+        return None
+    _LISTENING_CACHE[:] = [(now, ports)]
+    return ports
+
+
+def loopback_host(port: int, *, timeout_s: float = 0.25) -> str | None:
+    """The loopback address a local server on ``port`` answers on: 127.0.0.1, else ::1.
+
+    Node resolves ``localhost`` to ::1 first on Windows and recent macOS, so a
+    Vite / Astro / Next dev server started with its defaults listens on IPv6
+    only. Probing 127.0.0.1 alone missed it: Preview found nothing, a start
+    waited 75 s for a server that was up, and a port free on IPv4 was given
+    to a second app that then shadowed the first one for ``localhost``.
+    """
+    if port <= 0 or port > 65535:
+        return None
+    listening = _windows_listening_ports()
+    if listening is not None and port not in listening:
+        return None
+    for host in _LOOPBACK_HOSTS:
+        if port_in_use(host, port, timeout_s=timeout_s):
+            return host
+    return None
+
+
+def loopback_url(port: int, host: str | None = None) -> str:
+    """``http://`` URL of the local server on ``port`` (IPv4 when nothing answers yet)."""
+    host = host or loopback_host(port) or "127.0.0.1"
+    return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+
+
 def who_listens(port: int) -> ListenerInfo | None:
     """Best-effort PID/cmdline for whatever listens on ``port`` (IPv4/IPv6)."""
     if port <= 0 or port > 65535:
@@ -140,7 +199,12 @@ def who_listens(port: int) -> ListenerInfo | None:
     info = _who_via_ss(port)
     if info is not None:
         return info
-    return _who_via_lsof(port)
+    info = _who_via_lsof(port)
+    if info is not None:
+        return info
+    # Windows has neither ss nor lsof, nor do slim Linux images; macOS without
+    # root gets nothing here (psutil needs it there) and keeps lsof.
+    return _who_via_psutil(port)
 
 
 def resolve_from_config(config: Any | None = None) -> list[ResolvedPort]:
@@ -399,19 +463,54 @@ def _who_via_lsof(port: int) -> ListenerInfo | None:
     return ListenerInfo(pid=pid, cmdline=cmdline or parts[0], source="lsof", cwd=_cwd_for_pid(pid))
 
 
+def _who_via_psutil(port: int) -> ListenerInfo | None:
+    """The OS connection table through psutil, when ss / lsof are missing."""
+    try:
+        import psutil
+
+        conns = psutil.net_connections(kind="tcp")
+    except Exception:
+        return None
+    for conn in conns:
+        if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port:
+            pid = conn.pid
+            return ListenerInfo(pid=pid, cmdline=_cmdline_for_pid(pid), source="psutil", cwd=_cwd_for_pid(pid))
+    return None
+
+
 def _cwd_for_pid(pid: int | None) -> str | None:
-    """Best-effort working directory of a process (Linux /proc, else None)."""
+    """Working directory of a process, or None when it cannot be read.
+
+    Linux reads /proc; macOS and Windows ask psutil. ``Path("/proc/...").resolve()``
+    used to run everywhere: where /proc does not exist (macOS) it returns the
+    missing path unchanged, and that fake folder made every project's own dev
+    server look like another project's.
+    """
     if pid is None or pid <= 0:
         return None
+    if sys.platform.startswith("linux"):
+        try:
+            return os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            return None
     try:
-        return str(Path(f"/proc/{pid}/cwd").resolve())
-    except OSError:
+        import psutil
+
+        return psutil.Process(pid).cwd() or None
+    except Exception:
         return None
 
 
 def _cmdline_for_pid(pid: int | None) -> str | None:
     if pid is None or pid <= 0:
         return None
+    if not sys.platform.startswith("linux"):
+        try:
+            import psutil
+
+            return " ".join(psutil.Process(pid).cmdline()) or None
+        except Exception:
+            return None
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_text(encoding="utf-8", errors="replace")
     except OSError:

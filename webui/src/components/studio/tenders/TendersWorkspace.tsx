@@ -271,11 +271,11 @@ export function TendersWorkspace({
       <div
         className={cn(
           "flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background",
-          chatOpen ? "pr-0" : "",
+          chatOpen ? "pe-0" : "",
         )}
         data-desk-scroll-host
         style={{
-          paddingRight: NOTIFICATION_GUTTER,
+          paddingInlineEnd: NOTIFICATION_GUTTER,
           WebkitFontSmoothing: "antialiased",
         }}
       >
@@ -369,7 +369,7 @@ export function TendersWorkspace({
               </>
             ) : null}
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ms-auto flex shrink-0 items-center gap-2">
             <IconButton ariaLabel={tx("resetDesk", "Recommencer à zéro")} title={tx("resetDesk", "Recommencer à zéro")}
               iconProps={{ iconName: "Archive" }} disabled={Boolean(busy)} styles={ICON_BUTTON_STYLES}
               onClick={() => { setError(""); setResetOpen(true); }} />

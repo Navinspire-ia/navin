@@ -124,3 +124,15 @@ class TaskRouteWireTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["event"], "turn_end")
         self.assertEqual(body["model_name"], "moonshotai/kimi-k2.5")
         self.assertEqual(body["task_role"], "review")
+
+
+class GoalStatusBroadcastTests(unittest.IsolatedAsyncioTestCase):
+    async def test_goal_status_reaches_clients_not_attached_to_the_chat(self) -> None:
+        channel, sent = _ws_channel()
+        channel._conn_chats = {"conn-a": {"chat-1"}, "conn-b": {"chat-2"}}  # type: ignore[attr-defined]
+        await channel.send_goal_status("chat-1", "running", started_at=12.0)
+        self.assertEqual(len(sent), 2)
+        body = json.loads(sent[0])
+        self.assertEqual(body["event"], "goal_status")
+        self.assertEqual(body["chat_id"], "chat-1")
+        self.assertEqual(body["started_at"], 12.0)

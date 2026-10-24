@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, CircleDot, Loader2, X } from "lucide-react";
+import { Check, CircleCheck, CircleDot, ListChecks, Loader2, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 
@@ -15,7 +15,6 @@ import { ACTIVITY_DETAIL_PAGE_SIZE, ActivityPagination } from "./activity/Activi
 
 import { preloadMarkdownText } from "@/components/MarkdownText";
 import {
-  fetchBoard,
   updateBoard,
   type SessionPlan,
   type SessionPlanItem,
@@ -23,6 +22,9 @@ import {
 } from "@/lib/api";
 import { requestOpenSessionPlan } from "@/lib/workbench-events";
 import { cn } from "@/lib/utils";
+import { fetchBoardShared } from "@/lib/board-fetch";
+import { setVisibleInterval } from "@/lib/visible-interval";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 /** Safety net for the case where a board_updated broadcast is missed. */
@@ -146,6 +148,9 @@ export function ThreadPlanPanel({
   onStop?: () => void;
 }) {
   const { client, token } = useClient();
+  // Read at call time: a rotation used to blank the plan and reload it.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const tx = useCallback((key: string, fallback: string) => t(key, { defaultValue: fallback }), [t]);
@@ -162,15 +167,15 @@ export function ThreadPlanPanel({
   const gapsCardId = `${panelId}-gaps`;
 
   const load = useCallback(async () => {
-    if (!token || !sessionKey) return;
+    if (!hasToken || !sessionKey) return;
     const request = ++requestId.current;
     try {
-      const board = await fetchBoard(token, sessionKey);
+      const board = await fetchBoardShared(tokenRef.current, sessionKey);
       if (request === requestId.current) setPlan(board.session_plan ?? null);
     } catch {
       // Keep the last known plan when a background refresh fails.
     }
-  }, [token, sessionKey]);
+  }, [hasToken, sessionKey, tokenRef]);
 
   useEffect(() => {
     setPlan(null);
@@ -183,8 +188,8 @@ export function ThreadPlanPanel({
 
   useEffect(() => {
     const unsubscribe = client.onBoardUpdate(() => void load());
-    const interval = window.setInterval(() => void load(), POLL_MS);
-    return () => { unsubscribe(); window.clearInterval(interval); };
+    const stopPolling = setVisibleInterval(() => void load(), POLL_MS);
+    return () => { unsubscribe(); stopPolling(); };
   }, [client, load]);
 
   const qualitySignature = plan?.quality
@@ -230,18 +235,31 @@ export function ThreadPlanPanel({
 
   return (
     <div ref={target} className="host-no-drag shrink-0" data-testid="thread-plan-panel">
-      <DefaultButton
+      {/* Same reading as the journal sections: state icon, title, count in the margin. */}
+      <button
+        type="button"
         data-testid="thread-plan-toggle"
-        text={`${tx("thread.plan.created", "Plan")} ${plan.done_count}/${plan.total_count}`}
-        iconProps={{ iconName: plan.complete ? "CheckMark" : "BulletedList" }}
         title={title}
         aria-expanded={expanded}
         aria-controls={expanded ? panelId : undefined}
         aria-haspopup="dialog"
         onClick={() => setExpanded((open) => !open)}
-        styles={COMMAND_STYLES}
-        className="tabular-nums"
-      />
+        className={cn(
+          "inline-flex h-9 items-center gap-2 rounded-md px-2 text-[14px] font-semibold text-foreground/90",
+          "transition-colors hover:bg-foreground/[0.04]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        )}
+      >
+        {plan.complete ? (
+          <CircleCheck aria-hidden className="h-[18px] w-[18px] text-[hsl(var(--tone-edit))]" strokeWidth={2} />
+        ) : (
+          <ListChecks aria-hidden className="h-[18px] w-[18px] text-muted-foreground" strokeWidth={2} />
+        )}
+        <span>{tx("thread.plan.created", "Plan")}</span>
+        <span className="text-[13.5px] font-normal tabular-nums text-muted-foreground">
+          {plan.done_count}/{plan.total_count}
+        </span>
+      </button>
       {expanded ? (
         <Callout
           target={target.current}
@@ -392,7 +410,7 @@ function PlanRow({
         <span className={cn("flex min-w-0 items-start gap-1 break-words", PLAN_ROW_TONE_CLASS[tone])}>
           <span className="min-w-0 flex-1">{item.title}</span>
           {cancelled ? (
-            <span className="ml-1 shrink-0 text-[10.5px] font-medium text-muted-foreground/60">
+            <span className="ms-1 shrink-0 text-[10.5px] font-medium text-muted-foreground/60">
               {cancelledLabel}
             </span>
           ) : null}

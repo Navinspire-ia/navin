@@ -500,11 +500,26 @@ def _sevenzip_entries(path: Path) -> list[tuple[str, bytes]] | str:
             }
             if not wanted:
                 return []
-            extracted = archive.read(targets=set(wanted))
-            return [
-                (name, payload.read())
-                for name, payload in sorted(extracted.items())
-            ]
+            if hasattr(archive, "read"):
+                extracted = archive.read(targets=set(wanted))
+                return [
+                    (name, payload.read())
+                    for name, payload in sorted(extracted.items())
+                ]
+            # py7zr 1.0 removed read(): extract the wanted members to a
+            # private folder and read them back, never outside that folder.
+            import tempfile
+
+            with tempfile.TemporaryDirectory(prefix="navin-7z-") as tmp:
+                root = Path(tmp).resolve()
+                archive.extract(path=root, targets=sorted(wanted))
+                entries: list[tuple[str, bytes]] = []
+                for name in sorted(wanted):
+                    target = (root / name).resolve()
+                    if root not in target.parents or not target.is_file():
+                        continue
+                    entries.append((name, target.read_bytes()))
+                return entries
     except Exception as e:
         logger.exception("Failed to read 7z archive {}", path)
         return f"[error: failed to read archive: {e!s}]"

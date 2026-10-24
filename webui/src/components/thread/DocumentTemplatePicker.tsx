@@ -259,7 +259,7 @@ export function DocumentTemplatePicker({
           </div>
           {/* Header + tabs stay pinned; only the grid scrolls inside the
               viewport-clamped panel so categories remain clickable. */}
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-track-transparent">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pe-1 scrollbar-thin scrollbar-track-transparent">
           <div className="grid auto-rows-min grid-cols-2 items-start gap-2">
             {activeTemplates.map((template) => {
               const isSelected =
@@ -280,7 +280,7 @@ export function DocumentTemplatePicker({
                       onSelect(isSelected ? null : template);
                       setOpen(false);
                     }}
-                    className="block w-full text-left"
+                    className="block w-full text-start"
                     title={template.description || template.title}
                     data-testid={`document-template-option-${template.category}-${template.name}`}
                   >
@@ -315,7 +315,7 @@ export function DocumentTemplatePicker({
                     </div>
                   </button>
                   {isSelected ? (
-                    <span className="pointer-events-none absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-primary-foreground shadow">
+                    <span className="pointer-events-none absolute end-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-primary-foreground shadow">
                       <Check className="h-3 w-3" strokeWidth={3} aria-hidden />
                     </span>
                   ) : null}
@@ -332,7 +332,7 @@ export function DocumentTemplatePicker({
                       defaultValue: "Preview all slides",
                     })}
                     className={cn(
-                      "absolute left-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full",
+                      "absolute start-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full",
                       "bg-black/55 text-white opacity-0 shadow backdrop-blur-sm transition-opacity",
                       "hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100",
                     )}
@@ -375,7 +375,7 @@ export function DocumentTemplateChip({
   const Icon = CATEGORY_ICONS[template.category] ?? LayoutTemplate;
   return (
     <div
-      className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 py-1.5 pl-1.5 pr-2"
+      className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 py-1.5 ps-1.5 pe-2"
       data-testid="document-template-chip"
     >
       {template.preview_url ? (
@@ -402,7 +402,7 @@ export function DocumentTemplateChip({
         type="button"
         onClick={onRemove}
         aria-label={t("thread.composer.remove", { defaultValue: "Remove" })}
-        className="ml-1 grid h-5 w-5 shrink-0 place-items-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+        className="ms-1 grid h-5 w-5 shrink-0 place-items-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
       >
         <X className="h-3.5 w-3.5" aria-hidden />
       </button>

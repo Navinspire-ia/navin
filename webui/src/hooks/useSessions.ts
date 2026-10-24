@@ -25,8 +25,69 @@ import type {
 
 const EMPTY_MESSAGES: UIMessage[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 160;
+/** Waits between retries of a conversation load (slow or restarting engine). */
+export const THREAD_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
+
+/**
+ * Load a conversation, retrying while the engine is slow or restarting.
+ * A 404 or 4xx is final; timeouts, network errors and 5xx are retried.
+ */
+export async function fetchThreadWithRetry<T>(
+  load: () => Promise<T>,
+  isCancelled: () => boolean = () => false,
+  delays: readonly number[] = THREAD_RETRY_DELAYS_MS,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await load();
+    } catch (error) {
+      const status = error instanceof ApiError ? error.status : 0;
+      const transient = status === 0 || status >= 500 || status === 408 || status === 429;
+      if (!transient || attempt >= delays.length || isCancelled()) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      if (isCancelled()) throw error;
+    }
+  }
+}
 const OLDER_HISTORY_PAGE_LIMIT = 120;
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
+const HISTORY_CACHE_MAX = 20;
+
+interface CachedHistory {
+  messages: UIMessage[];
+  hasPendingToolCalls: boolean;
+  forkBoundaryMessageCount: number | null;
+  beforeCursor: string | null;
+  hasMoreBefore: boolean;
+  userMessageOffset: number;
+}
+
+/** Bounded LRU of the last loaded transcript per chat, so switching back renders instantly. */
+const historyCache = new Map<string, CachedHistory>();
+
+function readHistoryCache(key: string): CachedHistory | undefined {
+  const hit = historyCache.get(key);
+  if (hit) {
+    historyCache.delete(key);
+    historyCache.set(key, hit);
+  }
+  return hit;
+}
+
+function writeHistoryCache(key: string, entry: CachedHistory): void {
+  historyCache.delete(key);
+  historyCache.set(key, entry);
+  while (historyCache.size > HISTORY_CACHE_MAX) {
+    const oldest = historyCache.keys().next().value;
+    if (oldest === undefined) break;
+    historyCache.delete(oldest);
+  }
+}
+
+/** Test helper: drop every cached transcript. */
+export function clearSessionHistoryCache(): void {
+  historyCache.clear();
+}
 
 function persistedMessagesToUi(messages: UIMessage[]): UIMessage[] {
   return messages.map((m, idx) => ({
@@ -306,11 +367,22 @@ export function useSessionHistory(key: string | null): {
       return;
     }
     let cancelled = false;
+    const cached = readHistoryCache(key);
     // Mark the new key as loading immediately so callers never see stale
     // messages from the previous session during the render right after a switch.
+    // A cached transcript renders at once; the fetch below refreshes it.
     setState((prev) => prev.key === key
       ? { ...prev, loading: true, loadingOlder: false, error: null }
-      : {
+      : cached
+        ? {
+            key,
+            ...cached,
+            loading: false,
+            loadingOlder: false,
+            error: null,
+            version: 1,
+          }
+        : {
           key,
           messages: [],
           loading: true,
@@ -325,10 +397,13 @@ export function useSessionHistory(key: string | null): {
         });
     (async () => {
       try {
-        const body = await fetchWebuiThread(token, key, {
-          limit: INITIAL_HISTORY_PAGE_LIMIT,
-          direction: "latest",
-        });
+        const body = await fetchThreadWithRetry(
+          () => fetchWebuiThread(token, key, {
+            limit: INITIAL_HISTORY_PAGE_LIMIT,
+            direction: "latest",
+          }),
+          () => cancelled,
+        );
         if (cancelled) return;
         if (!body?.messages?.length) {
           setState((prev) => ({
@@ -381,7 +456,11 @@ export function useSessionHistory(key: string | null): {
             version: prev.key === key ? prev.version + 1 : 1,
           }));
         } else {
-          setState((prev) => ({
+          // Keep what is already on screen (cache or previous load): a slow
+          // or restarting engine must not blank the conversation.
+          setState((prev) => prev.key === key && prev.messages.length > 0
+            ? { ...prev, loading: false, loadingOlder: false }
+            : {
             key,
             messages: [],
             loading: false,
@@ -393,7 +472,7 @@ export function useSessionHistory(key: string | null): {
             hasMoreBefore: false,
             userMessageOffset: 0,
             version: prev.key === key ? prev.version : 0,
-          }));
+          });
         }
       }
     })();
@@ -401,6 +480,18 @@ export function useSessionHistory(key: string | null): {
       cancelled = true;
     };
   }, [key, token, refreshSeq]);
+
+  useEffect(() => {
+    if (!state.key || state.loading || state.error) return;
+    writeHistoryCache(state.key, {
+      messages: state.messages,
+      hasPendingToolCalls: state.hasPendingToolCalls,
+      forkBoundaryMessageCount: state.forkBoundaryMessageCount,
+      beforeCursor: state.beforeCursor,
+      hasMoreBefore: state.hasMoreBefore,
+      userMessageOffset: state.userMessageOffset,
+    });
+  }, [state]);
 
   const loadOlder = useCallback(async () => {
     if (!key || loadingOlderRef.current) return;
@@ -482,6 +573,22 @@ export function useSessionHistory(key: string | null): {
   // Even before the effect above commits its loading state, never surface the
   // previous session's payload for a brand-new key.
   if (state.key !== key) {
+    const cachedNow = historyCache.get(key);
+    if (cachedNow) {
+      return {
+        messages: cachedNow.messages,
+        loading: false,
+        loadingOlder: false,
+        error: null,
+        refresh,
+        loadOlder,
+        hasMoreBefore: cachedNow.hasMoreBefore,
+        userMessageOffset: cachedNow.userMessageOffset,
+        version: 1,
+        forkBoundaryMessageCount: cachedNow.forkBoundaryMessageCount,
+        hasPendingToolCalls: cachedNow.hasPendingToolCalls,
+      };
+    }
     return {
       messages: EMPTY_MESSAGES,
       loading: true,

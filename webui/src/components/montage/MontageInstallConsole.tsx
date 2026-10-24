@@ -164,7 +164,7 @@ export function MontageInstallConsole({
         <div className="min-w-0 flex-1 truncate text-[12px] font-medium">
           {label}
           {headerCommand ? (
-            <span className="ml-2 font-normal text-white/55">{headerCommand}</span>
+            <span className="ms-2 font-normal text-white/55">{headerCommand}</span>
           ) : null}
         </div>
         {busy ? (
@@ -219,7 +219,7 @@ export function MontageInstallConsole({
             <Suspense
               fallback={
                 <div className="flex h-full items-center justify-center text-[12px] text-white/50">
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" aria-hidden />
                   {t("montage.console.loading", { defaultValue: "Opening console…" })}
                 </div>
               }

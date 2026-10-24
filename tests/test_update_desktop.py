@@ -165,7 +165,7 @@ class InstallScriptTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
-    def _run(self, target: Path, artifact: Path) -> subprocess.CompletedProcess:
+    def _run(self, target: Path, artifact: Path, env: dict | None = None) -> subprocess.CompletedProcess:
         # A live pid would make the script wait for it, so it is handed one that
         # has already gone: the wait then falls straight through to the swap.
         finished = subprocess.Popen(["/bin/true"])
@@ -185,7 +185,28 @@ class InstallScriptTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=90,
+            env={**os.environ, **(env or {})},
         )
+
+    def test_the_new_version_opens_without_the_in_progress_marker_and_knows_it_was_updated(self):
+        # While the marker exists, a Navin opened by hand waits instead of
+        # starting an engine whose files are being swapped (desktop main.rs).
+        marker, done = self.tmp / "in-progress", self.tmp / "just-updated"
+        marker.write_text("123\n")
+        target = self.tmp / "app"
+        seen = self.tmp / "seen"
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+        artifact = self.tmp / "new"
+        # The new version records whether the marker was still there when it started.
+        artifact.write_text(f"#!/bin/sh\n[ -e {marker} ] && echo stale > {seen} || echo clear > {seen}\nsleep 40\n")
+        artifact.chmod(0o755)
+
+        result = self._run(target, artifact, {"NAVIN_UPDATE_MARKER": str(marker), "NAVIN_UPDATE_DONE": str(done)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(seen.read_text().strip(), "clear")
+        self.assertFalse(marker.exists())
+        self.assertEqual(done.read_text(), "done")
 
     def test_the_new_file_takes_the_place_of_the_old_one(self):
         target = self.tmp / "app"

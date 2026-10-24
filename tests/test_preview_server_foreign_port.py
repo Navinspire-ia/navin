@@ -61,7 +61,7 @@ class DiscoverForeignPortTest(unittest.TestCase):
             ws = Path(tmp)
             with (
                 mock.patch.object(ps, "_PROBE_PORTS", [3000]),
-                mock.patch.object(ps, "port_in_use", return_value=True),
+                mock.patch.object(ps, "loopback_host", return_value="127.0.0.1"),
                 mock.patch.object(ps, "_looks_like_navin_port", return_value=False),
                 mock.patch.object(ps, "who_listens", return_value=_listener("/other/lynara")),
                 mock.patch.object(ps, "http_reachable", return_value=True),
@@ -73,7 +73,7 @@ class DiscoverForeignPortTest(unittest.TestCase):
             ws = Path(tmp)
             with (
                 mock.patch.object(ps, "_PROBE_PORTS", [3000]),
-                mock.patch.object(ps, "port_in_use", return_value=True),
+                mock.patch.object(ps, "loopback_host", return_value="127.0.0.1"),
                 mock.patch.object(ps, "_looks_like_navin_port", return_value=False),
                 mock.patch.object(ps, "who_listens", return_value=_listener(str(ws))),
                 mock.patch.object(ps, "http_reachable", return_value=True),
@@ -86,7 +86,7 @@ class DiscoverForeignPortTest(unittest.TestCase):
     def test_discovery_without_workspace_adopts_any_server(self) -> None:
         with (
             mock.patch.object(ps, "_PROBE_PORTS", [3000]),
-            mock.patch.object(ps, "port_in_use", return_value=True),
+            mock.patch.object(ps, "loopback_host", return_value="127.0.0.1"),
             mock.patch.object(ps, "_looks_like_navin_port", return_value=False),
             mock.patch.object(ps, "who_listens", return_value=_listener("/anywhere")),
             mock.patch.object(ps, "http_reachable", return_value=True),
@@ -103,6 +103,7 @@ class EnsurePreviewForeignPortTest(unittest.IsolatedAsyncioTestCase):
     class _FakeServer:
         def __init__(self) -> None:
             self.url = None
+            self.port = None
             self.command = "npm run dev"
             self.cwd = "/ws"
 
@@ -114,7 +115,7 @@ class EnsurePreviewForeignPortTest(unittest.IsolatedAsyncioTestCase):
 
         async def _start(serv, owner_session_key=None):
             serv.url = "http://127.0.0.1:3001"
-            return None, None
+            return None, None, serv
 
         async def _wait(url: str, timeout_s: float) -> bool:
             return url == "http://127.0.0.1:3001"

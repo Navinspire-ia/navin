@@ -910,7 +910,7 @@ class TendersAgentWiringTest(unittest.TestCase):
         self.assertIn("tauri://localhost/#/tenders?notice=abc", tauri)
         self.assertIn("official_tender_portals_leave_the_ide", tauri)
         self.assertIn("every_catalog_url_leaves_the_ide", tauri)
-        self.assertIn(".on_navigation({", tauri)
+        self.assertIn(".on_navigation(move |url| {", tauri)
         self.assertIn(".on_new_window(move |url, _features|", tauri)
         self.assertIn("open_external_in_os_browser", tauri)
         self.assertIn("apply_in_app_navigation", tauri)
@@ -1823,6 +1823,7 @@ class TendersModelRoutingTest(unittest.TestCase):
         models = {"frontier": "qwen/qwen3.8-max", "economy": "deepseek/deepseek-v4-flash"}
         config = SimpleNamespace(
             model_routes={"deep": "frontier", "docs": "economy"},
+            model_routing_enabled=True,
             resolve_preset=lambda name: SimpleNamespace(model=models[name]),
         )
         with patch("navin.config.loader.load_config", return_value=config):

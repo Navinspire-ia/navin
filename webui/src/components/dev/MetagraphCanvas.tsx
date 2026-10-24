@@ -425,7 +425,7 @@ export function MetagraphCanvas({
         })}
       </svg>
 
-      <div className="absolute right-2 top-2 flex flex-col gap-1">
+      <div className="absolute end-2 top-2 flex flex-col gap-1">
         {[
           { icon: Plus, label: zoomInLabel, run: () => zoomBy(1.3) },
           { icon: Minus, label: zoomOutLabel, run: () => zoomBy(1 / 1.3) },

@@ -66,6 +66,14 @@ def git_route(root: Path | str, *, platform: str | None = None) -> GitRoute | No
             )
 
     git = shutil.which("git")
+    if git is None and system == "win32":
+        # Git for Windows installed after Navin started (by hand or by the
+        # background winget install) is in Program Files\Git\cmd, which the
+        # PATH handed over by Explorer does not contain yet.
+        from navin.utils.path_env import augment_path_for_user_tools
+
+        augment_path_for_user_tools()
+        git = shutil.which("git")
     if git is None:
         return None
     return GitRoute(argv=(git, "-C", root_str), root=root_str)

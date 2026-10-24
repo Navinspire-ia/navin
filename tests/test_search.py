@@ -234,6 +234,29 @@ class _GrepFixture(unittest.TestCase):
         kwargs.setdefault("pattern", "rate_limit")
         return _run(self.tool.execute(**kwargs))
 
+    def _grep_fresh(self, **kwargs) -> str:
+        """Search as a new session would, without the repeated-search note."""
+        self.tool._file_states.clear()
+        return self._grep(**kwargs)
+
+
+class GrepRepeatTest(_GrepFixture):
+    def test_the_same_search_with_the_same_result_says_so(self) -> None:
+        first = self._grep(output_mode="content")
+        self.assertNotIn("Same search as an earlier call", first)
+        again = self._grep(output_mode="content")
+        self.assertIn("Same search as an earlier call in this session, same result", again)
+        self.assertIn("app/limiter.py", again)
+
+    def test_a_changed_result_or_another_search_gets_no_note(self) -> None:
+        self._grep()
+        _write(self.root, "app/extra.py", "rate_limit = 3\n")
+        self.assertNotIn("Same search", self._grep())
+        self.assertNotIn("Same search", self._grep(glob="*.py"))
+        self.assertNotIn("Same search", self._grep(pattern="no_such_symbol_xyz"))
+        # A repeated empty search is the loop this note is for.
+        self.assertIn("Same search", self._grep(pattern="no_such_symbol_xyz"))
+
 
 class GrepRankingTest(_GrepFixture):
     def test_definition_file_is_listed_first(self) -> None:
@@ -331,6 +354,22 @@ class GrepBehaviourTest(_GrepFixture):
     def test_no_match_is_reported_plainly(self) -> None:
         self.assertIn("No matches found", self._grep(pattern="zzz_absent_zzz"))
 
+    def test_no_match_names_the_next_step(self) -> None:
+        out = self._grep(pattern="zzz_absent_zzz", glob="*.py")
+        self.assertIn("next step:", out)
+        self.assertIn("case_insensitive=true", out)
+        self.assertIn("drop glob/type", out)
+
+    def test_no_match_in_one_file_says_case_insensitive_would_hit(self) -> None:
+        out = self._grep(pattern="RATE_LIMIT", path="app/limiter.py", output_mode="content")
+        self.assertIn("No matches found", out)
+        self.assertIn("it DOES match with case_insensitive=true", out)
+        self.assertIn("widen path to the parent directory", out)
+
+    def test_no_match_flags_regex_metacharacters(self) -> None:
+        out = self._grep(pattern="rate_limit(None, x)")
+        self.assertIn("fixed_strings=true", out)
+
     def test_head_limit_paginates_and_says_so(self) -> None:
         out = self._grep(head_limit=1)
         self.assertEqual(out.splitlines()[0], "app/limiter.py")
@@ -359,7 +398,7 @@ class BackendParityTest(_GrepFixture):
         with mock.patch.object(search_mod, "_native_module", return_value=None):
             with_rg = self._grep(**kwargs)
             with mock.patch.object(search_mod, "_rg_binary", return_value=None):
-                without_rg = self._grep(**kwargs)
+                without_rg = self._grep_fresh(**kwargs)
         return with_rg, without_rg
 
     @unittest.skipUnless(_HAS_RG, "ripgrep not installed")
@@ -385,12 +424,12 @@ class BackendParityTest(_GrepFixture):
     def test_native_agrees_with_the_python_fallback(self) -> None:
         for mode in ("files_with_matches", "content", "count"):
             with self.subTest(mode=mode):
-                native = self._grep(output_mode=mode)
+                native = self._grep_fresh(output_mode=mode)
                 with (
                     mock.patch.object(search_mod, "_native_module", return_value=None),
                     mock.patch.object(search_mod, "_rg_binary", return_value=None),
                 ):
-                    pure = self._grep(output_mode=mode)
+                    pure = self._grep_fresh(output_mode=mode)
                 self.assertEqual(native, pure)
 
     @unittest.skipUnless(_HAS_NATIVE, "navin_core not installed")
@@ -453,7 +492,7 @@ class MultilineTest(_GrepFixture):
         with mock.patch.object(search_mod, "_native_module", return_value=None):
             with_rg = self._grep(pattern=self._PATTERN, output_mode="content", multiline=True)
             with mock.patch.object(search_mod, "_rg_binary", return_value=None):
-                pure = self._grep(pattern=self._PATTERN, output_mode="content", multiline=True)
+                pure = self._grep_fresh(pattern=self._PATTERN, output_mode="content", multiline=True)
         self.assertEqual(with_rg, pure)
 
     def test_context_after_shows_the_rest_of_the_match(self) -> None:
@@ -523,6 +562,143 @@ class FallbackGitignoreTest(unittest.TestCase):
         with mock.patch.object(search_mod, "_rg_binary", return_value=None):
             out = _run(self.tool.execute(pattern="token", include_ignored=True))
         self.assertIn("secret_build/app.ts", out)
+
+
+class FallbackBudgetTest(unittest.TestCase):
+    """Without a fast backend the Python scan answers in bounded time.
+
+    On the Windows desktop (no native module, no ripgrep, a WSL project read
+    through the 9P bridge) one grep call ran for ten minutes. It now stops at
+    the budget and says the answer is partial instead of "No matches".
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        _write(self.root, "src/app.ts", "export const token = 1;\n")
+        self.tool = GrepTool(workspace=self.root)
+        for name in ("_native_module", "_rg_binary"):
+            patcher = mock.patch.object(search_mod, name, return_value=None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_an_exhausted_budget_reports_a_partial_search(self) -> None:
+        with mock.patch.object(search_mod, "_FALLBACK_BUDGET_S", 0.0):
+            out = _run(self.tool.execute(patterns=["token", "const"]))
+        self.assertEqual(out.count("(partial: the search stopped"), 2)
+        self.assertNotIn("src/app.ts", out)
+
+    def test_within_budget_the_answer_is_complete_and_unflagged(self) -> None:
+        out = _run(self.tool.execute(pattern="token"))
+        self.assertIn("src/app.ts", out)
+        self.assertNotIn("partial", out)
+
+
+class WslRipgrepTest(unittest.TestCase):
+    """A WSL project seen from Windows is searched by the distribution's rg."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.linux_root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        _write(self.linux_root, "backend/ocr.py", "DUPLICATE_INVOICE = 1\n")
+        self.unc = Path("\\\\wsl.localhost\\Ubuntu" + str(self.linux_root).replace("/", "\\"))
+        from navin.utils import wsl
+
+        for name, value in (("wsl_executable", "wsl.exe"), ("resolve_distro", "Ubuntu")):
+            patcher = mock.patch.object(wsl, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _scan(self, **kwargs):
+        return search_mod._wsl_rg_scan(
+            self.unc, "DUPLICATE_INVOICE", fixed_strings=False, case_insensitive=False,
+            include_ignored=False, max_file_bytes=2_000_000, platform="win32", **kwargs,
+        )
+
+    def test_argv_runs_rg_inside_the_distribution_on_its_linux_path(self) -> None:
+        done = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+        with mock.patch.object(search_mod.subprocess, "run", return_value=done) as run:
+            self.assertEqual(self._scan(), {})
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["wsl.exe", "-d", "Ubuntu", "--exec"])
+        self.assertEqual(argv[4:6], ["sh", "-c"])
+        self.assertEqual(argv[-3:], ["--", "DUPLICATE_INVOICE", str(self.linux_root)])
+
+    def test_missing_rg_in_the_distribution_falls_through(self) -> None:
+        done = subprocess.CompletedProcess([], 127, stdout="", stderr="")
+        with mock.patch.object(search_mod.subprocess, "run", return_value=done):
+            self.assertIsNone(self._scan())
+
+    def test_not_windows_or_not_wsl_is_left_to_the_other_backends(self) -> None:
+        self.assertIsNone(search_mod._wsl_rg_scan(
+            self.unc, "x", fixed_strings=False, case_insensitive=False,
+            include_ignored=False, max_file_bytes=1, platform="linux",
+        ))
+        self.assertIsNone(search_mod._wsl_rg_scan(
+            Path("C:\\work\\app"), "x", fixed_strings=False, case_insensitive=False,
+            include_ignored=False, max_file_bytes=1, platform="win32",
+        ))
+
+    @unittest.skipUnless(_HAS_RG, "ripgrep not installed")
+    def test_hits_come_back_under_the_windows_spelling(self) -> None:
+        # The real script and ripgrep, with wsl.exe itself left out.
+        with mock.patch("navin.utils.wsl.command_prefix", return_value=[]):
+            hits = self._scan()
+        expected = str(self.unc / "backend" / "ocr.py")
+        self.assertEqual(hits, {expected: [(1, "DUPLICATE_INVOICE = 1")]})
+
+    def test_it_runs_before_the_native_module(self) -> None:
+        tool = GrepTool(workspace=self.linux_root)
+        found = {str(self.linux_root / "backend/ocr.py"): [(1, "DUPLICATE_INVOICE = 1")]}
+        with (
+            mock.patch.object(search_mod, "_wsl_rg_scan", return_value=found),
+            mock.patch.object(search_mod, "_native_scan") as native,
+        ):
+            out = _run(tool.execute(pattern="DUPLICATE_INVOICE"))
+        native.assert_not_called()
+        self.assertIn("backend/ocr.py", out)
+
+    def test_ranking_mtimes_come_from_one_stat_inside_the_distribution(self) -> None:
+        # One 9P stat per matched file cost ten seconds on a common word.
+        hit = str(self.unc / "backend" / "ocr.py")
+        linux = f"{self.linux_root}/backend/ocr.py"
+        done = subprocess.CompletedProcess([], 0, stdout=f"1700000000 {linux}\0".encode(), stderr=b"")
+        with mock.patch.object(search_mod.subprocess, "run", return_value=done) as run:
+            mtimes = search_mod._wsl_mtimes(self.unc, [hit], platform="win32")
+        self.assertEqual(mtimes, {hit: 1700000000.0})
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["wsl.exe", "-d", "Ubuntu", "--exec"])
+        self.assertIn("stat", argv)
+        self.assertEqual(run.call_args.kwargs["input"], linux.encode() + b"\0")
+        self.assertIsNone(search_mod._wsl_mtimes(self.unc, [hit], platform="linux"))
+
+    def test_find_files_lists_inside_the_distribution(self) -> None:
+        done = subprocess.CompletedProcess([], 0, stdout=f"{self.linux_root}/backend/ocr.py\0", stderr="")
+        with mock.patch.object(search_mod.subprocess, "run", return_value=done) as run:
+            rows = search_mod._wsl_rg_files(self.unc, include_ignored=False, platform="win32")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["wsl.exe", "-d", "Ubuntu", "--exec"])
+        self.assertIn("--files", argv)
+        self.assertEqual(argv[-2:], ["--", str(self.linux_root)])
+        self.assertEqual(rows, [str(self.unc / "backend" / "ocr.py")])
+        with mock.patch.object(search_mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 127, "", "")):
+            self.assertIsNone(search_mod._wsl_rg_files(self.unc, include_ignored=False, platform="win32"))
+        self.assertIsNone(search_mod._wsl_rg_files(self.unc, include_ignored=False, platform="linux"))
+
+    def test_find_files_uses_the_distribution_listing_first(self) -> None:
+        tool = FindFilesTool(workspace=self.linux_root)
+        listed = [str(self.linux_root / "backend/ocr.py")]
+        with (
+            mock.patch.object(search_mod, "_wsl_rg_files", return_value=listed),
+            mock.patch.object(search_mod, "_rg_files") as host_rg,
+            mock.patch.object(search_mod, "_native_walk") as native,
+        ):
+            out = _run(tool.execute(query="ocr"))
+        host_rg.assert_not_called()
+        native.assert_not_called()
+        self.assertIn("backend/ocr.py", out)
 
 
 class FindFilesTest(unittest.TestCase):
@@ -621,5 +797,40 @@ class FindFilesGitignoreTest(unittest.TestCase):
         self.assertEqual(fallback, out)
 
 
+class GrepOffsetPastEndTest(unittest.TestCase):
+    def test_offset_past_the_last_match_is_not_reported_as_no_match(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "a.py", "needle\nneedle\nneedle\n")
+            tool = GrepTool(workspace=root)
+            for mode in ("content", "files_with_matches", "count"):
+                out = _run(tool.execute(pattern="needle", output_mode=mode, offset=10))
+                self.assertIn("No entries at offset", out, mode)
+                self.assertNotIn("No matches found", out, mode)
+            none = _run(tool.execute(pattern="absent", output_mode="content"))
+            self.assertIn("No matches found", none)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_broad_pattern_gets_a_narrowing_note_but_exact_and_count_do_not(tmp_path) -> None:
+    import asyncio
+
+    from navin.agent.tools.search import _BROAD_PATTERN_FILES, GrepTool
+
+    for index in range(_BROAD_PATTERN_FILES + 5):
+        (tmp_path / f"m{index}.py").write_text("import os\n", encoding="utf-8")
+    (tmp_path / "target.py").write_text("def build_dashboard_route():\n    pass\n", encoding="utf-8")
+    tool = GrepTool(workspace=tmp_path)
+
+    broad = str(asyncio.run(tool.execute(pattern="import", path=".")))
+    exact = str(asyncio.run(tool.execute(pattern="build_dashboard_route", path=".")))
+    count = str(asyncio.run(tool.execute(pattern="import", path=".", output_mode="count")))
+
+    assert f"broad pattern: {_BROAD_PATTERN_FILES + 5} files match" in broad
+    assert "exact identifier" in broad
+    assert "target.py" in exact and "broad pattern" not in exact
+    # count is the scoping step itself: it reports totals, not a warning.
+    assert "broad pattern" not in count and "total matches" in count

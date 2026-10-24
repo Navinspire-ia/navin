@@ -11,6 +11,8 @@ Team seat never exceeds its paid entitlement.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import threading
 import time
 from typing import Any
@@ -244,9 +246,11 @@ def apply_to_agent_loop(loop: Any, config: Any) -> None:
     steps = effective_steps_per_task(config)
     agents = effective_concurrent_agents(config)
     loop.max_iterations = steps
+    previous_agents = getattr(getattr(loop, "subagents", None), "max_concurrent_subagents", None)
     if hasattr(loop, "subagents") and loop.subagents is not None:
         loop.subagents.max_iterations = steps
         loop.subagents.max_concurrent_subagents = agents
+        loop.subagents.max_total_concurrent_subagents = agents
         # This runs on the license-sync thread every few minutes, which makes it
         # the periodic re-measure of the machine as well. A limit that just went
         # back up has to wake the queues, otherwise they wait for a subagent to
@@ -258,9 +262,6 @@ def apply_to_agent_loop(loop: Any, config: Any) -> None:
             except Exception:  # noqa: BLE001 - a sync must never die on this
                 pass
     # Parent-turn concurrency gate mirrors concurrentAgents.
-    import asyncio
-    import os
-
     env_cap = os.environ.get("NAVIN_MAX_CONCURRENT_REQUESTS")
     if env_cap is not None:
         try:
@@ -271,4 +272,124 @@ def apply_to_agent_loop(loop: Any, config: Any) -> None:
             loop._concurrency_gate = None
             return
         agents = min(agents, env_n)
-    loop._concurrency_gate = asyncio.Semaphore(agents)
+    _resize_concurrency_gate(loop, agents, previous_agents=previous_agents)
+
+
+class ResizableSemaphore(asyncio.Semaphore):
+    """An asyncio semaphore whose capacity can change while it is held.
+
+    The parent-turn gate used to be swapped for a fresh ``Semaphore`` on every
+    license sync, from the sync thread. Turns that already held the old one
+    released it into the void while the new one admitted a full wave on top,
+    so the cap was not enforced and the swap raced the event loop. Here the
+    object stays the same: :meth:`request_limit` is thread-safe and only
+    records the target; the change is applied on the loop thread (scheduled
+    right away when the loop is known, otherwise on the next acquire or
+    release). Shrinking takes free permits first and swallows later releases
+    for the rest, so holders are never disturbed.
+    """
+
+    def __init__(self, value: int = 1) -> None:
+        super().__init__(value)
+        self._init_resizable(value)
+
+    def _init_resizable(self, capacity: int) -> None:
+        self._capacity = max(0, int(capacity))
+        self._debt = 0
+        self._pending_limit: int | None = None
+        self._pending_lock = threading.Lock()
+
+    @classmethod
+    def adopt(cls, sem: asyncio.Semaphore, capacity: int) -> ResizableSemaphore:
+        """Upgrade a plain semaphore in place, keeping its holders and waiters."""
+        sem.__class__ = cls
+        assert isinstance(sem, ResizableSemaphore)
+        # A plain semaphore does not record its capacity; it is at least the
+        # number of permits currently free.
+        sem._init_resizable(max(int(capacity), int(getattr(sem, "_value", 0))))
+        return sem
+
+    @property
+    def capacity(self) -> int:
+        """Capacity once any pending change is applied."""
+        with self._pending_lock:
+            pending = self._pending_limit
+        return self._capacity if pending is None else pending
+
+    def request_limit(self, limit: int) -> bool:
+        """Ask for a new capacity from any thread. Returns whether it changes."""
+        limit = max(0, int(limit))
+        with self._pending_lock:
+            current = self._capacity if self._pending_limit is None else self._pending_limit
+            if limit == current:
+                return False
+            self._pending_limit = limit
+        try:
+            on_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            on_loop = None
+        bound = getattr(self, "_loop", None)
+        if on_loop is not None and (bound is None or bound is on_loop):
+            self._apply_pending()
+        elif bound is not None:
+            try:
+                bound.call_soon_threadsafe(self._apply_pending)
+            except RuntimeError:
+                pass  # loop closed; the next acquire/release applies it
+        return True
+
+    def _apply_pending(self) -> None:
+        with self._pending_lock:
+            target = self._pending_limit
+            self._pending_limit = None
+        if target is None or target == self._capacity:
+            return
+        delta = target - self._capacity
+        self._capacity = target
+        if delta < 0:
+            self._debt += -delta
+            take = min(self._debt, max(0, self._value))
+            self._value -= take
+            self._debt -= take
+            return
+        repaid = min(delta, self._debt)
+        self._debt -= repaid
+        for _ in range(delta - repaid):
+            asyncio.Semaphore.release(self)
+
+    async def acquire(self) -> bool:
+        self._apply_pending()
+        return await super().acquire()
+
+    def release(self) -> None:
+        self._apply_pending()
+        if self._debt > 0:
+            # Shrinking: this permit leaves circulation instead of waking a waiter.
+            self._debt -= 1
+            return
+        super().release()
+
+
+def _resize_concurrency_gate(loop: Any, limit: int, *, previous_agents: Any) -> None:
+    """Point the loop's parent-turn gate at *limit* without replacing a held one."""
+    gate = getattr(loop, "_concurrency_gate", None)
+    if isinstance(gate, ResizableSemaphore):
+        gate.request_limit(limit)
+        return
+    if isinstance(gate, asyncio.Semaphore):
+        # Built by AgentLoop.__init__ from NAVIN_MAX_CONCURRENT_REQUESTS or the
+        # subagent cap; the env var was already folded into *limit* above.
+        try:
+            built_with = int(previous_agents)
+        except (TypeError, ValueError):
+            built_with = limit
+        env_cap = os.environ.get("NAVIN_MAX_CONCURRENT_REQUESTS")
+        if env_cap is not None:
+            try:
+                built_with = int(env_cap)
+            except ValueError:
+                pass
+        ResizableSemaphore.adopt(gate, built_with).request_limit(limit)
+        return
+    # No gate yet (or unlimited until now): nothing holds it, start fresh.
+    loop._concurrency_gate = ResizableSemaphore(limit)

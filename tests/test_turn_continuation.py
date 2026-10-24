@@ -200,6 +200,26 @@ class MaybeContinueTurnTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ctx.session.metadata[tc._TURN_CONTINUATION_ROUNDS_KEY], 1)
 
+    async def test_a_blank_final_answer_resumes_instead_of_giving_up(self) -> None:
+        """The 'couldn't produce a final answer' stop resumes, bounded."""
+        ctx = self._ctx()
+        ctx.stop_reason = "empty_final_response"
+        ctx.final_content = "I completed the tool steps but couldn't produce a final answer."
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
+        self.assertTrue(ctx.suppress_response)
+        self.assertEqual(ctx.session.metadata[tc._EMPTY_FINAL_ROUNDS_KEY], 1)
+        queued = ctx.pending_queue.get_nowait()
+        # The resume says what happened (a blank reply), not "tool budget".
+        self.assertIn("previous reply was empty", queued.content)
+        self.assertNotIn("tool-call budget", queued.content)
+        self.assertIn("not a system prompt", queued.content)
+        ctx.session.metadata[tc._EMPTY_FINAL_ROUNDS_KEY] = tc._EMPTY_FINAL_ROUNDS_LIMIT
+        ctx.suppress_response = False
+        self.assertFalse(await tc.maybe_continue_turn(ctx))
+        self.assertFalse(ctx.suppress_response)
+        tc.reset_budget_continuation_rounds(ctx.session.metadata)
+        self.assertNotIn(tc._EMPTY_FINAL_ROUNDS_KEY, ctx.session.metadata)
+
     async def test_board_builds_use_the_board_prompt(self) -> None:
         session_focus.remember("websocket:chat-1", ["task-1"])
         ctx = self._ctx()

@@ -39,13 +39,13 @@
       "archive": "zip",
       "ffprobe": {
         "archive": "zip",
-        "sha256": "d13f35db03456b7f65b7edb6437c86e23810fbfe91795e571f5b77211343b4f1",
-        "source": "evermeet.cx",
-        "url": "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
+        "sha256": "0b6576104a95c1b39d4939e2df86f8f7cf1d55287ff57da48777d94605d12feb",
+        "source": "OSXExperts.NET FFprobe 8.0 static build (Intel)",
+        "url": "https://www.osxexperts.net/ffprobe80intel.zip"
       },
-      "sha256": "8a8c9e549983409fe6604b9aa665648b7a5def9407fe814c39c8b2ea7f64a48f",
-      "source": "evermeet.cx",
-      "url": "https://evermeet.cx/ffmpeg/getrelease/zip"
+      "sha256": "2d24d22db78c87f394a5822867acd5c5dc5e762cd261a44bd26923f3a5af3e07",
+      "source": "OSXExperts.NET FFmpeg 8.0 static build (Intel)",
+      "url": "https://www.osxexperts.net/ffmpeg80intel.zip"
     },
     "windows-arm64": {
       "archive": "zip",

@@ -22,8 +22,6 @@ portal and the compositors are converted with the stream's scale.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import io
 import json
 import os
@@ -49,6 +47,7 @@ from navin.computer.base import (
     WindowInfo,
 )
 from navin.computer.keys import KeyCombo
+from navin.utils.proc import no_window_kwargs
 
 # X keysyms (the portal and wtype speak xkb keysyms).
 _KEYSYMS: dict[str, int] = {

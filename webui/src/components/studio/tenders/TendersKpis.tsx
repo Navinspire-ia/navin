@@ -7,7 +7,7 @@ export const KPI_GRID_CLASS = DASH_TILE_GRID_CLASS;
 export const KPI_CELL_CLASS = "min-w-0";
 export const KPI_CARD_CLASS = "min-w-0";
 export const KPI_VALUE_CLASS =
-  "mt-1 block w-full min-w-0 text-left text-xl font-semibold leading-tight tabular-nums sm:text-2xl";
+  "mt-1 block w-full min-w-0 text-start text-xl font-semibold leading-tight tabular-nums sm:text-2xl";
 
 export type TenderKpiItem = {
   id: "new" | "open" | "qualified" | "deadline" | "weighted";

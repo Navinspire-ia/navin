@@ -30,6 +30,63 @@ function reasoning(id: string, createdAt: number): UIMessage {
   return { id, role: "assistant", content: "", createdAt, reasoning: "Let me look at the code." };
 }
 
+describe("journal steps dedupe one call across trace formats and messages", () => {
+  const shellEvent = (phase: "start" | "end", extra: Record<string, unknown> = {}) => ({
+    phase,
+    call_id: "call-1",
+    name: "exec",
+    arguments: { command: "npm test", timeout: 60 },
+    ...extra,
+  });
+
+  it("matches a history trace line (Python spacing) to its structured run", () => {
+    const message: UIMessage = {
+      ...trace("t1", ['exec({"command": "npm test", "timeout": 60})']),
+      toolEvents: [shellEvent("start"), shellEvent("end", { result: "12 passed" })],
+    };
+    const steps = collectJournalSteps([message], false);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ kind: "shell", status: "done", output: "12 passed" });
+    expect(buildJournalTimeline(steps, { streaming: false })).toHaveLength(1);
+  });
+
+  it("drops the same call written twice with other spacing in one message", () => {
+    const message: UIMessage = {
+      ...trace("t1", [
+        'exec({"command":"npm test","timeout":60})',
+        'exec({"command": "npm test", "timeout": 60})',
+      ]),
+      toolEvents: [shellEvent("end", { result: "ok" })],
+    };
+    expect(collectJournalSteps([message], false)).toHaveLength(1);
+  });
+
+  it("keeps one row when the start and end frames land in different trace messages", () => {
+    const first: UIMessage = {
+      ...trace("t1", ['exec({"command":"npm test","timeout":60})'], 1),
+      toolEvents: [shellEvent("start")],
+    };
+    const second: UIMessage = {
+      ...trace("t2", [], 2),
+      content: "",
+      toolEvents: [shellEvent("end", { result: "done" })],
+    };
+    const steps = collectJournalSteps([first, second], true);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ kind: "shell", status: "done" });
+  });
+
+  it("puts reasoning between the calls it led to", () => {
+    const steps = collectJournalSteps([
+      reasoning("r1", 1),
+      trace("t1", ['exec({"command":"ls"})'], 2),
+      { ...reasoning("r2", 3), reasoning: "Now the tests.", reasoningStreaming: true },
+    ], true);
+    expect(steps.map((step) => step.kind)).toEqual(["reasoning", "shell", "reasoning"]);
+    expect(steps[2]).toMatchObject({ status: "running", text: "Now the tests." });
+  });
+});
+
 describe("journal steps from trace lines", () => {
   it("walks tool calls in order and keeps reads, searches, shells and tools apart", () => {
     const steps = collectJournalSteps([
@@ -147,6 +204,23 @@ describe("time by phase", () => {
     ]);
   });
 
+  it("leaves the time spent waiting on the user out of the work", () => {
+    // exec at +0, the ask_user card opens at +10s and is answered at +7m10s.
+    const echo: UIMessage = {
+      id: "choice-r1",
+      role: "tool",
+      kind: "choice",
+      content: "",
+      createdAt: t0 + 430_000,
+      interaction: { type: "choice", requestId: "r1", question: "Which file?", label: "config.ts", waitedMs: 420_000 },
+    } as UIMessage;
+    const messages = [trace("t1", ['exec({"command":"ls"})'], t0), echo, trace("t2", ['exec({"command":"wc"})'], t0 + 440_000)];
+    const worked = activityDurationMs(messages, false, t0 + 999_000, undefined, t0, t0 + 450_000);
+    expect(worked).toBe(30_000);
+    const split = activityPhaseSplit(messages, worked, t0);
+    expect(split).toEqual([{ key: "command", ms: 30_000 }]);
+  });
+
   it("counts the wait before the first activity as thinking and drops slivers", () => {
     const split = activityPhaseSplit([
       trace("t1", ['board({"action":"list"})'], t0 + 5_000),
@@ -168,9 +242,14 @@ describe("activity cluster source locks", () => {
   const thread = readFileSync(resolve(__dirname, "ThreadMessages.tsx"), "utf8");
   const css = readFileSync(resolve(__dirname, "../../globals.css"), "utf8");
 
-  it("renders one Thinking card with copy and click-to-expand, not a wall of rows", () => {
-    expect(cluster).toContain("ReasoningCard");
+  it("keeps thinking in the journal, in time order, with a click-to-expand body", () => {
+    // Reasoning is no longer one card pinned above the journal: each
+    // segment is a journal row between the calls it led to.
+    expect(cluster).not.toContain("<ReasoningCard");
     expect(cluster).not.toContain("<ReasoningRow");
+    expect(journal).toContain("ReasoningJournalBody");
+    expect(journal).toContain('data-testid="activity-reasoning-preview"');
+    expect(journal).toContain("whitespace-pre-line");
     expect(row).toContain('data-testid="activity-reasoning-card"');
     expect(row).not.toContain("rounded-xl border");
     expect(row).toContain("line-clamp-6");

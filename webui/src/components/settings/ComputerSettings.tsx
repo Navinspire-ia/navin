@@ -15,10 +15,13 @@ import {
   updateComputerModel, updateSettings,
 } from "@/lib/api";
 import type { ComputerDiagnostics, ComputerModelsPayload, SettingsPayload, SettingsUpdate } from "@/lib/types";
-import { COMPUTER_MODEL_CALLOUT, COMPUTER_PERMISSIONS, computerChatUrl, computerPermissionGranted, computerSetupStep, type ComputerPermission } from "@/lib/computer-setup";
+import { COMPUTER_PERMISSIONS, computerChatUrl, computerPermissionGranted, computerSetupStep, type ComputerPermission } from "@/lib/computer-setup";
 import { useClient } from "@/providers/ClientProvider";
 import "@/lib/fluent-icons";
+import { COMPUTER_MODEL_CALLOUT } from "./computer-callout";
 import "./computer-settings.css";
+import { ComputerAuditLog } from "./ComputerAuditLog";
+import { ComputerPermissionRules } from "./ComputerPermissionRules";
 
 type ComputerConfig = NonNullable<SettingsPayload["computer"]>;
 type AppRule = "protected_apps" | "allowed_apps" | "blocked_apps" | "ask_apps";
@@ -497,6 +500,10 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
               onClick={() => { const lines = (rule: AppRule) => apps[rule].split("\n").map((name) => name.trim()).filter(Boolean);
                 void persist({ computerProtectedApps: lines("protected_apps"), computerAllowedApps: lines("allowed_apps"),
                   computerBlockedApps: lines("blocked_apps"), computerAskApps: lines("ask_apps") }); }} />
+            <Separator />
+            <ComputerPermissionRules disabled={optionDisabled} />
+            <Separator />
+            <ComputerAuditLog />
           </div> : null}
           </> : <div className="computer-settings-card">
             <Text variant="large" styles={{ root: { fontWeight: 600 } }}>{t("settings.sections.browser")}</Text>

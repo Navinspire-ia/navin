@@ -281,7 +281,9 @@ class PinnedDNSAsyncTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        ok, error, resolved_ips = resolve_url_target(url, allow_loopback=self._allow_loopback)
+        ok, error, resolved_ips = await asyncio.to_thread(
+            resolve_url_target, url, allow_loopback=self._allow_loopback
+        )
         if not ok:
             raise UnsafeURLRequestError(error, request=request)
         async with self._resolver_lock:

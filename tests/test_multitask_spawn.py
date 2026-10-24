@@ -556,3 +556,71 @@ class LiveClientKeySpawnTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NestedSpawnDepthTest(unittest.IsolatedAsyncioTestCase):
+    async def _call(self, manager: Any, parent: str | None) -> Any:
+        from navin.agent.tools.context import RequestContext, bind_request_context
+        from navin.agent.tools.spawn import SpawnTool
+
+        meta = {"subagent": True, "subagent_task_id": parent} if parent else {}
+        token = bind_request_context(RequestContext(
+            channel="cli", chat_id="x", message_id=None, session_key="cli:x",
+            runtime=mock.Mock(), metadata=meta,
+        ))
+        try:
+            return await SpawnTool(manager).execute(task="sub work")
+        finally:
+            from navin.agent.tools.context import reset_request_context
+            reset_request_context(token)
+
+    async def test_subagents_can_spawn_until_the_depth_limit(self) -> None:
+        from navin.agent.tools.spawn import MAX_SPAWN_DEPTH, SpawnTool
+
+        self.assertIn("subagent", SpawnTool._scopes)
+        depths = {"lvl1": 1, "deep": MAX_SPAWN_DEPTH}
+        manager = mock.Mock()
+        manager.spawn = mock.AsyncMock(return_value="Subagent started")
+        manager.spawn_depth = lambda tid: depths.get(tid, 1)
+        await self._call(manager, None)
+        self.assertNotIn("depth", manager.spawn.await_args.kwargs)
+        await self._call(manager, "lvl1")
+        self.assertEqual(manager.spawn.await_args.kwargs["depth"], 2)
+        self.assertEqual(manager.spawn.await_args.kwargs["parent_task_id"], "lvl1")
+        calls = manager.spawn.await_count
+        refused = await self._call(manager, "deep")
+        self.assertIn("depth limit", str(refused))
+        self.assertEqual(manager.spawn.await_count, calls)
+
+    async def test_manager_records_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = SubagentManager(workspace=Path(tmp), bus=mock.Mock(), max_tool_result_chars=1000)
+            self.assertEqual(manager.spawn_depth(None), 0)
+            manager._spawn_depths["a"] = 2
+            self.assertEqual(manager.spawn_depth("a"), 2)
+            self.assertEqual(manager.spawn_depth("unknown"), 1)
+
+
+class NestedResultRoutingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_child_result_goes_to_the_spawning_subagent(self) -> None:
+        from collections import deque
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bus = mock.Mock()
+            bus.publish_inbound = mock.AsyncMock()
+            manager = SubagentManager(workspace=Path(tmp), bus=bus, max_tool_result_chars=1000)
+            manager._agent_sessions.update({"mid": "cli:x", "leaf": "cli:x"})
+            manager._agent_mailboxes["mid"] = deque()
+            manager._spawn_parents["leaf"] = "mid"
+            origin = {"channel": "cli", "chat_id": "x", "session_key": "cli:x"}
+            await manager._announce_result("leaf", "Leaf", "t", "found it", origin, "ok")
+            box = manager._agent_mailboxes["mid"]
+            self.assertEqual(len(box), 1)
+            self.assertIn("found it", box[0]["content"])
+            bus.publish_inbound.assert_not_awaited()
+            # Spawner gone: the result falls back to the parent turn.
+            del manager._agent_mailboxes["mid"]
+            with mock.patch.object(manager, "_flush_pending_outcomes",
+                                   side_effect=lambda: [f.set_result(None) for _, f in manager._pending_outcomes]):
+                await manager._announce_result("leaf", "Leaf", "t", "late", origin, "ok")
+            bus.publish_inbound.assert_awaited_once()

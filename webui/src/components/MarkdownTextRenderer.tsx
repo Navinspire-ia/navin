@@ -499,7 +499,7 @@ export default function MarkdownTextRenderer({
       pre({ children: markdownChildren }) {
         const kids = Children.toArray(markdownChildren);
         const lone = kids.length === 1 ? kids[0] : null;
-        /** Highlighted fences render ``CodeBlock`` (block shell); skip invalid ``<pre><div>``. */
+        /** Highlighted fences render ``CodeBlock`` (block shell); skip invalid ``<pre dir="ltr"><div>``. */
         if (isRenderedCodeBlock(lone)) {
           return <>{markdownChildren}</>;
         }
@@ -515,7 +515,7 @@ export default function MarkdownTextRenderer({
           );
         }
         return (
-          <pre
+          <pre dir="ltr"
             className={cn(
               "my-3 overflow-x-auto rounded-lg border border-border/60 bg-muted/35",
               "p-3 font-mono text-[0.8125rem] leading-snug text-foreground/90",
@@ -571,23 +571,38 @@ export default function MarkdownTextRenderer({
       },
       table({ children, node: _node, ...props }) {
         void _node;
-        // Wrap wide markdown tables in a horizontal-scroll container (the
-        // pattern used by DeepSeek/others) so a 6+ column table scrolls inside
-        // the conversation column instead of forcing the page wider than 100vw.
-        // min-w-max keeps natural column widths; w-full stretches narrow tables.
+        // Responsive tables: cells wrap their text so a report table fits the
+        // conversation column at any width. Only a table whose words cannot
+        // fit (many columns, long paths) scrolls, inside its own box, instead
+        // of being clipped by the thread column. No min-w-max: it kept every
+        // cell on one line, so wide tables were cut at the column edge.
         return (
-          <div className="w-full overflow-x-auto">
-            <table className="w-full min-w-max" {...props}>
+          <div className="markdown-table-scroll" data-testid="markdown-table-scroll">
+            <table className="w-full" {...props}>
               {children}
             </table>
           </div>
+        );
+      },
+      // A paragraph that is only bold text is a title the model wrote by hand
+      // ("**What was done**"): named so the answer under a journal can set it
+      // like a section title. Any other paragraph is left as it is.
+      p({ children: markdownChildren, node, className: paragraphClassName, ...props }) {
+        const parts = (node?.children ?? []).filter(
+          (child) => !(child.type === "text" && !child.value.trim()),
+        );
+        const leadOnly = parts.length === 1 && parts[0].type === "element" && parts[0].tagName === "strong";
+        return (
+          <p className={cn(paragraphClassName, leadOnly && "md-lead") || undefined} {...props}>
+            {markdownChildren}
+          </p>
         );
       },
       li({ children: markdownChildren, className: itemClassName }) {
         const link = inlineLinkPreviewFromChildren(markdownChildren);
         if (link) {
           return (
-            <li className={cn("list-none pl-0", itemClassName)}>
+            <li className={cn("list-none ps-0", itemClassName)}>
               <InlineLinkPreviewRow link={link} />
             </li>
           );
@@ -605,7 +620,7 @@ export default function MarkdownTextRenderer({
             aria-hidden
             data-testid="markdown-task-checkbox"
             className={cn(
-              "mr-2 inline-grid h-4 w-4 translate-y-[2px] place-items-center rounded-[4px]",
+              "me-2 inline-grid h-4 w-4 translate-y-[2px] place-items-center rounded-[4px]",
               "border border-border/70 bg-muted/55 text-background",
               checked && "border-foreground/55 bg-foreground/65",
             )}
@@ -666,6 +681,9 @@ export default function MarkdownTextRenderer({
 
   return (
     <div
+      // Each answer takes its direction from its own text, so an English
+      // answer in the Arabic UI still reads left to right (and vice versa).
+      dir="auto"
       className={cn(
         // Reading rhythm (sizes, weights, spacing, colors) lives in the
         // `.markdown-content` rules of globals.css: one system for every

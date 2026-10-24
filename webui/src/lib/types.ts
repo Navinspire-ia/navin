@@ -5,7 +5,26 @@ export type Role = "user" | "assistant" | "tool" | "system";
 
 /** "trace" rows are intermediate agent breadcrumbs (tool-call hints,
  * progress pings) that should not be rendered as conversational replies. */
-export type MessageKind = "message" | "trace";
+export type MessageKind = "message" | "trace" | "choice" | "approval";
+
+/** A settled ask_user card or approval, restated in the chat where it happened. */
+export interface UIInteractionEcho {
+  type: "choice" | "approval";
+  requestId: string;
+  /** Choice: the question. Approval: the action that asked for permission. */
+  question: string;
+  /** Choice: the picked option label. */
+  label?: string;
+  /** Choice: the answer the user typed instead of a listed option. */
+  customText?: string;
+  skipped?: boolean;
+  timedOut?: boolean;
+  stopped?: boolean;
+  /** Approval outcome. */
+  allowed?: boolean;
+  /** How long the card waited for the user, when the close frame says it. */
+  waitedMs?: number;
+}
 
 export type UITurnPhase = "user" | "reasoning" | "activity" | "answer" | "complete";
 
@@ -93,6 +112,8 @@ export interface UIMessage {
   turnId?: string;
   turnPhase?: UITurnPhase;
   turnSeq?: number;
+  /** kind "choice" / "approval": the settled exchange this row restates. */
+  interaction?: UIInteractionEcho;
 }
 
 export interface UICliAppAttachment {
@@ -322,6 +343,12 @@ export interface PluginPackSummary {
   enabled: boolean;
   skills: string[];
   mcp_servers: string[];
+  /** Agent definitions (`agents/*.md`) shipped by the pack. */
+  agents?: string[];
+  /** Markdown slash commands (`commands/*.md`) shipped by the pack. */
+  commands?: string[];
+  /** Lifecycle events with at least one hook. */
+  hooks?: string[];
 }
 
 export interface PluginPacksPayload {
@@ -481,6 +508,8 @@ export interface TaskProgressData {
   step?: string;
   step_index?: number;
   steps_total?: number;
+  /** "compacting" while the context is being summarized. */
+  phase?: string;
 }
 
 /** WebSocket snapshot for sustained goals (`goal_state` events; keyed by ``chat_id``). */
@@ -488,6 +517,26 @@ export interface GoalStateWsPayload {
   active: boolean;
   ui_summary?: string;
   objective?: string;
+}
+
+export interface ActivityEventV1 {
+  v: 1;
+  type:
+    | "task.started"
+    | "tool.started"
+    | "tool.output"
+    | "tool.finished"
+    | "file.changed"
+    | "test.completed"
+    | "agent.started"
+    | "approval.required"
+    | "task.completed";
+  id: string;
+  ts: number;
+  agent: string;
+  parent: string | null;
+  status: "running" | "ok" | "error" | string;
+  data: Record<string, unknown>;
 }
 
 export interface ToolProgressEvent {
@@ -1207,6 +1256,146 @@ export interface GitClonePayload {
   reused?: boolean;
 }
 
+/** One forge identity the engine can use (Settings > Git & GitHub). */
+export interface GitAccount {
+  host: string;
+  kind: ForgeKind | string;
+  login: string | null;
+  source: "settings" | "env" | "gh";
+  scopes: string[] | null;
+}
+
+export interface GitAccountsPayload {
+  accounts: GitAccount[];
+  device_flow: { github: boolean };
+}
+
+export interface GitAccountTestPayload {
+  ok: boolean;
+  login?: string;
+  scopes?: string[];
+  error?: string;
+}
+
+export type GitMachineOs = "windows" | "macos" | "linux";
+
+/** One line of the machine check: `fix` is a command to copy or an engine action. */
+export interface GitMachineCheck {
+  id:
+    | "git_missing"
+    | "git_old"
+    | "git_ok"
+    | "identity_missing"
+    | "identity_ok"
+    | "helper_plaintext"
+    | "helper_missing"
+    | "helper_ok"
+    | "remote_no_token"
+    | "remote_ssh_no_key"
+    | "remote_ok"
+    | string;
+  level: "ok" | "info" | "warn" | "error";
+  params: Record<string, unknown>;
+  fix: {
+    command?: string;
+    url?: string;
+    action?: "identity" | "connect" | "use_https" | string;
+    host?: string;
+    remote?: string;
+  } | null;
+}
+
+export interface GitMachineRemote {
+  name: string;
+  url: string;
+  protocol: "https" | "ssh" | "local" | string;
+  host: string;
+  auth: "token" | "ssh_key" | "embedded" | "local" | "none" | string;
+  https_url: string | null;
+}
+
+/** `/api/webui/git/machine`: git where the project runs, never a token. */
+export interface GitMachinePayload {
+  platform: { os: GitMachineOs; label: string; arch: string; wsl: boolean };
+  git: {
+    available: boolean;
+    version: string | null;
+    path: string | null;
+    distro: string | null;
+    bridge_ok: boolean;
+    min_version: string;
+  };
+  identity: {
+    name: string | null;
+    email: string | null;
+    name_scope: string | null;
+    email_scope: string | null;
+  };
+  credential_helper: {
+    helpers: string[];
+    active: string;
+    secure: boolean;
+    recommended: { helper: string; command: string; note: string };
+  };
+  ssh: { keys: string[] };
+  gh: { available: boolean };
+  remotes: GitMachineRemote[];
+  checks: GitMachineCheck[];
+  root: string | null;
+}
+
+/** What `/api/webui/git/setup` checked or changed after a connect. */
+export interface GitSetupAction {
+  id: "identity" | "scopes" | string;
+  status:
+    | "configured"
+    | "already"
+    | "needs_input"
+    | "failed"
+    | "unavailable"
+    | "missing"
+    | "ok"
+    | string;
+  name?: string | null;
+  email?: string | null;
+  missing?: string[];
+  scopes?: string[] | null;
+  distro?: string | null;
+  error?: string;
+}
+
+export interface GitSetupPayload extends GitAccountTestPayload {
+  host?: string;
+  kind?: string;
+  actions: GitSetupAction[];
+  machine?: GitMachinePayload;
+}
+
+export interface GitIdentityPayload {
+  ok: boolean;
+  name: string | null;
+  email: string | null;
+  changed: string[];
+  distro: string | null;
+  error: string | null;
+}
+
+export interface GitDeviceStartPayload {
+  flow_id: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+export type GitDevicePollStatus = "pending" | "slow_down" | "ok" | "expired" | "denied" | "error";
+
+export interface GitDevicePollPayload {
+  status: GitDevicePollStatus;
+  login?: string;
+  error?: string;
+}
+
 export interface FileDiagnostic {
   line: number;
   col: number;
@@ -1486,6 +1675,10 @@ export interface ProviderModelInfo {
 export interface LiveVoiceSetup {
   ready: boolean;
   reason: string | null;
+  /** Which Live runs: the realtime model (it listens and speaks) or listening + chat + voice. */
+  engine?: "realtime" | "pipeline";
+  realtime?: { provider: string; model: string } | null;
+  pipeline_ready?: boolean;
   missing: string[];
   mode: "navin" | "byok";
   settings_section: "voice";
@@ -1712,12 +1905,24 @@ export interface SettingsPayload {
   }>;
   /** Task-role routing: role slug (e.g. "deep", "search") → model preset name. */
   model_routes?: Record<string, string>;
+  /** Task routing on (default) or off for every chat. */
+  model_routing_enabled?: boolean;
+  /** Collaboration Mode (Settings > Team) on or off for every chat. */
+  collab_enabled?: boolean;
+  /** Enabled teammates, for the chat's Team switch and avatars. */
+  collab_members?: Array<{ id: string; name: string; title: string; avatar: string; color: string }>;
+  /** Named teams (Dev, Sales...); each chat picks one. */
+  collab_teams?: Array<{ id: string; name: string; members: string[] }>;
+  collab_default_team?: string;
   providers: Array<{
     name: string;
     label: string;
     configured: boolean;
     auth_type?: "api_key" | "oauth";
     api_key_required?: boolean;
+    /** Bedrock only. */
+    aws_region?: string | null;
+    aws_profile?: string | null;
     api_key_hint?: string | null;
     api_base?: string | null;
     default_api_base?: string | null;
@@ -1809,6 +2014,17 @@ export interface SettingsPayload {
     /** Hidden by default; a window is what makes a captcha solvable. */
     headless: boolean;
     live_view: boolean;
+  };
+  /** One model per use, among every model added in Models (the provider comes with it). */
+  media_models?: MediaModelChoices;
+  /** Providers with their key (or local base): the media pickers list their models. */
+  media_providers?: MediaProviderRef[];
+  /** Where exec and the browser run: this computer (default) or the AWS cloud sandbox. */
+  execution?: {
+    target: "local" | "aws" | string;
+    aws_accepted: boolean;
+    /** This device is signed in to a Navin plan (cloud execution needs one). */
+    licensed: boolean;
   };
   /** Desktop control (`computer` tool): screen, mouse and keyboard in any app. */
   computer?: {
@@ -1973,6 +2189,11 @@ export interface SettingsPayload {
     realtime_required_plans: string[];
     managed_defaults?: { stt_model: string; tts_model: string; voice: string };
     live?: LiveVoiceSetup;
+    /** Live engine: realtime (voice-to-voice model), pipeline (STT -> chat -> TTS) or auto. */
+    live_engine?: "auto" | "realtime" | "pipeline";
+    live_realtime_provider?: string;
+    live_realtime_model?: string;
+    live_realtime_voice?: string;
     providers: Array<{
       name: string;
       label: string;
@@ -2424,6 +2645,16 @@ export interface SettingsUpdate {
   computerEnabled?: boolean;
   computerAsk?: "never" | "destructive" | "always";
   computerSessionMode?: "shared" | "dedicated";
+  executionTarget?: "local" | "aws";
+  voiceLiveEngine?: "auto" | "realtime" | "pipeline";
+  /** "provider::model" for one use; empty for Live = no realtime model. */
+  mediaModelImage?: string;
+  mediaModelVideo?: string;
+  mediaModelTts?: string;
+  mediaModelStt?: string;
+  mediaModelLive?: string;
+  voiceLiveRealtimeVoice?: string;
+  executionAwsAccepted?: boolean;
   computerLiveView?: boolean;
   computerAuditLog?: boolean;
   computerAnthropicNative?: boolean;
@@ -2441,7 +2672,7 @@ export interface SettingsUpdate {
   computerAllowedApps?: string[];
   computerBlockedApps?: string[];
   computerAskApps?: string[];
-  /** Forge token entry to add, update or remove (Settings > Git). */
+  /** Forge token entry to add, update or remove (Settings > Git & GitHub). */
   forgeHost?: string;
   /** Empty string clears the stored token for `forgeHost`. */
   forgeToken?: string;
@@ -2489,6 +2720,9 @@ export interface ProviderSettingsUpdate {
   endpointRegion?: string;
   accessPlan?: string;
   wireProtocol?: string;
+  /** Bedrock: AWS region of the calls and optional AWS profile. */
+  awsRegion?: string;
+  awsProfile?: string;
 }
 
 export interface ProviderConnectionTestPayload {
@@ -2569,6 +2803,11 @@ export interface VoiceSettingsUpdate {
   responseFormat: string;
   /** null = follow plan gate (Pro+/Team); true/false force. */
   realtimeEnabled: boolean | null;
+  /** Live engine: realtime voice-to-voice model, STT -> chat -> TTS pipeline, or auto. */
+  liveEngine?: "auto" | "realtime" | "pipeline";
+  /** "provider::model" of the realtime Live model; empty = none. */
+  liveRealtime?: string;
+  liveRealtimeVoice?: string;
 }
 
 /**
@@ -2621,6 +2860,7 @@ export type PresenceMember = {
 };
 
 export type InboundEvent =
+  | { event: "subagent_query_result"; chat_id: string; request_id: string; result?: unknown; error?: string }
   | {
       event: "ready";
       chat_id: string;
@@ -2633,6 +2873,14 @@ export type InboundEvent =
       event: "presence_sync";
       chat_id: string;
       members: PresenceMember[];
+    }
+  | {
+      /** A prompt sent from another window on this chat (another tab, a guest, the host). */
+      event: "user_message";
+      chat_id: string;
+      content: string;
+      turn_id?: string;
+      author?: string;
     }
   | {
       event: "presence_join";
@@ -2662,6 +2910,8 @@ export type InboundEvent =
       media?: string[];
       media_urls?: Array<{ url: string; name?: string }>;
       tool_events?: ToolProgressEvent[];
+      /** v1 activity events (additive; clients ignore unknown types and fall back to tool_events). */
+      activity_events?: ActivityEventV1[];
       /** Present when the frame is an agent breadcrumb (e.g. tool hint,
        * generic progress line) rather than a conversational reply. */
       kind?: "tool_hint" | "progress" | "reasoning";
@@ -2699,6 +2949,8 @@ export type InboundEvent =
       chat_id: string;
       stream_id?: string;
       text?: string;
+      /** The segment was abandoned by a mid-stream retry: drop its text. */
+      discarded?: boolean;
     } & InboundTurnMetadata)
   | ({
       event: "reasoning_delta";
@@ -2814,6 +3066,10 @@ export type InboundEvent =
       request_id: string;
       allowed: boolean;
       reason?: string;
+      /** What was asked, so the chat can restate the decision. */
+      action?: string;
+      /** Milliseconds the card stayed open, waiting on the user. */
+      waited_ms?: number;
     }
   | {
       /** The agent paused on a product fork and is waiting for a pick. */
@@ -2832,11 +3088,55 @@ export type InboundEvent =
       expires_at_ms?: number | null;
     }
   | {
+      /** A Multitask subagent's changes were merged, or need a decision. */
+      event: "worktree_merge";
+      chat_id: string;
+      task_id: string;
+      label?: string;
+      status: "merged" | "conflict" | "blocked" | "unknown" | "resolving" | "kept" | "discarded" | "gone" | string;
+      files?: string[];
+      conflicts?: string[];
+      reason?: string;
+      branch?: string;
+      resolve_prompt?: string;
+      error?: string;
+    }
+  | {
+      /** A tool needs a login or a git account: show the secure credential card. */
+      event: "credential_request";
+      chat_id: string;
+      request_id: string;
+      kind: "site_login" | "git_host" | string;
+      host: string;
+      names?: string[];
+      reason?: string;
+      expires_at_ms?: number | null;
+    }
+  | {
+      /** The credential card is over. Refs and a login name only, never a value. */
+      event: "credential_closed";
+      chat_id: string;
+      request_id: string;
+      kind?: string;
+      host?: string;
+      status?: string;
+      refs?: string[];
+      login?: string;
+    }
+  | {
       event: "choice_closed";
       chat_id: string;
       request_id: string;
       option_id?: string;
       skipped?: boolean;
+      question?: string;
+      label?: string;
+      custom_text?: string;
+      timed_out?: boolean;
+      stopped?: boolean;
+      turn_id?: string;
+      turn_phase?: string;
+      turn_seq?: number;
     }
   | {
       event: "terminal_open_request";
@@ -2897,6 +3197,19 @@ export type InboundEvent =
       event: "product_module_request";
       chat_id?: string;
       module?: string;
+    }
+  | {
+      /** Collaboration Mode: one live team exchange. */
+      event: "team_message";
+      chat_id?: string;
+      entry_id: string;
+      kind: string;
+      sender: Record<string, unknown>;
+      target?: Record<string, unknown> | null;
+      content?: string;
+      task_id?: string | null;
+      status?: string | null;
+      ts?: number;
     }
   | {
       /** Live parallel subagent card (spawn fan-out). */
@@ -3396,6 +3709,7 @@ export type MobilePreviewEvent =
     } & MobilePreviewStatus);
 
 export type Outbound =
+  | { type: "subagents_list" | "subagent_history" | "subagent_recover" | "subagent_relaunch" | "subagent_team_feed" | "subagent_team_message" | "subagent_team_assign" | "subagent_team_select"; chat_id: string; request_id: string; task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string }
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
   | { type: "fork_chat"; source_chat_id: string; before_user_index: number; title?: string }
   | { type: "attach"; chat_id: string }
@@ -3434,6 +3748,8 @@ export type Outbound =
     }
   | { type: "approval_decision"; request_id: string; allowed: boolean; remember: boolean }
   | { type: "choice_answer"; request_id: string; option_id?: string; skipped?: boolean; custom_text?: string }
+  | { type: "credential_answer"; request_id: string; status: "saved" | "connected" | "declined"; login?: string }
+  | { type: "worktree_merge_action"; chat_id: string; task_id: string; action: "resolve" | "keep" | "discard" }
   | { type: "terminal_shells" }
   | {
       type: "terminal_open";
@@ -3538,3 +3854,24 @@ export type Outbound =
        * generic websocket protocol for other clients. */
       webui?: true;
     };
+
+
+export type MediaUseKind = "image" | "video" | "tts" | "stt" | "live";
+
+export interface MediaModelOption {
+  /** "provider::model" */
+  value: string;
+  provider: string;
+  provider_label: string;
+  model: string;
+  label: string;
+  /** The provider has its key (or local base). */
+  ready: boolean;
+}
+
+export type MediaModelChoices = Record<MediaUseKind, { selected: string; options: MediaModelOption[] }>;
+
+export interface MediaProviderRef {
+  provider: string;
+  label: string;
+}

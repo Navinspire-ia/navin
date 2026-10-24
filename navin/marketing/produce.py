@@ -220,66 +220,79 @@ def _try_generate_image(store: MarketingStore, row: dict[str, Any]) -> dict[str,
         return {"skipped": str(exc)[:180]}
 
 
-def _try_generate_video(store: MarketingStore, row: dict[str, Any]) -> dict[str, Any] | None:
+def _demo_video_ready() -> str:
+    """Empty when the premium pipeline can run, else the readable reason."""
     try:
-        from navin.config.loader import load_config
-        from navin.providers.media_credentials import media_credentials_ready
-        from navin.providers.video_generation import get_video_gen_provider
-        from navin.utils.artifacts import store_generated_video_artifact
-    except Exception:
-        return None
-    try:
-        config = load_config()
-        vid_cfg = config.tools.video_generation
-        provider = getattr(config.providers, vid_cfg.provider, None)
-        if not media_credentials_ready(vid_cfg.provider, provider):
-            return {"skipped": "video provider is not configured"}
-        cls = get_video_gen_provider(vid_cfg.provider)
-        if cls is None:
-            return {"skipped": f"unsupported video provider {vid_cfg.provider}"}
-        client = cls(
-            api_key=getattr(provider, "api_key", None),
-            api_base=getattr(provider, "api_base", None),
-            extra_headers=getattr(provider, "extra_headers", None),
-            extra_body=getattr(provider, "extra_body", None),
-            proxy=getattr(provider, "proxy", None),
-        )
-        refs = _refs(store)
+        from navin.marketing.demo_video import pipeline_readiness
 
-        async def _run() -> Any:
-            return await client.generate(
-                prompt=str(row.get("prompt") or ""),
-                model=vid_cfg.model,
-                reference_image=refs[0] if refs else None,
-                aspect_ratio=str(row.get("aspect") or vid_cfg.default_aspect_ratio or "9:16"),
-                duration_seconds=min(int(getattr(vid_cfg, "default_duration_seconds", 8) or 8), 10),
-            )
+        readiness = pipeline_readiness()
+    except Exception as exc:  # noqa: BLE001 - desk must stay usable without Montage
+        return f"demo video pipeline unavailable: {str(exc)[:120]}"
+    if readiness.get("ready"):
+        return ""
+    return "demo video pipeline is not ready: " + ", ".join(readiness.get("missing") or ["unknown"]) + " missing"
 
-        response = asyncio.run(_run())
-        raw = getattr(response, "video", None)
-        mime = str(getattr(response, "mime", None) or "video/mp4")
-        if raw is None:
-            return {"skipped": "video provider returned no clip"}
-        artifact = store_generated_video_artifact(
-            raw if isinstance(raw, (bytes, bytearray)) else bytes(raw),
-            mime=mime,
-            prompt=str(row.get("prompt") or ""),
-            model=vid_cfg.model,
-            save_dir="marketing-video",
-            provider=vid_cfg.provider,
-        )
-        copied = copy_generated(store, artifact["path"], hint=str(row.get("placement") or "clip"))
-        if not copied:
-            return {"skipped": "could not store generated clip"}
-        return {
-            "preview": copied["preview"],
-            "asset": copied["name"],
-            "path": copied["path"],
-            "status": "produced",
-            "provider": vid_cfg.provider,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"skipped": str(exc)[:180]}
+
+def _video_format(row: dict[str, Any]) -> str:
+    aspect = str(row.get("aspect") or "").strip()
+    return aspect if aspect in {"16:9", "9:16", "1:1"} else ("9:16" if aspect in {"4:5", "3:4"} else "16:9")
+
+
+def _try_generate_video(
+    store: MarketingStore,
+    row: dict[str, Any],
+    cache: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Fill a clip placement from one premium demo-video run.
+
+    The pipeline (storyboard, scripted capture, polish, motion scenes,
+    premium assemble, video QA with revise) renders 16:9, 9:16 and 1:1 in
+    one go, so every clip placement of a produce call shares one run.
+    """
+    memo = cache if cache is not None else {}
+    if "manifest" not in memo and "skipped" not in memo:
+        reason = _demo_video_ready()
+        if reason:
+            memo["skipped"] = reason
+        else:
+            try:
+                from navin.marketing import demo_video
+
+                memo["manifest"] = demo_video.produce_demo_video(store)
+            except Exception as exc:  # noqa: BLE001 - desk must stay usable
+                memo["skipped"] = f"demo video failed: {str(exc)[:160]}"
+    if memo.get("skipped"):
+        return {"skipped": str(memo["skipped"])}
+    manifest = memo.get("manifest") or {}
+    videos = manifest.get("videos") or {}
+    fmt = _video_format(row)
+    source = videos.get(fmt) or next(iter(videos.values()), "")
+    if not source:
+        return {"skipped": "demo video produced no deliverable"}
+    copies = memo.setdefault("copies", {})
+    if source not in copies:
+        copies[source] = copy_generated(store, source, hint=f"demo {fmt.replace(':', 'x')}")
+    copied = copies[source]
+    if not copied:
+        return {"skipped": "could not store demo video"}
+    thumb = memo.get("thumbnail")
+    if thumb is None and manifest.get("thumbnail"):
+        thumb = copy_generated(store, manifest["thumbnail"], hint="demo thumbnail") or {}
+        memo["thumbnail"] = thumb
+    verdicts = (manifest.get("qa") or {}).get("verdicts") or {}
+    return {
+        "preview": copied["preview"],
+        "asset": copied["name"],
+        "path": copied["path"],
+        "status": "produced",
+        "provider": "demo_video",
+        "pipeline": "demo_video",
+        "assembled": True,
+        "format": fmt if fmt in videos else next(iter(videos), fmt),
+        "thumbnail": (thumb or {}).get("preview", ""),
+        "qa_verdict": str(verdicts.get(fmt) or manifest.get("status") or ""),
+        "storyboard": str(manifest.get("storyboard") or ""),
+    }
 
 
 def _try_generate_speech(store: MarketingStore, row: dict[str, Any]) -> dict[str, Any] | None:
@@ -360,6 +373,7 @@ def produce_assets(
     if not generate:
         store.append_journal({"kind": "produce", "text": "briefs ready - generation skipped"})
         return {"produced": 0, "skipped": ["generation skipped"], "creatives": store.load_creatives()}
+    demo_run: dict[str, Any] = {}
     for row in rows:
         if row.get("preview") and row.get("status") in {"produced", "harvested", "ready"}:
             if target:
@@ -371,8 +385,8 @@ def produce_assets(
             result = _try_generate_image(store, row)
             if result and result.get("preview"):
                 images_left -= 1
-        elif kind == "video" and videos_left > 0:
-            result = _try_generate_video(store, row)
+        elif kind == "video" and (videos_left > 0 or demo_run.get("manifest")):
+            result = _try_generate_video(store, row, demo_run)
             if result and result.get("preview"):
                 videos_left -= 1
         elif kind == "audio" and audio_left > 0:

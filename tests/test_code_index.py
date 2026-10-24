@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import textwrap
 import unittest
 from pathlib import Path
@@ -13,7 +14,10 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from navin.agent.tools.code_index import CodeIndexTool
+from navin.index import graph_rank
+from navin.index.graph_rank import CodeGraph, Commit, add_co_changes, build_graph, rank
 from navin.index.service import CodeIndex
+from navin.index.service import is_bridged_root as real_is_bridged_root
 from navin.index.store import refs_cache_path
 from navin.index.symbols import extract, language_for
 
@@ -481,6 +485,344 @@ class CallGraphTest(unittest.TestCase):
         fresh.refresh()
         self.assertEqual(fresh.callers("helper"), [])
 
+    def test_file_call_edges_link_files_through_their_imports(self) -> None:
+        edges = {(src, dst, kind): names for src, dst, kind, _, names in self.index.file_call_edges()}
+        self.assertEqual(edges[("app/main.py", "pkg/core.py", "call")], ("engine",))
+        self.assertIn(("tests/test_run.py", "app/main.py", "call"), edges)
+        # Same-file calls (engine -> helper) are not file edges, and the
+        # homonym method in other/thing.py is reached by nothing.
+        self.assertFalse([key for key in edges if key[0] == key[1]])
+        self.assertFalse([key for key in edges if key[1] == "other/thing.py"])
+
+    def test_file_call_edges_ignore_builtin_method_names(self) -> None:
+        # `d.items()` is a dict method; the one project function named `items`
+        # must not become a dependency of every file that iterates a dict.
+        (self.root / "pkg" / "bag.py").write_text("def items():\n    return []\n", encoding="utf-8")
+        (self.root / "pkg" / "user.py").write_text(
+            "def walk(d):\n    return d.items()\n", encoding="utf-8"
+        )
+        self.index.refresh(force=True)
+        targets = {dst for src, dst, *_ in self.index.file_call_edges() if src == "pkg/user.py"}
+        self.assertNotIn("pkg/bag.py", targets)
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(
+        [
+            "git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+            "-c", "commit.gpgsign=false", *args,
+        ],
+        cwd=root, check=True, capture_output=True,
+    )
+
+
+class GraphRankTest(unittest.TestCase):
+    """Typed graph + task-weighted ranking on a small billing repository.
+
+    The change asked about is the Algerian stamp duty: the ranking has to reach
+    the receipt and the G50 report that depend on it, the tests that cover
+    them, and the rate table that history shows changing with it, while the
+    French VAT code stays out.
+    """
+
+    FILES = {
+        "billing/stamp.py": """
+            def calculate_stamp_duty(amount, country):
+                if country == "DZ":
+                    return round(amount * 0.01, 2)
+                return 0.0
+        """,
+        "billing/receipt.py": """
+            from billing.stamp import calculate_stamp_duty
+
+
+            def create_receipt(amount, country):
+                return amount + calculate_stamp_duty(amount, country)
+        """,
+        "reports/g50.py": """
+            from billing.receipt import create_receipt
+
+
+            def g50_total(rows):
+                return sum(create_receipt(a, c) for a, c in rows)
+        """,
+        "billing/rates.py": "DZ_RATE = 0.01\n",
+        "countries/france.py": """
+            def french_vat(amount):
+                return amount * 0.2
+        """,
+        "tests/test_stamp.py": """
+            from billing.stamp import calculate_stamp_duty
+
+
+            def test_dz():
+                assert calculate_stamp_duty(100, "DZ") == 1.0
+        """,
+        "tests/test_g50.py": """
+            from reports.g50 import g50_total
+
+
+            def test_total():
+                assert g50_total([(100, "DZ")]) == 101.0
+        """,
+        "tests/test_france.py": """
+            from countries.france import french_vat
+
+
+            def test_vat():
+                assert french_vat(10) == 2.0
+        """,
+    }
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        for rel, body in self.FILES.items():
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(textwrap.dedent(body).strip() + "\n", encoding="utf-8")
+        _git(self.root, "init", "-q")
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-qm", "initial import")
+        (self.root / "billing" / "rates.py").write_text("DZ_RATE = 0.015\n", encoding="utf-8")
+        with (self.root / "billing" / "stamp.py").open("a", encoding="utf-8") as handle:
+            handle.write("# rate moved to billing/rates.py\n")
+        _git(self.root, "commit", "-qam", "stamp duty: new rate")
+        self._patch = mock.patch(
+            "navin.config.loader.get_config_path",
+            return_value=self.root / ".cfg" / "config.json",
+        )
+        self._patch.start()
+        self.index = CodeIndex(self.root)
+        self.index.refresh(force=True)
+        self.history = graph_rank.git_history(self.root)
+        # The initial import is a root commit: it must add no co-change pair,
+        # or France would look coupled to the stamp duty.
+        self.graph = build_graph(self.index, self.history)
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def _rank(self, task: str, seed: str, **kwargs: object) -> graph_rank.RankResult:
+        return rank(self.graph, {seed: 1.0}, task=task, exclude={seed}, **kwargs)
+
+    def test_history_is_newest_first_with_project_relative_files(self) -> None:
+        self.assertEqual(len(self.history), 2)
+        self.assertEqual(self.history[0].subject, "stamp duty: new rate")
+        self.assertEqual(set(self.history[0].files), {"billing/rates.py", "billing/stamp.py"})
+        self.assertEqual([commit.parents for commit in self.history], [1, 0])
+
+    def test_relations_keep_their_type_and_direction(self) -> None:
+        calls = self.graph.edge("billing/receipt.py", "billing/stamp.py", "calls")
+        self.assertIsNotNone(calls)
+        self.assertEqual(calls[1], ("calculate_stamp_duty",))
+        self.assertIsNotNone(self.graph.edge("billing/receipt.py", "billing/stamp.py", "imports"))
+        self.assertIsNone(self.graph.edge("billing/stamp.py", "billing/receipt.py", "calls"))
+        # A use from a test file is a `tests` edge, not a plain call.
+        self.assertIsNotNone(self.graph.edge("tests/test_stamp.py", "billing/stamp.py", "tests"))
+        self.assertIsNone(self.graph.edge("tests/test_stamp.py", "billing/stamp.py", "calls"))
+
+    def test_co_change_is_symmetric_and_skips_sweeps(self) -> None:
+        self.assertIsNotNone(self.graph.edge("billing/stamp.py", "billing/rates.py", "co_change"))
+        self.assertIsNotNone(self.graph.edge("billing/rates.py", "billing/stamp.py", "co_change"))
+        self.assertIsNone(self.graph.edge("billing/stamp.py", "countries/france.py", "co_change"))
+        self.assertEqual(self.graph.history_commits, 1)
+
+    def test_co_change_spreads_one_unit_per_commit(self) -> None:
+        graph = CodeGraph(["a.py", "b.py", "c.py"])
+        add_co_changes(graph, [Commit("1", 0, "pair", ("a.py", "b.py"))])
+        add_co_changes(graph, [Commit("2", 0, "trio", ("a.py", "b.py", "c.py"))])
+        self.assertAlmostEqual(graph.edge("a.py", "b.py", "co_change")[0], 1.5)
+        self.assertAlmostEqual(graph.edge("a.py", "c.py", "co_change")[0], 0.5)
+        self.assertEqual(graph.relation_counts(), {"co_change": 3})
+
+    def test_co_change_skips_sweeps_and_root_commits(self) -> None:
+        graph = CodeGraph(["a.py", "b.py", "c.py"])
+        used = add_co_changes(
+            graph,
+            [
+                Commit("1", 0, "format all", ("a.py", "b.py", "c.py")),
+                Commit("2", 0, "initial", ("a.py", "b.py"), parents=0),
+            ],
+            max_files=2,
+        )
+        self.assertEqual(used, 0)
+        self.assertEqual(graph.relation_counts(), {})
+
+    def test_tool_rank_lists_files_with_their_evidence(self) -> None:
+        import asyncio
+
+        tool = CodeIndexTool(workspace=self.root)
+        out = asyncio.run(
+            tool.execute(action="rank", task="impact_analysis", name="calculate_stamp_duty")
+        )
+        self.assertIn("seeds: billing/stamp.py", out)
+        self.assertIn("reports/g50.py", out)
+        self.assertIn("billing/receipt.py <-calls- reports/g50.py (create_receipt)", out)
+        self.assertIn("co-changes from 1 commit(s)", out)
+        self.assertNotIn("countries/france.py", out)
+        tests = asyncio.run(tool.execute(action="rank", task="test_relevance", path="billing/stamp.py"))
+        self.assertIn("1. tests/test_stamp.py", tests)
+        self.assertIn("[test]", tests)
+
+    def test_tool_rank_reports_fallbacks_and_bad_input(self) -> None:
+        import asyncio
+
+        from navin.agent.tools.code_index import _RANK_TASKS
+
+        tool = CodeIndexTool(workspace=self.root)
+        self.assertEqual(_RANK_TASKS, graph_rank.TASKS)
+        unknown = asyncio.run(tool.execute(action="rank", name="no_such_symbol"))
+        self.assertIn("Seed note: symbol 'no_such_symbol' has no definition", unknown)
+        self.assertIn("No graph ranking for code_relevance", unknown)
+        self.assertIn("action=text or action=semantic", unknown)
+        self.assertIn("needs seeds", asyncio.run(tool.execute(action="rank")))
+        self.assertIn("unknown task", asyncio.run(tool.execute(action="rank", task="x", name="a")))
+
+    def test_impact_reaches_dependents_and_stays_out_of_other_countries(self) -> None:
+        result = self._rank("impact_analysis", "billing/stamp.py")
+        paths = [item.path for item in result.files]
+        for expected in ("billing/receipt.py", "reports/g50.py", "billing/rates.py", "tests/test_stamp.py"):
+            self.assertIn(expected, paths)
+        self.assertNotIn("countries/france.py", paths)
+        self.assertNotIn("tests/test_france.py", paths)
+        self.assertLess(paths.index("billing/receipt.py"), paths.index("reports/g50.py"))
+        self.assertEqual(result.files[0].score, 1.0)
+        g50 = next(item for item in result.files if item.path == "reports/g50.py")
+        self.assertEqual(
+            [step.render() for step in g50.evidence],
+            [
+                "billing/stamp.py <-calls- billing/receipt.py (calculate_stamp_duty)",
+                "billing/receipt.py <-calls- reports/g50.py (create_receipt)",
+            ],
+        )
+
+    def test_test_relevance_returns_the_covering_tests_only(self) -> None:
+        result = self._rank("test_relevance", "billing/stamp.py")
+        paths = [item.path for item in result.files]
+        self.assertTrue(all(item.is_test for item in result.files))
+        self.assertEqual(paths[0], "tests/test_stamp.py")
+        self.assertIn("tests/test_g50.py", paths)
+        self.assertNotIn("tests/test_france.py", paths)
+
+    def test_code_relevance_reads_what_the_seed_uses(self) -> None:
+        paths = [item.path for item in self._rank("code_relevance", "billing/receipt.py").files]
+        self.assertIn("billing/stamp.py", paths)
+        self.assertNotIn("countries/france.py", paths)
+
+    def test_hop_limit_bounds_the_walk(self) -> None:
+        paths = [item.path for item in self._rank("impact_analysis", "billing/stamp.py", max_hops=1).files]
+        self.assertIn("billing/receipt.py", paths)
+        self.assertNotIn("reports/g50.py", paths)
+
+    def test_unusable_seeds_report_a_fallback_instead_of_a_ranking(self) -> None:
+        missing = rank(self.graph, {"nope.py": 1.0})
+        self.assertEqual(missing.files, ())
+        self.assertIn("no seed", missing.fallback)
+        no_test = self._rank("test_relevance", "billing/rates.py", max_hops=1)
+        self.assertEqual(no_test.files, ())
+        self.assertIn("no test file", no_test.fallback)
+        with self.assertRaises(ValueError):
+            rank(self.graph, {"billing/stamp.py": 1.0}, task="guess")
+
+    def test_seeds_resolve_from_symbols_and_paths_with_notes(self) -> None:
+        seeds = graph_rank.resolve_seeds(
+            self.index, symbols=["calculate_stamp_duty"], paths=["g50.py", "missing.py"],
+        )
+        self.assertEqual(seeds.weights, {"billing/stamp.py": 1.0, "reports/g50.py": 1.0})
+        self.assertEqual(seeds.explicit, frozenset(seeds.weights))
+        self.assertTrue(any("missing.py" in note for note in seeds.notes))
+
+    def test_ranking_is_deterministic_and_serializes(self) -> None:
+        first = self._rank("impact_analysis", "billing/stamp.py").to_dict()
+        second = self._rank("impact_analysis", "billing/stamp.py").to_dict()
+        self.assertEqual(first, second)
+        self.assertEqual(first["modelVersion"], graph_rank.MODEL_VERSION)
+        node = first["nodes"][0]
+        self.assertEqual(set(node), {"nodeId", "file", "symbol", "score", "isTest", "isSeed", "evidencePaths"})
+        self.assertTrue(node["evidencePaths"][0])
+
+
+class GraphRankBenchTest(unittest.TestCase):
+    """The history replay must score methods without seeing the future."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        for rel, body in GraphRankTest.FILES.items():
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(textwrap.dedent(body).strip() + "\n", encoding="utf-8")
+        _git(self.root, "init", "-q")
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-qm", "initial import")
+        self._touch("billing/stamp.py", "billing/rates.py")
+        _git(self.root, "commit", "-qam", "stamp duty: new rate")
+        self._touch("billing/stamp.py", "billing/receipt.py", "tests/test_stamp.py")
+        _git(self.root, "commit", "-qam", "receipt rounding")
+        # The evaluated commit also creates a file: it existed nowhere before,
+        # so it can be neither a seed nor a target.
+        self._touch("billing/stamp.py", "billing/rates.py", "tests/test_stamp.py")
+        (self.root / "billing" / "new_rule.py").write_text("def rule():\n    return 1\n", encoding="utf-8")
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-qm", "timbre fiscal: 2026 rate")
+        self._patch = mock.patch(
+            "navin.config.loader.get_config_path",
+            return_value=self.root / ".cfg" / "config.json",
+        )
+        self._patch.start()
+        self.index = CodeIndex(self.root)
+        self.index.refresh(force=True)
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def _touch(self, *paths: str) -> None:
+        for rel in paths:
+            with (self.root / rel).open("a", encoding="utf-8") as handle:
+                handle.write("# touched\n")
+
+    def test_split_keeps_the_evaluated_commit_out_of_history(self) -> None:
+        from navin.evals import graph_rank_bench as bench
+
+        commits = graph_rank.git_history(self.root)
+        added = bench.added_files(self.root, max_commits=50)
+        self.assertEqual(added[commits[0].sha], {"billing/new_rule.py"})
+        cases, history = bench.build_cases(
+            commits, set(self.index.entries), {"tests/test_stamp.py", "tests/test_g50.py"},
+            added, eval_commits=1,
+        )
+        self.assertEqual([commit.sha for commit in history], [c.sha for c in commits[1:]])
+        self.assertEqual({case.sha for case in cases}, {commits[0].sha})
+        for case in cases:
+            self.assertNotIn("billing/new_rule.py", case.targets | set(case.seeds))
+        self.assertEqual(
+            sorted(case.seeds for case in cases if case.scenario == "co_edit"),
+            [("billing/rates.py",), ("billing/stamp.py",)],
+        )
+
+    def test_report_scores_every_scenario_and_renders(self) -> None:
+        from navin.evals import graph_rank_bench as bench
+
+        commits = graph_rank.git_history(self.root)
+        report = bench.evaluate(
+            self.index, commits, bench.added_files(self.root, max_commits=50), eval_commits=1,
+        )
+        self.assertEqual(report["eval_commits"], 1)
+        # Two older non-root commits feed co-change; the root import does not.
+        self.assertEqual(report["history_commits"], 2)
+        co_edit = report["scenarios"]["co_edit"]
+        # stamp -> {rates, test_stamp}: both co-changed before (recall 1);
+        # rates -> {stamp, test_stamp}: only stamp did (recall 0.5).
+        self.assertEqual(co_edit["co_change"]["recall_at_k"], 0.75)
+        self.assertEqual(report["scenarios"]["tests"]["ppr_history"]["hit_at_k"], 1.0)
+        self.assertEqual(report["scenarios"]["request"]["text"]["cases"], 1)
+        table = bench.render(report)
+        self.assertIn("| method | Recall@10 | Hit@10 | MRR | coverage |", table)
+        self.assertIn("| ppr_history |", table)
+
 
 class LiveRevalidationTest(unittest.TestCase):
     """The index must answer about the project as it is, not as it was.
@@ -730,6 +1072,121 @@ class WarmerTest(unittest.TestCase):
             cfg.tools.semantic_search = MagicMock(enabled=None, provider="openai")
             load_config.return_value = cfg
             _warm_semantic(self.root, index)  # paid provider auto-off
+
+
+class BridgedRootThrottleTest(unittest.TestCase):
+    """A WSL project opened from Windows must not saturate the 9P bridge.
+
+    Every stat there is a bridge round trip: the index revalidates less often,
+    stats at a capped rate, re-stats only the files an agent wrote, and the
+    warmer does not re-walk the tree on every chat open.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        (self.root / "mod.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+        bridged = mock.patch("navin.index.service.is_bridged_root", return_value=True)
+        bridged.start()
+        self.addCleanup(bridged.stop)
+        self.index = CodeIndex(self.root)
+        self.index.ensure()
+
+    def _no_walk(self):
+        return mock.patch(
+            "navin.index.service.discover_files",
+            side_effect=AssertionError("the whole tree should not be walked"),
+        )
+
+    def test_detects_only_wsl_shares_seen_from_windows(self) -> None:
+        from navin.index import service
+
+        unc = "\\\\wsl.localhost\\Ubuntu\\home\\me\\proj"
+        with mock.patch.object(service.sys, "platform", "win32"):
+            self.assertTrue(real_is_bridged_root(unc))
+            self.assertTrue(real_is_bridged_root("\\\\wsl$\\Ubuntu\\proj"))
+            self.assertFalse(real_is_bridged_root("C:\\Users\\me\\proj"))
+        with mock.patch.object(service.sys, "platform", "linux"):
+            self.assertFalse(real_is_bridged_root(unc))
+
+    def test_revalidate_waits_longer_than_on_a_local_disk(self) -> None:
+        import time as _time
+
+        self.index._revalidated_at = _time.monotonic() - 10
+        with self._no_walk():
+            self.assertFalse(self.index.revalidate())
+
+    def test_an_agent_edit_restats_only_the_written_file(self) -> None:
+        (self.root / "mod.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+        extra = self.root / "extra.py"
+        extra.write_text("def gamma():\n    return 3\n", encoding="utf-8")
+        self.index.mark_dirty(self.root / "mod.py")
+        self.index.mark_dirty(extra)
+        with self._no_walk():
+            self.index.ensure()
+        self.assertTrue(self.index.definition("beta"))
+        self.assertFalse(self.index.definition("alpha"))
+        self.assertTrue(self.index.definition("gamma"))
+        self.assertIn("extra.py", self.index.all_files)
+
+    def test_a_deleted_file_leaves_the_index_without_a_walk(self) -> None:
+        target = self.root / "mod.py"
+        target.unlink()
+        self.index.mark_dirty(target)
+        with self._no_walk():
+            self.assertTrue(self.index.revalidate())
+        self.assertFalse(self.index.definition("alpha"))
+        self.assertNotIn("mod.py", self.index.all_files)
+
+    def test_an_edit_without_a_path_still_forces_a_full_walk(self) -> None:
+        (self.root / "other.py").write_text("def delta():\n    return 4\n", encoding="utf-8")
+        self.index.mark_dirty()
+        self.index.ensure()
+        self.assertTrue(self.index.definition("delta"))
+
+    def test_note_file_written_queues_the_path_instead_of_a_walk(self) -> None:
+        from navin.index import service as index_service
+        from navin.index.warmer import note_file_written
+
+        index_service._instances[str(self.root)] = self.index
+        self.addCleanup(index_service._instances.pop, str(self.root), None)
+        with mock.patch("navin.webui.metagraph_notify.schedule_metagraph_refresh"):
+            note_file_written(self.root / "mod.py")
+        self.assertFalse(self.index._dirty)
+        self.assertEqual(self.index._dirty_paths, {"mod.py"})
+
+    def test_stats_are_paced_and_sequential(self) -> None:
+        from navin.index import service
+
+        for n in range(5):
+            (self.root / f"f{n}.py").write_text(f"V{n} = {n}\n", encoding="utf-8")
+        files = [f"f{n}.py" for n in range(5)]
+        core = mock.MagicMock()
+        core.stat_tree.side_effect = AssertionError("no parallel stat on the bridge")
+        with (
+            mock.patch.object(service, "_BRIDGED_STAT_BURST", 2),
+            mock.patch.object(service, "native", return_value=core),
+            mock.patch.object(service.time, "sleep") as sleep,
+        ):
+            rows = list(service._iter_stats(self.root, files, paced=True))
+        self.assertEqual([row[0] for row in rows], files)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_warmer_does_not_rewarm_within_the_cooldown(self) -> None:
+        import time as _time
+
+        from navin.index import warmer
+
+        key = str(self.root)
+        warmer._last_bridged_warm[key] = _time.monotonic()
+        self.addCleanup(warmer._last_bridged_warm.pop, key, None)
+        self.assertFalse(warmer.schedule_warm(self.root))
+        warmer._last_bridged_warm[key] = _time.monotonic() - warmer._BRIDGED_WARM_COOLDOWN_S - 1
+        with mock.patch("navin.index.warmer.threading.Thread") as thread:
+            self.assertTrue(warmer.schedule_warm(self.root))
+        thread.return_value.start.assert_called_once()
+        warmer._warming.discard(key)
 
 
 if __name__ == "__main__":

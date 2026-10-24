@@ -3,10 +3,13 @@
 
 """Configuration loading utilities."""
 
+import copy
 import json
 import os
 import re
+import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +18,7 @@ from filelock import FileLock
 from loguru import logger
 from pydantic import BaseModel
 
-from navin.config.schema import Config, _resolve_tool_config_refs
+from navin.config.schema import LOW_EFFORT_MIGRATION, Config, _resolve_tool_config_refs
 from navin.config.secrets import (
     decrypt_config_data,
     encrypt_config_data,
@@ -65,7 +68,7 @@ def load_config(config_path: Path | None = None) -> Config:
             rewrite_secrets = has_plaintext_secrets(data)
             data = decrypt_config_data(data, path)
             data = _migrate_config(data)
-            config = Config.model_validate(data)
+            config = _validate_readable(data, path)
         except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             raise ValueError(f"Failed to load config from {path}: {e}") from e
         if rewrite_secrets:
@@ -78,6 +81,133 @@ def load_config(config_path: Path | None = None) -> Config:
     _remember_config_source(config, path)
     _apply_ssrf_whitelist(config)
     return config
+
+
+def _drop_setting(data: Any, loc: tuple[Any, ...]) -> bool:
+    """Remove the deepest key of *loc* that exists in *data*; False when none does."""
+    node = data
+    parent: Any = None
+    key: Any = None
+    for part in loc:
+        if isinstance(node, dict) and part in node:
+            parent, key, node = node, part, node[part]
+        elif isinstance(node, list) and isinstance(part, int) and 0 <= part < len(node):
+            parent, key, node = node, part, node[part]
+        else:
+            break
+    if parent is None:
+        return False
+    del parent[key]
+    return True
+
+
+def _validate_readable(data: Any, path: Path) -> Config:
+    """Validate the saved settings, setting aside the ones this version cannot read.
+
+    Another version of Navin (the CLI updated before the desktop app, a newer
+    build then an older one) can leave a value this one rejects. Refusing the
+    whole file stopped the engine at startup with no way to recover from the
+    app. The rejected settings fall back to their defaults instead, and the
+    file as it was is kept next to it as ``config.json.unreadable``.
+    """
+    try:
+        return Config.model_validate(data)
+    except pydantic.ValidationError as exc:
+        error = exc
+    if not isinstance(data, dict):
+        raise error
+    trimmed = copy.deepcopy(data)
+    dropped: list[str] = []
+    for _ in range(8):
+        removed = [
+            ".".join(str(part) for part in item.get("loc") or ())
+            for item in error.errors()
+            if _drop_setting(trimmed, tuple(item.get("loc") or ()))
+        ]
+        if not removed:
+            raise error
+        dropped.extend(removed)
+        try:
+            config = Config.model_validate(trimmed)
+        except pydantic.ValidationError as exc:
+            error = exc
+            continue
+        try:
+            shutil.copy2(path, path.with_name(f"{path.name}.unreadable"))
+        except OSError as copy_error:
+            logger.warning("could not keep a copy of {}: {}", path, copy_error)
+        logger.warning(
+            "Settings this version cannot read were reset to their defaults ({}); "
+            "the original file is kept as {}.unreadable",
+            ", ".join(dict.fromkeys(dropped)),
+            path.name,
+        )
+        return config
+    raise error
+
+
+_cache_lock = threading.RLock()
+#: str(path) -> (file signature, loader used, shared Config). See load_config_cached.
+_config_cache: dict[str, tuple[tuple[int, int, int, int] | None, Any, Config]] = {}
+
+
+def _file_signature(path: Path) -> tuple[int, int, int, int] | None:
+    """mtime_ns, size, inode and ctime_ns of *path*, or None when it is absent.
+
+    save_config replaces the file (new inode), editors rewrite it (new mtime
+    or size): any of them changing means the cached parse is stale.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
+
+
+def load_config_cached(config_path: Path | None = None) -> Config:
+    """``load_config`` for hot read-only paths, re-read only when the file changes.
+
+    The gateway used to parse, decrypt and validate the config file several
+    times per turn (runtime refresh, presets, routes, billing, websocket role).
+    This returns one shared ``Config`` per file version instead, invalidated by
+    the file's mtime/size/inode and by ``save_config`` / ``invalidate_config_cache``.
+    Secrets are decrypted once per change.
+
+    The returned object is SHARED: callers must treat it as read-only. A caller
+    that needs to edit (and save) must use ``load_config`` or take
+    ``config.model_copy(deep=True)`` first. Thread-safe.
+    """
+    path = config_path or get_config_path()
+    key = str(path)
+    # Signed before reading: a write racing the parse leaves a signature that
+    # no longer matches, so the next call re-reads instead of keeping stale data.
+    signature = _file_signature(path)
+    with _cache_lock:
+        hit = _config_cache.get(key)
+    # The loader identity is part of the key so a patched ``load_config``
+    # (tests, embedding hosts) is never bypassed by an entry it did not make.
+    loader = load_config
+    if hit is not None and hit[0] == signature and hit[1] is loader:
+        config = hit[2]
+        # load_config re-applies the SSRF policy on every load; keep that.
+        _apply_ssrf_whitelist(config)
+        return config
+    # Parsed outside the lock: load_config may save (plaintext secrets
+    # migration), and save_config takes the file lock then invalidates.
+    # Same call shape as the callers used to make (patched loaders may take none).
+    config = loader(config_path) if config_path is not None else loader()
+    with _cache_lock:
+        _config_cache[key] = (signature, loader, config)
+    return config
+
+
+def invalidate_config_cache(config_path: Path | None = None) -> None:
+    """Drop cached configs (one path, or all when *config_path* is None)."""
+    with _cache_lock:
+        if config_path is None:
+            _config_cache.clear()
+        else:
+            _config_cache.pop(str(config_path), None)
 
 
 def _remember_config_source(config: Config, path: Path) -> None:
@@ -141,6 +271,8 @@ def _apply_ssrf_whitelist(config: Config) -> None:
 # are what external clients and the desktop launcher connect to, and the rest are
 # security decisions where an operator's explicit "no" must not become implicit.
 _PINNED_PATHS: tuple[tuple[str, ...], ...] = (
+    # Without it on disk the one-shot migrations would run again at every load.
+    ("appliedMigrations",),
     ("agents", "defaults", "workspace"),
     ("api", "host"),
     ("api", "port"),
@@ -245,6 +377,7 @@ def save_config(
         finally:
             if temporary is not None and os.path.exists(temporary):
                 os.unlink(temporary)
+        invalidate_config_cache(path)
         try:
             os.chmod(path, 0o600)
         except OSError:
@@ -334,6 +467,36 @@ def _env_replace(match: re.Match[str]) -> str:
     return value
 
 
+def _reset_high_reasoning_effort(data: dict) -> None:
+    """Once per install: a saved ``high`` reasoning effort goes back to the default.
+
+    ``high`` used to be the default, so files written back then carry it as if
+    chosen, and the new default (low) never reached them. Only ``high`` moves,
+    in the agent defaults and in every model preset; any other value is kept.
+    The marker makes it one-shot: a ``high`` picked afterwards stays.
+    """
+    done = data.get("appliedMigrations")
+    if not isinstance(done, list):
+        done = []
+    if LOW_EFFORT_MIGRATION in done:
+        return
+
+    def reset(section: Any) -> None:
+        if not isinstance(section, dict):
+            return
+        for key in ("reasoningEffort", "reasoning_effort"):
+            if str(section.get(key) or "").strip().lower() == "high":
+                section.pop(key)
+
+    agents = data.get("agents")
+    reset(agents.get("defaults") if isinstance(agents, dict) else None)
+    presets = data.get("modelPresets", data.get("model_presets"))
+    if isinstance(presets, dict):
+        for preset in presets.values():
+            reset(preset)
+    data["appliedMigrations"] = [*done, LOW_EFFORT_MIGRATION]
+
+
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
     agents = data.get("agents", {})
@@ -352,6 +515,8 @@ def _migrate_config(data: dict) -> dict:
                 "replay max messages is now an internal safety cap. Remove it from "
                 "config. This compatibility warning will be removed in the next version."
             )
+
+    _reset_high_reasoning_effort(data)
 
     # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools = data.get("tools", {})

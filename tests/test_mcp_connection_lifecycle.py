@@ -50,6 +50,36 @@ class MCPConnectionLifecycleTest(unittest.TestCase):
 
         self.run_connection(lambda request: httpx.Response(405), action)
 
+    def test_http_405_logs_one_actionable_line_without_secrets(self):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="WARNING")
+
+        async def action():
+            result = await connect_mcp_servers(
+                {
+                    "debug": MCPServerConfig(
+                        type="streamableHttp",
+                        url="http://127.0.0.1:3001/secret-token/mcp?token=abc",
+                    )
+                },
+                ToolRegistry(),
+            )
+            self.assertEqual(result, {})
+
+        try:
+            self.run_connection(lambda request: httpx.Response(405), action)
+        finally:
+            logger.remove(sink)
+        hits = [line for line in lines if "answered 405" in line]
+        self.assertEqual(len(hits), 1, lines)
+        self.assertIn('"type": "sse"', hits[0])
+        self.assertIn("http://127.0.0.1:3001/...", hits[0])
+        self.assertNotIn("secret-token", hits[0])
+        self.assertNotIn("abc", hits[0])
+        self.assertFalse(any("connection closed" in line for line in lines), lines)
+
     def test_cancel_during_handshake_closes_transport_and_preserves_cancellation(self):
         started = asyncio.Event()
 

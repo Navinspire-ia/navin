@@ -715,27 +715,34 @@ async def document_template_context_provider(
 # same; the agent has to know they exist and where they are before it starts
 # hand-writing Office XML or reaching for pip.
 
-# Words that name a document format on their own.
-_DOC_FORMAT_RE = re.compile(
+# Words that name a document format.
+_DOC_FORMAT = (
     r"(?<!\w)(?:pdf|docx?|pptx?|xlsx|powerpoint|power point|libreoffice|"
-    r"pr[ée]sentation|diaporama|diapos?|tableur|classeur|spreadsheet)(?!\w)",
-    re.IGNORECASE,
+    r"pr[ée]sentation|diaporama|diapos?|tableur|classeur|spreadsheet)(?!\w)"
 )
-# Words that need a creation verb next to them ("word" and "deck" are ordinary
-# words; "excel" is a verb in English).
-_DOC_WEAK_RE = re.compile(
+# Words that are documents only when something asks to produce them ("word"
+# and "deck" are ordinary words; "excel" is a verb in English).
+_DOC_WEAK = (
     r"(?<![\w.])(?:word|excel|slides?|deck|office|rapport|report|proposal|"
     r"proposition|contrat|contract|lettre|letter|invoice|facture|devis|brochure|"
     r"flyer|fiche|memo|whitepaper|livre blanc|attestation|certificat|certificate|"
     r"cv|resume|compte[- ]rendu|minutes|cahier des charges|one[- ]pager|pitch|"
-    r"plaquette|dossier)(?!\w)",
-    re.IGNORECASE,
+    r"plaquette|dossier)(?!\w)"
 )
-_DOC_VERB_RE = re.compile(
+_DOC_VERB = (
     r"(?<!\w)(?:g[ée]n[èe]re[rz]?|generate|creat(?:e|ing)|cr[ée]e[rz]?|r[ée]dige[rz]?|"
     r"write|writing|make|produce|produi[st]|produire|pr[ée]pare[rz]?|prepare|build|"
     r"export(?:e[rz]?)?|convert(?:i[sr]?)?|mets? en page|design|fais|faire|draft|"
-    r"assemble|monte[rz]?|sors|sortir|livre[rz]?|deliver)(?!\w)",
+    r"assemble|monte[rz]?|sors|sortir|livre[rz]?|deliver|"
+    r"veux|voudrais|want|need|besoin d)(?!\w)"
+)
+# The verb must govern the document: at most four words between them ("fais
+# moi un pdf", "export this as .docx", "rédige un rapport"). Matching the two
+# anywhere in the message fired on 54 of 234 real coding turns, Navin's own
+# "verify what you edited, then report" nudge and invoice-OCR bug reports
+# included, and each one told the agent to start a document right away.
+_DOC_REQUEST_RE = re.compile(
+    _DOC_VERB + r"(?:[\s,:'’]+[\w'’.-]+){0,4}?[\s,:'’]+\.?(?:" + _DOC_FORMAT + "|" + _DOC_WEAK + ")",
     re.IGNORECASE,
 )
 _DOC_SUFFIXES = (".docx", ".pptx", ".xlsx", ".pdf", ".doc", ".ppt", ".odt", ".odp")
@@ -755,9 +762,7 @@ def wants_document_toolchain(text: str | None, metadata: Mapping[str, Any] | Non
     body = (text or "").strip()
     if not body or len(body) > 20_000:
         return False
-    if _DOC_FORMAT_RE.search(body):
-        return True
-    return bool(_DOC_WEAK_RE.search(body) and _DOC_VERB_RE.search(body))
+    return bool(_DOC_REQUEST_RE.search(body))
 
 
 def _attached_office_files(metadata: Mapping[str, Any] | None) -> list[str]:

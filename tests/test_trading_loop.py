@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
-
-import threading
 from unittest.mock import patch
 
 from navin.trading.heartbeat import tick_watch

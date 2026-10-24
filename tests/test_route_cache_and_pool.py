@@ -368,3 +368,28 @@ class TestSaturationIsReported:
             await task
 
         assert warnings == []
+
+
+class TestBackgroundRevalidation:
+    """A window regaining focus asked navin.live and waited about a second."""
+
+    @pytest.mark.asyncio
+    async def test_the_known_answer_comes_back_now_and_the_fresh_one_lands_later(self) -> None:
+        cache = CoalescingCache()
+        released = asyncio.Event()
+        values = iter(["old", "new"])
+
+        async def fetch() -> str:
+            value = next(values)
+            if value == "new":
+                await released.wait()
+            return value
+
+        assert cache.revalidate("k", fetch, ttl=60) is None, "nothing known yet"
+        assert await cache.get("k", fetch, ttl=60) == "old"
+        assert cache.revalidate("k", fetch, ttl=60) == "old"
+        assert cache.revalidate("k", fetch, ttl=60) == "old", "one refresh at a time"
+        released.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert await cache.get("k", fetch, ttl=60) == "new"

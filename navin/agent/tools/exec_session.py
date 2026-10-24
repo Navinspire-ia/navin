@@ -87,6 +87,10 @@ class _ExecSession:
         self.command = command
         self.cwd = cwd
         self.owner_session_key = owner_session_key
+        # True when a foreground exec outlived its window and was adopted: the
+        # command was meant to finish (an install, a build), unlike a server
+        # started with background=true.
+        self.adopted = False
         self.started_at = time.monotonic()
         # timeout None/0 means no limit; an infinite deadline is never reached.
         self.deadline = time.monotonic() + timeout if timeout else float("inf")
@@ -304,6 +308,14 @@ class ExecSessionManager:
             if session.process.returncode is None
         )
 
+    def running_sessions(self) -> list[tuple[str, "_ExecSession"]]:
+        """Live sessions with their ids (for callers that must wait on one)."""
+        return [
+            (session_id, session)
+            for session_id, session in sorted(self._sessions.items())
+            if session.process.returncode is None
+        ]
+
     def running_snapshot(self) -> list[ExecSessionInfo]:
         """Sync list of live sessions for ``/ps``."""
         now = time.monotonic()
@@ -401,6 +413,7 @@ class ExecSessionManager:
                 on_exit=on_exit,
                 on_finished=on_finished,
             )
+            self._sessions[session_id].adopted = True
         return session_id
 
     async def poll(

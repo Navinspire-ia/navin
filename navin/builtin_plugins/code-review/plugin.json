@@ -1,0 +1,15 @@
+{
+  "name": "code-review",
+  "version": "1.0.0",
+  "description": "Pull request review by parallel agents with validation of every finding, so only high-signal issues are reported or posted inline.",
+  "category": "productivity",
+  "commands": ["code-review"],
+  "agents": ["code-reviewer"],
+  "skills": ["code-reviewer", "pr-autopilot"],
+  "steps": [
+    {"step": "review a pull request", "use": "/code-review"},
+    {"step": "post the review on the pull request", "use": "/code-review --comment"},
+    {"step": "review local changes before a commit", "use": "agent:code-reviewer"},
+    {"step": "answer review threads and fix CI", "use": "skill:pr-autopilot"}
+  ]
+}

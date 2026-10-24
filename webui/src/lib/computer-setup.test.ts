@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { COMPUTER_MODEL_CALLOUT, computerChatUrl, computerPermissionGranted, computerSettingsUrl, computerSetupIssue, computerSetupStep } from "./computer-setup";
+import { COMPUTER_MODEL_CALLOUT } from "@/components/settings/computer-callout";
+import { computerChatUrl, computerPermissionGranted, computerSettingsUrl, computerSetupIssue, computerSetupStep } from "./computer-setup";
 import type { ComputerDiagnostics, SettingsPayload } from "./types";
 
 const config: NonNullable<SettingsPayload["computer"]> = {

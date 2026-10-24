@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleDisplayName</key>
+	<string>Navin</string>
+	<key>CFBundleExecutable</key>
+	<string>navin-desktop</string>
+	<key>CFBundleIdentifier</key>
+	<string>ai.navin.desktop</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Navin</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.2.1</string>
+	<key>CFBundleVersion</key>
+	<string>2.2.1</string>
+	<key>CSResourcesFileMapped</key>
+	<true/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13</string>
+	<key>CFBundleIconFile</key>
+	<string>icon.icns</string>
+	<key>LSRequiresCarbon</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Navin uses Computer to inspect and control applications when you ask the agent to use your desktop.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Navin uses the microphone for the live voice conversation with the agent.</string>
+</dict>
+</plist>

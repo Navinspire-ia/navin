@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "legacy-tickets": {
+      "type": "sse",
+      "url": "https://tickets.example.com/mcp/sse",
+      "headers": {"X-API-Key": "${TICKETS_API_KEY}"},
+      "toolTimeout": 60
+    }
+  }
+}

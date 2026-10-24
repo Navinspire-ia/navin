@@ -37,6 +37,6 @@ describe("Studio settings module", () => {
     expect(sidebar).toContain('data-testid="sidebar-studio-config"');
     expect(sidebar).toContain('onOpenSettings("studio")');
     expect(sidebar).toContain("sidebar-studio-toggle-");
-    expect(STUDIO_MODULE_IDS).toHaveLength(14);
+    expect(STUDIO_MODULE_IDS).toHaveLength(15);
   });
 });

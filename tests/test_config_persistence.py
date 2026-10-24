@@ -63,6 +63,42 @@ class PruningTest(unittest.TestCase):
         self.assertNotIn("sk-test", json.dumps(written))
 
 
+class OtherVersionSettingsTest(unittest.TestCase):
+    """A value written by another Navin version must not stop the engine at startup."""
+
+    def test_an_unreadable_value_falls_back_to_its_default_and_keeps_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            original = {
+                "gateway": {"port": "not-a-port", "restartMode": "from-the-future"},
+                "agents": {"defaults": {"maxConcurrentSubagents": 7}},
+                "futureSection": {"enabled": True},
+            }
+            path.write_text(json.dumps(original), encoding="utf-8")
+
+            config = load_config(path)
+
+            self.assertEqual(config.gateway.port, Config().gateway.port)
+            self.assertEqual(config.gateway.restart_mode, Config().gateway.restart_mode)
+            self.assertEqual(config.agents.defaults.max_concurrent_subagents, 7)
+            kept = path.with_name("config.json.unreadable")
+            self.assertEqual(json.loads(kept.read_text(encoding="utf-8")), original)
+
+    def test_a_file_that_is_not_json_still_reports_the_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text('{"gateway": ', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(path)
+
+    def test_a_readable_file_leaves_no_copy_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"gateway": {"port": 18999}}), encoding="utf-8")
+            self.assertEqual(load_config(path).gateway.port, 18999)
+            self.assertFalse(path.with_name("config.json.unreadable").exists())
+
+
 class RoundTripTest(unittest.TestCase):
     """Pruning must not change what navin actually runs with."""
 

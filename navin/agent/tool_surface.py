@@ -14,6 +14,7 @@ Measured 2026-09-01: 54 schemas were ~29k tokens before the user message.
 
 from __future__ import annotations
 
+import json
 import shlex
 from collections.abc import Callable
 from copy import deepcopy
@@ -46,6 +47,7 @@ _BUILD_TOOLS: frozenset[str] = frozenset(
         "write_file",
         "edit_file",
         "start_app",
+        "project",
         "open_preview",
         "preview_server",
     }
@@ -56,7 +58,8 @@ _BUILD_TOOLS: frozenset[str] = frozenset(
 # but filing board tasks, asking the user and tinting the composer are how a
 # plan is delivered, not how it is executed.
 PLAN_SAFE_WRITE_TOOLS: frozenset[str] = frozenset(
-    {"board", "ask_user", "set_composer_mode", "open_file_preview"}
+    # collab: a teammate assigned from Plan runs read-only (navin.collab.runtime).
+    {"board", "ask_user", "set_composer_mode", "open_file_preview", "collab"}
 )
 
 # The one folder a Plan turn may write: the plan's own artifacts (the archify
@@ -173,7 +176,9 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "test_run",
         "code_review",
         "pr_comments",
+        "forge",
         "start_app",
+        "project",
         "open_preview",
         "open_file_preview",
         "open_terminal",
@@ -181,7 +186,10 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "board",
         "skill",
         "spawn",
+        "team",
+        "collab",
         "ask_user",
+        "request_credentials",
         "set_composer_mode",
         "create_goal",
         "update_goal",
@@ -215,6 +223,7 @@ _MODE_DENIED: dict[str, frozenset[str]] = {
             "apply_patch",
             "edit_file",
             "start_app",
+            "project",
             "mobile",
             "montage",
             "write_stdin",
@@ -222,12 +231,12 @@ _MODE_DENIED: dict[str, frozenset[str]] = {
             "cron",
         }
     ),
+    # spawn stays: an audit across modules runs one subagent per module.
     "review": _HEAVY_MEDIA_TOOLS
     | frozenset(
         {
             "montage",
             "mobile",
-            "spawn",
             "generate_image",
             "generate_video",
             "music_generation",
@@ -236,6 +245,11 @@ _MODE_DENIED: dict[str, frozenset[str]] = {
     "security": _HEAVY_MEDIA_TOOLS
     | frozenset({"montage", "mobile", "music_generation", "generate_music"}),
     "debug": _HEAVY_MEDIA_TOOLS
+    | frozenset({"montage", "scrape", "music_generation", "generate_music"}),
+    # Reverse reads and inventories a target; media generation and the
+    # montage/scrape desks are noise there. Dynamic tools stay in the schema
+    # and are gated per call by approval, not hidden.
+    "reverse": _HEAVY_MEDIA_TOOLS
     | frozenset({"montage", "scrape", "music_generation", "generate_music"}),
     "montage": frozenset({"scrape", "mobile", "security_scan"}),
 }
@@ -320,8 +334,32 @@ def compact_tool_schema(
     *,
     max_chars: int = _COMPACT_SCHEMA_DESC_CHARS,
 ) -> dict[str, Any]:
-    """Copy a tool schema with long ``description`` strings shortened."""
-    return _truncate_schema_descriptions(deepcopy(schema), max_chars)
+    """Copy a tool schema with long ``description`` strings shortened.
+
+    Every subagent owns its registry, so the same schemas arrive as new dict
+    objects and the id-keyed memo below never hits. A content key (cheap JSON
+    dump) shares one compacted copy across all of them instead of a deepcopy
+    per subagent on the event loop. Callers must not mutate the result.
+    """
+    try:
+        key = (max_chars, json.dumps(schema, sort_keys=True, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return _truncate_schema_descriptions(deepcopy(schema), max_chars)
+    hit = _COMPACT_BY_CONTENT.get(key)
+    if hit is not None:
+        return hit
+    out = _truncate_schema_descriptions(deepcopy(schema), max_chars)
+    if len(_COMPACT_BY_CONTENT) >= 2048:
+        _COMPACT_BY_CONTENT.clear()
+    _COMPACT_BY_CONTENT[key] = out
+    return out
+
+
+_COMPACT_BY_CONTENT: dict[tuple[int, str], dict[str, Any]] = {}
+
+
+_FILTERED_MEMO: dict[tuple[Any, ...], tuple[list[dict[str, Any]], tuple[int, ...], list[dict[str, Any]]]] = {}
+_FILTERED_MEMO_MAX = 32
 
 
 def filter_tool_definitions(
@@ -331,9 +369,41 @@ def filter_tool_definitions(
     allowed: frozenset[str] | set[str] | None = None,
     compact: bool = False,
 ) -> list[dict[str, Any]]:
-    """Keep schemas that pass the allowlist (if any) and are not denied."""
+    """Keep schemas that pass the allowlist (if any) and are not denied.
+
+    Called several times per agent step with the same registry list: the
+    result is memoized and the very same list object comes back while the
+    definitions and filters are unchanged. That skips a deep copy of every
+    schema per call (compact) and lets the tool-token cache, keyed on the list,
+    hit instead of re-encoding all schemas each step (~30 ms per step).
+    Callers must not mutate the returned list or its schemas.
+    """
     if not denied and allowed is None and not compact:
         return definitions
+    key = (
+        id(definitions),
+        frozenset(denied or ()),
+        None if allowed is None else frozenset(allowed),
+        compact,
+    )
+    fingerprint = tuple(id(schema) for schema in definitions)
+    hit = _FILTERED_MEMO.get(key)
+    if hit is not None and hit[0] is definitions and hit[1] == fingerprint:
+        return hit[2]
+    out = _filter_tool_definitions(definitions, denied, allowed=allowed, compact=compact)
+    if key not in _FILTERED_MEMO and len(_FILTERED_MEMO) >= _FILTERED_MEMO_MAX:
+        _FILTERED_MEMO.pop(next(iter(_FILTERED_MEMO)))
+    _FILTERED_MEMO[key] = (definitions, fingerprint, out)
+    return out
+
+
+def _filter_tool_definitions(
+    definitions: list[dict[str, Any]],
+    denied: frozenset[str] | set[str] | None,
+    *,
+    allowed: frozenset[str] | set[str] | None,
+    compact: bool,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for schema in definitions:
         name = _schema_tool_name(schema)

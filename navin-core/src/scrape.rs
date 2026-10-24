@@ -20,7 +20,7 @@ use std::time::Duration;
 use url::Url;
 
 const DEFAULT_UA: &str =
-    "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.ai) AppleWebKit/537.36";
+    "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.live) AppleWebKit/537.36";
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_BYTES: usize = 5 * 1024 * 1024;
 const HARD_MAX_PAGES: usize = 500;

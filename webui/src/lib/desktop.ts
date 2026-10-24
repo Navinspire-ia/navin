@@ -182,6 +182,27 @@ export function tauriIpcAvailable(): boolean {
   return tauriInvoke() != null || tauriWindow()?.__TAURI_INTERNALS__ != null;
 }
 
+/**
+ * Open *url* in a second Navin window of the desktop app.
+ *
+ * A browser tab means nothing there: the Tauri and Electron shells both
+ * implement the `open_window` command, which refuses any address that is not
+ * this gateway. Resolves false outside the shell or when the shell refuses,
+ * so the caller can fall back to an in-app navigation.
+ */
+export async function openNavinWindow(
+  url: string,
+  invoke: TauriInvoke | null = tauriInvoke(),
+): Promise<boolean> {
+  if (!invoke) return false;
+  try {
+    await invoke("open_window", { url });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // -- Gateway URL resolution --------------------------------------------------
 
 /** The parts of `window.location` this module needs, so it stays testable. */

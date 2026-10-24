@@ -66,8 +66,8 @@ def test_board_validation_feedback_and_later_success(tmp_path, theme, width, sav
     asyncio.run(run())
 
 
-def test_real_board_permission_error_stays_out_of_the_transcript():
-    """A failed step is never painted as failed; the final message reports it."""
+def test_real_board_permission_error_shows_a_cross_and_a_short_reason():
+    """A failed step gets a red cross and a short reason, never "Failed"."""
     async def run():
         app = ActivityHost()
         async with app.run_test(size=(100, 24)):
@@ -77,7 +77,8 @@ def test_real_board_permission_error_stays_out_of_the_transcript():
             )
             row = app.block.query_one(ToolCall)
             assert "Failed" not in row._head_text()
-            assert not row.display
+            assert row.display and row._head_text().startswith("× ")
+            assert row._summary_text() == "permission denied"
             assert "Permission denied" in row.copy_text()
             assert row.has_class("-error")
             assert not row.validation_pending

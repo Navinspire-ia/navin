@@ -492,6 +492,7 @@ class DiscordChannel(BaseChannel):
         stream_id: str | None = None,
         stream_end: bool = False,
         resuming: bool = False,
+        discarded: bool = False,
     ) -> None:
         """Progressive Discord delivery: send once, then edit until the stream ends."""
         client = self._client
@@ -501,6 +502,20 @@ class DiscordChannel(BaseChannel):
 
         if stream_end:
             buf = self._stream_bufs.get(chat_id)
+            if discarded:
+                # The retry restarts the answer in a new segment: delete the
+                # partial message instead of leaving it above the full answer.
+                if not buf or (
+                    stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id
+                ):
+                    return
+                self._stream_bufs.pop(chat_id, None)
+                if buf.message is not None:
+                    try:
+                        await buf.message.delete()
+                    except Exception as e:
+                        self.logger.debug("discarded stream delete failed: {}", e)
+                return
             if not buf or buf.message is None or not buf.text:
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:

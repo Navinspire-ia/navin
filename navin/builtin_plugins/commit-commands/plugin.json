@@ -1,0 +1,15 @@
+{
+  "name": "commit-commands",
+  "version": "1.0.0",
+  "description": "Git workflow commands: commit, commit + push + pull request, and cleanup of local branches deleted on the remote.",
+  "category": "productivity",
+  "commands": ["commit", "commit-push-pr", "clean_gone"],
+  "agents": [],
+  "skills": ["git", "github"],
+  "steps": [
+    {"step": "commit the current changes", "use": "/commit"},
+    {"step": "commit, push and open a pull request", "use": "/commit-push-pr"},
+    {"step": "delete local branches gone from the remote", "use": "/clean_gone"},
+    {"step": "other git or forge operations", "use": "skill:git"}
+  ]
+}

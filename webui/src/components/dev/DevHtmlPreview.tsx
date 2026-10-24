@@ -130,7 +130,7 @@ export function DevHtmlPreview({
         />
       ) : null}
       {error && url ? (
-        <p className="pointer-events-none absolute bottom-2 left-2 right-2 truncate rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground">
+        <p className="pointer-events-none absolute bottom-2 start-2 end-2 truncate rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground">
           {error}
         </p>
       ) : null}

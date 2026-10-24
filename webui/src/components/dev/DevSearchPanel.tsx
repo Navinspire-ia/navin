@@ -186,7 +186,7 @@ export function DevSearchPanel({
             {showReplace ? (
               <ChevronDown className="h-3.5 w-3.5" aria-hidden />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+              <ChevronRight className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
             )}
           </button>
           <div className="min-w-0 flex-1 space-y-1">
@@ -206,7 +206,7 @@ export function DevSearchPanel({
                       )
                     : tx("dev.search.placeholder", "Search in project…")
                 }
-                className="h-8 rounded-lg pr-8 text-[12px]"
+                className="h-8 rounded-lg pe-8 text-[12px]"
                 aria-label={
                   semantic
                     ? tx(
@@ -219,7 +219,7 @@ export function DevSearchPanel({
               <button
                 type="button"
                 onClick={() => void runSearch()}
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="absolute end-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label={tx("dev.search.run", "Search")}
               >
                 {loading ? (
@@ -235,14 +235,14 @@ export function DevSearchPanel({
                   value={replacement}
                   onChange={(event) => setReplacement(event.target.value)}
                   placeholder={tx("dev.search.replacePlaceholder", "Replace")}
-                  className="h-8 rounded-lg pr-8 text-[12px]"
+                  className="h-8 rounded-lg pe-8 text-[12px]"
                   aria-label={tx("dev.search.replacePlaceholder", "Replace")}
                 />
                 <button
                   type="button"
                   onClick={() => void runReplace()}
                   disabled={replaceDisabled}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                  className="absolute end-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
                   title={tx("dev.search.replaceAll", "Replace all")}
                   aria-label={tx("dev.search.replaceAll", "Replace all")}
                 >
@@ -256,7 +256,7 @@ export function DevSearchPanel({
             ) : null}
           </div>
         </div>
-        <div className="flex items-center gap-1 pl-5">
+        <div className="flex items-center gap-1 ps-5">
           <button
             type="button"
             onClick={() => {
@@ -323,7 +323,7 @@ export function DevSearchPanel({
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
           </button>
           {result ? (
-            <span className="ml-auto truncate text-[11px] text-muted-foreground">
+            <span className="ms-auto truncate text-[11px] text-muted-foreground">
               {result.mode === "semantic" || result.tool === "semantic"
                 ? t("dev.search.semanticResults", {
                     defaultValue: "{{count}} semantic",
@@ -338,7 +338,7 @@ export function DevSearchPanel({
           ) : null}
         </div>
         {showFilters && !semantic ? (
-          <div className="space-y-1 pl-5">
+          <div className="space-y-1 ps-5">
             <label className="block text-[10.5px] uppercase tracking-wide text-muted-foreground">
               {tx("dev.search.filesToInclude", "files to include")}
             </label>
@@ -388,10 +388,10 @@ export function DevSearchPanel({
                 <button
                   type="button"
                   onClick={() => toggleFile(file.path)}
-                  className="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left hover:bg-muted/60"
+                  className="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-start hover:bg-muted/60"
                 >
                   {isCollapsed ? (
-                    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                    <ChevronRight className="rtl:-scale-x-100 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                   ) : (
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                   )}
@@ -412,7 +412,7 @@ export function DevSearchPanel({
                     type="button"
                     onClick={() => void runReplace([file.path])}
                     disabled={replaceDisabled}
-                    className="absolute right-1 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 disabled:opacity-40 group-hover/file:opacity-100"
+                    className="absolute end-1 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 disabled:opacity-40 group-hover/file:opacity-100"
                     title={tx("dev.search.replaceInFile", "Replace in this file")}
                     aria-label={`${tx("dev.search.replaceInFile", "Replace in this file")} - ${file.path}`}
                   >
@@ -430,7 +430,7 @@ export function DevSearchPanel({
                       key={`${match.line}-${match.col}-${index}`}
                       type="button"
                       onClick={() => onOpenMatch(file.path, match.line)}
-                      className="flex w-full items-baseline gap-2 rounded-md py-0.5 pl-6 pr-2 text-left hover:bg-muted/60"
+                      className="flex w-full items-baseline gap-2 rounded-md py-0.5 ps-6 pe-2 text-start hover:bg-muted/60"
                     >
                       <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                         {match.line}

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import hashlib
 import ipaddress
 import json
@@ -22,6 +20,7 @@ from urllib.parse import urlencode, urlsplit
 from navin.marketing.assets import mime_for
 from navin.marketing.errors import MarketingError
 from navin.marketing.store import MarketingStore
+from navin.utils.proc import no_window_kwargs
 
 
 @lru_cache(maxsize=128)

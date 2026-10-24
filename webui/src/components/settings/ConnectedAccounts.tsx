@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Checkbox, DefaultButton, MessageBar, MessageBarType, PrimaryButton, ProgressIndicator, Stack } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 import { useClient } from "@/providers/ClientProvider";
 import { openInOsBrowser } from "@/lib/api";
 import { accountAction, DEFAULT_ACCOUNT_PERMISSIONS, type AccountPermission, type AccountPermissions, type AccountsSnapshot, type ConnectedAccount } from "@/lib/accounts-api";
@@ -10,7 +11,7 @@ const BUTTON = { root: { minHeight: 40 } };
 export function ConnectedAccounts({ selectedId, onSelect }: { selectedId?: string; onSelect?: (account: ConnectedAccount) => void }) {
   const { token } = useClient();
   const { i18n } = useTranslation();
-  const c = (fr: string, en: string) => i18n.language.startsWith("fr") ? fr : en;
+  const c = (fr: string, en: string, values?: Record<string, string | number>) => bilingual(fr, en, values);
   const reduced = useReducedMotion();
   const [state, setState] = useState<AccountsSnapshot | null>(null);
   const [permissions, setPermissions] = useState(DEFAULT_ACCOUNT_PERMISSIONS);

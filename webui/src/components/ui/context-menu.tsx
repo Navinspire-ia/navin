@@ -143,7 +143,7 @@ export function ContextMenu({
               item.onSelect?.();
             }}
             className={cn(
-              "flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors",
+              "flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-start text-[13px] transition-colors",
               "disabled:pointer-events-none disabled:opacity-40",
               item.danger
                 ? "text-destructive hover:bg-destructive/10"

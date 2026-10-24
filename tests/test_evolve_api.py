@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,8 @@ class FakeDaemon:
         self.result: object = {"engine": "test", "jobs": []}
         self.error: dict | None = None
         self.close_without_answering = False
+        # Seconds to sit on a request before answering: a busy daemon.
+        self.stall_s = 0.0
 
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.bind(("127.0.0.1", 0))
@@ -143,6 +146,8 @@ class FakeDaemon:
             self.requests.append(request)
             if self.close_without_answering:
                 return
+            if self.stall_s:
+                time.sleep(self.stall_s)
             if request.get("token") != self.token:
                 self._send(
                     client,
@@ -349,7 +354,7 @@ class TestDaemonOnHostsWithoutUnixSockets:
 
 class TestDaemonSnapshot:
     def test_a_missing_endpoint_reads_as_not_running(self, monkeypatch, tmp_path):
-        def refuse(root, method, params):
+        def refuse(root, method, params, **kwargs):
             raise evolve_api.EvolveApiError(503, "engine daemon not reachable: nope")
 
         monkeypatch.setattr(evolve_api, "daemon_call", refuse)
@@ -363,7 +368,7 @@ class TestDaemonSnapshot:
     def test_a_daemon_that_answers_badly_is_not_confused_with_an_absent_one(
         self, monkeypatch, tmp_path
     ):
-        def misbehave(root, method, params):
+        def misbehave(root, method, params, **kwargs):
             raise evolve_api.EvolveApiError(504, "daemon did not answer in time")
 
         monkeypatch.setattr(evolve_api, "daemon_call", misbehave)
@@ -519,3 +524,109 @@ class TestDaemonLaunchAcrossTheWslBoundary:
         argv, cwd = evolve_api._daemon_argv(tmp_path)
         assert argv == ["/opt/navin-engine", "daemon", str(tmp_path)]
         assert cwd == str(tmp_path)
+
+
+class TestEngineScreenStaysFast:
+    """The Engine screen in the desktop app crawled: every refresh re-ran the
+    inspector (up to 20 s) and waited up to 10 s on the daemon status, and the
+    refreshes piled up on the server threads."""
+
+    def test_the_inspector_runs_once_for_repeated_refreshes(self, monkeypatch, tmp_path):
+        calls: list[Path] = []
+
+        def compute(root):
+            calls.append(root)
+            return {"framework": "vite", "start": "npm run dev", "test": None, "url": None}
+
+        monkeypatch.setattr(evolve_api, "_compute_manifest_hint", compute)
+        first = evolve_api._manifest_hint(tmp_path)
+        second = evolve_api._manifest_hint(tmp_path)
+        assert first == second and first["framework"] == "vite"
+        assert calls == [tmp_path]
+
+    def test_concurrent_refreshes_share_one_inspection(self, monkeypatch, tmp_path):
+        calls: list[Path] = []
+
+        def slow_compute(root):
+            calls.append(root)
+            time.sleep(0.3)
+            return {"framework": None, "start": None, "test": None, "url": None}
+
+        monkeypatch.setattr(evolve_api, "_compute_manifest_hint", slow_compute)
+        results: list[object] = []
+        threads = [
+            threading.Thread(target=lambda: results.append(evolve_api._manifest_hint(tmp_path)))
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert len(calls) == 1
+        assert len(results) == 4 and all(r == results[0] for r in results)
+
+    def test_a_cached_hint_expires(self, monkeypatch, tmp_path):
+        calls: list[Path] = []
+        monkeypatch.setattr(
+            evolve_api, "_compute_manifest_hint", lambda root: calls.append(root)
+        )
+        monkeypatch.setattr(evolve_api, "_HINT_MISS_TTL_S", 0.0)
+        evolve_api._manifest_hint(tmp_path)
+        evolve_api._manifest_hint(tmp_path)
+        assert len(calls) == 2
+
+    def test_overlapping_overviews_build_the_payload_once(self, monkeypatch, tmp_path):
+        builds: list[str] = []
+
+        def slow_build(raw_path):
+            builds.append(raw_path)
+            time.sleep(0.3)
+            return {"root": raw_path, "n": len(builds)}
+
+        monkeypatch.setattr(evolve_api, "_build_overview", slow_build)
+        results: list[dict] = []
+        threads = [
+            threading.Thread(target=lambda: results.append(evolve_api.overview(str(tmp_path))))
+            for _ in range(5)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert len(builds) == 1
+        assert results == [{"root": str(tmp_path), "n": 1}] * 5
+        # Not a cache: the next refresh after it finished builds fresh data.
+        assert evolve_api.overview(str(tmp_path))["n"] == 2
+
+    def test_a_failed_overview_reaches_every_waiter(self, monkeypatch, tmp_path):
+        def broken(raw_path):
+            time.sleep(0.2)
+            raise evolve_api.EvolveApiError(400, "bad path")
+
+        monkeypatch.setattr(evolve_api, "_build_overview", broken)
+        errors: list[int] = []
+
+        def call():
+            try:
+                evolve_api.overview(str(tmp_path))
+            except evolve_api.EvolveApiError as exc:
+                errors.append(exc.status)
+
+        threads = [threading.Thread(target=call) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert errors == [400, 400, 400]
+
+    def test_a_busy_daemon_does_not_hold_the_status_for_long(
+        self, daemon, monkeypatch, tmp_path
+    ):
+        assert evolve_api._STATUS_TIMEOUT_S <= 3.0
+        monkeypatch.setattr(evolve_api, "_STATUS_TIMEOUT_S", 0.2)
+        daemon.stall_s = 1.5
+        started = time.monotonic()
+        snapshot = evolve_api.daemon_snapshot(tmp_path)
+        assert time.monotonic() - started < 1.0
+        assert snapshot["online"] is False
+        assert snapshot["reason"] == evolve_api.DAEMON_REASON_UNREACHABLE

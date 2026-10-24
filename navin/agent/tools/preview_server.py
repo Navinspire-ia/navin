@@ -15,13 +15,15 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from navin.ports import is_navin_listener, port_in_use, who_listens
+from loguru import logger
+
+from navin.ports import is_navin_listener, loopback_host, loopback_url, who_listens
 
 # Ports commonly used by project apps (never Navin gateway :8765).
 _PROBE_PORTS = (
@@ -102,6 +104,9 @@ class ProjectDevServer:
     command: str
     port: int | None
     label: str
+    # The CLI flag that moves the server to another port ("--port" for Vite,
+    # "-p" for Next), when the command takes one. PORT is set either way.
+    port_flag: str | None = None
 
     @property
     def url(self) -> str | None:
@@ -190,12 +195,37 @@ def is_navin_editor_cwd(cwd: Path) -> bool:
 
 
 def http_reachable(url: str, *, timeout_s: float = 1.5) -> bool:
-    """True when GET url returns an HTTP response (any status < 500 preferred)."""
+    """True when GET url returns an HTTP response (any status < 500 preferred).
+
+    A ``127.0.0.1`` URL also counts when the server listens on ::1 only (the
+    Vite / Next default where Node resolves ``localhost`` to IPv6 first).
+    """
+    if _http_answers(url, timeout_s):
+        return True
+    twin = _ipv6_twin(url)
+    return twin is not None and _http_answers(twin, timeout_s)
+
+
+def _ipv6_twin(url: str) -> str | None:
+    """The same URL on ::1 when ``url`` targets 127.0.0.1 / localhost."""
+    for host in ("127.0.0.1", "localhost"):
+        prefix = f"http://{host}:"
+        if url.startswith(prefix):
+            return "http://[::1]:" + url[len(prefix):]
+    return None
+
+
+def _http_answers(url: str, timeout_s: float) -> bool:
     try:
         req = Request(url, method="GET", headers={"User-Agent": "navin-preview/1"})
         with urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 - local loopback only
             code = getattr(resp, "status", None) or resp.getcode()
             return 200 <= int(code) < 500
+    except HTTPError as exc:
+        # urlopen raises for 4xx/5xx. An API with no route at "/" answers 404:
+        # it is up. Treating that as down made start_app / project start wait
+        # 75s and report a failure for every backend API.
+        return 200 <= int(exc.code) < 500
     except (URLError, OSError, ValueError, TimeoutError):
         return False
 
@@ -219,7 +249,7 @@ def _looks_like_navin_port(port: int) -> bool:
                 "webui" in text or "navin-ai" in text or "/navin/" in text
             ):
                 return True
-    html = fetch_preview_html(f"http://127.0.0.1:{port}")
+    html = fetch_preview_html(loopback_url(port))
     return bool(html and html_looks_like_navin(html))
 
 
@@ -244,29 +274,89 @@ def _listener_belongs_to_workspace(port: int, workspace: Path | None) -> bool:
         return False
 
 
+def listener_workspace_match(port: int, workspace: Path | None) -> bool | None:
+    """True / False when the process on ``port`` is / is not inside the
+    workspace, None when that cannot be told (no workspace, cwd not readable)."""
+    if workspace is None:
+        return None
+    listener = who_listens(port)
+    if listener is None or not listener.cwd:
+        return None
+    try:
+        cwd = Path(listener.cwd).resolve()
+        root = Path(workspace).resolve()
+    except OSError:
+        return None
+    return cwd == root or root in cwd.parents
+
+
 def discover_running_project_url(
-    *, preferred_port: int | None = None, workspace: Path | None = None
+    *,
+    preferred_port: int | None = None,
+    workspace: Path | None = None,
+    allow_unproven: bool = False,
 ) -> str | None:
-    """Return a loopback URL that is already serving a non-Navin project."""
-    ports: list[int] = []
-    if preferred_port and preferred_port not in _PROBE_PORTS:
-        ports.append(preferred_port)
+    """Return a loopback URL that is already serving a non-Navin project.
+
+    The known port is tried first (even when it is also a usual one, 5173 or
+    5175: a fixed order once let another server on 5174 win). With a
+    workspace, a server started from it wins; a server proven to run from
+    another folder is never taken. ``allow_unproven`` falls back to a server
+    whose folder cannot be read (macOS lsof limits) when nothing better answers.
+    """
+    reserved = _navin_ports()
+    declared = workspace_declared_ports(workspace)
+    ports: list[int] = [preferred_port] if preferred_port else []
     ports.extend(_PROBE_PORTS)
     seen: set[int] = set()
+    unproven: list[str] = []
     for port in ports:
         if port in seen:
             continue
         seen.add(port)
-        if not port_in_use("127.0.0.1", port):
+        # Navin's reserved ports (5173-5176, 8765-8768, 18790-18793) are never
+        # a project preview: what answers there is Navin or another project.
+        if port in reserved:
+            continue
+        host = loopback_host(port)
+        if host is None:
             continue
         if _looks_like_navin_port(port):
             continue
-        if not _listener_belongs_to_workspace(port, workspace):
+        match = listener_workspace_match(port, workspace)
+        if workspace is not None and match is False:
+            continue  # another project's app
+        if workspace is not None and match is None:
+            if not allow_unproven:
+                continue
+            # The folder cannot be read (a WSL app seen from Windows, macOS
+            # lsof limits): only this project's remembered or declared port,
+            # never whatever app happens to answer on a usual port.
+            if port != preferred_port and port not in declared:
+                continue
+        url = loopback_url(port, host)
+        if not http_reachable(url):
             continue
-        url = f"http://127.0.0.1:{port}"
-        if http_reachable(url):
+        if workspace is None or match:
             return url
-    return None
+        unproven.append(url)
+    return unproven[0] if unproven else None
+
+
+def workspace_declared_ports(workspace: Path | None) -> frozenset[int]:
+    """Ports the workspace's own dev servers declare (package.json, vite config...)."""
+    if workspace is None:
+        return frozenset()
+    try:
+        servers = discover_project_dev_servers(workspace)
+    except OSError:
+        return frozenset()
+    return frozenset(s.port for s in servers if s.port)
+
+
+def is_navin_reserved_port(port: int | None) -> bool:
+    """True for a port Navin keeps for itself: never shown as a project preview."""
+    return bool(port) and port in _navin_ports()
 
 
 def _read_text(path: Path, limit: int = 40_000) -> str:
@@ -326,7 +416,36 @@ def _npm_dev_command(cwd: Path, scripts: dict[str, Any]) -> str | None:
     return f"npm run {script}"
 
 
-def _package_server(cwd: Path) -> ProjectDevServer | None:
+# `npm --prefix app run dev`, `pnpm -C app dev`, `yarn --cwd app dev`, `cd app && ...`:
+# a root package.json that only hands the dev server to a sub-folder.
+_DELEGATE_RE = re.compile(
+    r"(?:--prefix|--cwd|--dir|-C)[ =]+(?P<flag>[^\s&;|]+)|\bcd\s+(?P<cd>[^\s&;|]+)\s*&&"
+)
+
+
+def _delegated_folder(cwd: Path, scripts: dict) -> Path | None:
+    """The sub-folder the dev script really runs in, when it delegates to one."""
+    for name in ("dev", "start"):
+        text = scripts.get(name)
+        if not isinstance(text, str):
+            continue
+        match = _DELEGATE_RE.search(text)
+        if match is None:
+            return None
+        rel = (match.group("flag") or match.group("cd") or "").strip("\"'")
+        try:
+            root = cwd.resolve()
+            folder = (cwd / rel).resolve()
+            folder.relative_to(root)
+        except (OSError, ValueError):
+            return None
+        if folder != root and (folder / "package.json").is_file():
+            return folder
+        return None
+    return None
+
+
+def _package_server(cwd: Path, _depth: int = 0) -> ProjectDevServer | None:
     pkg_path = cwd / "package.json"
     if not pkg_path.is_file():
         return None
@@ -342,16 +461,26 @@ def _package_server(cwd: Path) -> ProjectDevServer | None:
     command = _npm_dev_command(cwd, scripts)
     if not command:
         return None
+    if _depth < 2:
+        # Start the real app where it lives: its port flag then reaches Vite or
+        # Next, while `npm run dev -- --port` on the wrapper would not.
+        nested = _delegated_folder(cwd, scripts)
+        if nested is not None:
+            inner = _package_server(nested, _depth + 1)
+            if inner is not None:
+                return inner
     port = _port_from_package_and_config(cwd)
+    script_text = " ".join(str(v) for v in scripts.values()).lower()
+    uses_vite = "vite" in script_text
+    uses_next = "next" in script_text
     # Vite default when unset.
-    if port is None and "vite" in " ".join(str(v) for v in scripts.values()).lower():
+    if port is None and uses_vite:
         port = 5173
-    if port is None and any(
-        "next" in str(v).lower() for v in scripts.values()
-    ):
+    if port is None and uses_next:
         port = 3000
+    port_flag = "--port" if uses_vite else "-p" if uses_next else None
     name = str(payload.get("name") or cwd.name)
-    return ProjectDevServer(cwd=cwd, command=command, port=port, label=name)
+    return ProjectDevServer(cwd=cwd, command=command, port=port, label=name, port_flag=port_flag)
 
 
 def _python_server(cwd: Path) -> ProjectDevServer | None:
@@ -614,30 +743,100 @@ def pick_server_for_url(
     return servers[0]
 
 
+def _navin_ports() -> frozenset[int]:
+    """Ports a project app must never take, even while they are free.
+
+    Navin's editor (Vite 5173-5176 in development), WebUI and engine pairs, and
+    the ports this installation really uses. A project left on 5173 by one
+    Navin (the desktop app on Windows) is what the browser then shows instead
+    of Navin's own editor started from WSL.
+    """
+    from navin.instance import NAVIN_DEFAULT_PORTS, navin_reserved_ports
+
+    try:
+        ports = set(navin_reserved_ports())
+    except Exception:  # pragma: no cover - the config read already guards itself
+        ports = set(NAVIN_DEFAULT_PORTS)
+    return frozenset(ports | {8900})
+
+
+def _free_port_after(port: int, *, span: int = 50) -> int | None:
+    """The first port above ``port`` nothing listens on, Navin's own excluded."""
+    reserved = _navin_ports()
+    for candidate in range(port + 1, min(port + 1 + span, 65536)):
+        if candidate in reserved:
+            continue
+        if loopback_host(candidate) is None:
+            return candidate
+    return None
+
+
+def _command_on_port(server: ProjectDevServer, port: int) -> str:
+    """``server.command`` moved to ``port`` (npm needs ``--`` before script args)."""
+    if not server.port_flag:
+        return server.command
+    flag = f"{server.port_flag} {port}"
+    if server.port_flag == "--port":
+        flag += " --strictPort"  # Vite: fail loudly rather than drift to another port
+    separator = " -- " if server.command.startswith("npm ") else " "
+    return f"{server.command}{separator}{flag}"
+
+
+def _moved_to_free_port(server: ProjectDevServer) -> ProjectDevServer | None:
+    """The same server on a free port, or None when there is none nearby."""
+    if server.port is None:
+        return None
+    port = _free_port_after(server.port)
+    if port is None:
+        return None
+    return replace(server, port=port, command=_command_on_port(server, port))
+
+
 async def start_project_dev_server(
     server: ProjectDevServer,
     *,
     owner_session_key: str | None = None,
-) -> tuple[str | None, str | None]:
-    """Start ``server`` in a background exec session. Returns (session_id, error)."""
+) -> tuple[str | None, str | None, ProjectDevServer]:
+    """Start ``server`` in a background exec session.
+
+    Returns ``(session_id, error, server_started)``. When the project's port is
+    taken (Navin's own editor on 5173, or another app), the project starts on
+    the next free port instead of failing: ``server_started`` carries that port.
+    """
     from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
 
-    if server.port and port_in_use("127.0.0.1", server.port):
-        if not _looks_like_navin_port(server.port) and http_reachable(
-            f"http://127.0.0.1:{server.port}"
-        ):
+    taken = bool(server.port) and bool(loopback_host(server.port))
+    # A reserved port moves the project even while it is free: the app would
+    # otherwise sit where Navin's editor opens. Without a port flag the command
+    # cannot be moved, so it keeps its own port.
+    reserved = bool(server.port and server.port_flag) and server.port in _navin_ports()
+    if taken or reserved:
+        navin_port = reserved or _looks_like_navin_port(server.port)
+        if taken and not navin_port and http_reachable(loopback_url(server.port)):
             # "Already up" is only true when the listener is actually this
             # project (same cwd). A foreign app on the same port must not
-            # be adopted: fall through and start on the next free port.
+            # be adopted: start on the next free port instead.
             if _listener_belongs_to_workspace(server.port, server.cwd):
-                return None, None  # already up
-        if _looks_like_navin_port(server.port):
+                return None, None, server  # already up
+        moved = _moved_to_free_port(server)
+        if moved is None:
             return None, (
-                f"port {server.port} is Navin's editor, not the project. "
-                "Configure the project on another port, then retry."
-            )
+                f"port {server.port} is "
+                + ("taken" if taken else "reserved")
+                + (" by Navin's editor" if navin_port else " by another app")
+                + " and no free port was found near it."
+            ), server
+        logger.info(
+            "Port {} is {}{}; starting {} on {}",
+            server.port, "taken" if taken else "reserved",
+            " by Navin" if navin_port else "", server.label, moved.port,
+        )
+        server = moved
 
     env = os.environ.copy()
+    if server.port:
+        # Next, CRA, Express and most servers read PORT; Vite takes the flag.
+        env["PORT"] = str(server.port)
     # Avoid interactive package managers hanging the session.
     env.setdefault("CI", "1")
     env.setdefault("npm_config_yes", "true")
@@ -655,15 +854,15 @@ async def start_project_dev_server(
             owner_session_key=owner_session_key,
         )
     except Exception as exc:
-        return None, f"could not start {server.label}: {exc}"
+        return None, f"could not start {server.label}: {exc}", server
 
     if poll.done and poll.exit_code not in (None, 0):
         detail = (poll.output or "").strip()[-500:]
         return None, (
             f"{server.command} exited with code {poll.exit_code}"
             + (f": {detail}" if detail else "")
-        )
-    return session_id, None
+        ), server
+    return session_id, None, server
 
 
 async def wait_for_url(url: str, *, timeout_s: float = 60.0) -> bool:
@@ -694,8 +893,13 @@ async def ensure_project_preview_url(
             preferred_port = urlparse(preferred_url).port
         except Exception:
             preferred_port = None
+        # Navin keeps 5173-5176, 8765-8768... for itself: whatever answers
+        # there (Navin, or another project) is never this project's Preview.
+        if is_navin_reserved_port(preferred_port):
+            preferred_url = None
+            preferred_port = None
 
-        if await http_reachable_async(preferred_url):
+        if preferred_url and await http_reachable_async(preferred_url):
             if preferred_port and _looks_like_navin_port(preferred_port):
                 return None, (
                     f"{preferred_url} is the Navin editor, not the project app."
@@ -736,7 +940,7 @@ async def ensure_project_preview_url(
             "(package.json with a dev script, vite/next, or start.sh)."
         )
 
-    _session_id, start_err = await start_project_dev_server(
+    _session_id, start_err, server = await start_project_dev_server(
         server,
         owner_session_key=owner_session_key,
     )
@@ -758,7 +962,8 @@ async def ensure_project_preview_url(
         )
 
     if await wait_for_url(url, timeout_s=75.0):
-        return url, None
+        # The address it really answers on (::1 for a default Vite on Windows).
+        return (loopback_url(server.port) if server.port else url), None
 
     # Port might have shifted (e.g. Vite fell back).
     running = await asyncio.to_thread(

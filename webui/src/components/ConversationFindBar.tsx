@@ -40,7 +40,7 @@ export function ConversationFindBar({
   return (
     <div
       className={cn(
-        "flex items-center gap-1 rounded-lg border border-border/70 bg-background pl-2 pr-0.5",
+        "flex items-center gap-1 rounded-lg border border-border/70 bg-background ps-2 pe-0.5",
         compact ? "h-8" : "h-9",
       )}
     >

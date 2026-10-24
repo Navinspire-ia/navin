@@ -1,8 +1,8 @@
 # Modes du composer
 
-Le composer de chat a un menu **Mode** (à gauche du sélecteur de modèle). Il fixe la posture de l'agent pour le prochain tour : concevoir, construire, reviewer, auditer la sécurité, déboguer, ou montage. Les modes d'investigation colorent le shell du composer avec une accentuation correspondante.
+Le composer de chat a un menu **Mode** (à gauche du sélecteur de modèle). Il fixe la posture de l'agent pour le prochain tour : concevoir, construire, reviewer, auditer la sécurité, déboguer, faire de la rétro-ingénierie, ou montage. Les modes d'investigation colorent le shell du composer avec une accentuation correspondante.
 
-Quand vous tapez du texte libre (sans `/` en tête), Plan / Review / Security / Debug / Montage **préfixent** votre message avec le workflow slash correspondant pour que l'agent charge le bon brief, les skills et les outils. Le mode Agent préfixe `/forge`. Une commande slash explicite n'est jamais double-préfixée.
+Quand vous tapez du texte libre (sans `/` en tête), Plan / Review / Security / Debug / Reverse / Montage **préfixent** votre message avec le workflow slash correspondant pour que l'agent charge le bon brief, les skills et les outils. Le mode Agent préfixe `/forge`. Une commande slash explicite n'est jamais double-préfixée.
 
 L'agent peut aussi basculer le mode UI lui-même via l'outil `set_composer_mode` (événement WebSocket `composer_mode_request`), pour que le menu et la couleur restent synchrones au démarrage d'un workflow ou lors d'un handoff.
 
@@ -15,6 +15,7 @@ L'agent peut aussi basculer le mode UI lui-même via l'outil `set_composer_mode`
 | **Review** | `/inspect` | `review` | Revue de code experte (lecture seule par défaut) | `review-report-*.html` + choix de remédiation numérotés |
 | **Security** | `/fortify` | `security` | Audit AppSec expert (lecture seule par défaut) | `security-report-*.html` + choix de durcissement numérotés |
 | **Debug** | `/debug` | `deep` | Reproduire et prouver la cause racine | `debug-report-*.html` + choix de fix numérotés |
+| **Reverse** | `/reverse` | `deep` | Rétro-ingénierie statique d'abord (lecture seule par défaut) | `.navin/reverse/<id>/evidence.json` + `reverse-report-*.html` |
 | **Montage** | `/montage` | `docs` | Kit marketing projet, calendrier, créas | `marketing/montage/` + `montage-report-*.html` |
 
 Le rôle de routage modèle pour `/debug` est `deep` ; le mode UI composer est `debug` (`set_composer_mode(mode=debug)`). Montage utilise `docs` et `set_composer_mode(mode=montage)`.
@@ -28,6 +29,7 @@ Familles slash associées qui synchronisent aussi le mode UI quand elles sont ta
 | Review | `/inspect`, `/turbo` |
 | Security | `/fortify`, `/probe`, `/unmask`, `/lineage`, `/xray`, `/gatekeeper`, `/perimeter`, `/bastion`, `/vault`, `/recon`, `/threatmap`, `/dast`, `/redteam`, `/pentest`, `/comply` |
 | Debug | `/debug` |
+| Reverse | `/reverse` |
 | Montage | `/montage` |
 
 Tables de commandes complètes : [Commandes](./commands.md). Audits en un clic : [Actions](./actions.md).
@@ -200,6 +202,31 @@ Détails ledger : [Mode Plan](./plan-mode.md).
 
 ---
 
+## Reverse
+
+**Quand l'utiliser :** vous voulez comprendre un artefact existant que vous possédez ou que vous êtes autorisé à étudier (binaire, APK, bundle web, app Electron, dossier) avant de le reconstruire ou de le sécuriser.
+
+**Comment démarrer :**
+
+- Mode **Reverse** + texte libre, ou `/reverse [binaire|apk|bundle|url|chemin]`. En CLI : `/mode reverse` (raccourci 8 dans le sélecteur).
+
+**Processus :**
+
+1. **Cible** - fixer l'artefact : hash, taille, type, plateforme.
+2. **Inventaire** - formats, sections, imports/exports, dépendances, ressources embarquées, points d'entrée, endpoints.
+3. **Architecture** - modules, flux de données, protocoles, stockage, auth, chacun avec sa preuve.
+4. **Preuves** - `.navin/reverse/<id>/evidence.json` (cible, moteur et version, constats avec extrait ou offset réel, zones non couvertes).
+5. **Plan de reconstruction** - composants et comportements qu'une reconstruction identique doit reproduire, plus les trous de couverture.
+6. **Rapport** - `reverse-report-[YYYYMMDD-HHMMSS].html` dans le même dossier, ouvert dans File Preview, avec des choix `#N` numérotés.
+
+**Statique d'abord :** les outils dynamiques (capture de processus, gdb, rizin, scénario navigateur ou Electron, adb) ne tournent qu'après votre accord pour chaque appel.
+
+**Moteur :** REA (`rea-agents@6.5.0`) via MCP si disponible, sinon la CLI `npx` (Node >=24.11), sinon les outils statiques standards de la machine.
+
+**Routage modèle :** rôle `deep` (UI mode `reverse`).
+
+---
+
 ## Montage
 
 **Quand l'utiliser :** vous avez importé un projet et voulez un plan de push marketing - kit, calendrier jour par jour, images/vidéos - sans embarquer HyperFrames dans l'install Navin.
@@ -231,16 +258,16 @@ Détails ledger : [Mode Plan](./plan-mode.md).
 | Mécanisme | Rôle |
 | --- | --- |
 | Menu Mode | Vous choisissez Plan / Agent / Review / Security / Debug / Montage ; le choix est persisté pour le chat |
-| Préfixe texte libre | Les modes non-Agent préfixent `/blueprint`, `/inspect`, `/fortify`, `/debug` ou `/montage` |
+| Préfixe texte libre | Les modes non-Agent préfixent `/blueprint`, `/inspect`, `/fortify`, `/debug`, `/reverse` ou `/montage` |
 | Slash → mode | Envoyer un slash workflow connu met à jour le menu + l'accent |
 | `set_composer_mode` | Outil agent ; émet `composer_mode_request` en WebSocket |
-| Démarrage workflow | Lancer `/inspect`, `/fortify`, `/debug`, `/montage`, `/blueprint`, `/forge`, … demande aussi le mode UI correspondant |
+| Démarrage workflow | Lancer `/inspect`, `/fortify`, `/debug`, `/reverse`, `/montage`, `/blueprint`, `/forge`, … demande aussi le mode UI correspondant |
 
 L'outil ne change pas les outils mid-turn par lui-même - il met à jour ce que vous voyez dans le composer pour que l'accent suive la posture.
 
 ---
 
-## Rapports HTML (Review / Security / Debug)
+## Rapports HTML (Review / Security / Debug / Reverse)
 
 Les modes d'investigation **doivent** se clôturer par un rapport HTML soigné et autonome (skill `studio-html-report`) :
 
@@ -249,6 +276,7 @@ Les modes d'investigation **doivent** se clôturer par un rapport HTML soigné e
 | Review | `review-report-[YYYYMMDD-HHMMSS].html` |
 | Security | `security-report-[YYYYMMDD-HHMMSS].html` |
 | Debug | `debug-report-[YYYYMMDD-HHMMSS].html` |
+| Reverse | `.navin/reverse/<id>/reverse-report-[YYYYMMDD-HHMMSS].html` |
 
 **Contenu du rapport :**
 

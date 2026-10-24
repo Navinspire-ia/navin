@@ -105,7 +105,7 @@ class SessionImportApiTests(unittest.TestCase):
                     workspace, source="codex"
                 )
             self.assertEqual(payload["sources"][0]["imported"], 2)
-            files = list((workspace / "sessions").glob("*.jsonl"))
+            files = list((workspace / ".navin" / "sessions").glob("*.jsonl"))
             self.assertEqual(len(files), 2)
 
     def test_import_rejects_unknown_source(self) -> None:

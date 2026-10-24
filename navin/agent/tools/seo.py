@@ -9,21 +9,20 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
 
 from pydantic import Field
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.path_utils import project_rooted_path
 from navin.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
-from navin.agent.tools.scrape_ops import parse_sitemap_urls
 from navin.config_base import Base
 from navin.security.workspace_access import current_tool_workspace
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 from navin.seo.crawler import SeoCrawler
-from navin.seo.models import AuditResult, Confidence, Evidence, Finding, PageRecord, Severity
+from navin.seo.models import AuditResult, PageRecord
 from navin.seo.onpage import audit_site
 from navin.seo.performance import PerformanceClient
+from navin.seo.pipeline import run_pipeline
 from navin.seo.report import report_payload, write_report
 from navin.seo.scoring import health_score
 from navin.seo.serp import DataForSeoAdapter, SemrushAdapter, SerpStore
@@ -71,7 +70,8 @@ class SeoTool(Tool):
     """Grounded SEO audit, performance, SERP, scoring and reporting engine."""
 
     config_key = "seo"
-    _scopes = {"core"}
+    # "teammate": loaded for a Collaboration Mode teammate that lists it.
+    _scopes = {"core", "teammate"}
     product_module = "seo"
 
     @classmethod
@@ -248,69 +248,15 @@ class SeoTool(Tool):
     def _pipeline(
         self, url: str, *, path: str | None, format: str, max_pages: int, max_depth: int
     ) -> str:
-        crawler = self._crawler()
-        pages = crawler.crawl(url, max_pages=max_pages, max_depth=max_depth)
-        findings = audit_site(pages)
-        for page in pages:
-            findings.extend(validate_jsonld(page.html, page.final_url))
-        parsed = urlparse(url)
-        origin = f"{parsed.scheme}://{parsed.netloc}/"
-        assets = crawler.crawl(urljoin(origin, "robots.txt"), max_pages=1, max_depth=0)
-        assets += crawler.crawl(urljoin(origin, "sitemap.xml"), max_pages=1, max_depth=0)
-        for asset, code in zip(assets, ("robots_unavailable", "sitemap_unavailable"), strict=False):
-            if asset.error or asset.status >= 400 or asset.status == 0:
-                findings.append(Finding(
-                    code=code, category="indexability", severity=Severity.HIGH,
-                    title=code.replace("_", " ").title(),
-                    message=f"{asset.url} was not available.",
-                    url=asset.url, evidence=[Evidence(
-                        kind="http_status", value=asset.status, source=asset.url
-                    )],
-                    recommendation="Publish a valid file and reference the sitemap in robots.txt.",
-                    confidence=Confidence.HIGH,
-                ))
-        if len(assets) >= 1 and assets[0].status < 400 and "sitemap:" not in assets[0].text.lower():
-            findings.append(Finding(
-                code="robots_sitemap_missing", category="indexability",
-                severity=Severity.LOW, title="Sitemap not declared in robots.txt",
-                message="robots.txt contains no Sitemap directive.", url=assets[0].url,
-                evidence=[Evidence(kind="robots_text", value=assets[0].text, source=assets[0].url)],
-                recommendation="Add an absolute Sitemap directive to robots.txt.",
-            ))
-        if len(assets) >= 2 and assets[1].status < 400:
-            sitemap_urls = parse_sitemap_urls(assets[1].html or assets[1].text)
-            if not sitemap_urls:
-                findings.append(Finding(
-                    code="sitemap_empty", category="indexability", severity=Severity.HIGH,
-                    title="Sitemap contains no URLs",
-                    message="No valid loc entries were parsed from sitemap.xml.",
-                    url=assets[1].url, evidence=[Evidence(
-                        kind="sitemap_url_count", value=0, source=assets[1].url
-                    )],
-                    recommendation="Publish valid sitemap XML with absolute loc entries.",
-                ))
-        performance = PerformanceClient(
-            psi_api_key=self.config.psi_api_key,
-            crux_api_key=self.config.crux_api_key,
-        )
-        try:
-            psi = performance.psi(url)
-        except RuntimeError as exc:
-            psi = {"status": "data_gap", "service": "psi_v5", "reason": str(exc), "metrics": None}
-        try:
-            crux = performance.crux(origin=origin.rstrip("/"))
-        except RuntimeError as exc:
-            crux = {"status": "data_gap", "service": "crux_v1", "reason": str(exc), "metrics": None}
-        data_gaps = [
-            {"service": str(item["service"]), "reason": str(item["reason"])}
-            for item in (psi, crux)
-            if item.get("status") == "data_gap"
-        ]
-        audit = AuditResult(
-            pages=pages,
-            findings=findings,
-            data_gaps=data_gaps,
-            metadata={"performance": {"psi": psi, "crux": crux}},
+        audit = run_pipeline(
+            url,
+            crawler=self._crawler(),
+            performance=PerformanceClient(
+                psi_api_key=self.config.psi_api_key,
+                crux_api_key=self.config.crux_api_key,
+            ),
+            max_pages=max_pages,
+            max_depth=max_depth,
         )
         output = self._path(path or f"seo/seo-report.{format}")
         write_report(audit, output, format)

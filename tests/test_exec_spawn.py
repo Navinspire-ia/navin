@@ -91,7 +91,9 @@ class WindowsRoutingTest(unittest.IsolatedAsyncioTestCase):
     async def test_wsl_crosses_into_the_distribution(self) -> None:
         recorder = await self._spawn_windows("C:/Windows/System32/wsl.exe", cwd="C:\\proj\\api")
         assert recorder.argv is not None
-        self.assertIn("--", recorder.argv)
+        # --exec, not --: after -- wsl.exe re-parses the line in the default shell.
+        self.assertIn("--exec", recorder.argv)
+        self.assertNotIn("--", recorder.argv)
         self.assertEqual(recorder.argv[-3:], ("bash", "-lc", "echo hello"))
         self.assertNotIn("-NoProfile", recorder.argv)
         # The working directory follows the command to the Linux side.

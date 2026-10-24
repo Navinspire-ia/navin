@@ -50,6 +50,7 @@ from loguru import logger
 
 from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 from navin.config.schema import Config, ModelPresetConfig
+from navin.providers.model_names import bedrock_display_name
 
 DEFAULT_CATALOG_URL = "https://navin.live/api/models"
 _FETCH_TIMEOUT_S = 5.0
@@ -509,23 +510,24 @@ FLASH_ROLE_TIERS: dict[str, str] = {
 # First match present in the catalog wins. Free / stealth slugs are skipped.
 PAID_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
     "deep": ("qwen/qwen3.8-max", "moonshotai/kimi-k3", "x-ai/grok-4.6"),
-    "dev": ("z-ai/glm-5.3-flash", "z-ai/glm-5.2", DS_V41_FLASH),
-    "fast": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
-    "code": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
-    "search": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
+    "dev": ("z-ai/glm-5.3-flash", "z-ai/glm-5.2", DS_V41_FLASH, "z-ai/glm-4.7"),
+    "fast": (DS_V41_FLASH, "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "code": (DS_V41_FLASH, "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "search": (DS_V41_FLASH, "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
     "plan": (
         "z-ai/glm-5.3-flash",
         "google/gemini-3.7-flash",
         "google/gemini-3.6-flash",
+        "z-ai/glm-4.7",
     ),
-    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
-    "review": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "z-ai/glm-5.2"),
-    "security": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "x-ai/grok-4.6"),
+    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "review": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "z-ai/glm-5.2", "z-ai/glm-4.7"),
+    "security": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "z-ai/glm-4.7", "x-ai/grok-4.6"),
 }
 
 FLASH_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
-    "deep": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
-    "dev": ("z-ai/glm-5.3-flash", DS_V41_FLASH),
+    "deep": ("minimax/minimax-m3", "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "dev": ("z-ai/glm-5.3-flash", DS_V41_FLASH, "z-ai/glm-4.7-flash"),
     "fast": (
         DS_V41_FLASH,
         "qwen/qwen3.7-flash",
@@ -541,10 +543,10 @@ FLASH_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
         "qwen/qwen3.7-flash",
         "z-ai/glm-4.7-flash",
     ),
-    "plan": ("z-ai/glm-5.3-flash", "minimax/minimax-m3"),
-    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
-    "review": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
-    "security": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
+    "plan": ("z-ai/glm-5.3-flash", "minimax/minimax-m3", "z-ai/glm-4.7-flash"),
+    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "review": ("minimax/minimax-m3", "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
+    "security": ("minimax/minimax-m3", "z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"),
 }
 
 
@@ -564,6 +566,9 @@ class CatalogModel:
     tier: str
     name: str = ""
     price_unconfirmed: bool = False
+    # Limits declared by the gateway catalog (None: not declared).
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -591,6 +596,8 @@ class Catalog:
     models: tuple[CatalogModel, ...] = field(default_factory=tuple)
     role_tiers: dict[str, str] = field(default_factory=lambda: dict(ROLE_TIERS))
     media: dict[str, MediaCatalogBucket] = field(default_factory=dict)
+    #: Task routing chosen in the site admin (role -> slug), saved with the catalog.
+    roles: dict[str, str] = field(default_factory=dict)
 
     def tier_leader(self, tier: str) -> CatalogModel | None:
         """First model of the tier, preferring paid + confirmed prices.
@@ -607,6 +614,13 @@ class Catalog:
             if not model.price_unconfirmed:
                 return model
         return pool[0] if pool else None
+
+
+def _positive_int(value: object) -> int | None:
+    """A token count from the payload, or None when it is absent or not a positive integer."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value) if value > 0 and float(value).is_integer() else None
 
 
 def _parse_models(raw_models: object) -> list[CatalogModel]:
@@ -626,6 +640,8 @@ def _parse_models(raw_models: object) -> list[CatalogModel]:
                 tier=tier,
                 name=str(raw.get("name") or ""),
                 price_unconfirmed=bool(raw.get("priceUnconfirmed")),
+                context_window_tokens=_positive_int(raw.get("contextWindow")),
+                max_output_tokens=_positive_int(raw.get("maxOutputTokens")),
             )
         )
     return models
@@ -644,7 +660,7 @@ def _parse_media(payload: object) -> dict[str, MediaCatalogBucket]:
         except (TypeError, ValueError):
             return None
 
-    for modality in ("image", "video", "audio", "music", "stt"):
+    for modality in ("image", "video", "audio", "music", "stt", "live"):
         bucket = raw_media.get(modality)
         if not isinstance(bucket, dict):
             continue
@@ -771,9 +787,22 @@ def is_media_model_slug(slug: str) -> bool:
     return any(token in leaf for token in _MEDIA_SLUG_TOKENS)
 
 
+# Served fast models, best first. GLM 5.3 Flash is the product default; until a
+# gateway serves it, GLM 4.7 Flash is the fast model it really has.
+FLASH_DEFAULT_CANDIDATES: tuple[str, ...] = (FLASH_DEFAULT_MODEL, "z-ai/glm-4.7-flash")
+
+
+def _offered_flash_default(models: list[CatalogModel]) -> str | None:
+    """The first Flash default the catalog really offers, else None."""
+    slugs = {m.slug for m in models}
+    return next((slug for slug in FLASH_DEFAULT_CANDIDATES if slug in slugs), None)
+
+
 def _shape_flash_text_models(
     models: list[CatalogModel],
     default_model: str,
+    *,
+    served_only: bool = False,
 ) -> tuple[list[CatalogModel], str]:
     """Flash subscribers never see Grok; GLM 5.3 Flash is always in the list.
 
@@ -782,7 +811,14 @@ def _shape_flash_text_models(
     slugs and inject the Flash default when the site forgot it.
     """
     kept = [m for m in models if m.slug not in FLASH_EXCLUDED_SLUGS]
-    if not any(m.slug == FLASH_DEFAULT_MODEL for m in kept):
+    # Behind a LiteLLM gateway the catalog is what the gateway serves: a model
+    # it does not serve must not be injected (the picker would offer a model
+    # that answers "Invalid model name"). Other modes keep the old rule.
+    offered = _offered_flash_default(kept) if served_only else (
+        FLASH_DEFAULT_MODEL if any(m.slug == FLASH_DEFAULT_MODEL for m in kept) else None
+    )
+    if offered is None:
+        # The catalog offers none of the Flash defaults: the site forgot it.
         kept.append(
             CatalogModel(
                 slug=FLASH_DEFAULT_MODEL,
@@ -790,10 +826,11 @@ def _shape_flash_text_models(
                 name="GLM 5.3 Flash",
             )
         )
+        offered = FLASH_DEFAULT_MODEL
     if not default_model or default_model in FLASH_EXCLUDED_SLUGS:
-        default_model = FLASH_DEFAULT_MODEL
+        default_model = offered
     elif default_model not in {m.slug for m in kept}:
-        default_model = FLASH_DEFAULT_MODEL
+        default_model = offered
     return kept, default_model
 
 
@@ -852,7 +889,9 @@ def parse_catalog(payload: object, *, plan: str | None = None) -> Catalog:
     if not text_models:
         raise ValueError("catalog payload has no usable text models")
     if plan_key == "flash":
-        text_models, default_model = _shape_flash_text_models(text_models, default_model)
+        text_models, default_model = _shape_flash_text_models(
+            text_models, default_model, served_only=provider == "litellm",
+        )
     text_models = [m for m in text_models if m.slug not in SUBSCRIPTION_EXCLUDED_SLUGS]
     if not text_models:
         raise ValueError("catalog payload has no usable text models")
@@ -860,7 +899,7 @@ def parse_catalog(payload: object, *, plan: str | None = None) -> Catalog:
         default_model = text_models[0].slug
     if default_model in media_slugs or is_media_model_slug(default_model):
         preferred = (
-            (FLASH_DEFAULT_MODEL, DS_V41_FLASH)
+            (*FLASH_DEFAULT_CANDIDATES, DS_V41_FLASH)
             if plan_key == "flash"
             else (DEFAULT_MANAGED_MODEL, PLUS_VISION_MODEL, DS_V41_FLASH)
         )
@@ -869,12 +908,22 @@ def parse_catalog(payload: object, *, plan: str | None = None) -> Catalog:
             text_models[0].slug,
         )
 
+    text_slugs = {m.slug for m in text_models}
+    raw_roles = (source.get("roles") if isinstance(source, dict) and isinstance(source.get("roles"), dict)
+                 else payload.get("roles"))
+    roles = {
+        role: slug.strip()
+        for role, slug in (raw_roles.items() if isinstance(raw_roles, dict) else [])
+        if role in ROLE_TIERS and isinstance(slug, str) and slug.strip() in text_slugs
+    }
+
     return Catalog(
         provider=provider if isinstance(provider, str) and provider else "openrouter",
         default_model=default_model,
         models=tuple(text_models),
         role_tiers=role_tiers,
         media=media,
+        roles=roles,
     )
 
 
@@ -883,6 +932,10 @@ def pick_role_default_slug(catalog: Catalog, role: str) -> str:
     flash = catalog.role_tiers.get("deep") != "expert"
     table = FLASH_ROLE_DEFAULTS if flash else PAID_ROLE_DEFAULTS
     known = {model.slug for model in catalog.models}
+    # The admin's routing (site > LiteLLM > Text, "Routing" boxes) comes first.
+    routed = catalog.roles.get(role)
+    if routed and routed in known:
+        return routed
     has_paid = any(not is_free_model_slug(model.slug) for model in catalog.models)
     for slug in table.get(role, ()):
         if slug in known and not is_free_model_slug(slug):
@@ -940,10 +993,12 @@ def catalog_presets(catalog: Catalog) -> dict[str, ModelPresetConfig]:
         if leader is None:
             continue
         presets[tier] = ModelPresetConfig(
-            label=leader.name or leader.slug,
+            label=bedrock_display_name(leader.slug, leader.name) or leader.slug,
             model=leader.slug,
             provider="navin",
             modality="text",
+            catalog_context_window_tokens=leader.context_window_tokens,
+            catalog_max_output_tokens=leader.max_output_tokens,
         )
     for model in catalog.models:
         key = slug_preset_key(model.slug)
@@ -952,10 +1007,12 @@ def catalog_presets(catalog: Catalog) -> dict[str, ModelPresetConfig]:
         if key in TIERS:
             continue
         presets[key] = ModelPresetConfig(
-            label=model.name or model.slug,
+            label=bedrock_display_name(model.slug, model.name) or model.slug,
             model=model.slug,
             provider="navin",
             modality="text",
+            catalog_context_window_tokens=model.context_window_tokens,
+            catalog_max_output_tokens=model.max_output_tokens,
         )
     for modality, bucket in catalog.media.items():
         if modality not in {"image", "video", "audio", "music", "stt"}:
@@ -967,7 +1024,7 @@ def catalog_presets(catalog: Catalog) -> dict[str, ModelPresetConfig]:
             if key in presets and presets[key].modality == "text":
                 key = f"{modality}-{key}"
             presets[key] = ModelPresetConfig(
-                label=model.name or model.slug,
+                label=bedrock_display_name(model.slug, model.name) or model.slug,
                 model=model.slug,
                 provider="navin",
                 modality=modality,  # type: ignore[arg-type]
@@ -1160,31 +1217,52 @@ def apply_catalog(
     if _heal_media_chat_default(config, catalog):
         changed = True
 
+    # Synchro de routine : les médias Navin suivent le catalogue (changement
+    # de défaut dans l'admin, modèle retiré) sans écraser un choix de l'utilisateur.
+    if not force_managed and _follow_catalog_media(config, catalog):
+        changed = True
+
     # Image / vidéo / TTS : Navin par défaut à l'abonnement.
     # Free = BYOK libre (on ne touche pas). Abonné qui a choisi un autre
     # provider = on respecte, sauf steer_tools (activate / plan change).
     if force_managed:
+        # The site's catalog is the only source of media models: a bucket it
+        # does not ship (Bedrock in Europe has no video) means no Navin
+        # default, never the OpenRouter slug these tools used to fall back to.
         image_bucket = catalog.media.get("image")
-        image_slug = (
-            (image_bucket.default_model if image_bucket else "")
-            or "google/gemini-3.1-flash-image"
-        )
+        image_slug = image_bucket.default_model if image_bucket else ""
         video_bucket = catalog.media.get("video")
-        video_slug = (
-            (video_bucket.default_model if video_bucket else "")
-            or "minimax/hailuo-3"
-        )
+        video_slug = video_bucket.default_model if video_bucket else ""
+        music_bucket = catalog.media.get("music")
+        music_slug = music_bucket.default_model if music_bucket else ""
 
         def _should_steer(provider: str | None) -> bool:
             name = (provider or "").strip().lower()
             return steer_tools or name in {"", "navin", "auto"}
 
+        def _drop_fallback(tool_config: Any, fallback: str) -> bool:
+            # The schema default is that OpenRouter slug too; left in place it
+            # would send a subscriber's media calls to a model the gateway
+            # does not serve.
+            name = (tool_config.provider or "").strip().lower()
+            if name in {"", "navin", "auto"} and tool_config.model == fallback:
+                tool_config.model = ""
+                return True
+            return False
+
+        def _steer(tool_config: Any, slug: str, fallback: str) -> bool:
+            if not slug:
+                return _drop_fallback(tool_config, fallback)
+            if _should_steer(tool_config.provider) and (
+                tool_config.provider != "navin" or tool_config.model != slug
+            ):
+                tool_config.provider = "navin"
+                tool_config.model = slug
+                return True
+            return False
+
         img = config.tools.image_generation
-        if _should_steer(img.provider) and (
-            img.provider != "navin" or img.model != image_slug
-        ):
-            img.provider = "navin"
-            img.model = image_slug
+        if _steer(img, image_slug, "google/gemini-3.1-flash-image"):
             changed = True
         # Seedream 4.5+ rejects 1K; keep managed defaults at 2K+.
         if (
@@ -1194,27 +1272,13 @@ def apply_catalog(
         ):
             img.default_image_size = "2K"
             changed = True
-        vid = config.tools.video_generation
-        if _should_steer(vid.provider) and (
-            vid.provider != "navin" or vid.model != video_slug
-        ):
-            vid.provider = "navin"
-            vid.model = video_slug
+        if _steer(config.tools.video_generation, video_slug, "minimax/hailuo-3"):
             changed = True
-        if _seed_managed_voice_defaults(config):
+        if _seed_managed_voice_defaults(config, catalog):
             changed = True
-
-        music_bucket = catalog.media.get("music")
-        music_slug = (
-            (music_bucket.default_model if music_bucket else "")
-            or "google/lyria-3-clip-preview"
-        )
-        music = config.tools.music_generation
-        if _should_steer(music.provider) and (
-            music.provider != "navin" or music.model != music_slug
-        ):
-            music.provider = "navin"
-            music.model = music_slug
+        if _apply_live_realtime_default(config, catalog):
+            changed = True
+        if _steer(config.tools.music_generation, music_slug, "google/lyria-3-clip-preview"):
             changed = True
 
     return changed
@@ -1399,9 +1463,19 @@ def heal_managed_voice_settings(config: Config) -> bool:
     return _seed_managed_voice_defaults(config)
 
 
-def _seed_managed_voice_defaults(config: Config) -> bool:
-    """Seed missing choices; an incomplete/offline catalog never invalidates a pick."""
+def _catalog_default(catalog: Catalog | None, modality: str, fallback: str) -> str:
+    bucket = catalog.media.get(modality) if catalog is not None else None
+    return (bucket.default_model if bucket else "") or fallback
+
+
+def _seed_managed_voice_defaults(config: Config, catalog: Catalog | None = None) -> bool:
+    """Seed missing choices; an incomplete/offline catalog never invalidates a pick.
+
+    With a catalog (Navin LiteLLM: Voxtral, Polly...), Navin listening and voice
+    follow its defaults until the user picks a model themselves."""
     changed = False
+    stt_default = _catalog_default(catalog, "stt", NAVIN_STT_MODEL)
+    tts_default = _catalog_default(catalog, "audio", NAVIN_TTS_MODEL)
     transcription = config.transcription
     stt_provider = (transcription.provider or "").strip().lower()
     stt_cfg = getattr(config.providers, stt_provider, None) if stt_provider else None
@@ -1412,13 +1486,14 @@ def _seed_managed_voice_defaults(config: Config) -> bool:
     model_raw = (transcription.model or "").strip()
     wrong_navin_model = stt_provider == "navin" and (
         not model_raw or (
-            not transcription.selection_explicit and model_raw in {"whisper-large-v3", "whisper-1"}
+            not transcription.selection_explicit
+            and (model_raw in {"whisper-large-v3", "whisper-1"} or (catalog is not None and model_raw != stt_default))
         )
     )
     if legacy_stt or wrong_navin_model:
-        if transcription.provider != "navin" or transcription.model != NAVIN_STT_MODEL:
+        if transcription.provider != "navin" or transcription.model != stt_default:
             transcription.provider = "navin"
-            transcription.model = NAVIN_STT_MODEL
+            transcription.model = stt_default
             changed = True
         if legacy_stt and not transcription.enabled:
             transcription.enabled = True
@@ -1434,18 +1509,79 @@ def _seed_managed_voice_defaults(config: Config) -> bool:
     if legacy_tts or (
         tts_provider == "navin"
         and (not voice.tts_model or (
-            not voice.selection_explicit and voice.tts_model in {"tts-1", "tts-1-hd"}
+            not voice.selection_explicit
+            and (voice.tts_model in {"tts-1", "tts-1-hd"} or (catalog is not None and voice.tts_model != tts_default))
         ))
     ):
-        if voice.tts_provider != "navin" or voice.tts_model != NAVIN_TTS_MODEL:
+        if voice.tts_provider != "navin" or voice.tts_model != tts_default:
+            if voice.tts_model != tts_default:
+                # A voice belongs to its model (Polly's Léa, Qwen's loongjohn...).
+                voice.voice = "auto"
             voice.tts_provider = "navin"
-            voice.tts_model = NAVIN_TTS_MODEL
+            voice.tts_model = tts_default
             changed = True
         if (voice.voice or "").strip().lower() in {"", "alloy"}:
             voice.voice = "auto"
             changed = True
 
     return changed
+
+
+def _follow_catalog_media(config: Config, catalog: Catalog) -> bool:
+    """Routine sync for the media served by Navin: a model the catalog no longer
+    serves moves to the catalog default, listening and voice follow the default
+    until the user picks one; another provider (own key) is never touched."""
+    changed = False
+    for modality, tool in (("image", config.tools.image_generation), ("video", config.tools.video_generation)):
+        bucket = catalog.media.get(modality)
+        if bucket is None or not bucket.default_model:
+            continue
+        served = {model.slug for model in bucket.models} or {bucket.default_model}
+        if (tool.provider or "").strip().lower() == "navin" and tool.model not in served:
+            tool.model = bucket.default_model
+            changed = True
+    if _seed_managed_voice_defaults(config, catalog):
+        changed = True
+    voice = config.voice
+    live = catalog.media.get("live")
+    # Remembered whatever is chosen now, so the list can always offer it.
+    if live is not None and live.default_model and voice.live_navin_model != live.default_model:
+        voice.live_navin_model = live.default_model
+        changed = True
+    if live is not None and live.default_model and (voice.live_realtime_provider or "").strip().lower() in {"", "navin"}:
+        served = {model.slug for model in live.models} or {live.default_model}
+        if voice.live_realtime_model not in served:
+            if voice.live_realtime_model and voice.live_realtime_model != live.default_model:
+                voice.live_realtime_voice = ""  # a voice belongs to its model
+            voice.live_realtime_model = live.default_model
+            voice.live_realtime_provider = "navin"
+            changed = True
+    return changed
+
+
+def _apply_live_realtime_default(config: Config, catalog: Catalog) -> bool:
+    """Follow the gateway's Live model (admin > LiteLLM > Live), unless the
+    user picked their own realtime provider (an OpenAI key)."""
+    voice = config.voice
+    provider = (voice.live_realtime_provider or "").strip().lower()
+    bucket = catalog.media.get("live")
+    slug = (bucket.default_model if bucket else "") or ""
+    remembered = False
+    if slug and voice.live_navin_model != slug:
+        voice.live_navin_model = slug  # offered in the list even while another provider is chosen
+        remembered = True
+    if provider not in {"", "navin"}:
+        return remembered
+    if voice.live_realtime_model == slug and provider == ("navin" if slug else provider):
+        return remembered
+    if voice.live_realtime_model and voice.live_realtime_model != slug:
+        # A voice belongs to its model: Nova Sonic's "tiffany" means nothing to
+        # Gemini Live. The new model starts on its own default voice.
+        voice.live_realtime_voice = ""
+    voice.live_realtime_model = slug
+    if slug:
+        voice.live_realtime_provider = "navin"
+    return True
 
 
 def heal_managed_media_settings(config: Config) -> bool:
@@ -1516,9 +1652,10 @@ def sync_managed_catalog(
     """Fetch and apply the catalog; persist when something changed.
 
     Best-effort by design: a gateway must boot on a plane. When the remote
-    catalog is unreachable (or not deployed yet), the embedded fallback is
-    applied so paid activations still get DeepSeek V4.1 Flash + task routes.
-    Returns True only when the catalog was applied and saved.
+    catalog is unreachable (or not deployed yet), a free install gets the
+    embedded fallback; a subscription keeps what it has, because the embedded
+    models are OpenRouter's and the subscription runs on the Navin gateway
+    only. Returns True only when the catalog was applied and saved.
 
     *min_interval_s*: skip the network fetch when a recent attempt already ran
     (Settings / picker reopen). *force* bypasses the throttle.
@@ -1558,6 +1695,16 @@ def sync_managed_catalog(
             ):
                 logger.warning(
                     "Model catalog fetch failed ({}): {}; keeping the catalog synced earlier",
+                    url,
+                    exc,
+                )
+                return False
+            if force_managed:
+                # The embedded catalog lists OpenRouter models; a subscription
+                # never falls back to OpenRouter. Wait for the site instead.
+                logger.warning(
+                    "Model catalog fetch failed ({}): {}; subscription keeps its "
+                    "current models until the catalog is reachable",
                     url,
                     exc,
                 )

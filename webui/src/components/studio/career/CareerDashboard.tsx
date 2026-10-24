@@ -269,7 +269,7 @@ export function CareerDashboard({
                 if (tile.open) onOpenOffers(tile.open);
                 else if (tile.pane) onOpenPane(tile.pane);
               }}
-              className="min-h-20 cursor-pointer rounded-2xl px-4 py-3 text-left shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[transform,background-color] duration-150 hover:bg-muted/30 active:scale-[0.96] dark:outline-white/10"
+              className="min-h-20 cursor-pointer rounded-2xl px-4 py-3 text-start shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[transform,background-color] duration-150 hover:bg-muted/30 active:scale-[0.96] dark:outline-white/10"
             >
               <span className="block text-2xl font-semibold tabular-nums text-indigo-700 dark:text-indigo-300">
                 {tile.count}
@@ -306,7 +306,7 @@ export function CareerDashboard({
                 <button
                   type="button"
                   onClick={() => onOpenOffers({ view: "inbox", bucket: "all", id: row.id })}
-                  className="flex min-h-14 w-full cursor-pointer items-center gap-4 rounded-xl px-3 text-left transition-[transform,background-color] duration-150 hover:bg-muted/40 active:scale-[0.96]"
+                  className="flex min-h-14 w-full cursor-pointer items-center gap-4 rounded-xl px-3 text-start transition-[transform,background-color] duration-150 hover:bg-muted/40 active:scale-[0.96]"
                 >
                   <span className={cn("w-10 shrink-0 text-lg font-semibold tabular-nums", scoreTone(row.match_score))}>
                     {row.match_score != null ? Math.round(row.match_score) : "-"}

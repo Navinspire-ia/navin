@@ -403,7 +403,9 @@ def is_unrestricted_exec_path(path: Path | str, *, relative_escape: bool = False
     return is_scratch_path(path)
 
 
-def _bwrap(command: str, workspace: str, cwd: str, strict: bool = False) -> str:
+def _bwrap(
+    command: str, workspace: str, cwd: str, strict: bool = False, deny_net: bool = False,
+) -> str:
     """Wrap command in a bubblewrap sandbox (requires bwrap in container).
 
     Only the workspace is bind-mounted read-write; its parent dir (which holds
@@ -463,6 +465,8 @@ def _bwrap(command: str, workspace: str, cwd: str, strict: bool = False) -> str:
     ]
 
     args = ["bwrap", "--new-session", "--die-with-parent", "--setenv", "HOME", str(ws)]
+    if deny_net:
+        args.append("--unshare-net")
     for p in required:
         args += ["--ro-bind", p, p]
     for p in optional:
@@ -754,7 +758,9 @@ def _sandbox_binary_is_runnable(binary: str) -> bool:
     return ok
 
 
-def _landlock(command: str, workspace: str, cwd: str, strict: bool = False) -> str:
+def _landlock(
+    command: str, workspace: str, cwd: str, strict: bool = False, deny_net: bool = False,
+) -> str:
     """Wrap *command* in the native OS sandbox.
 
     The navin-sandbox binary picks the mechanism the host actually has: Landlock
@@ -823,6 +829,8 @@ def _landlock(command: str, workspace: str, cwd: str, strict: bool = False) -> s
         args.extend(["--allow-write", extra])
     if strict:
         args.append("--strict")
+    if deny_net:
+        args.append("--deny-net")
     return shlex.join([*args, "--", shell, "-c", command])
 
 
@@ -838,6 +846,7 @@ def wrap_command(
     cwd: str,
     *,
     strict: bool = False,
+    deny_net: bool = False,
 ) -> str:
     """Wrap *command* using the named sandbox backend.
 
@@ -845,8 +854,12 @@ def wrap_command(
     confine the command (missing Landlock, missing sandbox-exec, win32)
     instead of warning and running unconfined. bwrap is inherently
     fail-closed - a missing binary fails the command - so it ignores it.
+    ``deny_net`` (``tools.exec.sandbox_network = "deny"``) also cuts the
+    network: a fresh network namespace on Linux, ``deny network*`` on macOS.
     """
     if backend := _BACKENDS.get(sandbox):
+        if deny_net:
+            return backend(command, workspace, cwd, strict, deny_net=True)
         return backend(command, workspace, cwd, strict)
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: {list(_BACKENDS)}")
 
@@ -888,14 +901,18 @@ def sandbox_denial_suspected(output: str) -> bool:
     return bool(output) and _SANDBOX_DENIAL_RE.search(output) is not None
 
 
-def sandbox_tool_description(sandbox: str) -> str:
+def sandbox_tool_description(sandbox: str, *, deny_net: bool = False) -> str:
     """Sentence for the exec tool description when an OS sandbox is configured."""
     if not sandbox or _IS_WINDOWS:
         return ""
+    reach = (
+        "reads stay open and the network is cut (no downloads, no API calls)"
+        if deny_net else "reads and network stay open"
+    )
     return (
         "Commands run inside an OS sandbox: writes are limited to the project "
-        "plus toolchain caches and SSH/forge state, reads and network stay "
-        "open. If a command fails because of that (permission denied outside "
+        f"plus toolchain caches and SSH/forge state, {reach}. "
+        "If a command fails because of that (permission denied outside "
         "the project, global install, system service), re-run it with "
         "unsandboxed=true: the user is asked to approve and it then runs "
         "unconfined. Do not ask needlessly. "

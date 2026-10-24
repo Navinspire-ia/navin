@@ -150,6 +150,7 @@ _VALUE_MARKERS = (
     "invalid_value",
     "supported values",
     "must be one of",
+    "input should be",  # Anthropic / Bedrock validation wording
     "not a valid",
     "'none'",
     '"none"',
@@ -162,6 +163,7 @@ _VALUE_MARKERS = (
 # are: 'minimal', ..." never says the word "reasoning".
 _TOPIC_MARKERS = (
     "reasoning",
+    "effort",
     "thinking",
     "think",
     "'none'",
@@ -175,11 +177,28 @@ def model_slug(model: str | None) -> str:
     return (model or "").lower().rsplit("/", 1)[-1]
 
 
+# OpenAI families with no reasoning at all: the chat/search snapshots of
+# GPT-5/6 and every GPT-4 / 3.5 model. A reasoning field is a 400 there.
+_OPENAI_NON_REASONING = re.compile(
+    r"(?:^|[/.\-_])(?:gpt-4|gpt-3\.5|chatgpt-)|gpt-[56][\w.\-]*-(?:chat|search)(?:$|[\-.:])"
+)
+
+
+def openai_rejects_reasoning(model: str | None) -> bool:
+    """True for OpenAI models that take no reasoning parameter at all."""
+    slug = model_slug(model)
+    if not slug or any(x in slug for x in _OFF_EXCEPTIONS):
+        return False
+    return bool(_OPENAI_NON_REASONING.search(slug))
+
+
 def reasoning_default(model: str | None) -> str:
     """What this model does about reasoning when the request says nothing."""
     slug = model_slug(model)
     if not slug:
         return UNKNOWN
+    if openai_rejects_reasoning(slug):
+        return DEFAULT_OFF
     if any(x in slug for x in _ALWAYS_EXCEPTIONS):
         pass
     elif any(m in slug for m in _ALWAYS_TUNABLE_MARKERS):
@@ -237,7 +256,7 @@ def off_shapes(
 
     if wire == WIRE_RESPONSES:
         # GPT-5.1+ accept "none"; GPT-5 stops at "minimal"; o-series at "low".
-        return [_effort_shape(e, wire) for e in ("none", "minimal", "low")]
+        return _openai_off_shapes(slug, wire)
 
     if "openrouter" in base:
         return [
@@ -269,9 +288,33 @@ def off_shapes(
             {"reasoning_effort": "none", "extra_body": template_off},
             {"extra_body": template_off},
         ]
+    if "claude" in slug:
+        from navin.providers.claude_capabilities import claude_cannot_disable_thinking
+
+        if claude_cannot_disable_thinking(slug):
+            # Opus 5.5, Sonnet 5.5, Fable, Mythos refuse "disabled": through
+            # an OpenAI-wire gateway (LiteLLM) the closest off is "low".
+            return [_effort_shape("low", wire)]
     # OpenAI vocabulary for OpenAI itself, Copilot, LM Studio, NVIDIA, HF,
     # SiliconFlow, Novita, OpenCode and every custom endpoint.
-    return [_effort_shape(e, wire) for e in ("none", "minimal", "low")]
+    return _openai_off_shapes(slug, wire)
+
+
+def _openai_off_shapes(slug: str, wire: str) -> list[dict[str, Any]]:
+    """The none -> minimal -> low floors, minus those an OpenAI model refuses.
+
+    A documented ladder saves refused round trips: GPT-5 has no "none",
+    GPT-5.1+ no "minimal", Codex and o-series start at "low", Pro at
+    "medium" (or "high" for the original GPT-5 Pro).
+    """
+    floors = ("none", "minimal", "low")
+    known = openai_known_efforts(slug)
+    if known:
+        kept = [e for e in floors if e in known]
+        if not kept:
+            kept = [min(known, key=EFFORT_LADDER.index)]
+        floors = tuple(kept)
+    return [_effort_shape(e, wire) for e in floors]
 
 
 def apply_shape(target: dict[str, Any], shape: dict[str, Any]) -> None:
@@ -285,6 +328,15 @@ def apply_shape(target: dict[str, Any], shape: dict[str, Any]) -> None:
             target.setdefault(key, value)
 
 
+_HISTORY_MARKERS = (
+    "signature",
+    "bound to a different conversation",
+    "expected thinking",
+    "expected `thinking`",
+    "redacted_thinking",
+)
+
+
 def classify_rejection(error: Exception | str) -> str | None:
     """Tell a refused reasoning request from every other error."""
     if isinstance(error, Exception):
@@ -293,6 +345,11 @@ def classify_rejection(error: Exception | str) -> str | None:
     else:
         text = str(error).lower()
     if not any(topic in text for topic in _TOPIC_MARKERS):
+        return None
+    if any(marker in text for marker in _HISTORY_MARKERS):
+        # A replayed thinking block was refused (bad or foreign signature,
+        # missing block): the history is at fault, not the effort setting.
+        # Stepping the effort down here would quietly stop reasoning.
         return None
     if any(marker in text for marker in _VALUE_MARKERS):
         return REJECT_VALUE
@@ -363,6 +420,20 @@ def _save_store(data: dict[str, int]) -> None:
         os.replace(tmp, path)
     except OSError as exc:
         logger.debug("reasoning negotiation store not written: {}", exc)
+
+
+def stored_flag(key: str) -> bool:
+    """A yes/no fact an endpoint taught us, kept in the same store."""
+    with _STORE_LOCK:
+        return bool(_load_store().get(key))
+
+
+def remember_flag(key: str) -> None:
+    with _STORE_LOCK:
+        store = _load_store()
+        if store.get(key) != 1:
+            store[key] = 1
+            _save_store(store)
 
 
 def forget_reasoning_negotiations() -> None:
@@ -456,3 +527,143 @@ class ReasoningOffNegotiator:
                 kind,
             )
         return True
+
+
+# --- Effort values each family takes ------------------------------------------
+#
+# A routed effort ("xhigh" for a hard step, "none" for a cheap one) must reach
+# every model as a value it accepts, or the step fails. Measured 2026-10-07:
+# Gemini 3.x takes none..high (no xhigh/max) and its -lite models refuse
+# "none"; GLM 5.3 always thinks and takes low/high/max only. Anything else a
+# model refuses is learned from the error, which names the valid values.
+
+EFFORT_LADDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+# "adaptive" and "ultra" are Anthropic-side efforts (adaptive thinking, the
+# deepest tier). Other wires reject them with a 400 on every attempt, so they
+# go out as the closest ladder value; nearest_effort then fits "max" down to
+# what the model takes.
+_NON_ANTHROPIC_EFFORT_ALIASES = {"adaptive": "high", "ultra": "max", "off": "none"}
+
+
+def non_anthropic_effort(effort: str | None) -> str | None:
+    """Map Anthropic-only effort names onto the shared ladder."""
+    if not isinstance(effort, str):
+        return effort
+    return _NON_ANTHROPIC_EFFORT_ALIASES.get(effort.strip().lower(), effort)
+
+_KNOWN_EFFORTS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (("gemini", "-lite"), frozenset({"minimal", "low", "medium", "high"})),
+    (("gemini",), frozenset({"none", "minimal", "low", "medium", "high"})),
+    (("glm-5.3",), frozenset({"none", "minimal", "low", "high", "max"})),
+    (("glm-5-3",), frozenset({"none", "minimal", "low", "high", "max"})),
+)
+_learned_efforts: dict[str, frozenset[str]] = {}
+_learned_lock = threading.Lock()
+
+# OpenAI reasoning ladders. Mirrors navin/webui/reasoning_catalog.json (the
+# Settings ladder), kept in sync by tests/test_reasoning_matrix_gpt_claude.py.
+_E_GPT5 = frozenset({"minimal", "low", "medium", "high"})
+_E_LOW_HIGH = frozenset({"low", "medium", "high"})
+_E_NONE_HIGH = frozenset({"none", "low", "medium", "high"})
+_E_LOW_XHIGH = frozenset({"low", "medium", "high", "xhigh"})
+_E_NONE_XHIGH = frozenset({"none", "low", "medium", "high", "xhigh"})
+_E_PRO_XHIGH = frozenset({"medium", "high", "xhigh"})
+_E_NONE_MAX = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+_E_PRO_MAX = frozenset({"medium", "high", "xhigh", "max"})
+_GPT5_MINOR = re.compile(r"gpt-5[.\-](\d{1,2})(?!\d)")
+_O_SERIES = re.compile(r"(?:^|[/\-_.])o[134](?:-|$|[.\d])")
+
+
+def openai_known_efforts(model: str | None) -> frozenset[str] | None:
+    """Effort values an OpenAI reasoning model documents; None = not OpenAI."""
+    slug = model_slug(model)
+    if not slug or openai_rejects_reasoning(slug):
+        return None
+    pro = "pro" in slug
+    codex = "codex" in slug
+    if "gpt-6" in slug:
+        return _E_PRO_MAX if pro else _E_NONE_MAX
+    if "gpt-5" in slug:
+        match = _GPT5_MINOR.search(slug)
+        minor = int(match.group(1)) if match else 0
+        if minor >= 6:
+            return _E_PRO_MAX if pro else _E_NONE_MAX
+        if minor >= 2:
+            if codex:
+                return _E_LOW_XHIGH
+            return _E_PRO_XHIGH if pro else _E_NONE_XHIGH
+        if minor == 1:
+            if "codex-max" in slug:
+                return _E_LOW_XHIGH
+            return _E_LOW_HIGH if codex else _E_NONE_HIGH
+        if pro:
+            return frozenset({"high"})
+        return _E_LOW_HIGH if codex else _E_GPT5
+    if _O_SERIES.search(slug):
+        return _E_LOW_HIGH
+    return None
+
+
+def accepted_efforts(
+    model: str | None, key: str | None = None, *, include_openai: bool = True,
+) -> frozenset[str] | None:
+    """Effort values this model takes, when known or learned; None = unknown.
+
+    ``include_openai=False`` leaves the documented OpenAI ladders out (the
+    "none" path walks its own floors in the endpoint's vocabulary).
+    """
+    if key:
+        with _learned_lock:
+            learned = _learned_efforts.get(key)
+        if learned:
+            return learned
+    slug = model_slug(model)
+    for markers, values in _KNOWN_EFFORTS:
+        if all(marker in slug for marker in markers):
+            return values
+    return openai_known_efforts(slug) if include_openai else None
+
+
+def nearest_effort(effort: str, accepted: frozenset[str] | None) -> str:
+    """The accepted value closest to ``effort`` (ties go to the deeper one).
+
+    "minimal" is the exception: it asks for as little thinking as possible,
+    so between "none" and "low" it takes "none" (GPT-5.1 replaced "minimal"
+    with "none" as its lowest level).
+    """
+    if not accepted or effort not in EFFORT_LADDER or effort in accepted:
+        return effort
+    index = EFFORT_LADDER.index(effort)
+    direction = 1 if effort == "minimal" else -1
+    ranked = sorted(
+        (value for value in accepted if value in EFFORT_LADDER),
+        key=lambda value: (
+            abs(EFFORT_LADDER.index(value) - index),
+            direction * EFFORT_LADDER.index(value),
+        ),
+    )
+    return ranked[0] if ranked else effort
+
+
+def learn_accepted_efforts(key: str, effort: str, error: Exception | str) -> bool:
+    """Remember the values a refusal lists; True when a retry can succeed."""
+    if classify_rejection(error) != REJECT_VALUE:
+        return False
+    if isinstance(error, Exception):
+        body = getattr(error, "body", None)
+        # A missing body must not read as the effort "none".
+        text = f"{body if body is not None else ''} {error}".lower()
+    else:
+        text = str(error).lower()
+    named = {value for value in EFFORT_LADDER if re.search(rf"(?<![\w-]){value}(?![\w-])", text)}
+    named.discard(effort)
+    if not named:
+        return False
+    accepted = frozenset(named)
+    with _learned_lock:
+        if _learned_efforts.get(key) == accepted:
+            return False
+        _learned_efforts[key] = accepted
+    logger.info("Model {} refused effort {!r}; it accepts {}", key, effort, sorted(accepted))
+    return True

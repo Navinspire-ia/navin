@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -359,7 +360,7 @@ export function TradingWorkspace({
   return (
     <Customizer settings={{ theme: fluentTheme }}>
       <div
-        className={cn("flex h-full min-h-0 flex-col bg-background", chatOpen ? "pr-0" : "")}
+        className={cn("flex h-full min-h-0 flex-col bg-background", chatOpen ? "pe-0" : "")}
         style={{
           paddingTop: NOTIFICATION_GUTTER ? 0 : undefined,
           WebkitFontSmoothing: "antialiased",
@@ -471,7 +472,7 @@ export function TradingWorkspace({
                     {tx(`pane.${item.id}`, item.id === "home" ? "Home" : item.id)}
                   </span>
                   {badge ? (
-                    <span className="absolute right-1 top-1 rounded-full bg-amber-500/25 px-1 text-[10px] tabular-nums leading-4">
+                    <span className="absolute end-1 top-1 rounded-full bg-amber-500/25 px-1 text-[10px] tabular-nums leading-4">
                       {badge}
                     </span>
                   ) : null}
@@ -500,7 +501,7 @@ export function TradingWorkspace({
             <button
               type="button"
               onClick={() => setPane("orders")}
-              className="mb-3 flex min-h-10 w-full cursor-pointer items-center justify-between gap-3 rounded-2xl bg-amber-500/12 px-4 py-2 text-left shadow-[0_8px_24px_rgba(245,158,11,0.12)] transition-[transform,opacity] duration-150 hover:bg-amber-500/18 active:scale-[0.96]"
+              className="mb-3 flex min-h-10 w-full cursor-pointer items-center justify-between gap-3 rounded-2xl bg-amber-500/12 px-4 py-2 text-start shadow-[0_8px_24px_rgba(245,158,11,0.12)] transition-[transform,opacity] duration-150 hover:bg-amber-500/18 active:scale-[0.96]"
             >
               <span className="text-sm font-medium">
                 {tx("pendingBanner", "{{count}} orders waiting for approval", { count: waiting.length })}
@@ -537,7 +538,7 @@ export function TradingWorkspace({
                 <button
                   type="button"
                   onClick={() => setPane("mandate")}
-                  className="cursor-pointer rounded-2xl p-4 text-left shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
+                  className="cursor-pointer rounded-2xl p-4 text-start shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
                 >
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{tx("homeDomains", "Domains")}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -560,7 +561,7 @@ export function TradingWorkspace({
                 <button
                   type="button"
                   onClick={() => setPane("mandate")}
-                  className="cursor-pointer rounded-2xl p-4 text-left shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
+                  className="cursor-pointer rounded-2xl p-4 text-start shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
                 >
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{tx("homeCountries", "Countries")}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -570,7 +571,7 @@ export function TradingWorkspace({
                     ).map((code) => (
                       <span key={code} className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium tabular-nums">
                         {code}
-                        <span className="ml-1 font-normal text-muted-foreground">
+                        <span className="ms-1 font-normal text-muted-foreground">
                           {(desk.catalog?.countries || []).find((item) => item.id === code)?.name || ""}
                         </span>
                       </span>
@@ -583,7 +584,7 @@ export function TradingWorkspace({
                 <button
                   type="button"
                   onClick={() => setPane("mandate")}
-                  className="cursor-pointer rounded-2xl p-4 text-left shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
+                  className="cursor-pointer rounded-2xl p-4 text-start shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
                 >
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{tx("homeAlerts", "Alert tools")}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -733,7 +734,7 @@ export function TradingWorkspace({
                         setFocusSymbol(focused.symbol);
                         setPane("research");
                       }}
-                      className="mt-3 w-full cursor-pointer rounded-2xl p-2 text-left shadow-[0_10px_28px_rgba(15,23,42,0.08)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
+                      className="mt-3 w-full cursor-pointer rounded-2xl p-2 text-start shadow-[0_10px_28px_rgba(15,23,42,0.08)] outline outline-1 outline-black/10 transition-[background-color] duration-150 hover:bg-muted/30 dark:outline-white/10"
                     >
                       <div className="rounded-[14px] p-3">
                         <div className="flex items-center justify-between gap-2">
@@ -1113,7 +1114,7 @@ function TradePane({
             )}
           >
             {item}
-            {positions.some((row) => row.symbol === item) ? <span className="ml-1 text-amber-600">●</span> : null}
+            {positions.some((row) => row.symbol === item) ? <span className="ms-1 text-amber-600">●</span> : null}
           </button>
         ))}
       </div>
@@ -1123,7 +1124,7 @@ function TradePane({
             <div className="min-w-0">
               <p className="truncate text-base font-semibold tabular-nums">
                 {symbol || tx("tradePick", "Pick a symbol")}
-                {chart?.name && chart.name !== symbol ? <span className="ml-2 text-sm font-normal text-muted-foreground">{chart.name}</span> : null}
+                {chart?.name && chart.name !== symbol ? <span className="ms-2 text-sm font-normal text-muted-foreground">{chart.name}</span> : null}
               </p>
               {tech ? (
                 <p className="text-xs tabular-nums text-muted-foreground">
@@ -1179,11 +1180,11 @@ function TradePane({
             <button
               type="button"
               onClick={() => onResearch(symbol)}
-              className="mt-3 flex w-full cursor-pointer items-start justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2 text-left transition-[background-color] duration-150 hover:bg-muted"
+              className="mt-3 flex w-full cursor-pointer items-start justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2 text-start transition-[background-color] duration-150 hover:bg-muted"
             >
               <span className="min-w-0">
                 <span className={cn("rounded-full px-2 py-0.5 text-xs", actionTone(research.action))}>{research.action || "WAIT"}</span>
-                <span className="ml-2 text-xs tabular-nums text-muted-foreground">{formatPct(research.confidence)}</span>
+                <span className="ms-2 text-xs tabular-nums text-muted-foreground">{formatPct(research.confidence)}</span>
                 <p className="mt-1 line-clamp-2 text-pretty text-sm" style={{ textWrap: "pretty" }}>
                   {research.note || research.thesis}
                 </p>
@@ -1556,7 +1557,7 @@ function MandatePane({
                 "Each row is one domain in one country. New picks land at the bottom of this list.",
               )}
         </p>
-        <ul className="mt-3 max-h-[22rem] space-y-2 overflow-y-auto pr-1">
+        <ul className="mt-3 max-h-[22rem] space-y-2 overflow-y-auto pe-1">
           {tapes.map((tape) => {
             const key = tapeKey(tape);
             const fresh = key === addedKey;
@@ -1646,7 +1647,7 @@ function MandatePane({
                 type="button"
                 disabled={busy}
                 onClick={() => addAlert(item.id)}
-                className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-muted/50 px-3 text-left text-sm transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.98]"
+                className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-muted/50 px-3 text-start text-sm transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.98]"
               >
                 <span className="font-medium">{item.name}</span>
                 <span className="text-xs text-muted-foreground">
@@ -1854,7 +1855,7 @@ function MarketsPane({
       <PaneFilter value={query} onChange={setQuery} tx={tx} />
       {!rows.length ? <Empty text={tx("filterEmpty", "Nothing matches this filter.")} /> : null}
     <Surface className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-left text-sm">
+      <table className="w-full min-w-[720px] text-start text-sm">
         <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
           <tr>
             <th className="px-3 py-2">{tx("symbol", "Symbol")}</th>
@@ -1892,7 +1893,7 @@ function MarketsPane({
                     {research?.action || "-"}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-2 text-end">
                   <div className="inline-flex gap-1">
                     <DefaultButton
                       text={tx("researchAction", "Research")}
@@ -2033,7 +2034,7 @@ function StrategiesPane({
             <li key={skill.id}>
               <button
                 type="button"
-                className="min-h-10 w-full cursor-pointer rounded-xl px-2 text-left hover:bg-muted/60"
+                className="min-h-10 w-full cursor-pointer rounded-xl px-2 text-start hover:bg-muted/60"
                 onClick={() => onUseSkill?.(skill.id)}
               >
                 {skill.name}
@@ -2063,7 +2064,7 @@ function AgentsPane({ research, tx }: { research: TradingResearch; tx: Tx }) {
       <div className="grid gap-3 md:grid-cols-2">
         <Surface className="p-4">
           <p className="text-xs uppercase text-muted-foreground">{tx("bull", "Bull")}</p>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-sm">
+          <ul className="mt-2 list-disc space-y-1 ps-4 text-sm">
             {(research.debate?.bull?.reasons || []).map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -2071,7 +2072,7 @@ function AgentsPane({ research, tx }: { research: TradingResearch; tx: Tx }) {
         </Surface>
         <Surface className="p-4">
           <p className="text-xs uppercase text-muted-foreground">{tx("bear", "Bear")}</p>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-sm">
+          <ul className="mt-2 list-disc space-y-1 ps-4 text-sm">
             {(research.debate?.bear?.reasons || []).map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -2201,7 +2202,7 @@ function PositionsPane({
                   <div className="min-w-0">
                     <p className="font-medium tabular-nums">
                       {row.symbol}
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      <span className="ms-2 text-xs font-normal text-muted-foreground">
                         {formatQty(row.qty)} · {tx("avg", "Avg")} {formatMoney(row.avg, row.currency || currency)}
                         {row.broker && row.broker !== "paper" ? ` · ${row.broker}` : ""}
                         {row.sector ? ` · ${row.sector}` : ""}
@@ -2220,7 +2221,7 @@ function PositionsPane({
                     <p className="mt-1 text-xs tabular-nums text-muted-foreground">
                       {tx("stop", "Stop")} {row.stop ? Number(row.stop).toFixed(2) : "-"}
                       {distance != null ? (
-                        <span className={cn("ml-1", near ? "font-medium text-red-600 dark:text-red-400" : "")}>
+                        <span className={cn("ms-1", near ? "font-medium text-red-600 dark:text-red-400" : "")}>
                           ({tx("stopDistance", "{{pct}}% above", { pct: distance.toFixed(1) })})
                         </span>
                       ) : null}
@@ -2381,16 +2382,16 @@ function OrdersPane({
       {!rows.length ? <Empty text={tx("filterEmpty", "Nothing matches this filter.")} /> : null}
       {rows.map((row) => {
         const tone = orderStatusTone(row.status);
-        const when = row.t ? new Date(Number(row.t) * 1000).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+        const when = row.t ? new Date(Number(row.t) * 1000).toLocaleString(intlLocale(), { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
         return (
           <Surface key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
             <div className="min-w-0">
               <p className="text-sm font-medium tabular-nums">
-                <span className={cn("mr-2 rounded-full px-2 py-0.5 text-[11px] uppercase", row.side === "buy" ? "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300" : "bg-red-600/15 text-red-700 dark:text-red-300")}>
+                <span className={cn("me-2 rounded-full px-2 py-0.5 text-[11px] uppercase", row.side === "buy" ? "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300" : "bg-red-600/15 text-red-700 dark:text-red-300")}>
                   {row.side}
                 </span>
                 {formatQty(row.qty)} {row.symbol} @ {formatMoney(row.price, currency)}
-                <span className={cn("ml-2 rounded-full px-2 py-0.5 text-[11px]", ORDER_TONE_CLASS[tone])}>{tx(`orderStatus.${row.status}`, row.status)}</span>
+                <span className={cn("ms-2 rounded-full px-2 py-0.5 text-[11px]", ORDER_TONE_CLASS[tone])}>{tx(`orderStatus.${row.status}`, row.status)}</span>
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {when ? `${when} · ` : ""}
@@ -2494,7 +2495,7 @@ function ResearchPane({
             type="button"
             onClick={() => onSelect(row.symbol)}
             className={cn(
-              "flex min-h-10 w-full cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-[background-color,transform] duration-150 active:scale-[0.96]",
+              "flex min-h-10 w-full cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-start text-sm transition-[background-color,transform] duration-150 active:scale-[0.96]",
               row.symbol === current?.symbol ? "bg-muted font-medium" : "hover:bg-muted/50",
             )}
           >
@@ -2509,8 +2510,8 @@ function ResearchPane({
           <p className="font-medium tabular-nums">
             {current.symbol} · {current.action} · {formatPct(current.confidence)}
             {current.t ? (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                {new Date(Number(current.t) * 1000).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              <span className="ms-2 text-xs font-normal text-muted-foreground">
+                {new Date(Number(current.t) * 1000).toLocaleString(intlLocale(), { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
               </span>
             ) : null}
           </p>
@@ -2683,7 +2684,7 @@ function BacktestsPane({
           <PaneFilter value={query} onChange={setQuery} tx={tx} />
           {!rows.length ? <Empty text={tx("filterEmpty", "Nothing matches this filter.")} /> : null}
           <Surface className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[760px] text-start text-sm">
               <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">{tx("symbol", "Symbol")}</th>
@@ -2742,7 +2743,7 @@ function BacktestRow({
         <td className="px-3 py-2">
           <p className="font-medium">{row.symbol}</p>
           <p className="text-[11px] text-muted-foreground">
-            {row.t ? new Date(Number(row.t) * 1000).toLocaleDateString() : ""}
+            {row.t ? new Date(Number(row.t) * 1000).toLocaleDateString(intlLocale()) : ""}
             {row.fundamentals ? ` · ${row.fundamentals}` : ""}
           </p>
         </td>
@@ -2752,7 +2753,7 @@ function BacktestRow({
           {row.bench_benchmark_return_pct != null ? (
             <>
               {row.benchmark} {formatPct(row.bench_benchmark_return_pct)}
-              <span className={cn("ml-1 text-xs", (alpha ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+              <span className={cn("ms-1 text-xs", (alpha ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
                 ({(alpha ?? 0) >= 0 ? "+" : ""}
                 {Number(alpha ?? 0).toFixed(1)})
               </span>
@@ -2792,24 +2793,24 @@ function BacktestRow({
               <div className="max-h-56 overflow-auto">
                 <p className="text-xs uppercase text-muted-foreground">{tx("tradeLog", "Trades")}</p>
                 {(row.trade_log || []).length ? (
-                  <table className="mt-1 w-full text-left text-xs tabular-nums">
+                  <table className="mt-1 w-full text-start text-xs tabular-nums">
                     <thead className="text-muted-foreground">
                       <tr>
-                        <th className="py-1 pr-2">{tx("entry", "Entry")}</th>
-                        <th className="py-1 pr-2">{tx("exit", "Exit")}</th>
-                        <th className="py-1 pr-2">{tx("pnl", "P&L")}</th>
-                        <th className="py-1 pr-2">{tx("reasonCol", "Reason")}</th>
+                        <th className="py-1 pe-2">{tx("entry", "Entry")}</th>
+                        <th className="py-1 pe-2">{tx("exit", "Exit")}</th>
+                        <th className="py-1 pe-2">{tx("pnl", "P&L")}</th>
+                        <th className="py-1 pe-2">{tx("reasonCol", "Reason")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(row.trade_log || []).map((trade, index) => (
                         <tr key={index} className="border-t border-black/5 dark:border-white/5">
-                          <td className="py-1 pr-2">{trade.entry != null ? Number(trade.entry).toFixed(2) : "-"}</td>
-                          <td className="py-1 pr-2">{trade.exit != null ? Number(trade.exit).toFixed(2) : "-"}</td>
-                          <td className={cn("py-1 pr-2", Number(trade.pnl || 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+                          <td className="py-1 pe-2">{trade.entry != null ? Number(trade.entry).toFixed(2) : "-"}</td>
+                          <td className="py-1 pe-2">{trade.exit != null ? Number(trade.exit).toFixed(2) : "-"}</td>
+                          <td className={cn("py-1 pe-2", Number(trade.pnl || 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
                             {formatMoney(trade.pnl, currency)}
                           </td>
-                          <td className="py-1 pr-2 text-muted-foreground">{trade.reason || "-"}</td>
+                          <td className="py-1 pe-2 text-muted-foreground">{trade.reason || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3016,7 +3017,7 @@ function RiskPane({
             {levels.length ? (
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {levels.map((level) => (
-                  <li key={`${level.symbol}-${level.price}-${level.when}`} className="inline-flex min-h-8 items-center gap-1 rounded-full bg-muted/60 pl-3 text-xs tabular-nums">
+                  <li key={`${level.symbol}-${level.price}-${level.when}`} className="inline-flex min-h-8 items-center gap-1 rounded-full bg-muted/60 ps-3 text-xs tabular-nums">
                     {level.symbol} {level.when === "below" ? "<" : ">"} {Number(level.price).toFixed(2)}
                     <IconButton
                       iconProps={{ iconName: "Cancel" }}

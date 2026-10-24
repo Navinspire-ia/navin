@@ -98,7 +98,7 @@ class DeskRuntimeIsolationTest(unittest.TestCase):
     def test_heartbeat_desks_stay_watch_only_and_isolated(self) -> None:
         pulse = (ROOT / "navin/gateway/heartbeat_desks.py").read_text(encoding="utf-8")
         self.assertIn("one failure never skips the others", pulse)
-        self.assertEqual(pulse.count("except Exception:"), 5)
+        self.assertEqual(pulse.count("except Exception:"), 6)  # + Campaigns replies
         for banned in ("produce_assets", "harvest_live_site", "run_pipeline", "run_collect", "hunt_companies"):
             self.assertNotIn(banned, pulse, banned)
         marketing = (ROOT / "navin/marketing/heartbeat.py").read_text(encoding="utf-8")

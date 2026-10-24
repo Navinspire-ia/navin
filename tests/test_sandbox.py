@@ -236,6 +236,40 @@ class StrictModeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as ws:
             wrapped = sandbox.wrap_command("native", "echo hi", ws, ws)
             self.assertNotIn("--strict", wrapped)
+            self.assertNotIn("--deny-net", wrapped)
+
+    def test_network_deny_reaches_both_backends_before_the_command(self) -> None:
+        with tempfile.TemporaryDirectory() as ws:
+            wrapped = sandbox.wrap_command("native", "curl x", ws, ws, deny_net=True)
+            self.assertLess(wrapped.index("--deny-net"), wrapped.index("curl x"))
+            with _bwrap_installed():
+                wrapped = sandbox.wrap_command("bwrap", "curl x", ws, ws, deny_net=True)
+                self.assertLess(wrapped.index("--unshare-net"), wrapped.index("curl x"))
+                self.assertNotIn(
+                    "--unshare-net", sandbox.wrap_command("bwrap", "curl x", ws, ws)
+                )
+
+    def test_exec_config_maps_sandbox_network_to_the_tool(self) -> None:
+        from types import SimpleNamespace
+
+        from pydantic import ValidationError
+
+        from navin.agent.tools.shell import ExecTool, ExecToolConfig
+
+        with self.assertRaises(ValidationError):
+            ExecToolConfig(sandbox_network="maybe")
+        for value, expected in (("deny", True), ("open", False)):
+            config = SimpleNamespace(
+                exec=ExecToolConfig(sandbox="native", sandbox_network=value),
+                restrict_to_workspace=False, webui_allow_local_service_access=True,
+                security_profile=None,
+                approvals=SimpleNamespace(enabled=False, exec_ask="destructive"),
+            )
+            with tempfile.TemporaryDirectory() as ws, patch(
+                "navin.agent.tools.shell.forge_tokens_from_tools_config", return_value={}
+            ):
+                tool = ExecTool.create(SimpleNamespace(config=config, workspace=ws))
+            self.assertIs(tool.sandbox_deny_net, expected)
 
     def test_native_passes_chdir_and_host_write_grants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

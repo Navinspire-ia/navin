@@ -82,7 +82,7 @@ def test_every_module_has_distinct_execution_coverage():
     assert task_fingerprint(training) != task_fingerprint(tasks("holdout"))
     report = evaluator().evaluate([])
     assert not report.failed, report.reason
-    assert report.passed == report.total == 16, report.as_dict(with_outcomes=True)
+    assert report.passed == report.total == 17, report.as_dict(with_outcomes=True)  # + campaigns
     assert {row.id for row in report.suites} == VALID_PRODUCT_MODULES
     assert all(row["tools"] >= 2 for row in report.metrics)
     restored = ExamReport.from_dict(report.as_dict(with_outcomes=True))

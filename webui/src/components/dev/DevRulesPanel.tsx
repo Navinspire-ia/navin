@@ -166,7 +166,7 @@ export function DevRulesPanel({
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <ul className="w-[7.5rem] shrink-0 overflow-y-auto border-r border-border/40 py-1">
+        <ul className="w-[7.5rem] shrink-0 overflow-y-auto border-e border-border/40 py-1">
           {loading && rules.length === 0 ? (
             <li className="flex items-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -185,7 +185,7 @@ export function DevRulesPanel({
                   type="button"
                   onClick={() => setSelected(rule.name)}
                   className={cn(
-                    "block w-full truncate px-2 py-1 text-left text-[11px]",
+                    "block w-full truncate px-2 py-1 text-start text-[11px]",
                     selected === rule.name
                       ? "bg-muted text-foreground"
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",

@@ -83,8 +83,9 @@ curl -fsS "http://127.0.0.1:$webui_port/health" >/dev/null
 # broken in the shipped builds while passing from a checkout, which is where the
 # rest of the test suite runs.
 
-# The OS command jail. Linux and macOS sidecars without it brick every exec.
-# Windows has no OS sandbox backend, so the helper is not shipped there.
+# The native OS command jail. Linux and macOS use their platform helpers.
+# Windows has no OS sandbox backend, but ships navin-sandbox.exe as a
+# pass-through helper; packaging/windows/smoke-test.ps1 checks that bundle.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) ;;
   *)

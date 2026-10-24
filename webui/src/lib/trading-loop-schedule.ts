@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { LAST_DAY, formatTimeOfDay, weekdayLabel } from "@/lib/loop-schedule";
 import type { TradingLoopKind, TradingLoopSchedule } from "@/lib/trading-api";
 
@@ -29,7 +30,7 @@ function clamp(value: number, low: number, high: number, fallback: number): numb
 
 export function browserTimeZone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    return Intl.DateTimeFormat(intlLocale()).resolvedOptions().timeZone || "";
   } catch {
     return "";
   }
@@ -95,7 +96,7 @@ export function describeTradingSchedule(
 
 export function formatNextDue(ts: number | undefined, locale: string): string {
   if (!ts || ts <= 0) return "";
-  return new Date(ts * 1000).toLocaleString(locale, {
+  return new Date(ts * 1000).toLocaleString(intlLocale(locale), {
     weekday: "short",
     day: "numeric",
     month: "short",

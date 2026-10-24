@@ -7,18 +7,17 @@ from __future__ import annotations
 
 import html
 import re
+import urllib.request
 from typing import Any, Callable
 
 from loguru import logger
-
-import urllib.request
 
 THIN_CHARS = 240
 FETCH_LIMIT = 400_000
 DESC_LIMIT = 4000
 CDC_LIMIT = 12_000
 _TIMEOUT_S = 8
-_UA = "NavinTenders/1.0 (+https://navin.ai)"
+_UA = "NavinTenders/1.0 (+https://navin.live)"
 
 _TAG = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>", re.I)
 _SPACE = re.compile(r"\s+")

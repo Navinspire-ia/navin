@@ -19,6 +19,9 @@ from textual.widgets._markdown import (
 )
 
 from navin.agent.code_validation import CodeValidationState
+from navin.tui.copy_chip import COPIED_LABEL, COPY_LABEL, CopyChip
+from navin.tui.markdown_stream import CopyableFence
+from navin.tui.settled import SettledMarkdown, render_markdown_lines
 from navin.tui.theme import NAVIN_THEMES
 from navin.tui.widgets import AssistantMessage, Composer, ComposerMeta, ComposerShell
 
@@ -199,3 +202,213 @@ def test_typing_keeps_cursor_inside_prompt_without_rebuilding_slash_menu():
             assert composer.text == "/help x"
             await pilot.pause()
     asyncio.run(run(), debug=True)
+
+
+def test_a_finished_answer_has_a_copy_icon_for_the_whole_report():
+    report = "## Report\n\nAll **done**.\n\n- `src/app.ts` changed\n- tests pass"
+
+    async def run():
+        app = FinishHost()
+        copied: list[str] = []
+        app.copy_to_clipboard = copied.append
+        async with app.run_test(size=(90, 40)) as pilot:
+            block = app.block
+            await block.tool_event("run", "exec", "end", {"command": "pytest -q"}, "2 passed", None, None)
+            await block.delta(report)
+            await pilot.pause()
+            chip = block.query_one(".assistant-copy", CopyChip)
+            # No icon while the answer is still being written.
+            assert not chip.display
+            await block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            assert chip.display
+            body = block.query_one(Markdown)
+            assert chip.region.y >= body.region.bottom
+            assert str(chip.content) == COPY_LABEL
+            await pilot.click(chip)
+            await pilot.pause()
+            # The answer as written, not the activity rows above it.
+            assert copied == [report]
+            assert chip.has_class("-copied") and str(chip.content) == COPIED_LABEL
+            # The click neither folded the answer nor selected text.
+            assert body.display and not app.screen.get_selected_text()
+            chip._reset()
+            assert str(chip.content) == COPY_LABEL and not chip.has_class("-copied")
+
+            # A turn that streams again loses the icon until it ends again.
+            await block.delta("\n\nOne more line.")
+            assert not chip.display
+            await block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            assert chip.display
+
+            # Built back from its record (scrolled far away and back).
+            record = block.snapshot_record()
+            assert record is not None
+            rebuilt = record.build()
+            await app.query_one(VerticalScroll).mount(rebuilt)
+            await pilot.pause()
+            again = rebuilt.query_one(".assistant-copy", CopyChip)
+            assert again.display
+            assert again.copy()
+            assert copied[-1] == report + "\n\nOne more line."
+
+            # A turn with only tool rows has no answer to copy: no icon.
+            tools_only = AssistantMessage()
+            await app.query_one(VerticalScroll).mount(tools_only)
+            await tools_only.tool_event("run", "exec", "end", {"command": "ls"}, "a\nb", None, None)
+            await tools_only.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            assert not tools_only.query_one(".assistant-copy", CopyChip).display
+    asyncio.run(run())
+
+
+def test_streaming_and_finishing_a_long_turn_never_restyles_the_whole_message():
+    # A class toggle on the message restyled every tool row and Markdown
+    # block under it: up to a second per toggle in the CLI freeze log, and
+    # 220 ms for the copy icon at every finish.
+    async def run():
+        app = FinishHost()
+        async with app.run_test(size=(90, 40)) as pilot:
+            block = app.block
+            for index in range(25):
+                await block.tool_event(
+                    f"t{index}", "exec", "end", {"command": f"pytest -q t{index}"}, "ok\n" * 5, None, None
+                )
+            await pilot.pause()
+            whole: list[int] = []
+            original = app.stylesheet.update_nodes
+
+            def watched(nodes, animate=False):
+                nodes = list(nodes)
+                if block in nodes:
+                    whole.append(len(nodes))
+                return original(nodes, animate=animate)
+
+            app.stylesheet.update_nodes = watched
+            await block.delta("Checking the last files.")
+            await pilot.pause()
+            assert block.has_class("-open")
+            assert block.query_one(".assistant-body.-answer", Markdown).display
+            await block.stream_end(resuming=True)
+            assert not block.has_class("-open")
+            report = "## Report\n\n" + "All **done**.\n\n" * 20
+            await block.delta(report)
+            await pilot.pause()
+            chip = block.query_one(".assistant-copy", CopyChip)
+            assert not chip.display
+            await block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            assert chip.display and block.has_class("-copyable")
+            await block.delta("\n\nOne more line.")
+            assert not chip.display
+            block.toggle_body()
+            block.toggle_body()
+            await pilot.pause()
+            assert len(list(block.walk_children())) > 100
+            assert whole == [], f"whole message restyled {len(whole)} times"
+    asyncio.run(run())
+
+
+FENCED = (
+    "Run this first:\n\n```bash\ngit push forgejo prod-v2\n```\n\n"
+    "Then:\n\n- build\n\n  ```\n  make build\n  make check\n  ```\n"
+)
+
+
+def test_each_live_code_block_copies_only_its_own_code():
+    async def run():
+        app = FinishHost()
+        copied: list[str] = []
+        app.copy_to_clipboard = copied.append
+        async with app.run_test(size=(80, 40)) as pilot:
+            await app.block.delta(FENCED)
+            await app.block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            fences = list(app.block.query(CopyableFence))
+            assert len(fences) == 2
+            for fence, lines in zip(fences, (1, 2)):
+                chip = fence.query_one(".fence-copy", CopyChip)
+                code = fence.query_one("#code-content")
+                # The icon sits on the top row, right-aligned, and the block
+                # keeps the settled renderer's height: icon, code, blank row.
+                assert chip.region.y == fence.region.y
+                assert code.region.y == fence.region.y + 1
+                assert fence.region.height == 1 + lines + 1
+                # Two cells from the edge, like the settled renderer's icon.
+                assert chip.region.right == fence.region.right - 2
+                assert chip.region.width == len(COPY_LABEL)
+            await pilot.click(fences[0].query_one(".fence-copy", CopyChip))
+            await pilot.click(fences[1].query_one(".fence-copy", CopyChip))
+            await pilot.pause()
+            assert copied == ["git push forgejo prod-v2", "make build\nmake check"]
+            # The rest of the icon row is not a copy target.
+            await pilot.click(fences[0], offset=(1, 0))
+            await pilot.pause()
+            assert len(copied) == 2
+            # The answer stays open under the clicks.
+            assert app.block.query_one(Markdown).display
+    asyncio.run(run())
+
+
+def test_a_streamed_code_block_copies_the_code_it_shows_now():
+    async def run():
+        app = FinishHost()
+        copied: list[str] = []
+        app.copy_to_clipboard = copied.append
+        async with app.run_test(size=(80, 30)) as pilot:
+            await app.block.delta("```bash\nmake")
+            await pilot.pause(0.3)
+            await app.block.delta(" build\nmake check\n```\n")
+            await app.block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            fence = app.block.query_one(CopyableFence)
+            assert fence.query_one(".fence-copy", CopyChip).copy()
+            assert copied == ["make build\nmake check"]
+    asyncio.run(run())
+
+
+class SettledHost(App):
+    def __init__(self, markdown: str):
+        super().__init__()
+        self.settled = SettledMarkdown(markdown)
+        for registered in NAVIN_THEMES:
+            self.register_theme(registered)
+        self.theme = "navin"
+
+    def compose(self) -> ComposeResult:
+        yield self.settled
+
+
+def test_each_settled_code_block_copies_only_its_own_code():
+    async def run():
+        app = SettledHost(FENCED)
+        copied: list[str] = []
+        app.copy_to_clipboard = copied.append
+        async with app.run_test(size=(70, 30)) as pilot:
+            await pilot.pause()
+            width = app.settled.size.width
+            rows = [line.plain for line in render_markdown_lines(FENCED, width)]
+            icons = [(y, row.index(COPY_LABEL)) for y, row in enumerate(rows) if COPY_LABEL in row]
+            assert len(icons) == 2
+            # Right-aligned two cells from the edge, then the code below it.
+            assert all(x == width - len(COPY_LABEL) - 2 for _y, x in icons)
+            assert rows[icons[0][0] + 1].strip() == "git push forgejo prod-v2"
+            await pilot.click(app.settled, offset=(icons[1][1] + 1, icons[1][0]))
+            await pilot.pause()
+            assert copied == ["make build\nmake check"]
+            shown = app.settled.render().plain.split("\n")
+            assert COPIED_LABEL in shown[icons[1][0]] and COPY_LABEL in shown[icons[0][0]]
+            await pilot.click(app.settled, offset=(icons[0][1] + 1, icons[0][0]))
+            await pilot.pause()
+            assert copied[-1] == "git push forgejo prod-v2"
+            # Text around the icons copies nothing.
+            await pilot.click(app.settled, offset=(1, 0))
+            await pilot.pause()
+            assert len(copied) == 2
+            app.settled._show_copied(None)
+            assert app.settled.render().plain.count(COPY_LABEL) == 2
+            # Narrow layouts drop the icon rather than overlap the code.
+            narrow = render_markdown_lines(FENCED, 8)
+            assert not any(COPY_LABEL in line.plain for line in narrow)
+    asyncio.run(run())

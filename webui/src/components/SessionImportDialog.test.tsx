@@ -40,6 +40,13 @@ const scanExternalSessions = vi.fn(async (token: string) => ({
   ],
   saved_roots: { ...savedRootsState },
 }));
+const uploadAndOpenSessionBundle = vi.fn(async (...args: unknown[]) => ({
+  chat_id: "opened-chat",
+  args,
+  project_dir: "/tmp/shared-project",
+  notes: [] as string[],
+  excluded_secrets: [] as string[],
+}));
 
 vi.mock("@/lib/api", () => ({
   addImportRoot: (...args: unknown[]) =>
@@ -50,6 +57,10 @@ vi.mock("@/lib/api", () => ({
     importExternalSessions(...(args as [string])),
   scanExternalSessions: (...args: unknown[]) =>
     scanExternalSessions(...(args as [string])),
+  openSessionBundle: (...args: unknown[]) =>
+    uploadAndOpenSessionBundle(...(args as [string, unknown])),
+  uploadAndOpenSessionBundle: (...args: unknown[]) =>
+    uploadAndOpenSessionBundle(...(args as [string, unknown])),
 }));
 
 vi.mock("@/providers/ClientProvider", () => ({
@@ -218,5 +229,53 @@ describe("SessionImportDialog custom roots", () => {
         "/tmp/picked",
       );
     });
+  });
+});
+
+describe("SessionImportDialog dropped .navin-session", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("opens a file dropped on the sidebar once, then opens its new chat", async () => {
+    const onOpenedShared = vi.fn();
+    const onImported = vi.fn();
+    const file = new File(["bundle"], "Rapport.navin-session");
+    const { rerender } = render(
+      <SessionImportDialog
+        open
+        initialFile={file}
+        onOpenChange={() => undefined}
+        onImported={onImported}
+        onOpenedShared={onOpenedShared}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(uploadAndOpenSessionBundle).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onOpenedShared).toHaveBeenCalledWith("opened-chat");
+    });
+    expect(uploadAndOpenSessionBundle.mock.calls[0][1]).toBe(file);
+    expect(onImported).toHaveBeenCalledTimes(1);
+
+    // A re-render with the same file does not upload it a second time.
+    rerender(
+      <SessionImportDialog
+        open
+        initialFile={file}
+        onOpenChange={() => undefined}
+        onImported={onImported}
+        onOpenedShared={onOpenedShared}
+      />,
+    );
+    expect(uploadAndOpenSessionBundle).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing on open without a dropped file", async () => {
+    render(<SessionImportDialog open onOpenChange={() => undefined} />);
+    await screen.findByRole("button", { name: /Cursor/ });
+    expect(uploadAndOpenSessionBundle).not.toHaveBeenCalled();
   });
 });

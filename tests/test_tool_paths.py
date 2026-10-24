@@ -527,6 +527,46 @@ class ReadWindowProgressTest(_WorkspaceTest):
         self.assertIn("line truncated", out)
         self.assertIn("chars omitted", out)
 
+    def test_a_whole_file_read_past_40k_points_to_outline_and_ranges(self) -> None:
+        body = "\n".join(f"def handler_{n}(request):  # {'z' * 80}" for n in range(600))
+        (self.root / "big.py").write_text(body + "\n", encoding="utf-8")
+        tool = ReadFileTool(**self._kw())
+
+        out = _run(tool.execute(path="big.py"))
+        self.assertIn("End of file - 600 lines total", out)
+        self.assertIn("Large read: about", out)
+        self.assertIn("code_index action=outline", out)
+
+        ranged = _run(tool.execute(path="big.py", offset=1, limit=600))
+        self.assertNotIn("Large read", ranged)
+        (self.root / "small.py").write_text("x = 1\n", encoding="utf-8")
+        self.assertNotIn("Large read", _run(tool.execute(path="small.py")))
+
+    def test_a_whole_read_after_a_search_points_at_the_lines_found(self) -> None:
+        from navin.agent.tools.search import GrepTool
+
+        body = [f"value_{n} = {n}" for n in range(600)]
+        body[449] = "def target_fn():"
+        (self.root / "big.py").write_text("\n".join(body) + "\n", encoding="utf-8")
+        # Both tools share the session's file states through _kw().
+        grep = GrepTool(**self._kw())
+        read = ReadFileTool(**self._kw())
+
+        self.assertIn("big.py", _run(grep.execute(pattern="target_fn")))
+        out = _run(read.execute(path="big.py"))
+        self.assertIn("already located lines 450 of this file", out)
+        self.assertIn("offset=430 limit=80", out)
+        # Said once: the next read of the file carries no note.
+        self.assertNotIn("already located", _run(read.execute(path="big.py", force=True)))
+
+        # A read that already targets a range needs no note.
+        _run(grep.execute(pattern="target_fn"))
+        self.assertNotIn("already located", _run(read.execute(path="big.py", offset=430, limit=80)))
+        # Nor does a whole read of a small file.
+        (self.root / "small.py").write_text("def target_fn():\n    pass\n", encoding="utf-8")
+        _run(grep.execute(pattern="target_fn", path="small.py"))
+        self.assertNotIn("already located", _run(read.execute(path="small.py")))
+
     def test_the_read_moves_past_the_oversized_line_in_one_call(self) -> None:
         # The per-line cap keeps the wide line to 2 000 chars, so the rest of
         # the file fits in the same window instead of needing a second read.
@@ -616,3 +656,15 @@ class DeviceReadBlockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WrongCaseSuggestionTest(_WorkspaceTest):
+    """grep path=webui/src/components/sidebar missed Sidebar.tsx in a real session."""
+
+    def test_a_wrong_case_name_suggests_the_real_entry_first(self) -> None:
+        comps = self.root / "atlas" / "components"
+        comps.mkdir()
+        for name in ("Sidebar.tsx", "SidebarAccountCard.tsx", "Header.tsx"):
+            (comps / name).write_text("x\n", encoding="utf-8")
+        out = _run(GrepTool(**self._kw()).execute(pattern="x", path="atlas/components/sidebar"))
+        self.assertIn("Did you mean: atlas/components/Sidebar.tsx", out)

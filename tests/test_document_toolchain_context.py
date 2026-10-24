@@ -41,6 +41,18 @@ class DetectionTests(unittest.TestCase):
         ):
             self.assertFalse(self._wants(text), text)
 
+    def test_coding_turns_that_mention_documents_do_not_trigger(self) -> None:
+        """Real turns that used to fire: the verb must govern the document."""
+        for text in (
+            "You edited code but have not verified the current result yet. Add or "
+            "adapt the tests, run them, create a fix if they fail, then report "
+            "what you checked.",
+            "il faut corriger le calcul de la facture dans le service, fais attention aux fonctions sql",
+            "Factures en traitement (1)\n4acd197f.pdf\nErreur OCR, il faut faire marcher l'import",
+            "pour navin desktop, refais la présentation des résultats dans le journal",
+        ):
+            self.assertFalse(self._wants(text), text)
+
     def test_an_attached_office_file_triggers_and_a_picked_template_does_not(self) -> None:
         attached = {"file_mentions": [{"path": "/w/brand.pptx"}]}
         self.assertTrue(self._wants("regarde ce fichier", attached))

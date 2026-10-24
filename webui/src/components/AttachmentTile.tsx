@@ -76,7 +76,7 @@ function ResolvedAttachmentTile({ attachment, className, inline = false, variant
           <button
             type="button"
             onClick={() => setLightboxOpen(true)}
-            className="block w-full cursor-zoom-in bg-muted/20 p-0 text-left"
+            className="block w-full cursor-zoom-in bg-muted/20 p-0 text-start"
             aria-label={
               attachment.name
                 ? `${t("lightbox.open", { defaultValue: "Open image" })}: ${attachment.name}`
@@ -355,7 +355,7 @@ function MediaActionBar({
   return (
     <div
       className={cn(
-        "absolute right-2 top-2 z-10 inline-flex items-center gap-0.5 rounded-full",
+        "absolute end-2 top-2 z-10 inline-flex items-center gap-0.5 rounded-full",
         "border border-border/60 bg-background/85 p-0.5 text-muted-foreground backdrop-blur-sm",
         "opacity-0 transition-opacity duration-150 motion-reduce:transition-none",
         "group-hover:opacity-100 group-focus-within:opacity-100",

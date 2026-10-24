@@ -187,3 +187,25 @@ class BwrapCredentialBindsTest(unittest.TestCase):
                 wrapped = wrap_command("landlock", "docker ps", tmp, tmp)
         self.assertIn("--allow-write", wrapped)
         self.assertIn(str(sock), wrapped)
+
+
+def test_cloud_cli_context_follows_the_user_and_prompts_are_off():
+    from navin.agent.tools.exec_env import build_exec_env
+
+    source = {
+        "AWS_PROFILE": "staging",
+        "KUBECONFIG": "/home/u/.kube/eks-staging",
+        "CLOUDSDK_CORE_PROJECT": "acme-dev",
+        "AWS_SECRET_ACCESS_KEY": "do-not-forward",
+        "GIT_PAGER": "less",
+    }
+    env = build_exec_env(base={"HOME": "/home/u"}, environ=source)
+    assert env["AWS_PROFILE"] == "staging"
+    assert env["KUBECONFIG"] == "/home/u/.kube/eks-staging"
+    assert env["CLOUDSDK_CORE_PROJECT"] == "acme-dev"
+    # Raw credentials still need allowedEnvKeys.
+    assert "AWS_SECRET_ACCESS_KEY" not in env
+    # Non-interactive defaults, never over the user's own choice.
+    assert env["AWS_PAGER"] == "" and env["TF_INPUT"] == "0"
+    assert env["CLOUDSDK_CORE_DISABLE_PROMPTS"] == "1"
+    assert "GIT_PAGER" not in env or env["GIT_PAGER"] != "cat"

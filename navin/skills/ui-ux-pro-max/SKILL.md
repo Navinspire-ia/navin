@@ -10,7 +10,7 @@ Bundled design intelligence from [ui-ux-pro-max-skill](https://github.com/nextle
 
 ## Hard defaults (non-negotiable for web)
 
-0. **Lock one official design system (Navin Code, non-negotiable):** Google Material (`@mui/material` + `@emotion/react` + `@emotion/styled`), Microsoft Fluent (`@fluentui/react`), or IBM Carbon (`@carbon/react` + `@carbon/styles`). If the user did not choose, call `ask_user` (`a` Google recommended, `b` Microsoft, `c` IBM). Skip takes Google. Never default to Tailwind, shadcn, Chakra, Ant, or a homemade kit. Map MASTER.md tokens onto that vendor `ThemeProvider`. Scaffold with Vite (or Next if named), never `create-react-app`.
+0. **Lock one official design system (Navin Code, non-negotiable):** Google Material (`@mui/material` + `@emotion/react` + `@emotion/styled`), Microsoft Fluent UI v9 (`@fluentui/react-components`), or IBM Carbon (`@carbon/react` + `@carbon/styles`). If the user did not choose, call `ask_user` (`a` Google recommended, `b` Microsoft, `c` IBM). Skip takes Google. Never default to Tailwind, shadcn, Chakra, Ant, or a homemade kit. Map MASTER.md tokens onto that vendor `ThemeProvider`. Scaffold with Vite (or Next if named), never `create-react-app`. A new app starts from that vendor's official template (MUI templates / Toolpad Core, Carbon UI Shell, Fluent v9 shell components) and builds one shared UI kit (`src/theme`, `src/components`, `src/layouts`) that every page uses - see fullstack-dev "Greenfield fullstack baseline". Tokens live in the theme only; pages never restyle components locally.
 1. **Install and use `framer-motion` on every web project** (React / Next / Vite / Astro-with-React, etc.):
    ```bash
    npm install framer-motion
@@ -131,7 +131,8 @@ python3 "$SEARCH" "<keyword>" --stack react|nextjs|vue|html-tailwind|shadcn|...
 
 ### 6. Pre-delivery checklist
 
-- [ ] Official DS locked: `@mui/material` or `@fluentui/react` or `@carbon/react` (ask_user if none)
+- [ ] Official DS locked: `@mui/material` or `@fluentui/react-components` or `@carbon/react` (ask_user if none)
+- [ ] Every page in the app shell and built from the shared kit; no inline colors or page-local CSS
 - [ ] `framer-motion` in package.json and used for primary animations
 - [ ] Dev / Marketing / Montage / 3D / studio report UI: `three` + `@react-three/fiber` + `@react-three/drei` installed and used; `--stack threejs` was run
 - [ ] 3D scene meets the quality bar (lights, shadows, camera, one renderer, reduced-motion still)

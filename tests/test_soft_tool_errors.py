@@ -16,6 +16,8 @@ import unittest
 
 from navin.config.schema import AgentDefaults
 from navin.utils.runtime import (
+    record_identical_action,
+    repeated_identical_action_error,
     repeated_readonly_tool_error,
     repeated_tool_failure_hint,
     reset_readonly_spin_counts,
@@ -133,6 +135,50 @@ class RepeatedReadonlyToolErrorTest(unittest.TestCase):
         self.assertIsNone(
             repeated_readonly_tool_error("read_file", {"path": "a.py"}, counts)
         )
+
+
+class IdenticalActionTest(unittest.TestCase):
+    """The same action run a third time with nothing edited in between."""
+
+    def test_the_third_identical_action_is_refused(self) -> None:
+        counts: dict[str, int] = {}
+        args = {"command": "pytest -q"}
+        for _ in range(2):
+            self.assertIsNone(repeated_identical_action_error("exec", args, counts))
+            record_identical_action("exec", args, counts, "1 failed")
+        blocked = repeated_identical_action_error("exec", args, counts)
+        self.assertIsNotNone(blocked)
+        self.assertIn("already ran 2 times", blocked or "")
+        self.assertIn("answer the user now", blocked or "")
+
+    def test_a_changing_answer_is_polling_not_a_loop(self) -> None:
+        counts: dict[str, int] = {}
+        args = {"command": "tail -n 5 build.log"}
+        for line in ("step 1", "step 2", "step 3", "step 4"):
+            self.assertIsNone(repeated_identical_action_error("exec", args, counts))
+            record_identical_action("exec", args, counts, line)
+
+    def test_other_arguments_and_an_edit_give_a_fresh_budget(self) -> None:
+        counts: dict[str, int] = {}
+        args = {"command": "pytest -q"}
+        record_identical_action("exec", args, counts, "ok")
+        record_identical_action("exec", args, counts, "ok")
+        self.assertIsNone(
+            repeated_identical_action_error("exec", {"command": "pytest -q -x"}, counts)
+        )
+        reset_readonly_spin_counts(counts)
+        self.assertIsNone(repeated_identical_action_error("exec", args, counts))
+        self.assertFalse(any(key.startswith("action:") for key in counts))
+
+    def test_polling_verification_tools_and_reads_are_not_counted_here(self) -> None:
+        counts: dict[str, int] = {}
+        for name in ("write_stdin", "browser", "spawn", "verify", "test_run", "read_file"):
+            for _ in range(4):
+                record_identical_action(name, {"session_id": "s"}, counts, "same")
+                self.assertIsNone(
+                    repeated_identical_action_error(name, {"session_id": "s"}, counts)
+                )
+        self.assertFalse(any(key.startswith("action:") for key in counts))
 
 
 if __name__ == "__main__":

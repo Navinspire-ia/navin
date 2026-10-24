@@ -62,17 +62,21 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ScanSearch,
   Scissors,
   Search,
   ShieldCheck,
   Smartphone,
   TerminalSquare,
   Trash2,
+  UsersRound,
+  Gauge,
   Waypoints,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { LiveAvatarDock } from "@/components/thread/LiveAvatar";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { parseCsv } from "@/components/FilePreviewBody";
@@ -107,6 +111,8 @@ import {
   type ContextMenuEntry,
 } from "@/components/ui/context-menu";
 import { DevOtherMenu, type DevOtherMenuItem } from "@/components/dev/DevOtherMenu";
+import { SHARE_SITE_EVENT } from "@/lib/share-events";
+import { noteRunningSite } from "@/lib/running-site";
 import { DevPreviewBrowser } from "@/components/dev/DevPreviewBrowser";
 import { AgentLiveView } from "@/components/dev/AgentLiveView";
 import { useAgentLiveSessions } from "@/hooks/useAgentLiveSessions";
@@ -131,8 +137,10 @@ import { DevQuickOpen } from "@/components/dev/DevQuickOpen";
 import { DevDebugPanel } from "@/components/dev/DevDebugPanel";
 import { DevRulesPanel } from "@/components/dev/DevRulesPanel";
 import { useRailCounts } from "@/hooks/useRailCounts";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
+import { setVisibleInterval } from "@/lib/visible-interval";
 import { railCountText } from "@/lib/rail-counts";
-import { retainAgentTerminals } from "@/lib/agent-terminals";
+import { retainAgentTerminals, terminalBelongsHere } from "@/lib/agent-terminals";
 import { DevSearchPanel } from "@/components/dev/DevSearchPanel";
 import { DevSymbolPicker } from "@/components/dev/DevSymbolPicker";
 import { DevDiffView } from "@/components/dev/DevDiffView";
@@ -228,6 +236,8 @@ import {
 } from "@/lib/tab-telemetry";
 import { railWidthFor, type DevRailDensity } from "@/lib/dev-rail-layout";
 import { cn } from "@/lib/utils";
+import { requestReverseLaunch } from "@/lib/reverse-launch";
+import { openSettingsSection } from "@/lib/settings-events";
 import { isDesktopShell } from "@/lib/desktop";
 import { shouldUseWindowOpenFallback } from "@/lib/external-url";
 import {
@@ -269,7 +279,7 @@ import {
   mergeReviewTabs,
   movePathKey,
   persistPreviewUrl,
-  PREVIEW_URL_STORAGE_KEY,
+  previewUrlKey,
   readStoredPreviewUrl,
   REVIEW_VISIBLE_FILE_LIMIT,
   reviewLineStats,
@@ -291,6 +301,9 @@ const CodeEditor = lazyWithRetry(() => import("./CodeEditor"));
 type HunkAction = (hunkId: string, action: "accept" | "reject") => void;
 const DevTerminal = lazyWithRetry(() => import("./DevTerminal"));
 const AgentExecTerminal = lazyWithRetry(() => import("./AgentExecTerminal"));
+const BenchResults = lazyWithRetry(() =>
+  import("@/components/BenchResults").then((m) => ({ default: m.BenchResults })),
+);
 const DevMetagraph = lazyWithRetry(() => import("./DevMetagraph"));
 const DevBoardPanel = lazyWithRetry(() => import("./DevBoardPanel"));
 const DevGuardrailsPanel = lazyWithRetry(() => import("./DevGuardrailsPanel"));
@@ -303,7 +316,7 @@ const RAIL_BADGE_CLASS =
   "shrink-0 rounded-full px-1.5 text-center text-[10px] font-semibold leading-4 tabular-nums min-w-[1.125rem]";
 /** Counter pill on the icon's corner (toolbar, icon-only rail). */
 const TOOLBAR_CORNER_BADGE_CLASS =
-  "absolute -right-0.5 -top-0.5 min-w-[1rem] rounded-full px-1 text-center text-[9px] font-semibold leading-4 tabular-nums";
+  "absolute -end-0.5 -top-0.5 min-w-[1rem] rounded-full px-1 text-center text-[9px] font-semibold leading-4 tabular-nums";
 /** Neutral "how many are open" tone; amber / sky stay for attention. */
 const RAIL_COUNT_TONE = "bg-foreground/[0.12] text-foreground/90";
 const TestExplorerPanel = lazyWithRetry(() => import("./TestExplorerPanel"));
@@ -326,6 +339,10 @@ type TerminalTab = {
   cwd?: string;
   /** "agent" tabs are read-only feeds of the agent's exec commands. */
   kind?: "pty" | "agent";
+  /** Chat whose agent ran the command (agent tabs). */
+  chatId?: string;
+  /** Project the shell was opened in (user tabs). */
+  root?: string | null;
   /** Long-running agent command (exec background/session mode). */
   background?: boolean;
   exitCode?: number | null;
@@ -492,6 +509,10 @@ export function DevWorkbench({
   onExplorerWidthChange?: (width: number) => void;
 }) {
   const { token, client } = useClient();
+  // Background loaders read the token at call time. The gateway rotates it
+  // every 270 s, and listing it as a dependency reloaded the tree, git, review
+  // and diagnostics (and blanked the status bar) on every rotation.
+  const tokenRef = useLatestTokenRef();
   const theme = useThemeValue();
   const isNarrow = useMediaQuery("(max-width: 1023px)");
   const { t } = useTranslation();
@@ -558,6 +579,7 @@ export function DevWorkbench({
     | "agentBrowser"
     | "mobile"
     | "graph"
+    | "bench"
     | "diff"
     | "board"
     | "evolve"
@@ -651,6 +673,17 @@ export function DevWorkbench({
     select: selectAgentBrowser,
     forget: forgetAgentBrowser,
   } = useAgentLiveSessions(client, chatId, () => setMode("agentBrowser"));
+  // An app opens in the Browser: the chat open at that moment may offer to share
+  // it. Only when the page changes: the Browser keeps its page across chats,
+  // and switching chats must not hand another chat's app to every chat visited.
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
+  const notedSiteRef = useRef("");
+  useEffect(() => {
+    if (!browserSrc || !browserUrl || notedSiteRef.current === browserUrl) return;
+    notedSiteRef.current = browserUrl;
+    if (chatIdRef.current) noteRunningSite(chatIdRef.current, browserUrl);
+  }, [browserSrc, browserUrl]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -711,7 +744,7 @@ export function DevWorkbench({
 
   useEffect(() => {
     let cancelled = false;
-    void fetchFsRoots(token)
+    void fetchFsRoots(tokenRef.current)
       .then((payload) => {
         if (cancelled) return;
         setEnvironment(payload.environment);
@@ -723,7 +756,7 @@ export function DevWorkbench({
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [tokenRef]);
 
   const currentRoot = projectPath ?? rootPath;
   const onInternalWorkspace = sameWorkspacePath(currentRoot, internalWorkspacePath);
@@ -758,19 +791,19 @@ export function DevWorkbench({
     if (gitRefreshInFlight.current) return;
     gitRefreshInFlight.current = true;
     const jobs: Promise<unknown>[] = [
-      fetchContextUsage(token, treeKey)
+      fetchContextUsage(tokenRef.current, treeKey)
         .then(setContextUsage)
         .catch(() => setContextUsage(null)),
-      fetchGithubChecks(token, treeKey)
+      fetchGithubChecks(tokenRef.current, treeKey)
         .then(setCiStatus)
         .catch(() => setCiStatus(null)),
     ];
     if (gitRoot) {
       jobs.push(
-        fetchGitStatus(token, gitRoot)
+        fetchGitStatus(tokenRef.current, gitRoot)
           .then(setGitStatus)
           .catch(() => setGitStatus(null)),
-        fetchGitChanges(token, treeKey)
+        fetchGitChanges(tokenRef.current, treeKey)
           .then(setGitChanges)
           .catch(() => setGitChanges(null)),
       );
@@ -778,7 +811,7 @@ export function DevWorkbench({
     void Promise.allSettled(jobs).finally(() => {
       gitRefreshInFlight.current = false;
     });
-  }, [gitRoot, token, treeKey]);
+  }, [gitRoot, tokenRef, treeKey]);
 
   useEffect(() => {
     setGitStatus(null);
@@ -788,11 +821,13 @@ export function DevWorkbench({
     // Polling alone leaves the footer lying for up to 12 s after a checkout
     // made elsewhere; refreshing on focus catches the common case of switching
     // branches in a terminal and coming back to the window.
-    const timer = window.setInterval(refreshGitStatus, 12_000);
+    const stopPolling = setVisibleInterval(refreshGitStatus, 12_000);
     window.addEventListener("focus", refreshGitStatus);
+    window.addEventListener("navin:model-settings-changed", refreshGitStatus);
     return () => {
-      window.clearInterval(timer);
+      stopPolling();
       window.removeEventListener("focus", refreshGitStatus);
+      window.removeEventListener("navin:model-settings-changed", refreshGitStatus);
     };
   }, [refreshGitStatus]);
 
@@ -815,13 +850,13 @@ export function DevWorkbench({
 
   const refreshDiagnostics = useCallback(
     (path: string) => {
-      void fetchFileDiagnostics(token, path, currentRoot ?? "")
+      void fetchFileDiagnostics(tokenRef.current, path, currentRoot ?? "")
         .then((payload) =>
           setDiagnosticsByPath((prev) => ({ ...prev, [path]: payload })),
         )
         .catch(() => undefined);
     },
-    [currentRoot, token],
+    [currentRoot, tokenRef],
   );
 
   // Workspace-mode LSP (pyright diagnosticMode=workspace) already computes
@@ -832,7 +867,7 @@ export function DevWorkbench({
     if (!root) return;
     const seeds = tabs.map((tab) => tab.path);
     if (splitTab && !seeds.includes(splitTab)) seeds.push(splitTab);
-    void fetchWorkspaceDiagnostics(token, root, { seeds })
+    void fetchWorkspaceDiagnostics(tokenRef.current, root, { seeds })
       .then((payload) => {
         setDiagnosticsByPath((prev) => {
           const next = { ...prev };
@@ -843,7 +878,7 @@ export function DevWorkbench({
         });
       })
       .catch(() => undefined);
-  }, [currentRoot, projectPath, splitTab, tabs, token]);
+  }, [currentRoot, projectPath, splitTab, tabs, tokenRef]);
 
   useEffect(() => {
     if (!problemsOpen) return;
@@ -1103,13 +1138,13 @@ export function DevWorkbench({
   const refreshReview = useCallback(() => {
     if (reviewRefreshInFlight.current) return;
     reviewRefreshInFlight.current = true;
-    void fetchReviewChanges(token, treeKey)
+    void fetchReviewChanges(tokenRef.current, treeKey)
       .then((payload) => setReviewChanges(payload.changes))
       .catch(() => undefined)
       .finally(() => {
         reviewRefreshInFlight.current = false;
       });
-  }, [token, treeKey]);
+  }, [tokenRef, treeKey]);
 
   useEffect(() => {
     setReviewChanges([]);
@@ -1118,8 +1153,7 @@ export function DevWorkbench({
     refreshReview();
     // 3s: the backend now streams agent edits into the pending store during
     // the turn (live flush), so a tighter poll makes them visibly "live".
-    const timer = window.setInterval(refreshReview, 3_000);
-    return () => window.clearInterval(timer);
+    return setVisibleInterval(refreshReview, 3_000);
   }, [refreshReview]);
 
   const reviewByPath = useMemo(() => {
@@ -1343,7 +1377,9 @@ export function DevWorkbench({
         const drag = dragState.current;
         if (!drag) return;
         if (drag.kind === "explorer") {
-          const next = drag.startSize + (ev.clientX - drag.startPos);
+          // The explorer sits on the inline-start side, so in RTL it grows leftward.
+          const sign = document.documentElement.dir === "rtl" ? -1 : 1;
+          const next = drag.startSize + sign * (ev.clientX - drag.startPos);
           // Leave room for the chat (or the flex center) and the docked panel /
           // rail so dragging the tree never swallows the shell.
           const shell = containerRef.current?.clientWidth ?? 800;
@@ -1389,6 +1425,7 @@ export function DevWorkbench({
           id,
           shell,
           cwd: startDir,
+          root: currentRoot,
           title: folder ?? `${label} ${terminalCounter}`,
           exited: false,
           ...(options?.sandbox ? { sandbox: true } : {}),
@@ -1416,6 +1453,7 @@ export function DevWorkbench({
             id,
             shell: undefined,
             cwd: terminalStartDir(null, currentRoot),
+            root: currentRoot,
             title: `${label} ${terminalCounter}`,
             exited: false,
           },
@@ -1437,17 +1475,18 @@ export function DevWorkbench({
       }
       setTerminals((prev) => {
         const next = prev.filter((term) => term.id !== id);
+        const here = next.filter((term) => terminalBelongsHere(term, chatIdRef.current, currentRoot));
         setActiveTerminal((current) =>
-          current === id ? (next.length ? next[next.length - 1].id : null) : current,
+          current === id ? (here.length ? here[here.length - 1].id : null) : current,
         );
-        if (next.length === 0) {
+        if (here.length === 0) {
           setTerminalOpen(false);
           setTerminalMaximized(false);
         }
         return next;
       });
     },
-    [client],
+    [client, currentRoot],
   );
 
   const handleTerminalExit = useCallback((id: string) => {
@@ -1489,6 +1528,22 @@ export function DevWorkbench({
       }
     }
   }, [terminals, activeTerminal]);
+
+  // Each project shows its own terminals. The others keep running (their
+  // shells and the agent's servers) and come back with their project.
+  const visibleTerminals = useMemo(
+    () => terminals.filter((term) => terminalBelongsHere(term, chatId, currentRoot)),
+    [chatId, currentRoot, terminals],
+  );
+  const visibleTerminalIds = useMemo(
+    () => new Set(visibleTerminals.map((term) => term.id)),
+    [visibleTerminals],
+  );
+  useEffect(() => {
+    if (activeTerminal && visibleTerminalIds.has(activeTerminal)) return;
+    const next = visibleTerminals.length ? visibleTerminals[visibleTerminals.length - 1].id : null;
+    if (next !== activeTerminal) setActiveTerminal(next);
+  }, [activeTerminal, visibleTerminalIds, visibleTerminals]);
 
   const subscribeAgentTerm = useCallback(
     (id: string, handler: (chunk: string) => void) => {
@@ -1547,12 +1602,16 @@ export function DevWorkbench({
                   {
                     id: tabId,
                     kind: "agent",
+                    chatId: update.chatId,
                     background: update.background,
                     title: agentTermTitle(update.command),
                     exited: false,
                   },
                 ],
           );
+          // A command of another project's chat is kept for that project,
+          // never pushed onto this one.
+          if (!terminalBelongsHere({ kind: "agent", chatId: update.chatId }, chatIdRef.current, null)) return;
           setTerminalOpen(true);
           // Show the agent's command, but never steal the tab from a user
           // who is working in their own shell.
@@ -1628,7 +1687,7 @@ export function DevWorkbench({
         };
       });
       try {
-        const payload = await fetchFileTree(token, treeKey, path ?? undefined);
+        const payload = await fetchFileTree(tokenRef.current, treeKey, path ?? undefined);
         if (treeGenRef.current[nodeKey] !== gen) return;
         if (!path) {
           const prevRoot = rootPathRef.current;
@@ -1670,7 +1729,7 @@ export function DevWorkbench({
         }));
       }
     },
-    [token, treeKey],
+    [tokenRef, treeKey],
   );
 
   // Reload the tree when the project changes or the fetch identity (token /
@@ -3388,7 +3447,8 @@ export function DevWorkbench({
     const rect = container.getBoundingClientRect();
     const onMove = (ev: PointerEvent) => {
       if (rect.width <= 0) return;
-      const ratio = (ev.clientX - rect.left) / rect.width;
+      const rtl = document.documentElement.dir === "rtl";
+      const ratio = (rtl ? rect.right - ev.clientX : ev.clientX - rect.left) / rect.width;
       setSplitRatio(Math.min(0.8, Math.max(0.2, ratio)));
     };
     const onUp = () => {
@@ -3833,7 +3893,7 @@ export function DevWorkbench({
       const openProjectUrl = async (url: string) => {
         const normalized = normalizePreviewUrl(url);
         setBrowserUrl(normalized);
-        persistPreviewUrl(normalized);
+        persistPreviewUrl(normalized, currentRoot);
         // Local apps go through the telemetry injection proxy so the console
         // panel (and the agent) can see console errors and failed requests.
         // On any proxy failure, fall back to the direct URL.
@@ -3844,8 +3904,10 @@ export function DevWorkbench({
             const proxy = await startPreviewProxy(token, targetPort);
             src = proxy.url;
             setPreviewTargetPort(targetPort);
-          } catch {
+          } catch (error) {
             setPreviewTargetPort(null);
+            // The engine recognized Navin itself on that port: never load it.
+            if (error instanceof Error && error.message.includes("navin_self")) return false;
           }
         } else {
           setPreviewTargetPort(null);
@@ -3855,11 +3917,12 @@ export function DevWorkbench({
         setBrowserSelfError(null);
         setBrowserStarting(false);
         setMode("browser");
+        return true;
       };
 
       const rejectSelfUrl = () => {
         try {
-          localStorage.removeItem(PREVIEW_URL_STORAGE_KEY);
+          localStorage.removeItem(previewUrlKey(currentRoot));
         } catch {
           // ignore
         }
@@ -3876,10 +3939,11 @@ export function DevWorkbench({
 
       const tryDiscover = async (): Promise<"ok" | "self" | "none"> => {
         // Gateway probe (no CORS). Prefer the last working URL when it still answers.
-        const stored = readStoredPreviewUrl();
+        const stored = readStoredPreviewUrl(currentRoot);
         try {
           const result = await fetchDiscoverPreviewUrl(token, {
             ...(stored ? { url: stored } : {}),
+            workspace: currentRoot,
           });
           if (result.url) {
             const isSelf =
@@ -3889,7 +3953,10 @@ export function DevWorkbench({
               rejectSelfUrl();
               return "self";
             }
-            await openProjectUrl(result.url);
+            if (!(await openProjectUrl(result.url))) {
+              rejectSelfUrl();
+              return "self";
+            }
             return "ok";
           }
         } catch {
@@ -3897,7 +3964,7 @@ export function DevWorkbench({
         }
         if (stored) {
           try {
-            localStorage.removeItem(PREVIEW_URL_STORAGE_KEY);
+            localStorage.removeItem(previewUrlKey(currentRoot));
           } catch {
             // ignore
           }
@@ -3939,10 +4006,43 @@ export function DevWorkbench({
 
       // Typed / trusted URL: open in the iframe. Do not CORS-fetch from the
       // browser (local apps usually block it) and do not hijack to another port.
-      await openProjectUrl(normalized);
+      if (!(await openProjectUrl(normalized))) {
+        rejectSelfUrl();
+        setMode("browser");
+      }
     },
-    [browserUrl, token, tx],
+    [browserUrl, currentRoot, token, tx],
   );
+
+  // Another project: its own Preview and terminals, never the previous
+  // project's app or shells. Its Preview is found again by discovery.
+  const shownProjectRef = useRef({ root: currentRoot, chatId });
+  const terminalOpenRef = useRef(terminalOpen);
+  terminalOpenRef.current = terminalOpen;
+  // Whether each project left its terminal panel open, to bring it back.
+  const terminalOpenByProjectRef = useRef(new Map<string, boolean>());
+  useEffect(() => {
+    const shown = shownProjectRef.current;
+    const sameRoot = (!shown.root && !currentRoot) || sameWorkspacePath(shown.root, currentRoot);
+    if (sameRoot && shown.chatId === chatId) return;
+    const projectKey = (root: string | null | undefined, chat: string | null) =>
+      root ? `root:${root}` : `chat:${chat ?? ""}`;
+    terminalOpenByProjectRef.current.set(projectKey(shown.root, shown.chatId), terminalOpenRef.current);
+    shownProjectRef.current = { root: currentRoot, chatId };
+    if (!sameRoot) {
+      setBrowserSrc(null);
+      setBrowserUrl("");
+      setPreviewTargetPort(null);
+      setBrowserSelfError(null);
+      setBrowserStarting(false);
+      previewAutoTriedRef.current = false;
+    }
+    const reopen =
+      visibleTerminals.length > 0
+      && (terminalOpenByProjectRef.current.get(projectKey(currentRoot, chatId)) ?? false);
+    setTerminalOpen(reopen);
+    if (!reopen) setTerminalMaximized(false);
+  }, [chatId, currentRoot, visibleTerminals.length]);
 
   // Entering Preview: silent discovery only. Never touch the chat.
   useEffect(() => {
@@ -4165,11 +4265,11 @@ export function DevWorkbench({
         {variant !== "body" ? (
         <div
           className={cn(
-            "flex items-center justify-end gap-2 border-b border-border/50 px-3 py-1.5",
+            "dev-file-toolbar flex items-center justify-end gap-2 border-b border-border/50 px-3 py-1.5",
             isSplit && focusedPane === pane && "bg-muted/20",
           )}
         >
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="dev-file-toolbar-actions flex min-w-0 items-center gap-1.5">
             {saveError && (!isSplit || focusedPane === pane) ? (
               <span className="max-w-[16rem] truncate text-[11px] text-destructive">
                 {saveError}
@@ -4378,6 +4478,8 @@ export function DevWorkbench({
                 type="button"
                 onClick={() => void saveFile(path)}
                 disabled={!dirty || saving}
+                title={`${tx("dev.save", "Save")} (⌘S)`}
+                aria-label={tx("dev.save", "Save")}
                 className={cn(
                   "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                   dirty
@@ -4398,6 +4500,8 @@ export function DevWorkbench({
               type="button"
               onClick={() => void refreshFile(path)}
               className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              title={tx("dev.refreshFile", "Reload")}
+              aria-label={tx("dev.refreshFile", "Reload")}
             >
               {fileLoading ? (
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -4469,7 +4573,7 @@ export function DevWorkbench({
             <button
               type="button"
               onClick={() => void downloadFile(path, preview?.name)}
-              className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-[12px] font-medium text-foreground shadow-sm hover:bg-muted"
+              className="absolute end-3 top-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-[12px] font-medium text-foreground shadow-sm hover:bg-muted"
               data-testid="dev-image-download"
             >
               <Download className="h-3.5 w-3.5" aria-hidden />
@@ -4527,7 +4631,7 @@ export function DevWorkbench({
             ) : showCsvPreview && csvRows ? (
               <div className="min-h-0 flex-1 overflow-auto">
                 <table
-                  className="w-max min-w-full border-collapse text-left text-xs"
+                  className="w-max min-w-full border-collapse text-start text-xs"
                   data-testid="dev-csv-preview"
                 >
                   <thead className="sticky top-0 bg-muted/90 backdrop-blur">
@@ -4688,6 +4792,7 @@ export function DevWorkbench({
     mode === "agi" ||
     mode === "computer" ||
     mode === "graph" ||
+    mode === "bench" ||
     mode === "board";
   const overflowMenuItems = (
     wrap: (action: () => void) => () => void,
@@ -4753,6 +4858,13 @@ export function DevWorkbench({
       label: tx("dev.graphTab", "Graph"),
       active: mode === "graph",
       onSelect: wrap(() => showMode("graph")),
+    },
+    {
+      key: "bench",
+      icon: <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+      label: tx("bench.title", "Navin Bench"),
+      active: mode === "bench",
+      onSelect: wrap(() => showMode("bench")),
     },
     {
       key: "board",
@@ -4840,7 +4952,7 @@ export function DevWorkbench({
   const railItem = (active: boolean) =>
     cn(
       "flex shrink-0 items-center rounded-md text-[13px] leading-4 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring/50",
-      railIconsOnly ? "h-8 w-8 justify-center" : "h-7 w-full min-w-0 gap-2 px-2 text-left",
+      railIconsOnly ? "h-8 w-8 justify-center" : "h-7 w-full min-w-0 gap-2 px-2 text-start",
       "[&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0 [&>svg]:stroke-[1.75]",
       active
         ? "bg-sidebar-accent text-sidebar-foreground"
@@ -4868,13 +4980,15 @@ export function DevWorkbench({
       <div
         className={cn(
           // No panel background: the rail sits in the shell like the toolbar.
-          "ml-auto flex h-full min-w-0 shrink-0 flex-col overflow-y-auto bg-background pt-3",
+          "ms-auto flex h-full min-w-0 shrink-0 flex-col overflow-hidden bg-background pt-3",
           railIconsOnly && "items-center",
         )}
         style={{ width: railWidth }}
         data-testid="dev-collapsed-rail"
         data-rail-density={railDensity}
       >
+        {/* Only the modules scroll: the Live avatar below stays on screen. */}
+        <div className={cn("flex min-h-0 w-full flex-1 flex-col overflow-y-auto", railIconsOnly && "items-center")}>
         {/* Explorer heads the rail: the center toolbar that normally reopens
             it is hidden while the chat is maximized. Files is gone from here
             because it duplicated Explorer in this narrow column. */}
@@ -4893,7 +5007,7 @@ export function DevWorkbench({
               aria-label={railIconsOnly ? tx("dev.hideExplorer", "Hide explorer") : undefined}
               data-testid="dev-rail-hide-explorer"
             >
-              <PanelLeftClose className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
+              <PanelLeftClose className="rtl:-scale-x-100 h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
               {railIconsOnly ? null : (
                 <span className="truncate">{tx("dev.panel.explorer", "Explorer")}</span>
               )}
@@ -4907,7 +5021,7 @@ export function DevWorkbench({
               aria-label={railIconsOnly ? tx("dev.showExplorer", "Show explorer") : undefined}
               data-testid="dev-rail-show-explorer"
             >
-              <PanelLeftOpen className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
+              <PanelLeftOpen className="rtl:-scale-x-100 h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
               {railIconsOnly ? null : (
                 <span className="truncate">{tx("dev.panel.explorer", "Explorer")}</span>
               )}
@@ -5000,7 +5114,7 @@ export function DevWorkbench({
                     </span>
                     <ChevronRight
                       className={cn(
-                        "!h-3.5 !w-3.5 text-muted-foreground/70 transition-transform",
+                        "rtl:[&:not(.rotate-90)]:rotate-180 !h-3.5 !w-3.5 text-muted-foreground/70 transition-transform",
                         railFilesOpen && "rotate-90",
                       )}
                       aria-hidden
@@ -5016,7 +5130,7 @@ export function DevWorkbench({
                       onClick={restoreAnd(() => openFileByPath(tab.path))}
                       className={cn(
                         railItem(mode === "code" && activeTab === tab.path),
-                        !railIconsOnly && "pl-8",
+                        !railIconsOnly && "ps-8",
                       )}
                       title={tab.displayPath}
                       aria-label={railIconsOnly ? tab.name : undefined}
@@ -5030,6 +5144,39 @@ export function DevWorkbench({
           ) : null}
           {(
             [
+              {
+                // Team launcher, right above Reverse: opens Settings > Team
+                // (teammates, models, prompts, tools and skills).
+                key: "team",
+                icon: <UsersRound className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.teamTab", "Team"),
+                badge: {
+                  text: tx("dev.reverseNew", "NEW"),
+                  tone: "bg-amber-400/80",
+                  dot: true,
+                  title: tx("dev.teamHint", "Set up your team: opens Settings > Team"),
+                },
+                active: false,
+                go: () => openSettingsSection("team"),
+              },
+              {
+                // Reverse launcher, right above AGI: switches the chat to the
+                // Reverse mode and asks which app to reverse engineer.
+                key: "reverse",
+                icon: <ScanSearch className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.reverseTab", "Reverse"),
+                badge: {
+                  text: tx("dev.reverseNew", "NEW"),
+                  tone: "bg-amber-400/80",
+                  dot: true,
+                  title: tx(
+                    "dev.reverseHint",
+                    "Reverse engineer an app: switches the chat to Reverse mode",
+                  ),
+                },
+                active: false,
+                go: () => requestReverseLaunch(),
+              },
               {
                 // First module after the project folder picker.
                 key: "agi",
@@ -5093,10 +5240,10 @@ export function DevWorkbench({
                 icon: <TerminalSquare className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.terminal", "Terminal"),
                 badge: railCountBadge(
-                  terminals.length,
+                  visibleTerminals.length,
                   t("dev.rail.openTerminals", {
                     defaultValue: "{{n}} open terminal(s)",
-                    n: terminals.length,
+                    n: visibleTerminals.length,
                   }),
                 ),
                 active: terminalOpen,
@@ -5188,7 +5335,8 @@ export function DevWorkbench({
               icon: ReactNode;
               label: string;
               extra?: ReactNode;
-              badge?: { text: string; tone: string; title: string };
+              /** dot: a small quiet marker (new feature) instead of a text pill; the text stays as its label. */
+              badge?: { text: string; tone: string; title: string; dot?: boolean };
               active: boolean;
               go: () => void;
             } | null>
@@ -5207,7 +5355,21 @@ export function DevWorkbench({
                 {entry.icon}
                 {railIconsOnly ? null : <span className="truncate">{entry.label}</span>}
                 {railIconsOnly ? null : entry.extra}
-                {entry.badge ? (
+                {entry.badge?.dot ? (
+                  // Quiet marker: a small dot that signals "new" without
+                  // competing with the agent's work for attention.
+                  <span
+                    role="img"
+                    aria-label={entry.badge.text}
+                    className={cn(
+                      "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                      entry.badge.tone,
+                      railIconsOnly ? "absolute end-0.5 top-0.5" : "ms-auto me-1",
+                    )}
+                    title={entry.badge.title}
+                    data-testid={`dev-rail-${entry.key}-badge`}
+                  />
+                ) : entry.badge ? (
                   // Counter pill: at the end of the row when names show, on
                   // the icon's corner when the rail is folded to icons.
                   <span
@@ -5215,8 +5377,8 @@ export function DevWorkbench({
                       RAIL_BADGE_CLASS,
                       entry.badge.tone,
                       railIconsOnly
-                        ? "absolute -right-0.5 -top-0.5 min-w-[1rem] px-1 text-[9px] leading-4"
-                        : "ml-auto",
+                        ? "absolute -end-0.5 -top-0.5 min-w-[1rem] px-1 text-[9px] leading-4"
+                        : "ms-auto",
                     )}
                     title={entry.badge.title}
                     data-testid={`dev-rail-${entry.key}-badge`}
@@ -5238,6 +5400,7 @@ export function DevWorkbench({
               "rules",
               "guardrails",
               "graph",
+              "bench",
               "board",
             ])}
           />
@@ -5257,13 +5420,17 @@ export function DevWorkbench({
               aria-label={railIconsOnly ? tx("dev.rail.expand", "Show names") : undefined}
               data-testid={railIconsOnly ? "dev-rail-expand" : "dev-rail-collapse"}
             >
-              {railIconsOnly ? <ChevronsLeft aria-hidden /> : <ChevronsRight aria-hidden />}
+              {railIconsOnly ? <ChevronsLeft className="rtl:-scale-x-100" aria-hidden /> : <ChevronsRight className="rtl:-scale-x-100" aria-hidden />}
               {railIconsOnly ? null : (
                 <span className="truncate">{tx("dev.rail.collapse", "Collapse")}</span>
               )}
             </button>
           ) : null}
             </div>
+        </div>
+          {/* The Live call's avatar and its controls, next to the chat: a
+              footer of the rail, level with the chat bar, never scrolled away. */}
+          <LiveAvatarDock iconsOnly={railIconsOnly} />
           </div>
   ) : null;
 
@@ -5471,10 +5638,10 @@ export function DevWorkbench({
         <div
           className={cn(
             "flex min-w-0 flex-none flex-col overflow-hidden bg-muted/20 host-no-drag",
-            // Docked Code: the chat sits against this column. A border-r here
+            // Docked Code: the chat sits against this column. A border-e here
             // was a second line next to the chat. Keep the seam only between
             // explorer and editor when they share the same row.
-            !dockRight && "border-r border-border/55",
+            !dockRight && "border-e border-border/55",
           )}
           style={{ width: explorerWidth, maxWidth: "40%" }}
         >
@@ -5534,7 +5701,7 @@ export function DevWorkbench({
               aria-label={tx("dev.hideExplorer", "Hide explorer")}
               title={tx("dev.hideExplorer", "Hide explorer")}
             >
-              <PanelLeftClose className="h-4 w-4" aria-hidden />
+              <PanelLeftClose className="rtl:-scale-x-100 h-4 w-4" aria-hidden />
             </button>
           </div>
           {panelTab === "search" ? (
@@ -5654,13 +5821,13 @@ export function DevWorkbench({
                 type="button"
                 onClick={() => setRootExpanded((prev) => !prev)}
                 onContextMenu={(event) => openEntryMenu(null, event)}
-                className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-left text-[12.5px] font-medium leading-5 text-foreground/90 transition-colors hover:bg-muted/60 hover:text-foreground"
+                className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 ps-2 pe-2 text-start text-[12.5px] font-medium leading-5 text-foreground/90 transition-colors hover:bg-muted/60 hover:text-foreground"
                 aria-expanded={rootExpanded}
               >
                 {rootExpanded ? (
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                 ) : (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  <ChevronRight className="rtl:-scale-x-100 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                 )}
                 {rootExpanded ? (
                   <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
@@ -5677,7 +5844,7 @@ export function DevWorkbench({
                   event.stopPropagation();
                   openEntryMenu(null, event);
                 }}
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                className="absolute end-1 top-1/2 -translate-y-1/2 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                 aria-label={`${tx("dev.moreActions", "More actions")} - ${projectLabel}`}
                 title={tx("dev.moreActions", "More actions")}
               >
@@ -5685,12 +5852,12 @@ export function DevWorkbench({
               </button>
             </div>
             {!rootExpanded ? null : rootState?.loading && !rootState.entries.length ? (
-              <div className="flex items-center gap-2 py-1.5 pl-[36px] text-[12px] text-muted-foreground">
+              <div className="flex items-center gap-2 py-1.5 ps-[36px] text-[12px] text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 {tx("dev.loadingTree", "Loading files…")}
               </div>
             ) : rootState?.error ? (
-              <p className="py-1.5 pl-[36px] text-[12px] text-destructive">{rootState.error}</p>
+              <p className="py-1.5 ps-[36px] text-[12px] text-destructive">{rootState.error}</p>
             ) : (
               <DevTreeLevel
                 parentKey="__root__"
@@ -5746,7 +5913,7 @@ export function DevWorkbench({
               ? "absolute inset-y-0 z-20 w-1.5"
               : "w-1 shrink-0",
           )}
-          style={dockRight ? { left: Math.max(0, explorerWidth - 3) } : undefined}
+          style={dockRight ? { insetInlineStart: Math.max(0, explorerWidth - 3) } : undefined}
         />
       ) : null}
 
@@ -5778,14 +5945,15 @@ export function DevWorkbench({
             "flex min-w-0 shrink-0 flex-col overflow-hidden bg-muted/15",
             // With the chat panel open it sits to our right and owns the
             // corner; with it closed this toolbar runs under the bell instead.
-            chatOpen ? "pr-2" : NOTIFICATION_GUTTER,
+            chatOpen ? "pe-2" : NOTIFICATION_GUTTER,
           )}
         >
-          {/* Icon + label, same type and colors as the Other menu. */}
+          {/* Explorer, Git and Browser show their name; Changes, Terminal and
+              Other are icons (name in the tooltip and for screen readers). */}
           {(() => {
             const navBtn = (active: boolean) =>
               cn(
-                "inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-[12px] px-2.5 text-[13px] leading-5 transition-colors",
+                "inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-[12px] px-2 text-[13px] leading-5 transition-colors",
                 active
                   ? "bg-muted text-foreground"
                   : "text-foreground/80 hover:bg-foreground/[0.055] hover:text-foreground dark:hover:bg-white/[0.08]",
@@ -5807,7 +5975,7 @@ export function DevWorkbench({
                     title={tx("dev.hideExplorer", "Hide explorer")}
                     data-testid="dev-hide-explorer"
                   >
-                    <PanelLeftClose className="h-4 w-4 shrink-0" aria-hidden />
+                    <PanelLeftClose className="rtl:-scale-x-100 h-4 w-4 shrink-0" aria-hidden />
                     <span>{tx("dev.panel.explorer", "Explorer")}</span>
                   </button>
                 ) : (
@@ -5819,7 +5987,7 @@ export function DevWorkbench({
                     title={tx("dev.showExplorer", "Show explorer")}
                     data-testid="dev-show-explorer"
                   >
-                    <PanelLeftOpen className="h-4 w-4 shrink-0" aria-hidden />
+                    <PanelLeftOpen className="rtl:-scale-x-100 h-4 w-4 shrink-0" aria-hidden />
                     <span>{tx("dev.panel.explorer", "Explorer")}</span>
                   </button>
                 )}
@@ -5837,8 +6005,7 @@ export function DevWorkbench({
                         data-testid="dev-toolbar-changes"
                       >
                         <GitCompare className="h-4 w-4 shrink-0" aria-hidden />
-                        {label(tx("dev.rail.changes", "Changes"))}
-                        {reviewStats.added + reviewStats.deleted > 0 ? (
+                          {reviewStats.added + reviewStats.deleted > 0 ? (
                           <DiffPair
                             added={reviewStats.added}
                             deleted={reviewStats.deleted}
@@ -5881,17 +6048,16 @@ export function DevWorkbench({
                       aria-label={tx("dev.terminal", "Terminal")}
                     >
                       <TerminalSquare className="h-4 w-4 shrink-0" aria-hidden />
-                      {label(tx("dev.terminal", "Terminal"))}
-                      {terminals.length > 0 ? (
+                      {visibleTerminals.length > 0 ? (
                         <span
                           className={cn(TOOLBAR_CORNER_BADGE_CLASS, RAIL_COUNT_TONE)}
                           title={t("dev.rail.openTerminals", {
                             defaultValue: "{{n}} open terminal(s)",
-                            n: terminals.length,
+                            n: visibleTerminals.length,
                           })}
                           data-testid="dev-toolbar-terminal-badge"
                         >
-                          {railCountText(terminals.length)}
+                          {railCountText(visibleTerminals.length)}
                         </span>
                       ) : null}
                     </button>
@@ -5926,7 +6092,7 @@ export function DevWorkbench({
                     <div className="shrink-0">
                     <DevOtherMenu
                       triggerClassName={navBtn(toolbarOtherActive)}
-                      showTriggerLabel
+                      showTriggerLabel={false}
                       onSeed={onSeedChat}
                       onRun={onRunAction}
                       activeFilePath={mode === "code" ? activeTab : null}
@@ -5935,7 +6101,7 @@ export function DevWorkbench({
                     </div>
                     </div>
                 {onSelectProject ? (
-                  <div className="ml-0.5 flex shrink-0 items-center [&_button]:h-8">
+                  <div className="ms-0.5 flex shrink-0 items-center [&_button]:h-8">
                     <DevProjectSelector
                       projectPath={projectPath ?? rootPath}
                       projectName={projectName}
@@ -5948,7 +6114,7 @@ export function DevWorkbench({
                 <button
                   type="button"
                   onClick={toggleFullscreen}
-                  className="ml-0.5 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="ms-0.5 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
                   aria-label={
                     isFullscreen
                       ? tx("dev.exitFullscreen", "Exit full screen")
@@ -5976,7 +6142,7 @@ export function DevWorkbench({
                     title={tx("dev.chatMaximize", "Expand the chat (hide the workbench)")}
                     data-testid="dev-maximize-chat"
                   >
-                    <PanelRightOpen className="h-4 w-4" aria-hidden />
+                    <PanelRightOpen className="rtl:-scale-x-100 h-4 w-4" aria-hidden />
                   </button>
                 ) : null}
               </div>
@@ -6114,7 +6280,8 @@ export function DevWorkbench({
                     align="start"
                     side="bottom"
                     sideOffset={6}
-                    className="w-64"
+                    // 15+ changed files: the list scrolls instead of running off the screen.
+                    className="max-h-[min(60vh,420px)] w-72 overflow-y-auto"
                     data-testid="dev-review-files-menu"
                   >
                     {reviewDiffFiles.map((change) => (
@@ -6169,6 +6336,12 @@ export function DevWorkbench({
               onRunAction={onRunAction}
             />
           </Suspense>
+          </PanelErrorBoundary>
+        ) : mode === "bench" ? (
+          <PanelErrorBoundary>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <BenchResults token={token} />
+            </div>
           </PanelErrorBoundary>
         ) : mode === "templates" ? (
           <PanelErrorBoundary>
@@ -6388,6 +6561,11 @@ export function DevWorkbench({
             onOpen={(next) => void openBrowser(next)}
             onRefresh={() => refreshPreviewFrame()}
             onOpenExternal={() => openPreviewExternal()}
+            onShare={chatId
+              ? () => window.dispatchEvent(new CustomEvent(SHARE_SITE_EVENT, {
+                  detail: { chatId, url: browserUrl || (previewTargetPort ? `http://localhost:${previewTargetPort}` : "") },
+                }))
+              : undefined}
             onRetry={() => {
                       previewAutoTriedRef.current = false;
                       void openBrowser(browserUrl || undefined);
@@ -6445,7 +6623,7 @@ export function DevWorkbench({
             <div className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col",
               previewFullscreen &&
-                "fixed inset-y-0 right-0 z-[80] bg-background left-0 lg:left-[var(--navin-host-sidebar,0px)]",
+                "fixed inset-y-0 end-0 z-[80] bg-background start-0 lg:start-[var(--navin-host-sidebar,0px)]",
             )}>
               {renderEditorPane(
                 focusedPane === "right" ? splitTab : activeTab,
@@ -6484,7 +6662,7 @@ export function DevWorkbench({
             <div className={cn(
               "flex min-h-0 flex-1 flex-col",
               previewFullscreen &&
-                "fixed inset-y-0 right-0 z-[80] bg-background left-0 lg:left-[var(--navin-host-sidebar,0px)]",
+                "fixed inset-y-0 end-0 z-[80] bg-background start-0 lg:start-[var(--navin-host-sidebar,0px)]",
             )}>
               {renderEditorPane(activeTab, "left")}
             </div>
@@ -6545,9 +6723,9 @@ export function DevWorkbench({
               />
             ) : null}
             <div className="flex items-center gap-1 border-b border-border/40 bg-muted/20 px-2 py-1">
-              <TerminalSquare className="mr-1 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+              <TerminalSquare className="me-1 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-                {terminals.map((term) => (
+                {visibleTerminals.map((term) => (
                   <div
                     key={term.id}
                     className={cn(
@@ -6645,18 +6823,18 @@ export function DevWorkbench({
                   <ChevronsDownUp className="h-3.5 w-3.5" aria-hidden />
                 </button>
                 {shellMenuOpen ? (
-                  <div className="absolute right-0 top-8 z-20 min-w-[10rem] rounded-lg border border-border/60 bg-popover p-1 shadow-lg">
+                  <div className="absolute end-0 top-8 z-20 min-w-[10rem] rounded-lg border border-border/60 bg-popover p-1 shadow-lg">
                     {shells.map((shell) => (
                       <button
                         key={shell.name}
                         type="button"
                         onClick={() => spawnTerminal(shell.name)}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground hover:bg-muted"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12px] text-foreground hover:bg-muted"
                       >
                         <TerminalSquare className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                         {shell.name}
                         {shell.default ? (
-                          <span className="ml-auto text-[10px] text-muted-foreground">
+                          <span className="ms-auto text-[10px] text-muted-foreground">
                             {tx("dev.defaultShell", "default")}
                           </span>
                         ) : null}
@@ -6670,12 +6848,12 @@ export function DevWorkbench({
                         "dev.isolatedTerminalHint",
                         "Same OS sandbox as the agent's commands: writes limited to this project and toolchain caches, reads and network open.",
                       )}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-foreground hover:bg-muted"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12px] text-foreground hover:bg-muted"
                       data-testid="terminal-new-isolated"
                     >
                       <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
                       {tx("dev.isolatedTerminal", "Isolated terminal")}
-                      <span className="ml-auto text-[10px] text-muted-foreground">
+                      <span className="ms-auto text-[10px] text-muted-foreground">
                         {tx("dev.isolatedTerminalBadge", "sandbox")}
                       </span>
                     </button>
@@ -6684,7 +6862,7 @@ export function DevWorkbench({
               </div>
             </div>
             <div className="relative min-h-0 flex-1">
-              {terminals.filter((term) => term.kind !== "agent" || term.id === activeTerminal).map((term) => (
+              {terminals.filter((term) => term.kind !== "agent" || (term.id === activeTerminal && visibleTerminalIds.has(term.id))).map((term) => (
                 <div key={term.id} className="absolute inset-0">
                   <PanelErrorBoundary>
                   <Suspense fallback={null}>
@@ -6703,7 +6881,7 @@ export function DevWorkbench({
                       chatId={chatId}
                       cwd={term.cwd}
                       isDark={theme === "dark"}
-                      active={activeTerminal === term.id}
+                      active={activeTerminal === term.id && visibleTerminalIds.has(term.id)}
                       exitedLabel={tx("dev.terminalExited", "process exited")}
                       restartedLabel={tx(
                         "dev.terminalRestarted",

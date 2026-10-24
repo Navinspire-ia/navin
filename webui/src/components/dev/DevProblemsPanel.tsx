@@ -47,7 +47,7 @@ export function DevProblemsPanel({
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-2 py-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {t("dev.problems.title", { defaultValue: "Problems" })}
-          <span className="ml-2 font-normal normal-case tabular-nums text-muted-foreground/80">
+          <span className="ms-2 font-normal normal-case tabular-nums text-muted-foreground/80">
             {errors} {t("dev.problems.errors", { defaultValue: "errors" })}
             {" · "}
             {warnings} {t("dev.problems.warnings", { defaultValue: "warnings" })}
@@ -79,7 +79,7 @@ export function DevProblemsPanel({
                 key={`${row.path}:${row.line}:${row.col}:${index}`}
                 type="button"
                 onClick={() => onOpen(row.path, row.line)}
-                className="flex w-full cursor-pointer items-start gap-2 px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
+                className="flex w-full cursor-pointer items-start gap-2 px-2 py-1.5 text-start transition-colors hover:bg-muted/60"
               >
                 {isError ? (
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />

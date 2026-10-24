@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from navin.optional_live import live_modules_available
 from navin.providers.registry import find_by_name
 from navin.utils.helpers import detect_image_mime
 
@@ -1840,7 +1841,12 @@ register_image_gen_provider(ZhipuImageGenerationClient)
 
 
 class NavinImageGenerationClient(OpenRouterImageGenerationClient):
-    """Image generation via the managed Navin OpenRouter key (Seedream, etc.)."""
+    """Image generation via the managed Navin key (Seedream, etc.).
+
+    On OpenRouter it speaks OpenRouter's Images API; on the Navin gateway
+    (LiteLLM, see navin.providers.gateway) the standard OpenAI
+    ``/images/generations`` API, with the same key and base.
+    """
 
     provider_name = "navin"
     missing_key_message = (
@@ -1848,8 +1854,175 @@ class NavinImageGenerationClient(OpenRouterImageGenerationClient):
         "or switch Image settings to your own provider."
     )
 
+    def __new__(cls, *args: Any, **kwargs: Any):  # type: ignore[misc]
+        from navin.providers.gateway import navin_managed_base
 
-from navin.optional_live import live_modules_available
+        # The subscription is served by the Navin gateway only, never by
+        # OpenRouter: an empty or OpenRouter base resolves to the gateway.
+        kwargs["api_base"] = navin_managed_base(kwargs.get("api_base"))
+        client = OpenAIImageGenerationClient(*args, **kwargs)
+        client.provider_name = "navin"
+        client.missing_key_message = cls.missing_key_message
+        return client
+
 
 if live_modules_available():
     register_image_gen_provider(NavinImageGenerationClient)
+
+
+_XAI_ASPECT_RATIOS = {
+    "1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "9:19.5", "19.5:9",
+    "9:20", "20:9", "1:2", "2:1", "21:9", "5:2",
+}
+
+
+class XaiImageGenerationClient(ImageGenerationProvider):
+    """Grok Imagine with the user's own xAI key (``/v1/images/generations``,
+    ``/v1/images/edits`` with the reference images as data URLs)."""
+
+    provider_name = "xai"
+    missing_key_message = "xAI API key is not configured. Set providers.xai.apiKey."
+
+    def _default_base_url(self) -> str:
+        return "https://api.x.ai/v1"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_images: list[str] | None = None,
+        aspect_ratio: str | None = None,
+        image_size: str | None = None,
+    ) -> GeneratedImageResponse:
+        if not self.api_key:
+            raise ImageGenerationError(self.missing_key_message)
+        body: dict[str, Any] = {
+            "model": (model or "grok-imagine-image-2.0").removeprefix("xai/"),
+            "prompt": prompt,
+            "n": 1,
+            "response_format": "b64_json",
+            "aspect_ratio": aspect_ratio if aspect_ratio in _XAI_ASPECT_RATIOS else "auto",
+        }
+        size = (image_size or "").strip().lower()
+        if size in {"1k", "1.5k", "2k"}:
+            body["resolution"] = size
+        refs = list(reference_images or [])
+        endpoint = "images/generations"
+        if refs:
+            endpoint = "images/edits"
+            urls = [image_path_to_data_url(path) for path in refs]
+            if len(urls) == 1:
+                body["image"] = {"url": urls[0]}
+            else:
+                body["images"] = [{"url": url} for url in urls]
+        body.update(self.extra_body)
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", **self.extra_headers}
+        response = await self._http_post(f"{self.api_base}/{endpoint}", headers=headers, body=body)
+        if response.status_code >= 400:
+            detail = response.text[:1000]
+            logger.error("xAI image API error ({}): {}", response.status_code, detail)
+            raise ImageGenerationError(f"xAI image generation failed (HTTP {response.status_code}): {detail}")
+        payload = response.json()
+        client = self._client or httpx.AsyncClient(timeout=self.timeout)
+        try:
+            images = await _openai_images_from_payload(client, payload)
+        finally:
+            if self._client is None:
+                await client.aclose()
+        self._require_images(images, payload)
+        return GeneratedImageResponse(images=images, content="", raw=payload)
+
+
+register_image_gen_provider(XaiImageGenerationClient)
+
+
+# Qwen Image max / plus accept these sizes only; Wan and Qwen Image 2.0 take any size in range.
+_QWEN_IMAGE_SIZES = {
+    "1:1": "1328*1328", "16:9": "1664*928", "9:16": "928*1664", "4:3": "1472*1104", "3:4": "1104*1472",
+}
+_WAN_IMAGE_SIZES = {
+    "1:1": "1280*1280", "16:9": "1696*960", "9:16": "960*1696", "4:3": "1472*1104", "3:4": "1104*1472",
+}
+
+
+class QwenImageGenerationClient(ImageGenerationProvider):
+    """Qwen Image / Wan with the user's own Alibaba key, on the multimodal-generation
+    API of the Qwen provider's host (navin/providers/qwen_media.py). Reference
+    images switch to an edit model and travel as data URLs."""
+
+    provider_name = "qwen"
+    missing_key_message = "Qwen (Alibaba) API key is not configured. Set providers.qwen.apiKey."
+
+    def _resolve_base_url(self, api_base: str | None) -> str:
+        from navin.providers.qwen_media import native_host
+
+        return native_host(api_base)
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_images: list[str] | None = None,
+        aspect_ratio: str | None = None,
+        image_size: str | None = None,
+    ) -> GeneratedImageResponse:
+        from navin.providers.qwen_media import api_key_or_env
+
+        key = api_key_or_env(self.api_key)
+        if not key:
+            raise ImageGenerationError(self.missing_key_message)
+        clean = (model or "qwen-image-plus").removeprefix("qwen/")
+        refs = list(reference_images or [])
+        content: list[dict[str, str]] = [{"image": image_path_to_data_url(path)} for path in refs[:3]]
+        if refs and clean in {"qwen-image", "qwen-image-plus", "qwen-image-max"}:
+            clean = "qwen-image-edit-plus"
+        content.append({"text": prompt})
+        sizes = _WAN_IMAGE_SIZES if clean.startswith("wan") else _QWEN_IMAGE_SIZES
+        parameters: dict[str, Any] = {"n": 1, "watermark": False, "prompt_extend": True}
+        if not refs:
+            parameters["size"] = sizes.get(aspect_ratio or "1:1", sizes["1:1"])
+        body: dict[str, Any] = {"model": clean, "input": {"messages": [{"role": "user", "content": content}]},
+                                "parameters": parameters}
+        body.update(self.extra_body)
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", **self.extra_headers}
+        response = await self._http_post(
+            f"{self.api_base}/api/v1/services/aigc/multimodal-generation/generation", headers=headers, body=body,
+        )
+        if response.status_code >= 400:
+            detail = response.text[:1000]
+            raise ImageGenerationError(f"Qwen image generation failed (HTTP {response.status_code}): {detail}")
+        payload = response.json()
+        urls = [
+            str(part.get("image"))
+            for choice in ((payload.get("output") or {}).get("choices") or [])
+            for part in ((choice.get("message") or {}).get("content") or [])
+            if isinstance(part, dict) and part.get("image")
+        ]
+        client = self._client or httpx.AsyncClient(timeout=self.timeout)
+        try:
+            images = [await _download_image_data_url(client, url) for url in urls]
+        finally:
+            if self._client is None:
+                await client.aclose()
+        self._require_images(images, payload)
+        return GeneratedImageResponse(images=images, content="", raw=payload)
+
+
+register_image_gen_provider(QwenImageGenerationClient)
+
+
+class OmniRouteImageGenerationClient(CustomImageGenerationClient):
+    """OpenAI-compatible Images API through the local OmniRoute gateway."""
+
+    provider_name = "omniroute"
+    missing_base_message = (
+        "OmniRoute API base is not configured. Set providers.omniroute.apiBase (default http://localhost:20128/v1)."
+    )
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:20128/v1"
+
+
+register_image_gen_provider(OmniRouteImageGenerationClient)

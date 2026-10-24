@@ -10,6 +10,7 @@ from navin.utils.tool_hints import (
     PREVIEW_ADD_BG,
     PREVIEW_CTX_BG,
     PREVIEW_DEL_BG,
+    activity_label,
     clip_transcript,
     describe_explore_step,
     describe_tool_headline,
@@ -25,6 +26,7 @@ from navin.utils.tool_hints import (
     format_turn_summary,
     humanize_shell_command,
     preview_rows,
+    strip_session_notes,
     tool_cluster_kind,
     tool_verb,
 )
@@ -412,3 +414,168 @@ class QuietToolLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_run_output_statuses_get_colors() -> None:
+    from rich.text import Text
+
+    from navin.utils.tool_hints import activity_palette, highlight_output_statuses
+
+    line = "tests/test_a.py::T::test_x PASSED [ 18%]\ntests/test_b.py::test_y FAILED\n1 skipped"
+    rendered = highlight_output_statuses(Text(line))
+    palette = activity_palette(True)
+
+    def style_of(word: str) -> str:
+        start = line.index(word)
+        return " ".join(str(s.style) for s in rendered.spans if s.start <= start < s.end)
+
+    assert palette["green"] in style_of("PASSED")
+    assert palette["coral"] in style_of("FAILED")
+    assert palette["mustard"] in style_of("skipped")
+    assert palette["blue"] in style_of("tests/test_a.py")
+    assert palette["muted"] in style_of("[ 18%]")
+    assert rendered.plain == line
+
+
+def test_huge_single_line_preview_is_cut_instead_of_freezing_the_terminal():
+    """A 200 kB minified line took seconds to wrap and highlight on the UI thread."""
+    import time
+
+    from navin.utils.tool_hints import PREVIEW_MAX_WRAPPED_ROWS, format_tool_preview_markup
+
+    line = '{"k":"' + "x" * 200_000 + '"}'
+    start = time.monotonic()
+    markup = format_tool_preview_markup(
+        "exec", {"command": "cat a.json"}, rows=[(1, "ctx", line)], width=100, include_run_output=True,
+    )
+    assert time.monotonic() - start < 1.0
+    assert len(markup.splitlines()) <= PREVIEW_MAX_WRAPPED_ROWS + 1
+    assert "..." in markup
+    short = format_tool_preview_markup("exec", {"command": "x"}, rows=[(1, "ctx", "ok done")], width=100)
+    assert "ok done" in short and "..." not in short
+
+
+def test_heredoc_command_labels_never_recurse_forever():
+    from navin.utils.tool_hints import _command_label, short_run_target
+
+    for command in ("<<EOF\nx\nEOF", "rg foo <<EOF\nEOF", "grep x << y", "<< "):
+        assert isinstance(short_run_target(command), str)
+        assert isinstance(_command_label(command), str)
+
+
+def test_leading_zero_width_text_does_not_freeze_width_helpers():
+    """Regression: rich 14 split_graphemes looped forever on a leading
+    zero-width character and froze the whole CLI (10000s+ event loop stall)."""
+    import os
+    import threading
+
+    from rich.cells import cell_len, chop_cells, set_cell_size
+    from rich.console import Console
+    from rich.text import Text
+
+    from navin.utils.tool_hints import format_preview_markup_line
+
+    # A daemon thread with a join timeout works on every OS and runner
+    # (signal.alarm is POSIX only, sys.executable may be a frozen binary):
+    # a hung rich call leaves the thread alive and fails the test.
+    outcome: dict[str, object] = {}
+
+    def exercise() -> None:
+        try:
+            console = Console(width=30, file=open(os.devnull, "w", encoding="utf-8"))
+            for text in ["\u200babcdefgh", "\ufe0fabc", "\u0301", "\u200d\u200dx"]:
+                set_cell_size(text, 3)
+                chop_cells(text, 2)
+                cell_len(text)
+                for width in (1, 2, 5):
+                    Text(text).wrap(console, width)
+                    console.print(Text(text), width=width)
+            outcome["line"] = format_preview_markup_line(1, "ctx", "\u200bhello", width=20)
+        except BaseException as exc:  # surfaced by the assertions below
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=exercise, daemon=True)
+    worker.start()
+    worker.join(timeout=15)
+    assert not worker.is_alive(), "rich width helpers hung on zero-width text"
+    assert "error" not in outcome, outcome.get("error")
+    assert "hello" in str(outcome["line"])
+
+
+def test_pathological_tool_output_paints_in_bounded_time():
+    """One paint must stay bounded whatever the tool printed: a multi-MB line,
+    zero-width runs, leading U+200B / U+0301 / U+FE0F, a trailing ZWJ and 50k
+    lines used to hold the UI thread for tens of seconds."""
+    import threading
+    import time
+
+    from rich.text import Text
+
+    from navin.utils.tool_hints import (
+        MAX_TRANSCRIPT_LINES,
+        PREVIEW_MAX_PAINT_ROWS,
+        format_tool_preview_markup,
+        preview_rows,
+    )
+
+    lines = ["​́️" + "x​́" * 2000 + f" {index}‍" for index in range(50_000)]
+    lines[0] = "​" * 100_000 + "a" * 1_000_000 + "‍"
+    lines[-1] = "​́️" + "​" * 50_000 + "‍"
+    outcome: dict[str, object] = {}
+
+    def exercise() -> None:
+        try:
+            started = time.perf_counter()
+            rows = preview_rows(
+                "exec", {"command": "cat blob"}, output_lines=lines,
+                limit=MAX_TRANSCRIPT_LINES, include_run_output=True,
+            )
+            full = format_tool_preview_markup(
+                "exec", {"command": "cat blob"}, rows=rows, limit=MAX_TRANSCRIPT_LINES,
+                width=200, include_run_output=True,
+            )
+            outcome["streamed"] = time.perf_counter() - started
+            short = [(index, "ctx", "​́️x​́" * 8 + "‍") for index in range(50_000)]
+            started = time.perf_counter()
+            direct = format_tool_preview_markup(
+                "exec", {"command": "x"}, rows=short, limit=len(short), width=120, include_run_output=True,
+            )
+            outcome["direct"] = time.perf_counter() - started
+            Text.from_markup(full)
+            outcome["direct_rows"] = direct.count("\n") + 1
+            outcome["tail"] = direct.splitlines()[-1]
+        except BaseException as exc:  # surfaced by the assertions below
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=exercise, daemon=True)
+    worker.start()
+    worker.join(timeout=30)
+    assert not worker.is_alive(), "preview painting hung on pathological output"
+    assert "error" not in outcome, outcome.get("error")
+    assert outcome["streamed"] < 1.0, outcome
+    assert outcome["direct"] < 1.0, outcome
+    assert outcome["direct_rows"] <= PREVIEW_MAX_PAINT_ROWS + 1
+    assert "not shown" in str(outcome["tail"])
+
+
+def test_a_running_command_follow_up_reads_as_what_was_done_not_write_stdin():
+    poll = {"session_id": "exec-1", "chars": "", "yield_time_ms": 5000}
+    assert activity_label("write_stdin", poll, phase="start") == "Checking running command"
+    assert activity_label("write_stdin", poll) == "Checked running command"
+    assert activity_label("write_stdin", {"session_id": "exec-1", "chars": "y\n"}) == "Sent input to running command"
+    assert activity_label("write_stdin", {"session_id": "exec-1", "terminate": True}) == "Stopped running command"
+    assert activity_label("list_exec_sessions", {}) == "Listed running commands"
+    assert "stdin" not in activity_label("write_stdin", poll).lower()
+
+
+def test_session_bookkeeping_never_reaches_the_command_preview():
+    result = (
+        "compiling\nSTDERR:\nwarning: unused\nProcess running. session_id: exec-1\n"
+        "You will be told when it finishes; keep working meanwhile, or write_stdin with "
+        "yield_time_ms to wait for it.\nElapsed: 3.1s"
+    )
+    shown = [text for _n, _k, text in preview_rows("write_stdin", {"session_id": "exec-1"}, result=result, limit=10)]
+    assert shown == ["compiling", "warning: unused"]
+    assert strip_session_notes("(no output yet)\nElapsed: 0.5s") == ""
+    # The command's own lines stay, even when they look alike.
+    assert strip_session_notes("STDERR: is a word here\nExit code: 1") == "STDERR: is a word here\nExit code: 1"

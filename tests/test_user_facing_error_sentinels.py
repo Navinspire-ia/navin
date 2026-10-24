@@ -32,8 +32,8 @@ MEDIA_EMPTY = (
 )
 RATE_LIMIT = (
     "The model is at capacity right now. Navin already retried "
-    "automatically. Wait a few seconds and send your message again, "
-    "or pick another model."
+    "automatically and resumes by itself. You can also "
+    "pick another model."
 )
 QUOTA = (
     "Your own API key is out of credit. Top up at the provider, "
@@ -41,13 +41,13 @@ QUOTA = (
 )
 CONNECTION = (
     "Could not reach the model provider. Navin already retried "
-    "automatically. Check your internet connection, and any VPN, "
-    "proxy or firewall that could block the request, then send your "
-    "message again."
+    "automatically and resumes by itself. If it persists, check your "
+    "internet connection, and any VPN, proxy or firewall that could "
+    "block the request."
 )
 UPSTREAM = (
     "The model provider hit a temporary error. Navin already retried "
-    "automatically. Send your message again, or pick another model."
+    "automatically and resumes by itself. You can also pick another model."
 )
 CONTEXT = (
     "This turn no longer fits in the model's context window. Start a "

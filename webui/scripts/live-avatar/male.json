@@ -1,0 +1,9 @@
+{
+  "phenotype": {"gender": 1.0, "age": 0.5, "muscle": 0.6, "weight": 0.5, "proportions": 0.65, "height": 0.55},
+  "race": {"asian": 0.0, "caucasian": 1.0, "african": 0.0},
+  "skin": "young_caucasian_male2.mhmat",
+  "hair": "short02.mhclo",
+  "eyebrows": "eyebrow001.mhclo",
+  "eyelashes": "eyelashes01.mhclo",
+  "clothes": ["male_casualsuit01.mhclo"]
+}

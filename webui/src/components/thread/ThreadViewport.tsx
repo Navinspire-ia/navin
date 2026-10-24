@@ -114,23 +114,90 @@ export function isProgrammaticScroll(
  *   to the tail again. Reading it as `user` is how following died mid-turn
  *   the moment a long tool result landed.
  */
-export type ScrollEventMeaning = "user" | "echo" | "catch-up";
+export type ScrollEventMeaning = "user" | "echo" | "catch-up" | "layout" | "jump";
 
+/**
+ * - `layout`: nobody asked for this scroll. A fold animating, the virtual
+ *   window swapping padding, a smooth scroll settling or a hydrate replacing
+ *   the transcript all move scrollTop; none of them means the reader left
+ *   the tail, so following continues.
+ * - `jump`: a frame of a smooth jump to a prompt (Find, prompt navigator,
+ *   prompt rail) still in flight. The jump already decided the reader is
+ *   reading there; its early frames, still near the bottom, must not turn
+ *   following back on.
+ */
 export function classifyScrollEvent(
   mark: ProgrammaticScrollMark,
   scrollTop: number,
   now: number,
   near: boolean,
+  userIntent = true,
+  jumpUntil = 0,
 ): ScrollEventMeaning {
-  if (!isProgrammaticScroll(mark, scrollTop, now)) return "user";
-  if (mark?.bottom && !near) return "catch-up";
-  return "echo";
+  if (jumpUntil > 0 && now < jumpUntil) return "jump";
+  if (isProgrammaticScroll(mark, scrollTop, now)) {
+    return mark?.bottom && !near ? "catch-up" : "echo";
+  }
+  return userIntent ? "user" : "layout";
+}
+
+/** How long the frames of a smooth prompt jump are read as the jump itself. */
+export const PROMPT_JUMP_ECHO_MS = 1500;
+
+/** Last position seen by the scroll listener. */
+export type ScrollSample = { top: number; height: number } | null;
+
+/**
+ * An upward move with an unchanged scrollHeight is the reader (text-selection
+ * drag, middle-click autoscroll, the browser's find bar): layout moves (a fold,
+ * the virtual window, a hydrate) change the height.
+ */
+export function isUpwardScrollWithSameHeight(
+  previous: ScrollSample,
+  scrollTop: number,
+  scrollHeight: number,
+): boolean {
+  if (previous === null) return false;
+  return scrollTop < previous.top - 1 && Math.abs(scrollHeight - previous.height) < 1;
+}
+
+/** How long a wheel / touch / key / scrollbar gesture vouches for the scrolls after it. */
+export const USER_SCROLL_INTENT_MS = 1000;
+
+const SCROLL_INTENT_KEYS = new Set([
+  "PageUp",
+  "PageDown",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  " ",
+  "Tab",
+]);
+
+/** A key press that scrolls the thread (not typing in the composer). */
+export function isScrollIntentKey(key: string, typingInField: boolean): boolean {
+  if (!SCROLL_INTENT_KEYS.has(key)) return false;
+  return !typingInField;
+}
+
+/** Whether the reader is the one moving the viewport right now. */
+export function hasRecentUserScrollIntent(
+  lastIntentAt: number,
+  pointerHeld: boolean,
+  now: number,
+): boolean {
+  if (pointerHeld) return true;
+  return lastIntentAt > 0 && now - lastIntentAt <= USER_SCROLL_INTENT_MS;
 }
 
 export interface ThreadViewportHandle {
   jumpToUserPrompt: (promptId: string) => void;
   jumpToMessage: (messageId: string) => void;
   cancelAutoScroll: () => void;
+  /** The transcript is about to be replaced (hydrate): keep following the
+   *  tail across the swap when the reader was following it. */
+  followAfterHydrate: () => void;
 }
 
 interface ThreadViewportProps {
@@ -269,6 +336,14 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     useRef<{ height: number; top: number } | null>(null);
   /** User scrolled away from the bottom; do not auto-yank until they return or we reset (new chat / send). */
   const userReadingHistoryRef = useRef(false);
+  /** Last wheel / touch / scroll key, and a pointer held on the scrollbar or rail. */
+  const lastUserScrollIntentAtRef = useRef(0);
+  const scrollPointerHeldRef = useRef(false);
+  /** Until when scroll frames belong to a smooth prompt jump (Find, navigator, rail). */
+  const promptJumpUntilRef = useRef(0);
+  const lastScrollSampleRef = useRef<ScrollSample>(null);
+  const followAfterHydrateRef = useRef(false);
+  const viewportRootRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [keyboardInsetBottom, setKeyboardInsetBottom] = useState(0);
@@ -362,6 +437,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     } else if (marker) {
       marker.scrollIntoView({ block: "end", behavior });
     }
+    promptJumpUntilRef.current = 0;
     userReadingHistoryRef.current = false;
     setAtBottom(true);
   }, []);
@@ -384,6 +460,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       }
     }
     const near = el.scrollHeight - top - el.clientHeight < NEAR_BOTTOM_PX;
+    promptJumpUntilRef.current = 0;
     userReadingHistoryRef.current = false;
     setAtBottom(near);
     return true;
@@ -449,17 +526,30 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     setRevealPromptId(promptId);
     const scrollEl = scrollRef.current;
     if (scrollEl && findPromptElement(scrollEl, promptId)) {
+      // A jump up the thread is a request to read there: stop following.
+      // The click came from outside the viewport (Find, navigator), so no
+      // gesture vouches for the smooth frames that follow: mark them as ours.
+      userReadingHistoryRef.current = true;
+      activeTurnPromptRef.current = null;
+      cancelScheduledBottomScroll();
+      promptJumpUntilRef.current = Date.now() + PROMPT_JUMP_ECHO_MS;
       jumpToPrompt(scrollEl, promptId);
       return;
     }
     const index = messages.findIndex((message) => message.id === promptId);
     if (index < 0) return;
+
     pendingPromptJumpRef.current = promptId;
     userReadingHistoryRef.current = true;
     activeTurnPromptRef.current = null;
     setAtBottom(false);
     setVisibleMessageCount((count) => Math.max(count, messages.length - index));
-  }, [messages]);
+  }, [cancelScheduledBottomScroll, messages]);
+
+  const followAfterHydrate = useCallback(() => {
+    cancelScheduledBottomScroll();
+    followAfterHydrateRef.current = !userReadingHistoryRef.current;
+  }, [cancelScheduledBottomScroll]);
 
   useImperativeHandle(
     ref,
@@ -467,9 +557,19 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       jumpToUserPrompt,
       jumpToMessage: jumpToUserPrompt,
       cancelAutoScroll: cancelScheduledBottomScroll,
+      followAfterHydrate,
     }),
-    [cancelScheduledBottomScroll, jumpToUserPrompt],
+    [cancelScheduledBottomScroll, followAfterHydrate, jumpToUserPrompt],
   );
+
+  // A hydrate swaps the whole transcript; the reader who was following the
+  // tail stays on it once the new rows are laid out.
+  useLayoutEffect(() => {
+    if (!followAfterHydrateRef.current) return;
+    followAfterHydrateRef.current = false;
+    if (!hasMessages || userReadingHistoryRef.current) return;
+    scrollToBottom(false, 4);
+  }, [hasMessages, messages, scrollToBottom]);
 
   const measureComposerDock = useCallback(() => {
     const el = composerDockRef.current;
@@ -569,6 +669,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     lastConversationKeyRef.current = conversationKey;
     pendingConversationScrollRef.current = true;
     userReadingHistoryRef.current = false;
+    promptJumpUntilRef.current = 0;
+    lastScrollSampleRef.current = null;
     activeTurnPromptRef.current = null;
     setAtBottom(true);
     setVisibleMessageCount(INITIAL_HISTORY_WINDOW);
@@ -627,7 +729,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     const scrollEl = scrollRef.current;
     if (!promptId || !scrollEl || !findPromptElement(scrollEl, promptId)) return;
     pendingPromptJumpRef.current = null;
-    const frame = window.requestAnimationFrame(() => jumpToPrompt(scrollEl, promptId));
+    const frame = window.requestAnimationFrame(() => {
+      promptJumpUntilRef.current = Date.now() + PROMPT_JUMP_ECHO_MS;
+      jumpToPrompt(scrollEl, promptId);
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [revealPromptId, visibleMessages.length]);
 
@@ -694,13 +799,40 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
     const onScroll = (allowHistoryLoad = true) => {
       const near = isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+      const now = Date.now();
+      const previous = lastScrollSampleRef.current;
+      lastScrollSampleRef.current = { top: el.scrollTop, height: el.scrollHeight };
       const meaning = classifyScrollEvent(
         programmaticPromptScrollRef.current,
         el.scrollTop,
-        Date.now(),
+        now,
         near,
+        hasRecentUserScrollIntent(
+          lastUserScrollIntentAtRef.current,
+          scrollPointerHeldRef.current,
+          now,
+        ) || isUpwardScrollWithSameHeight(previous, el.scrollTop, el.scrollHeight),
+        promptJumpUntilRef.current,
       );
       programmaticPromptScrollRef.current = null;
+      if (meaning === "jump") {
+        // A frame of our own smooth jump to a prompt: the jump already set
+        // the reading guard; early frames near the bottom must not undo it.
+        setAtBottom(near);
+        return;
+      }
+      if (meaning === "layout") {
+        // Not the reader: a fold, the virtual window or a hydrate moved the
+        // viewport. Stay on the tail when following; otherwise only refresh
+        // the jump button. Never resume following from here: the late frames
+        // of a jump land as layout and would snap the reader back down.
+        if (!userReadingHistoryRef.current) {
+          if (!near) scrollToBottomNow(false);
+          return;
+        }
+        setAtBottom(near);
+        return;
+      }
       if (meaning === "catch-up") {
         // Our scroll to the tail landed, then the thread grew under it.
         // The reader never moved: go to the tail again instead of deciding
@@ -724,8 +856,92 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     return () => el.removeEventListener("scroll", handleScroll);
   }, [maybeLoadEarlierFromScroll, scrollToBottomNow]);
 
+  // Only real gestures count as the reader moving the thread: wheel, touch,
+  // scroll keys, or a pointer held on the scrollbar / prompt rail.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const root = viewportRootRef.current;
+    if (!el || !root) return;
+    const markIntent = () => {
+      lastUserScrollIntentAtRef.current = Date.now();
+      // The reader took over: a prompt jump still in flight is theirs now.
+      promptJumpUntilRef.current = 0;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      // The scrollbar belongs to the scroll element itself; the rail and the
+      // jump button sit outside it. A click inside the transcript or the
+      // composer is not a scroll.
+      if (target === el || (target && !el.contains(target))) {
+        scrollPointerHeldRef.current = true;
+        markIntent();
+      }
+    };
+    const onPointerUp = () => {
+      if (!scrollPointerHeldRef.current) return;
+      scrollPointerHeldRef.current = false;
+      markIntent();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isScrollIntentKey(event.key, isKeyboardEditableElement(document.activeElement))) {
+        markIntent();
+      }
+    };
+    // Chromium may never send pointerup after a scrollbar drag that ends
+    // outside the window: drop the held flag when the page loses focus.
+    // Text-selection drag and middle-click autoscroll start with a mouse press
+    // or a selection; the composer is excluded (clicking to type is not a scroll).
+    const onSelectionIntent = (event: Event) => {
+      const target = event.target instanceof Node ? event.target : null;
+      const dock = composerDockRef.current;
+      if (target && dock?.contains(target)) return;
+      // A left click on a control (a fold toggle, a link) is not a scroll; the
+      // fold animating after it must still read as layout.
+      if (
+        event instanceof MouseEvent
+        && event.type === "mousedown"
+        && event.button === 0
+        && target instanceof Element
+        && target.closest("button, a, summary, input, textarea, select, label, [role='button']")
+      ) {
+        return;
+      }
+      markIntent();
+    };
+    const releasePointer = () => {
+      scrollPointerHeldRef.current = false;
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") releasePointer();
+    };
+    root.addEventListener("wheel", markIntent, { passive: true });
+    root.addEventListener("touchmove", markIntent, { passive: true });
+    root.addEventListener("touchend", markIntent, { passive: true });
+    root.addEventListener("mousedown", onSelectionIntent, { passive: true });
+    root.addEventListener("selectstart", onSelectionIntent, { passive: true });
+    root.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("blur", releasePointer);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      root.removeEventListener("wheel", markIntent);
+      root.removeEventListener("touchmove", markIntent);
+      root.removeEventListener("touchend", markIntent);
+      root.removeEventListener("mousedown", onSelectionIntent);
+      root.removeEventListener("selectstart", onSelectionIntent);
+      root.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("blur", releasePointer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   return (
-    <div className="thread-viewport relative flex min-h-0 flex-1 overflow-hidden">
+    <div ref={viewportRootRef} className="thread-viewport relative flex min-h-0 flex-1 overflow-hidden">
       <div
         ref={scrollRef}
         className={cn(
@@ -752,7 +968,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                       disabled={loadingOlder}
                       className={cn(
                         "flex items-center gap-1.5 rounded-full border border-border/60",
-                        "bg-background/90 px-3 py-1 text-[11px] text-muted-foreground",
+                        "bg-background/90 px-3 py-1 text-[13px] text-muted-foreground",
                         "shadow-sm backdrop-blur transition-colors hover:text-foreground",
                         loadingOlder && "opacity-70",
                       )}
@@ -802,6 +1018,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               data-testid="thread-composer-dock"
               className="sticky bottom-0 z-10 bg-background"
             >
+              {/* Text scrolling under the dock fades out instead of showing a hard cut behind the prompt. */}
+              <div
+                aria-hidden
+                data-testid="thread-composer-dock-fade"
+                className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-background to-transparent"
+              />
               <div className="px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4">
                 {composer}
               </div>
@@ -836,6 +1058,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           messages={visibleMessages}
           scrollRef={scrollRef}
           bottomOffset={scrollButtonBottom}
+          onJump={jumpToUserPrompt}
         />
       ) : null}
 

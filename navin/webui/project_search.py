@@ -15,6 +15,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import time
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
@@ -105,6 +107,19 @@ def _passes_globs(rel_posix: str, include: list[str], exclude: list[str]) -> boo
     return not any(_glob_matches(rel_posix, p) for p in exclude)
 
 
+def _wsl_rg_prefix(root: Path, *, platform: str | None = None) -> list[str] | None:
+    """ripgrep inside the distribution for a ``\\\\wsl.localhost`` root seen from Windows."""
+    if (platform or sys.platform) != "win32":
+        return None
+    from navin.utils import wsl
+
+    location = wsl.parse_unc(str(root))
+    if location is None or not wsl.wsl_executable():
+        return None
+    distro = wsl.resolve_distro(location.distro) or location.distro
+    return wsl.rg_prefix(distro, location.path)
+
+
 def _rg_search(
     root: Path,
     query: str,
@@ -113,38 +128,47 @@ def _rg_search(
     case_sensitive: bool,
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    platform: str | None = None,
 ) -> list[dict[str, Any]] | None:
+    # A WSL project seen from Windows is searched inside the distribution:
+    # the Windows ripgrep would read every file over the 9P bridge (the same
+    # search took minutes there against 0.3 s inside). It runs from the
+    # project root through --cd, so paths come back relative as below.
+    wsl_prefix = _wsl_rg_prefix(root, platform=platform)
     rg = shutil.which("rg")
-    if rg is None:
+    if wsl_prefix is None and rg is None:
         return None
-    cmd = [
-        rg, "--json", "--max-count", "50",
+    flags = [
+        "--json", "--max-count", "50",
         "--max-filesize", "1M", "--no-follow",
         # Editor-grade search: include hidden and gitignored files; the
         # explicit glob excludes below keep the noisy directories out.
-        "--hidden", "--no-ignore-vcs",
+        "--hidden", "--no-ignore-vcs", "--no-messages",
     ]
-    cmd.append("--case-sensitive" if case_sensitive else "--ignore-case")
+    flags.append("--case-sensitive" if case_sensitive else "--ignore-case")
     if not regex:
-        cmd.append("--fixed-strings")
+        flags.append("--fixed-strings")
     for skip in _SKIP_DIRS:
-        cmd.extend(["--glob", f"!{skip}/"])
+        flags.extend(["--glob", f"!{skip}/"])
     for pattern in include or []:
-        cmd.extend(["--glob", pattern])
+        flags.extend(["--glob", pattern])
     for pattern in exclude or []:
-        cmd.extend(["--glob", f"!{pattern}"])
+        flags.extend(["--glob", f"!{pattern}"])
     # Searched as "." from inside the root rather than by absolute path: a glob
     # containing a separator anchors to the start of the path it is matched
     # against, so "src/**" only means what the user typed if that path is
     # relative to the project.
-    cmd.extend(["--", query, "."])
-    try:
-        out = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_RG_TIMEOUT_S,
-            cwd=str(root),
-            **no_window_kwargs(),
-        )
-    except (OSError, subprocess.SubprocessError):
+    flags.extend(["--", query, "."])
+    out = None
+    if wsl_prefix is not None:
+        out = _run_rg([*wsl_prefix, *flags], cwd=None)
+        if out is not None and out.returncode == 127:
+            out = None  # no ripgrep in the distribution: the Windows one, slower
+    if out is None:
+        if rg is None:
+            return None
+        out = _run_rg([rg, *flags], cwd=str(root))
+    if out is None:
         return None
     if out.returncode not in (0, 1):  # 1 = no matches
         # 2 = usage/regex error → surface to the caller
@@ -178,6 +202,52 @@ def _rg_search(
             "text": _clip(lines_text),
         })
     return rows
+
+
+def _run_rg(cmd: list[str], *, cwd: str | None) -> subprocess.CompletedProcess[str] | None:
+    """Run ripgrep and stop reading once ``_MAX_RESULTS`` matches came back.
+
+    ``--max-count`` is per file, so a common word over a large tree printed
+    gigabytes of JSON (2 GB, 7 s for "import" on navin's own repo) that were
+    all read and then cut to 500 rows. The process is stopped as soon as the
+    rows we keep are in.
+    """
+    try:
+        process = subprocess.Popen(  # noqa: S603
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+            cwd=cwd, **no_window_kwargs(),
+        )
+    except OSError:
+        return None
+    lines: list[str] = []
+    matches = 0
+    stopped = False
+    deadline = time.monotonic() + _RG_TIMEOUT_S
+    assert process.stdout is not None
+    try:
+        for raw in process.stdout:
+            line = raw.decode("utf-8", errors="replace")
+            lines.append(line)
+            if line.startswith('{"type":"match"'):
+                matches += 1
+                if matches >= _MAX_RESULTS:
+                    stopped = True
+                    break
+            if time.monotonic() > deadline:
+                stopped = True
+                break
+    finally:
+        if stopped:
+            process.kill()
+        try:
+            _, err = process.communicate(timeout=5)
+        except subprocess.SubprocessError:
+            process.kill()
+            err = b""
+    code = 0 if stopped else process.returncode
+    return subprocess.CompletedProcess(
+        cmd, code, stdout="".join(lines), stderr=(err or b"").decode("utf-8", errors="replace"),
+    )
 
 
 def _python_search(
@@ -994,11 +1064,11 @@ def explain_push_failure(stderr: str) -> str:
         )
     elif any(marker in lowered for marker in _AUTH_FAILURE_MARKERS):
         hint = (
-            "The credentials stored for this remote are wrong or expired. "
-            "Create a new access token on the forge, then update it in your "
-            "git credential helper (git credential-manager / osxkeychain / "
-            "libsecret) or run 'git push' once in a terminal to be prompted "
-            "again. Use the token as the password, not your account password."
+            "The credentials for this remote are missing, wrong or expired. "
+            "Create a new access token on the forge and add it in "
+            "Settings > Git & GitHub (Navin hands it to git for HTTPS "
+            "remotes), or update it in your git credential helper "
+            "(git credential-manager / osxkeychain / libsecret)."
         )
     elif any(marker in lowered for marker in _PERMISSION_MARKERS):
         hint = (
@@ -1013,10 +1083,26 @@ def explain_push_failure(stderr: str) -> str:
     return f"git push failed: {detail}\n{hint}"
 
 
+def _git_network_env(root: Path, args: tuple[str, ...]) -> dict[str, str] | None:
+    """Non-interactive env carrying the forge token, for push / pull / fetch.
+
+    Local commands keep the inherited environment untouched (``None``).
+    """
+    from navin.utils import git_credentials
+
+    if not git_credentials.is_network_command(args):
+        return None
+    try:
+        return git_credentials.git_env_for_repo(root)
+    except Exception:  # noqa: BLE001 - fall back to a prompt-free plain env
+        return git_credentials.apply_noninteractive(dict(os.environ))
+
+
 def _run_git_write(root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
     argv = _git_argv(root)
     if argv is None:
         return None
+    env = _git_network_env(root, args)
     try:
         return subprocess.run(  # noqa: S603
             [*argv, *args],
@@ -1025,6 +1111,7 @@ def _run_git_write(root: Path, *args: str) -> subprocess.CompletedProcess[str] |
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_WRITE_TIMEOUT_S,
+            **({"env": env} if env is not None else {}),
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
@@ -1659,10 +1746,27 @@ def git_log_payload(scope: WorkspaceScope, limit: int = _GIT_LOG_DEFAULT) -> dic
     root = _root(scope)
     limit = max(1, min(limit, _GIT_LOG_MAX))
     fmt = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%D%x1f%s"
-    out = _run_git(
-        root, "log", "--all", "--topo-order", f"--max-count={limit}",
-        f"--pretty=format:{fmt}",
-    )
+    # The reads are independent: run them together. On a WSL project each git
+    # call is a wsl.exe start (about 0.3 s), and seven in a row made the
+    # timeline take over two seconds to open.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        log_job = pool.submit(
+            _run_git, root, "log", "--all", "--topo-order", f"--max-count={limit}",
+            f"--pretty=format:{fmt}",
+        )
+        remote_job = pool.submit(_run_git, root, "rev-list", "--remotes", f"--max-count={limit * 4}")
+        refs_job = pool.submit(
+            _run_git, root, "for-each-ref", "refs/heads", "refs/remotes",
+            "--sort=-committerdate",
+            "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f"
+            "%(committerdate:iso8601-strict)%1f%(authorname)%1f%(symref)",
+        )
+        head_job = pool.submit(_run_git, root, "rev-parse", "HEAD")
+        total_job = pool.submit(_run_git, root, "rev-list", "--all", "--count")
+        state_job = pool.submit(_branch_state, root)
+    out = log_job.result()
     if out is None:
         return {"available": False, "is_repo": False, "commits": [], "branches": []}
     if out.returncode != 0:
@@ -1670,7 +1774,7 @@ def git_log_payload(scope: WorkspaceScope, limit: int = _GIT_LOG_DEFAULT) -> dic
 
     # Everything reachable from a remote ref counts as pushed; the rest is
     # local-only work the UI should flag.
-    remote = _run_git(root, "rev-list", "--remotes", f"--max-count={limit * 4}")
+    remote = remote_job.result()
     pushed_set = (
         set(remote.stdout.split())
         if remote is not None and remote.returncode == 0
@@ -1702,12 +1806,7 @@ def git_log_payload(scope: WorkspaceScope, limit: int = _GIT_LOG_DEFAULT) -> dic
         })
 
     branches: list[dict[str, Any]] = []
-    refs_out = _run_git(
-        root, "for-each-ref", "refs/heads", "refs/remotes",
-        "--sort=-committerdate",
-        "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f"
-        "%(committerdate:iso8601-strict)%1f%(authorname)%1f%(symref)",
-    )
+    refs_out = refs_job.result()
     if refs_out is not None and refs_out.returncode == 0:
         for line in refs_out.stdout.splitlines():
             parts = line.split("\x1f")
@@ -1722,8 +1821,8 @@ def git_log_payload(scope: WorkspaceScope, limit: int = _GIT_LOG_DEFAULT) -> dic
                 "remote": parts[0].startswith("refs/remotes/"),
             })
 
-    head = _run_git(root, "rev-parse", "HEAD")
-    total = _run_git(root, "rev-list", "--all", "--count")
+    head = head_job.result()
+    total = total_job.result()
     return {
         "available": True,
         "is_repo": True,
@@ -1735,7 +1834,7 @@ def git_log_payload(scope: WorkspaceScope, limit: int = _GIT_LOG_DEFAULT) -> dic
             if total is not None and total.returncode == 0 and total.stdout.strip().isdigit()
             else len(commits)
         ),
-        **_branch_state(root),
+        **state_job.result(),
     }
 
 

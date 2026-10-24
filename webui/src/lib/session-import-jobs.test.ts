@@ -17,7 +17,7 @@ it("polls the same import beyond the old 30 second deadline", async () => {
   await vi.runAllTimersAsync();
   expect(await importing).toEqual(result);
   expect(fetcher).toHaveBeenCalledTimes(41);
-  expect(String(fetcher.mock.calls[1][0])).toContain("job_id=job-1");
+  expect(String((fetcher.mock.calls[1] as unknown[])[0])).toContain("job_id=job-1");
 });
 
 it("accepts results from older gateways", async () => {

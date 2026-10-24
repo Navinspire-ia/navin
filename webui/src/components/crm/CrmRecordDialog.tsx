@@ -334,7 +334,7 @@ export function CrmRecordDialog({
           className="grid gap-4"
           onSubmit={form.handleSubmit((values) => onSubmit(toBody(kind, values, currency)))}
         >
-          <DialogHeader className="text-left">
+          <DialogHeader className="text-start">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>
               {tx("crm.modalHelp", "Les champs marques * sont obligatoires.")}
@@ -860,7 +860,7 @@ export function CrmRecordDialog({
             <p className="text-[12px] text-destructive">{String(firstError || error)}</p>
           ) : null}
 
-          <DialogFooter className="gap-2 sm:space-x-0">
+          <DialogFooter className="gap-2 sm:space-x-0 rtl:space-x-reverse">
             <Button type="button" variant="outline" onClick={onClose}>
               {tx("crm.cancel", "Annuler")}
             </Button>
@@ -884,7 +884,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1.5 text-left">
+    <label className="grid gap-1.5 text-start">
       <span className="text-[12px] font-medium text-foreground">
         {label}
         {required ? <span className="text-destructive"> *</span> : null}

@@ -495,6 +495,48 @@ class GateBindingTest(_BrokerTest):
         self.assertFalse(decision.allowed)
         self.assertIn("subagent", decision.reason)
 
+    async def test_a_subagent_question_reaches_the_user_of_the_parent_chat(self) -> None:
+        from navin.agent.approval import SubagentApprovalGate
+
+        broker = self._broker()
+        gate = SubagentApprovalGate(broker, label="fixer", unattended_reason="background")
+        token = bind_approval_gate(gate)
+        try:
+            task = asyncio.ensure_future(request_approval(_request()))
+            for _ in range(100):
+                if self.published:
+                    break
+                await asyncio.sleep(0)
+            self.assertIn("[subagent fixer]", self.published[-1][1].action)
+            broker.resolve(self.published[-1][0], allowed=True)
+            self.assertTrue((await task).allowed)
+        finally:
+            reset_approval_gate(token)
+
+    async def test_a_subagent_with_nobody_to_ask_keeps_the_background_refusal(self) -> None:
+        from navin.agent.approval import SubagentApprovalGate
+
+        reset_request_context(self._ctx_token)
+        self._ctx_token = bind_request_context(RequestContext(
+            channel="cli", chat_id="local", session_key="cli:local"
+        ))
+        for parent in (self._broker(), None):
+            gate = SubagentApprovalGate(parent, label="x", unattended_reason="background only")
+            decision = await gate.ask(_request())
+            self.assertFalse(decision.allowed)
+            self.assertEqual(decision.reason, "background only")
+
+    async def test_permission_modes_of_the_agent_definition(self) -> None:
+        from navin.agent.approval import SubagentApprovalGate
+
+        edits = SubagentApprovalGate(None, label="x", unattended_reason="no",
+                                     permission_mode="acceptEdits")
+        self.assertTrue((await edits.ask(_request(tool="write_file"))).allowed)
+        self.assertFalse((await edits.ask(_request(tool="exec"))).allowed)
+        bypass = SubagentApprovalGate(None, label="x", unattended_reason="no",
+                                      permission_mode="bypassPermissions")
+        self.assertTrue((await bypass.ask(_request(tool="exec"))).allowed)
+
     async def test_a_gate_that_raises_refuses_instead_of_crashing_the_turn(self) -> None:
         class Broken:
             async def ask(self, request: ApprovalRequest) -> ApprovalDecision:

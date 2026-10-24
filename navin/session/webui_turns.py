@@ -278,6 +278,8 @@ _WORKFLOW_BRIEF_HEADER_RE = re.compile(r"^\[([^\]]+)\]\s*\(/[\w-]+\)(?:\s|$)")
 _WORKFLOW_FOCUS_RE = re.compile(
     r"(?m)^Focus / target given by the user:\s*(.+)$"
 )
+# Long or pasted focus is fenced (navin.command.builtin.format_workflow_focus).
+_WORKFLOW_USER_REQUEST_RE = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.S)
 
 
 def strip_leading_slash_command(text: str) -> str:
@@ -292,9 +294,16 @@ def title_source_from_user_text(user_text: str | None) -> str:
         return ""
     if _WORKFLOW_BRIEF_HEADER_RE.match(source) and "Skills for this mission" in source:
         focus = _WORKFLOW_FOCUS_RE.search(source)
-        if focus:
-            return focus.group(1).strip()
-        return ""
+        if not focus:
+            return ""
+        block = _WORKFLOW_USER_REQUEST_RE.search(source, focus.end())
+        if block:
+            for line in block.group(1).splitlines():
+                line = line.strip().lstrip("#").strip()
+                if line:
+                    return line
+            return ""
+        return focus.group(1).strip()
     return strip_leading_slash_command(source).strip()
 
 

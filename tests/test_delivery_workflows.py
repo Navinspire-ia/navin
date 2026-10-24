@@ -37,7 +37,10 @@ from navin.command.builtin import (
     _HTML_REPORT_WORKFLOWS,
     _MONTAGE_TOOLS_CLAUSE,
     _MONTAGE_UNCLEAR_FOCUS_CLAUSE,
+    _PRELOADED_SKILLS_CLAUSE,
     _SCOPED_FANOUT_CLAUSE,
+    _SIMPLE_TASK_CLAUSE,
+    _TRACKED_RUN_CLAUSE,
     _UNCLEAR_FOCUS_CLAUSE,
     _WORKFLOW_BRIEFS,
     _workflow_handler,
@@ -45,7 +48,6 @@ from navin.command.builtin import (
     focus_is_plain_question,
 )
 from navin.command.modules import (
-    APPLY_PATCH_ONLY_METADATA_KEY,
     EVIDENCE_ONLY_METADATA_KEY,
     PRELOAD_SKILLS_METADATA_KEY,
     REQUIRES_TOOL_DELIVERY_METADATA_KEY,
@@ -75,9 +77,19 @@ class DeliveryBriefTest(unittest.TestCase):
         return msg.content, dict(msg.metadata)
 
     def test_every_delivery_command_carries_the_clause(self) -> None:
-        for command in sorted(_DELIVERY_WORKFLOWS):
+        for command in sorted(_DELIVERY_WORKFLOWS - _CODE_BUILD_WORKFLOWS):
             content, _meta = self._brief(command)
             self.assertIn(_DELIVERY_RUN_CLAUSE, content, command)
+
+    def test_already_loaded_is_said_only_where_skills_are_preloaded(self) -> None:
+        # Slim workflows load one playbook per phase; "already loaded" there
+        # contradicted the line that lists them.
+        for command in sorted(_DELIVERY_WORKFLOWS):
+            content, meta = self._brief(command)
+            slim = bool(meta.get(SLIM_SKILL_PRELOAD_METADATA_KEY))
+            self.assertEqual(_PRELOADED_SKILLS_CLAUSE in content, not slim and command not in _CODE_BUILD_WORKFLOWS, command)
+            if slim:
+                self.assertNotIn("already loaded", content, command)
 
     def test_delivery_commands_all_exist(self) -> None:
         self.assertEqual(_DELIVERY_WORKFLOWS - set(_WORKFLOW_BRIEFS), set())
@@ -111,19 +123,32 @@ class DeliveryBriefTest(unittest.TestCase):
         self.assertTrue(_CODE_BUILD_WORKFLOWS <= _DELIVERY_WORKFLOWS)
         for command in sorted(_CODE_BUILD_WORKFLOWS):
             content, meta = self._brief(command)
-            self.assertIn(_DELIVERY_RUN_CLAUSE, content, command)
+            # The studio close-out (finished file only, script under build/)
+            # contradicted the code delivery summary.
+            self.assertNotIn(_DELIVERY_RUN_CLAUSE, content, command)
+            self.assertIn("not a plan or a promise", _CODE_STRICT_LOOP_CLAUSE)
             self.assertIn(_CODE_VERIFY_CLAUSE, content, command)
             self.assertIn(_CODE_STRICT_LOOP_CLAUSE, content, command)
             self.assertTrue(meta.get(REQUIRES_TOOL_DELIVERY_METADATA_KEY), command)
             self.assertTrue(meta.get(REQUIRES_VERIFY_BEFORE_DONE_METADATA_KEY), command)
             # Prompt preference only - runner no longer hard-blocks write_file.
-            self.assertFalse(meta.get(APPLY_PATCH_ONLY_METADATA_KEY), command)
+            self.assertNotIn("apply_patch_only", meta, command)
 
     def _brief_with_focus(self, command: str, focus: str) -> tuple[str, dict]:
         msg = SimpleNamespace(content="", metadata={}, channel="cli", chat_id="test")
         ctx = SimpleNamespace(args=focus, raw=f"{command} {focus}", msg=msg, loop=None)
         asyncio.run(_workflow_handler(command)(ctx))  # type: ignore[arg-type]
         return msg.content, dict(msg.metadata)
+
+    def test_a_simple_task_is_not_also_told_to_plan_on_the_board(self) -> None:
+        simple, _ = self._brief_with_focus("/forge", "corrige la faute de frappe dans README.md")
+        self.assertIn(_SIMPLE_TASK_CLAUSE, simple)
+        self.assertNotIn(_TRACKED_RUN_CLAUSE, simple)
+        mission, _ = self._brief_with_focus(
+            "/forge", "migre tout le module facturation vers la nouvelle API, backend frontend et tests",
+        )
+        self.assertIn(_TRACKED_RUN_CLAUSE, mission)
+        self.assertNotIn(_SIMPLE_TASK_CLAUSE, mission)
 
     def test_a_plain_question_in_agent_mode_is_not_forced_into_tools(self) -> None:
         """"Quelle option de ls ... ?" in Agent used to cost a second model
@@ -142,6 +167,31 @@ class DeliveryBriefTest(unittest.TestCase):
                 self.assertNotIn(_DELIVERY_RUN_CLAUSE, content, (command, focus))
                 # Still a full Agent turn: the brief and its verify rules stay.
                 self.assertIn(_CODE_VERIFY_CLAUSE, content, (command, focus))
+
+    def test_a_text_for_the_client_is_answered_in_the_chat(self) -> None:
+        """"Les 8 points doivent etre propres et bien lisibles" got the board,
+        design-system and verify rules of a build, then a nudge to produce a
+        file: the agent wrote files and described them instead of the text."""
+        from navin.command.builtin import _FORGE_UI_CLAUSE, _TEXT_DELIVERABLE_CLAUSE
+
+        for focus in (
+            "les 8 points doivent etre propres et bien lisibles pour le client",
+            "reformule le message client, point 7",
+            "redige un mail de relance au fournisseur",
+        ):
+            content, meta = self._brief_with_focus("/forge", focus)
+            self.assertIn(_TEXT_DELIVERABLE_CLAUSE, content, focus)
+            self.assertNotIn(_FORGE_UI_CLAUSE, content, focus)
+            self.assertNotIn(_CODE_VERIFY_CLAUSE, content, focus)
+            self.assertFalse(meta.get(REQUIRES_TOOL_DELIVERY_METADATA_KEY), focus)
+
+    def test_interface_rules_come_only_with_an_interface_request(self) -> None:
+        from navin.command.builtin import _FORGE_UI_CLAUSE
+
+        ui, _ = self._brief_with_focus("/forge", "refais l'ecran des factures avec un tableau de bord")
+        self.assertIn(_FORGE_UI_CLAUSE, ui)
+        backend, _ = self._brief_with_focus("/forge", "corrige le calcul de TVA dans le service de facturation")
+        self.assertNotIn(_FORGE_UI_CLAUSE, backend)
 
     def test_a_question_that_asks_for_work_keeps_the_delivery_nudge(self) -> None:
         for focus in (

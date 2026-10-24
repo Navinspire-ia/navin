@@ -192,7 +192,13 @@ def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_plac
                 await app._render_history()
                 await pilot.pause()
             assert frames
-            assert all(count == 12 and at_end for count, at_end in frames), frames
+            # The latest exchanges paint first and older rows are inserted
+            # above them: every frame stays pinned to the end, the page only
+            # grows, and it ends complete.
+            assert all(at_end for _count, at_end in frames), frames
+            counts = [count for count, _at_end in frames]
+            assert counts == sorted(counts), frames
+            assert counts[-1] == 12, frames
             transcript = app.transcript
             assert len(transcript.children) == 12
             assert app.query(UserMessage).first().raw_text == "question 94"
@@ -228,6 +234,48 @@ def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_plac
             await pilot.pause()
             assert len(transcript.children) == 36
             assert app.query(UserMessage).first().raw_text == "question 82"
+    asyncio.run(run())
+
+
+def test_older_history_loads_a_screen_ahead_and_the_chat_stays_on_screen(tmp_path):
+    from textual import events
+
+    async def run():
+        app = make_app(tmp_path)
+        history = []
+        for i in range(60):
+            history.extend([
+                {"role": "user", "content": f"question {i}"},
+                {"role": "assistant", "content": f"answer {i}\n\nDetails of answer {i}."},
+            ])
+        app.runtime.history_snapshot = lambda: list(history)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app._render_history()
+            await pilot.pause()
+            transcript = app.transcript
+            assert transcript.has_older
+            # Still a few rows below the top: the older page is already asked for.
+            transcript.scroll_to(y=min(transcript.max_scroll_y, 8), animate=False, immediate=True)
+            await pilot.pause()
+            hidden_frames = []
+            original_display = app._display
+
+            def record_display(screen, renderable):
+                if not app._batch_count and transcript.styles.visibility == "hidden":
+                    hidden_frames.append(renderable)
+                return original_display(screen, renderable)
+
+            with patch.object(app, "_display", record_display):
+                x, y = transcript.region.x + 5, transcript.region.y + 5
+                transcript.post_message(events.MouseScrollUp(
+                    transcript, x, y, 0, 0, 0, False, False, False, screen_x=x, screen_y=y,
+                ))
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+            assert len(transcript.children) == 24
+            assert not hidden_frames, "the chat never blanks while older messages load"
+            assert not transcript.loading_history
     asyncio.run(run())
 
 

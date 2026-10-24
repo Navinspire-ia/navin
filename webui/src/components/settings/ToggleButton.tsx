@@ -42,7 +42,7 @@ export function ToggleButton({
         className={cn(
           "h-[18px] w-[18px] rounded-full bg-background shadow-[0_1px_2px_rgba(0,0,0,0.18),0_2px_7px_rgba(0,0,0,0.11)]",
           "transition-transform duration-200 ease-out",
-          checked ? "translate-x-[16px]" : "translate-x-0",
+          checked ? "translate-x-[16px] rtl:-translate-x-[16px]" : "translate-x-0",
         )}
       />
       <span className="sr-only">{label}</span>

@@ -40,6 +40,11 @@ class VoiceModeFlagTest(unittest.TestCase):
         self.assertIn("one precise question at a time", text)
         self.assertIn("Push back", text)
         self.assertIn("When you finish", text)
+        # An expert pair, not a narrator: reasoning, honesty, and a call when blocked.
+        self.assertIn("Think out loud", text)
+        self.assertIn("not sure", text)
+        self.assertIn("Call the user instead of going in circles", text)
+        self.assertIn("claiming to be a human", text)
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2013", text)
 

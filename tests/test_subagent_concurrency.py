@@ -295,6 +295,45 @@ class SpawnQueueTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.queued_count("cli:local"), 0)
         self.assertEqual(self.runner.started, 2)
 
+    async def test_cancelling_a_thousand_queued_agents_is_fast_and_journaled(self) -> None:
+        import time
+
+        await self._fill()
+        for index in range(1000):
+            await self._spawn(f"q{index}")
+        queued_ids = [m["task_id"] for m in self.manager.team_members("cli:local")][-3:]
+        started = time.monotonic()
+        cancelled = await self.manager.cancel_by_session("cli:local")
+        elapsed = time.monotonic() - started
+        self.assertEqual(cancelled, 1002)
+        # The regression this guards took minutes; a busy CI runner can need
+        # several seconds for the same 1002 journal writes.
+        self.assertLess(elapsed, 15.0)
+        for task_id in queued_ids:
+            events = self.manager.journal.history("cli:local", task_id)["events"]
+            self.assertIn("Cancelled before execution.", repr(events))
+    async def test_cancelling_queued_work_closes_its_live_card(self) -> None:
+        import queue
+
+        from navin.bus.outbound_events import SubagentProgressEvent
+
+        self.bus.outbound = queue.Queue()
+        self.manager.max_concurrent_subagents = 1
+        for index in range(2):
+            await self.manager.spawn(
+                task=f"Task {index}", runtime=mock.Mock(), origin_channel="websocket",
+                origin_chat_id="c", session_key="websocket:c",
+            )
+        queued_id = self.manager.team_members("websocket:c")[1]["task_id"]
+        await self.manager.cancel_by_session("websocket:c")
+        events = []
+        while not self.bus.outbound.empty():
+            event = self.bus.outbound.get_nowait().event
+            if isinstance(event, SubagentProgressEvent) and event.task_id == queued_id:
+                events.append(event)
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].error_kind, "cancelled")
+
     async def test_one_session_queue_does_not_hold_up_another(self) -> None:
         await self._fill(session_key="cli:one")
         queued = await self._spawn("c", session_key="cli:one")
@@ -375,6 +414,12 @@ class HundredsOfAgentsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.get_running_count(), 0)
         # Every one announced its result to the parent.
         self.assertEqual(len(self.bus.published), self.WAVE)
+        from navin.agent import subagent as _sub
+        from navin.config.schema import AgentDefaults
+        self.assertGreaterEqual(
+            _sub._MAX_OUTCOME_HISTORY,
+            AgentDefaults.model_fields["max_concurrent_subagents"].metadata[-1].le,
+        )
         # And the verdicts survive the statuses being dropped, which is what
         # spawn(action="results") reads when a turn could not carry them all.
         self.assertEqual(len(self.manager.recent_outcomes(session_key="cli:local")), self.WAVE)

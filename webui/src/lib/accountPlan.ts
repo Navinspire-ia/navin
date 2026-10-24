@@ -1,6 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
+
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export function accountPlanSlug(
@@ -54,4 +56,28 @@ export function compactAccountLine(
     bits.push(`$${Number.isInteger(price) ? price : price.toFixed(2)}/month`);
   }
   return bits.join("  ");
+}
+
+/**
+ * "Bonus +$1,000 until Jan 15, 2027" when an admin bonus is active, else "".
+ * Only the bonus is shown: the plan's own AI budget is never displayed.
+ */
+export function bonusLine(
+  t: Translate,
+  account?: { usage?: { extra_budget_micro_usd?: number | null; extra_budget_until?: string | null } | null } | null,
+): string {
+  const micro = account?.usage?.extra_budget_micro_usd ?? 0;
+  if (!(micro > 0)) return "";
+  const usd = micro / 1_000_000;
+  const amount = new Intl.NumberFormat(intlLocale(), {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: usd % 1 === 0 ? 0 : 2,
+  }).format(usd);
+  const until = account?.usage?.extra_budget_until ? new Date(account.usage.extra_budget_until) : null;
+  if (until && Number.isFinite(until.getTime())) {
+    const date = new Intl.DateTimeFormat(intlLocale(), { dateStyle: "medium" }).format(until);
+    return t("sidebar.account.bonus", { amount, date, defaultValue: "Bonus +{{amount}} until {{date}}" });
+  }
+  return t("sidebar.account.bonusNoEnd", { amount, defaultValue: "Bonus +{{amount}}" });
 }

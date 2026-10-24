@@ -121,6 +121,11 @@ def resolve_tts_config(config: Any) -> EffectiveTtsConfig:
     voice = (getattr(voice_cfg, "voice", None) or spec.default_voice).strip() or spec.default_voice
     api_key = _resolve_tts_api_key(provider, provider_cfg, config)
     api_base = _resolve_tts_api_base(provider, provider_cfg)
+    if provider == "bedrock":
+        # Polly runs with the Bedrock provider's AWS credentials and region.
+        from navin.providers.bedrock_media import provider_credentials
+
+        api_key, api_base = provider_credentials(provider_cfg)
     # Resolve legacy automatic settings, but honor an explicit provider choice.
     # A missing BYOK key must lead to setup, not send speech to another account.
     explicit_provider = bool(getattr(voice_cfg, "tts_provider", None))
@@ -182,8 +187,15 @@ def voice_realtime_allowed(config: Any) -> bool:
                 and stt.provider != "navin" and tts.provider != "navin")
 
 
-def live_voice_status(config: Any, *, stt: Any = None, tts: Any = None) -> dict[str, Any]:
-    """One readiness contract for the Live button, Settings and WebSocket start."""
+def live_voice_status(
+    config: Any, *, stt: Any = None, tts: Any = None, include_realtime: bool = False,
+) -> dict[str, Any]:
+    """One readiness contract for the Live button, Settings and WebSocket start.
+
+    ``engine`` says which Live runs: ``realtime`` when a Live model is chosen
+    and its provider is ready (unless Settings force "Listening + voice"),
+    else ``pipeline`` (listening -> chat -> voice). The pipeline WebSocket and
+    the CLI only run the pipeline and keep ``include_realtime`` off."""
     from navin.audio.transcription import resolve_transcription_config
 
     stt = stt if stt is not None else resolve_transcription_config(config)
@@ -209,9 +221,24 @@ def live_voice_status(config: Any, *, stt: Any = None, tts: Any = None) -> dict[
         reason = "plan_required"
     else:
         reason = None
+    engine = "pipeline"
+    realtime: dict[str, Any] | None = None
+    if include_realtime and reason != "voice_disabled":
+        from navin.live.realtime import resolve_realtime_target
+
+        target = resolve_realtime_target(config)
+        if target is not None:
+            engine = "realtime"
+            realtime = {"provider": target.provider, "model": target.model}
+            # The realtime model listens and speaks itself: listening and
+            # voice models are only its spare.
+            reason = None
     return {
         "ready": reason is None,
         "reason": reason,
+        "engine": engine,
+        "realtime": realtime,
+        "pipeline_ready": not missing and allowed,
         "missing": missing,
         "mode": "navin" if "navin" in {stt.provider, tts.provider} else "byok",
         "settings_section": "voice",

@@ -207,6 +207,67 @@ def _dependents_depth(tasks: list[dict[str, Any]]) -> dict[str, int]:
     return {task_id: len(collect(task_id, frozenset())) for task_id in waiters}
 
 
+# A plan filed in one create call, or in several calls of one request, has
+# creation times close together; a card filed in another request is farther
+# apart. Gaps up to this many seconds chain tasks into one filing.
+_SAME_FILING_SECONDS = 600
+
+
+def _created_ts(task: dict[str, Any]) -> float | None:
+    from datetime import datetime
+
+    raw = task.get("created_at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def plan_members(tasks: list[dict[str, Any]], task_id: str) -> set[str]:
+    """The plan a task belongs to: the tasks filed with it, plus everything
+    linked to them through depends_on, in either direction.
+
+    Used to keep "close and claim the next" on the work in hand instead of
+    jumping to an unrelated card that happens to rank first on the board.
+    """
+    by_id = {task["id"]: task for task in tasks if task.get("id")}
+    if task_id not in by_id:
+        return {task_id}
+    neighbours: dict[str, set[str]] = {tid: set() for tid in by_id}
+    for task in by_id.values():
+        for dep in task.get("depends_on") or []:
+            if dep in by_id:
+                neighbours[task["id"]].add(dep)
+                neighbours[dep].add(task["id"])
+    seeds = {task_id}
+    stamp = _created_ts(by_id[task_id])
+    if stamp is not None:
+        timeline = sorted(
+            (ts, tid) for tid, task in by_id.items() if (ts := _created_ts(task)) is not None
+        )
+        at = next(i for i, (_, tid) in enumerate(timeline) if tid == task_id)
+        low = high = at
+        while low > 0 and timeline[low][0] - timeline[low - 1][0] <= _SAME_FILING_SECONDS:
+            low -= 1
+        while (
+            high + 1 < len(timeline)
+            and timeline[high + 1][0] - timeline[high][0] <= _SAME_FILING_SECONDS
+        ):
+            high += 1
+        seeds.update(tid for _, tid in timeline[low:high + 1])
+    members: set[str] = set()
+    stack = list(seeds)
+    while stack:
+        tid = stack.pop()
+        if tid in members:
+            continue
+        members.add(tid)
+        stack.extend(neighbours.get(tid, ()))
+    return members
+
+
 def plan_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     """Derived planning view of the board.
 
@@ -340,6 +401,27 @@ def plan_quality(
     }
 
 
+def mission_step_ids(mission: dict[str, Any] | None) -> set[str]:
+    if not isinstance(mission, dict):
+        return set()
+    return {
+        str(step.get("id"))
+        for step in mission.get("steps") or []
+        if isinstance(step, dict) and step.get("id")
+    }
+
+
+def mission_concerns(mission: dict[str, Any] | None, focus_ids: list[str]) -> bool:
+    """True when this conversation worked on at least one step of the mission.
+
+    A ledger that lists no steps cannot be attributed, so it is kept.
+    """
+    steps = mission_step_ids(mission)
+    if not steps:
+        return isinstance(mission, dict)
+    return bool(steps & {str(i) for i in focus_ids})
+
+
 def session_plan(
     tasks: list[dict[str, Any]],
     focus_ids: list[str],
@@ -364,6 +446,10 @@ def session_plan(
     items = [by_id[task_id] for task_id in focus_ids if task_id in by_id]
     if not items:
         return None
+    # The ledger is project-wide. A chat that only touched its own tasks must
+    # not be titled with another chat's mission goal.
+    if not mission_concerns(mission, focus_ids):
+        mission = None
 
     # Over the whole board, not just the focused subset: a task can depend on work
     # filed in an earlier session, and judging that against the subset alone would

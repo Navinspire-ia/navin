@@ -49,9 +49,9 @@ const MemoizedMarkdownRenderer = memo(function MemoizedMarkdownRenderer({
   );
 });
 
-const SHORT_STREAM_COMMIT_MS = 80;
-const MEDIUM_STREAM_COMMIT_MS = 140;
-const LONG_STREAM_COMMIT_MS = 220;
+const SHORT_STREAM_COMMIT_MS = 32;
+const MEDIUM_STREAM_COMMIT_MS = 56;
+const LONG_STREAM_COMMIT_MS = 90;
 const STREAMING_HIGHLIGHT_CHAR_LIMIT = 16_000;
 
 class MarkdownRendererBoundary extends Component<
@@ -95,6 +95,7 @@ export function MarkdownText({
 
   const plainFallback = (
     <div
+      dir="auto"
       className={cn(
         "whitespace-pre-wrap break-words leading-relaxed text-foreground/92",
         className,

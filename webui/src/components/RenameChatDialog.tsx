@@ -56,7 +56,7 @@ export function RenameChatDialog({
             onConfirm(trimmed);
           }}
         >
-          <DialogHeader className="text-left">
+          <DialogHeader className="text-start">
             <DialogTitle>{dialogTitle ?? t("chat.renameTitle")}</DialogTitle>
             <DialogDescription>
               {description ?? t("chat.renameDescription")}
@@ -69,7 +69,7 @@ export function RenameChatDialog({
             autoFocus
             maxLength={160}
           />
-          <DialogFooter className="gap-2 sm:space-x-0">
+          <DialogFooter className="gap-2 sm:space-x-0 rtl:space-x-reverse">
             <Button type="button" variant="outline" onClick={onCancel}>
               {t("deleteConfirm.cancel")}
             </Button>

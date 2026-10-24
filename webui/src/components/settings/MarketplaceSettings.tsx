@@ -237,7 +237,7 @@ export function MarketplaceSettings({
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-medium text-foreground">
                     {skill.name}
-                    <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+                    <span className="ms-2 text-[11px] font-normal text-muted-foreground">
                       v{skill.latestVersion}
                     </span>
                   </p>
@@ -253,9 +253,9 @@ export function MarketplaceSettings({
                   onClick={() => void handleInstall(skill)}
                 >
                   {busy ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                    <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    <Download className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   )}
                   {t("settings.marketplace.install", { defaultValue: "Install" })}
                 </Button>

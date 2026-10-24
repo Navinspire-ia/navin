@@ -112,10 +112,10 @@ export function SpreadsheetPreview({
             {t("filePreview.sheetEmpty", { defaultValue: "This sheet is empty." })}
           </p>
         ) : (
-          <table className="w-max min-w-full border-collapse text-left text-xs">
+          <table className="w-max min-w-full border-collapse text-start text-xs">
             <thead className="sticky top-0 z-[1] bg-muted/90 backdrop-blur">
               <tr>
-                <th className={cn("border-b border-r border-border/60 text-right font-normal text-muted-foreground/70", cellPad)}>
+                <th className={cn("border-b border-e border-border/60 text-end font-normal text-muted-foreground/70", cellPad)}>
                   {"\u00a0"}
                 </th>
                 {Array.from({ length: width }, (_, index) => (
@@ -133,7 +133,7 @@ export function SpreadsheetPreview({
                 const lineNo = rowIndex + (headerLooksNamed ? 2 : 1);
                 return (
                   <tr key={`r-${lineNo}`} className={cn(rowIndex % 2 === 1 && "bg-muted/20")}>
-                    <td className={cn("border-b border-r border-border/30 text-right font-mono text-[10px] text-muted-foreground/60", cellPad)}>
+                    <td className={cn("border-b border-e border-border/30 text-end font-mono text-[10px] text-muted-foreground/60", cellPad)}>
                       {lineNo}
                     </td>
                     {Array.from({ length: width }, (_, cellIndex) => {
@@ -144,7 +144,7 @@ export function SpreadsheetPreview({
                           key={`c-${lineNo}-${cellIndex}`}
                           className={cn(
                             "max-w-[28rem] truncate border-b border-border/30 text-muted-foreground",
-                            numeric && "text-right tabular-nums",
+                            numeric && "text-end tabular-nums",
                             cellPad,
                           )}
                           title={value.length > 40 ? value : undefined}

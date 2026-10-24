@@ -150,8 +150,12 @@ def _prepare_desktop_launch() -> bool:
     Returns ``True`` when an existing instance was opened and no new gateway
     should be started.
     """
+    from navin.instance import is_own_navin, ports_for_this_navin
+
     webui_port, gateway_port, secret = _desktop_config()
-    if _health_ready(webui_port):
+    # Only this installation is reopened: another Navin answering there (a WSL
+    # one shares Windows' localhost) would get this install's secret and fail.
+    if _health_ready(webui_port) and is_own_navin("127.0.0.1", webui_port) is not False:
         from navin.cli.commands import _open_webui_browser
 
         url = f"http://127.0.0.1:{webui_port}/"
@@ -160,9 +164,11 @@ def _prepare_desktop_launch() -> bool:
         _open_webui_browser(url, wait=False)
         return True
 
+    # Held by another Navin or program: the next free pair (webui saves it).
+    webui_port, gateway_port, _moved = ports_for_this_navin(webui_port, gateway_port)
     if not _port_is_free(webui_port) or not _port_is_free(gateway_port):
         _report_desktop_failure(
-            "Navin is already running, or port 8766 / 18791 is in use. "
+            "Navin is already running, or another program is keeping it from starting. "
             "Close the other copy, then open the app again."
         )
         return True

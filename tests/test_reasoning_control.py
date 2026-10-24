@@ -131,8 +131,13 @@ class OffShapesTest(unittest.TestCase):
 
     def test_openai_vocabulary_walks_none_minimal_low(self) -> None:
         self.assertEqual(
-            [s["reasoning_effort"] for s in off_shapes("gpt-5", base_url="https://api.openai.com/v1")],
+            [s["reasoning_effort"] for s in off_shapes("my-custom-model", base_url="https://api.openai.com/v1")],
             ["none", "minimal", "low"],
+        )
+        # Documented OpenAI ladders skip the floors the model refuses.
+        self.assertEqual(
+            [s["reasoning_effort"] for s in off_shapes("gpt-5", base_url="https://api.openai.com/v1")],
+            ["minimal", "low"],
         )
 
     def test_responses_api_puts_it_under_reasoning(self) -> None:
@@ -402,8 +407,10 @@ class ResponsesApiSaysOffTest(unittest.TestCase):
             "Error code: 400 - Invalid value: 'none'. Supported values are: "
             "'minimal', 'low', 'medium', and 'high'."
         )
-        self.assertTrue(provider._register_reasoning_rejection("gpt-5.1", exc, "none"))
-        body = provider._build_responses_body(MESSAGES, None, "gpt-5.1", 4096, 0.2, "none", None)
+        # A model the documented ladders do not know (GPT-5.1 itself takes
+        # "none" and has no "minimal", so its floors skip that step).
+        self.assertTrue(provider._register_reasoning_rejection("gpt-7-preview", exc, "none"))
+        body = provider._build_responses_body(MESSAGES, None, "gpt-7-preview", 4096, 0.2, "none", None)
         self.assertEqual(body.get("reasoning"), {"effort": "minimal"})
 
 
@@ -427,7 +434,13 @@ class AnthropicSaysOffTest(unittest.TestCase):
 
     def test_high_still_turns_thinking_on(self) -> None:
         kwargs = self._kwargs("claude-sonnet-4-6", "high")
-        self.assertEqual(kwargs.get("thinking"), {"type": "adaptive"})
+        self.assertEqual(kwargs.get("thinking"), {"type": "adaptive", "display": "summarized"})
+
+    def test_every_effort_above_low_streams_a_thinking_summary(self) -> None:
+        for effort in ("medium", "high", "xhigh", "max", "adaptive"):
+            with self.subTest(effort=effort):
+                thinking = self._kwargs("claude-opus-4-7", effort).get("thinking")
+                self.assertEqual(thinking, {"type": "adaptive", "display": "summarized"})
 
 
 class BedrockSaysOffTest(unittest.TestCase):
@@ -453,14 +466,40 @@ class BedrockSaysOffTest(unittest.TestCase):
         self.assertEqual(legacy["inferenceConfig"]["temperature"], 1.0)
 
         adaptive = self._kwargs("us.anthropic.claude-sonnet-4-6-v1:0", "high")
-        self.assertEqual(adaptive["additionalModelRequestFields"]["thinking"], {"type": "adaptive"})
+        self.assertEqual(
+            adaptive["additionalModelRequestFields"]["thinking"],
+            {"type": "adaptive", "display": "summarized"},
+        )
 
     def test_opus_4_7_keeps_its_adaptive_effort_shape(self) -> None:
+        # thinking.adaptive.effort is refused ("Extra inputs are not
+        # permitted", measured on Bedrock 2026-10-07): effort is output_config.
         kwargs = self._kwargs("us.anthropic.claude-opus-4-7-v1:0", "high")
+        fields = kwargs["additionalModelRequestFields"]
+        self.assertEqual(fields["thinking"], {"type": "adaptive", "display": "summarized"})
+        self.assertEqual(fields["output_config"], {"effort": "high"})
+
+    def test_each_claude_generation_turns_thinking_off_its_own_way(self) -> None:
+        def off(model):
+            fields = self._kwargs(model, "none")["additionalModelRequestFields"]
+            return fields["thinking"], fields.get("output_config")
+
+        self.assertEqual(off("eu.anthropic.claude-sonnet-5-5"), ({"type": "between_tools"}, None))
         self.assertEqual(
-            kwargs["additionalModelRequestFields"]["thinking"],
-            {"type": "adaptive", "effort": "high"},
+            off("eu.anthropic.claude-opus-5-5"), ({"type": "adaptive"}, {"effort": "low"})
         )
+        self.assertEqual(off("eu.anthropic.claude-sonnet-5"), ({"type": "disabled"}, None))
+
+    def test_non_claude_bedrock_families_get_their_own_knob(self) -> None:
+        gpt = self._kwargs("global.openai.gpt-6-sol", "minimal")
+        self.assertEqual(gpt["additionalModelRequestFields"], {"reasoning": {"effort": "none"}})
+        self.assertNotIn("temperature", gpt["inferenceConfig"])
+        grok = self._kwargs("global.xai.grok-4.7", "high")
+        self.assertEqual(grok["additionalModelRequestFields"], {"reasoning_effort": "high"})
+        self.assertNotIn("temperature", grok["inferenceConfig"])
+        glm = self._kwargs("zai.glm-4.7-flash", "none")
+        self.assertEqual(glm["additionalModelRequestFields"], {"thinking": {"type": "disabled"}})
+        self.assertNotIn("additionalModelRequestFields", self._kwargs("minimax.minimax-m2.5", "high"))
 
     def test_old_claude_and_no_effort_send_nothing(self) -> None:
         self.assertNotIn(
@@ -475,3 +514,14 @@ class BedrockSaysOffTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_refused_thinking_signature_is_not_an_effort_rejection() -> None:
+    from navin.providers.reasoning_control import classify_rejection
+
+    # Seen on test-02: Bedrock refused a replayed block; stepping the effort
+    # down would have silently stopped Claude from reasoning.
+    assert classify_rejection(
+        "BedrockException - messages.3.content.6: Invalid `signature` in `thinking` "
+        "block. The block is bound to a different conversation"
+    ) is None

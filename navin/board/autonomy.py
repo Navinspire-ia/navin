@@ -40,6 +40,7 @@ from typing import Any
 
 from loguru import logger
 
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 AUTONOMY_SCHEMA_VERSION = 1
@@ -322,14 +323,25 @@ def issues_repo(project_path: Path | str) -> str | None:
 
 
 def _git(root: Path, *args: str) -> tuple[int, str, str]:
+    extra: dict[str, Any] = {}
+    from navin.utils import git_credentials
+
+    if git_credentials.is_network_command(args):
+        # The auto-PR push runs with nobody watching: no credential prompt,
+        # and the Settings > Git & GitHub token for HTTPS remotes.
+        try:
+            extra["env"] = git_credentials.git_env_for_repo(root)
+        except Exception:  # noqa: BLE001 - still prompt-free without a token
+            extra["env"] = git_credentials.apply_noninteractive(dict(os.environ))
     try:
         completed = subprocess.run(  # noqa: S603
-            ["git", "-C", str(root), *args],
+            [*(git_argv(root) or ["git", "-C", str(root)]), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_TIMEOUT_S,
+            **extra,
             **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -469,7 +481,10 @@ def runtime_lines(project_path: Path | str) -> list[str]:
             "Auto-branch is OFF: work claimed tasks on the branch the user is "
             "already on, and never create or switch branches without asking."
         )
-    if effective["open_pr_on_done"]:
+    # Without auto-branch a task has no branch of its own and the board opens
+    # no pull request for it (tools/board.py): telling the agent to push and
+    # wait for one only got the user's own working branch pushed.
+    if effective["open_pr_on_done"] and effective["auto_branch"]:
         lines.append(
             "When a task reaches done: commit, push its branch and let the "
             "board open the pull request (merge request on GitLab) through "

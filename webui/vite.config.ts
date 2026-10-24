@@ -824,6 +824,8 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         "/webui": { target, changeOrigin: true },
+        // Live realtime engine: a WebSocket under /api (bridged by the gateway).
+        "/api/live/realtime": { target, changeOrigin: true, ws: true },
         "/api": { target, changeOrigin: true },
         "/remotive-api": {
           target: "https://remotive.com",

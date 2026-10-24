@@ -105,3 +105,13 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "scratch_dirs_open: keep the OS temp dir open to file tools (see _scratch_dirs_closed)",
     )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_fallback_refusals():
+    """A fallback one test saw refused must not be skipped in the next test."""
+    from navin.providers import fallback_provider
+
+    fallback_provider._REFUSED_UNTIL.clear()
+    yield
+    fallback_provider._REFUSED_UNTIL.clear()

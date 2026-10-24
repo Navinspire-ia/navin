@@ -102,6 +102,7 @@ _CATALOG_SYNC_WAIT_S = 2.5
 _CATALOG_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-catalog")
 _MCP_VALUES_HEADER = "X-Navin-MCP-Values"
 _MCP_VALUES_HEADER_MAX_BYTES = 64 * 1024
+_COLLAB_VALUES_MAX_BYTES = 256 * 1024
 _CHANNEL_VALUES_HEADER = "X-Navin-Channel-Values"
 _CHANNEL_VALUES_HEADER_MAX_BYTES = 64 * 1024
 _API_SERVICE_VALUES_HEADER = "X-Navin-API-Service-Values"
@@ -190,6 +191,12 @@ class WebUISettingsRouter:
             return self._handle_settings_model_configuration_delete(request)
         if path == "/api/settings/model-routes/update":
             return self._handle_settings_model_route_update(request)
+        if path == "/api/settings/collab":
+            return await self._handle_settings_collab(request, update=False)
+        if path == "/api/settings/collab/update":
+            return await self._handle_settings_collab(request, update=True)
+        if path == "/api/settings/collab/test-email":
+            return await self._handle_settings_collab_test_email(request)
         if path == "/api/settings/provider/update":
             return self._handle_settings_provider_update(request)
         if path == "/api/settings/provider/test":
@@ -530,6 +537,48 @@ class WebUISettingsRouter:
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
+
+    async def _handle_settings_collab(self, request: WsRequest, *, update: bool) -> Response:
+        """Settings > Team. The team travels as chunked base64 headers (no HTTP body)."""
+        from navin.webui.collab_api import collab_payload, update_collab
+
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            if not update:
+                return self._json_response(await asyncio.to_thread(collab_payload))
+            from navin.webui.file_preview import WebUIFilePreviewError, file_body_from_headers
+
+            raw_enabled = (_query_first(self._query(request), "enabled") or "").strip().lower()
+            if raw_enabled:
+                # The on/off switch alone (chat menu), no team payload.
+                enabled = raw_enabled in {"1", "true", "yes", "on"}
+                return self._json_response(await asyncio.to_thread(update_collab, {"enabled": enabled}))
+            try:
+                raw = file_body_from_headers(request.headers) or "{}"
+            except WebUIFilePreviewError as exc:
+                raise WebUISettingsError("invalid team settings") from exc
+            if len(raw.encode("utf-8")) > _COLLAB_VALUES_MAX_BYTES:
+                raise WebUISettingsError("Team settings are too large")
+            try:
+                values = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise WebUISettingsError("invalid team settings") from exc
+            if not isinstance(values, dict):
+                raise WebUISettingsError("invalid team settings")
+            return self._json_response(await asyncio.to_thread(update_collab, values))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+
+    async def _handle_settings_collab_test_email(self, request: WsRequest) -> Response:
+        from navin.webui.collab_api import send_test_email
+
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            return self._json_response(await asyncio.to_thread(send_test_email))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
 
     def _handle_settings_provider_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):

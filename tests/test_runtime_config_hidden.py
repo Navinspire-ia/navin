@@ -69,6 +69,43 @@ class RuntimeConfigHiddenTest(unittest.TestCase):
         self.assertNotIn("config.json", names)
         self.assertNotIn(".config-key", names)
 
+    def test_plain_names_are_answered_without_resolving(self) -> None:
+        """resolve() is a 9P round trip per entry on a \\\\wsl.localhost project."""
+        from navin.config import secrets
+
+        target = self.root / "readme.txt"
+        with patch("navin.config.loader.get_config_path", return_value=self.config):
+            secrets.is_runtime_secret_path(target)  # warm the config resolution
+            with patch.object(Path, "resolve", autospec=True, side_effect=AssertionError("resolved")):
+                self.assertFalse(secrets.is_runtime_secret_path(target))
+                self.assertFalse(secrets.is_runtime_secret_path(self.root / "missing.py"))
+
+    def test_every_spelling_of_the_secret_names_takes_the_full_check(self) -> None:
+        from navin.config.secrets import runtime_secret_name_suspect
+
+        with patch("navin.config.loader.get_config_path", return_value=self.config):
+            for name in ("config.json", "CONFIG.JSON", "config.json. ", ".config-key", "CONFIG~1.JSO", "config.json::$DATA", ".."):
+                self.assertTrue(runtime_secret_name_suspect(name), name)
+            self.assertFalse(runtime_secret_name_suspect("readme.txt"))
+
+    def test_a_link_with_an_innocent_name_is_still_caught(self) -> None:
+        import os
+
+        from navin.config.secrets import is_runtime_secret_entry, is_runtime_secret_path
+
+        link = self.root / "notes.txt"
+        try:
+            link.symlink_to(self.config)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        with patch("navin.config.loader.get_config_path", return_value=self.config):
+            self.assertTrue(is_runtime_secret_path(link))
+            entries = {entry.name: entry for entry in os.scandir(self.root)}
+            self.assertTrue(is_runtime_secret_entry(entries["notes.txt"]))
+            self.assertFalse(is_runtime_secret_entry(entries["readme.txt"]))
+            payload = file_tree_payload(str(self.root), scope=self.scope)
+        self.assertNotIn("notes.txt", {entry["name"] for entry in payload["entries"]})
+
     def test_read_file_refuses_live_config(self) -> None:
         tool = ReadFileTool(
             workspace=self.root,

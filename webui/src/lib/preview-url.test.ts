@@ -29,8 +29,16 @@ describe("isNavinSelfPreviewUrlSync", () => {
 
   it("does not treat another loopback port as Navin", () => {
     stubLocation("http://127.0.0.1:5173/");
-    expect(isNavinSelfPreviewUrlSync("http://127.0.0.1:5174")).toBe(false);
+    expect(isNavinSelfPreviewUrlSync("http://127.0.0.1:5180")).toBe(false);
     expect(isNavinSelfPreviewUrlSync("http://127.0.0.1:3000")).toBe(false);
+  });
+
+  it("refuses Navin's reserved ports from any page, even the desktop one", () => {
+    stubLocation("http://127.0.0.1:8766/#/code");
+    for (const port of ["5173", "5174", "5175", "5176", "8767", "8768"]) {
+      expect(isNavinSelfPreviewUrlSync(`http://127.0.0.1:${port}`)).toBe(true);
+      expect(isNavinSelfPreviewUrlSync(`http://localhost:${port}/`)).toBe(true);
+    }
   });
 
   it("always rejects the gateway port", () => {
@@ -64,11 +72,11 @@ describe("osBrowserPreviewUrl", () => {
     stubLocation("http://127.0.0.1:8766/#/code");
     expect(
       osBrowserPreviewUrl({
-        browserUrl: "http://127.0.0.1:5176",
+        browserUrl: "http://127.0.0.1:5180",
         browserSrc: "http://127.0.0.1:18792/",
-        previewTargetPort: 5176,
+        previewTargetPort: 5180,
       }),
-    ).toBe("http://127.0.0.1:5176");
+    ).toBe("http://127.0.0.1:5180");
   });
 
   it("reconstructs from the preview port when the bar is empty", () => {
@@ -77,9 +85,9 @@ describe("osBrowserPreviewUrl", () => {
       osBrowserPreviewUrl({
         browserUrl: "",
         browserSrc: "http://127.0.0.1:18792/",
-        previewTargetPort: 5175,
+        previewTargetPort: 5181,
       }),
-    ).toBe("http://127.0.0.1:5175");
+    ).toBe("http://127.0.0.1:5181");
   });
 
   it("never returns the editor itself", () => {

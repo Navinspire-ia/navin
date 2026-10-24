@@ -303,7 +303,7 @@ export function DevGuardrailsSecurity({
                 onClick={onOpenSettings}
                 data-testid="dev-guardrails-restart-link"
               >
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <RotateCcw className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 {tx("dev.guardrails.restartFromSettings", "Restart from Settings")}
               </Button>
             ) : null}
@@ -317,7 +317,7 @@ export function DevGuardrailsSecurity({
               data-testid="dev-guardrails-web-safety-save"
             >
               {saving ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : null}
               {saving ? t("settings.actions.saving") : t("settings.actions.save")}
             </Button>

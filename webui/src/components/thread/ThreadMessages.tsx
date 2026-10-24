@@ -7,16 +7,15 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Archive, History, Loader2 } from "lucide-react";
+import { History } from "lucide-react";
 import { MessageBubble } from "@/components/MessageBubble";
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
-import { formatElapsed } from "@/components/thread/ParallelSubagentsPanel";
+import { InteractionEcho } from "@/components/thread/InteractionEcho";
 import {
   refusalOutdatedForSelection,
   type SelectedModelRoute,
@@ -42,7 +41,7 @@ interface ThreadMessagesProps {
   mcpPresets?: McpPresetInfo[];
   slashCommands?: SlashCommand[];
   forkBoundaryMessageCount?: number | null;
-  /** Latest automatic context compaction reported by the backend. */
+  /** Accepted for callers; context compaction is no longer shown in the thread. */
   contextCompaction?: ContextCompactionNotice | null;
   /** Latest restore point snapshotted by the backend (one per user turn). */
   checkpointNotice?: CheckpointNotice | null;
@@ -131,9 +130,11 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
   marginTop,
   userPromptId,
   hasBodyBelow,
+  afterActivity = false,
   isTurnStreaming,
   isLatestTurn,
   turnRunning,
+  turnHasTools,
   showCopyAction,
   superseded,
   nextAssistant,
@@ -152,9 +153,12 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
   marginTop: string;
   userPromptId?: string;
   hasBodyBelow: boolean;
+  /** The answer of a turn with tools: it sits under the journal's "Final result" title. */
+  afterActivity?: boolean;
   isTurnStreaming: boolean;
   isLatestTurn: boolean;
   turnRunning: boolean;
+  turnHasTools: boolean;
   showCopyAction: boolean;
   superseded: boolean;
   nextAssistant?: UIMessage;
@@ -185,6 +189,7 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
       data-user-prompt-id={userPromptId}
       data-message-id={unit.type === "message" ? unit.message.id : undefined}
       data-virtual-index={index}
+      data-agent-result={afterActivity || undefined}
     >
       {unit.type === "activity" ? (
         <AgentActivityCluster
@@ -192,6 +197,7 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
           isTurnStreaming={isTurnStreaming}
           isLatestTurn={isLatestTurn}
           turnRunning={turnRunning}
+          turnHasTools={turnHasTools}
           hasBodyBelow={hasBodyBelow}
           turnLatencyMs={unit.turnLatencyMs}
           startedAtMs={unit.startedAtMs}
@@ -201,6 +207,12 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
           onOpenFilePreview={onOpenFilePreview}
           liveTaskHint={isTurnStreaming ? liveTaskHint : messageTaskHint(nextAssistant)}
         />
+      ) : unit.message.interaction ? (
+        // A question and its answer already read as one "Asked ... -> answer"
+        // row in the activity journal; a second echo card repeated it.
+        unit.message.interaction.type === "approval" ? (
+          <InteractionEcho echo={unit.message.interaction} />
+        ) : null
       ) : (
         <MessageBubble
           message={unit.message}
@@ -209,8 +221,8 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
           mcpPresets={mcpPresets}
           slashCommands={slashCommands}
           onOpenFilePreview={onOpenFilePreview}
-          onForkFromHere={forkIndex !== undefined ? handleFork : undefined}
-          onRevertResubmit={userIndexForEdit !== undefined ? handleRevert : undefined}
+          onForkFromHere={onForkFromMessage && forkIndex !== undefined ? handleFork : undefined}
+          onRevertResubmit={onRevertResubmit && userIndexForEdit !== undefined ? handleRevert : undefined}
           superseded={superseded}
         />
       )}
@@ -229,7 +241,6 @@ export function ThreadMessages({
   mcpPresets = EMPTY_MCP_PRESETS,
   slashCommands = EMPTY_SLASH_COMMANDS,
   forkBoundaryMessageCount = null,
-  contextCompaction = null,
   checkpointNotice = null,
   pinnedBlock = null,
   pinnedBlockAfterMessageCount = null,
@@ -244,10 +255,6 @@ export function ThreadMessages({
   const forkBoundaryAfterUnitIndex = useMemo(
     () => unitIndexAfterMessageCount(units, forkBoundaryMessageCount),
     [forkBoundaryMessageCount, units],
-  );
-  const compactionAfterUnitIndex = useMemo(
-    () => unitIndexAfterMessageCount(units, contextCompaction?.afterMessageCount ?? null),
-    [contextCompaction, units],
   );
   const checkpointAfterUnitIndex = useMemo(
     () => unitIndexAfterMessageCount(units, checkpointNotice?.afterMessageCount ?? null),
@@ -273,6 +280,7 @@ export function ThreadMessages({
     [isStreaming, units],
   );
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
+  const toolTurnFlags = useMemo(() => turnHasToolFlags(units), [units]);
   const pinnedPromptIndex = useMemo(
     () => promptUnitIndex(units, revealPromptId),
     [revealPromptId, units],
@@ -330,9 +338,15 @@ export function ThreadMessages({
               marginTop={marginTop}
               userPromptId={userPromptId}
               hasBodyBelow={hasBodyBelow}
+              afterActivity={
+                unit.type === "message"
+                && unit.message.role === "assistant"
+                && prev?.type === "activity"
+              }
               isTurnStreaming={liveActivityClusterIndices.has(index)}
               isLatestTurn={index === latestActivityIndex}
               turnRunning={isStreaming && index > lastUserUnitIndex}
+              turnHasTools={toolTurnFlags[index] ?? false}
               showCopyAction={
                 unit.type === "message" && unit.message.role === "assistant"
                   ? copyFlags[index]
@@ -364,9 +378,6 @@ export function ThreadMessages({
             {index === forkBoundaryAfterUnitIndex ? (
               <ForkBoundaryDivider label={t("thread.forkedFromHistory")} />
             ) : null}
-            {contextCompaction && index === compactionAfterUnitIndex ? (
-              <ContextCompactionDivider notice={contextCompaction} />
-            ) : null}
             {checkpointNotice && index === checkpointAfterUnitIndex ? (
               <CheckpointDivider />
             ) : null}
@@ -376,9 +387,6 @@ export function ThreadMessages({
       })}
       {virtual.window && virtual.window.paddingBottom > 0 ? (
         <div aria-hidden style={{ height: virtual.window.paddingBottom }} data-testid="thread-virtual-pad-bottom" />
-      ) : null}
-      {contextCompaction && compactionAfterUnitIndex === null ? (
-        <ContextCompactionDivider notice={contextCompaction} />
       ) : null}
       {pinnedBlock && pinnedBlockAfterUnitIndex === null ? pinnedBlock : null}
       {awaitingFirstOutput ? (
@@ -395,16 +403,10 @@ export function ThreadMessages({
   );
 }
 
-/** Live status while the agent has accepted the turn but not emitted yet.
- *  First messages (and cold model starts) can sit quiet for a while - without
- *  an elapsed clock it looks frozen. */
-export function awaitingFirstOutputPhase(
-  elapsedMs: number,
-): "thinking" | "working" | "slow" {
-  if (elapsedMs < 15_000) return "thinking";
-  if (elapsedMs < 60_000) return "working";
-  return "slow";
-}
+/** Before the first output: the live status (label + clock) lives in the
+ *  composer, so the thread only shows a quiet placeholder, plus a hint when
+ *  the first tokens are unusually slow. */
+export const AWAITING_SLOW_HINT_MS = 60_000;
 
 function AwaitingFirstOutputIndicator({
   taskHint = "",
@@ -412,63 +414,32 @@ function AwaitingFirstOutputIndicator({
   taskHint?: string;
 }) {
   const { t } = useTranslation();
-  const startedAtRef = useRef(Date.now());
-  const [now, setNow] = useState(() => Date.now());
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => {
-    startedAtRef.current = Date.now();
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), AWAITING_SLOW_HINT_MS);
+    return () => window.clearTimeout(timer);
   }, []);
-
-  const elapsedMs = Math.max(0, now - startedAtRef.current);
-  const elapsed = formatElapsed(elapsedMs);
-  const phase = awaitingFirstOutputPhase(elapsedMs);
-
-  // Duration lives in ONE place. "Working · 42s" plus a second "42s"
-  // produced the double timer on the status line.
-  const label =
-    phase === "thinking"
-      ? t("thread.assistantThinking", { defaultValue: "Thinking…" })
-      : phase === "working"
-        ? t("thread.assistantWorkingFor", { defaultValue: "Working" })
-        : t("thread.assistantStillRunning", {
-            duration: elapsed,
-            defaultValue:
-              "Still running · {{duration}} - not stuck yet. Use Stop if you want to cancel.",
-          });
 
   return (
     <div className="mt-5" data-testid="assistant-awaiting-indicator">
       <div className="inline-flex max-w-full flex-col gap-1.5">
-        <span className="inline-flex items-center gap-2 text-[13.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary/70" aria-hidden />
-          <span className="min-w-0 animate-pulse">{label}</span>
-          {phase !== "slow" ? (
-            <span
-              className="shrink-0 tabular-nums text-[12px] text-muted-foreground/70"
-              aria-hidden
-            >
-              {elapsed}
-            </span>
-          ) : null}
-          <span className="inline-flex items-center gap-1" aria-hidden>
-            <PulseDot delay="0ms" />
-            <PulseDot delay="150ms" />
-            <PulseDot delay="300ms" />
-          </span>
+        <span className="inline-flex h-6 items-center gap-1.5 ps-0.5" aria-hidden>
+          <PulseDot delay="0ms" />
+          <PulseDot delay="150ms" />
+          <PulseDot delay="300ms" />
         </span>
         {taskHint ? (
           <span
-            className="pl-5 text-[11px] text-muted-foreground/55"
+            className="text-[13px] text-muted-foreground/60"
             data-testid="activity-task-model"
           >
             {taskHint}
           </span>
         ) : null}
-        {phase === "slow" ? (
-          <span className="text-[12px] text-muted-foreground/70">
+        {slow ? (
+          <span className="text-[14px] text-muted-foreground/75" data-testid="assistant-awaiting-slow">
             {t("thread.assistantAwaitingHint", {
               defaultValue:
                 "The model is still preparing the first tokens (cold start or a heavy first step).",
@@ -484,9 +455,38 @@ function PulseDot({ delay }: { delay: string }) {
   return (
     <span
       style={{ animationDelay: delay }}
-      className="inline-block h-1 w-1 animate-bounce rounded-full bg-muted-foreground/60"
+      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50"
     />
   );
+}
+
+/** Per unit: does the turn it belongs to run real tools (not only reasoning)? */
+export function turnHasToolFlags(units: DisplayUnit[]): boolean[] {
+  const flags = new Array<boolean>(units.length).fill(false);
+  let segmentStart = 0;
+  const closeSegment = (end: number) => {
+    let hasTools = false;
+    for (let i = segmentStart; i < end; i += 1) {
+      const unit = units[i];
+      if (unit.type === "activity" && unit.items.some((item) => item.type !== "reasoning")) {
+        hasTools = true;
+        break;
+      }
+    }
+    if (!hasTools) return;
+    for (let i = segmentStart; i < end; i += 1) {
+      if (units[i].type === "activity") flags[i] = true;
+    }
+  };
+  for (let i = 0; i < units.length; i += 1) {
+    const unit = units[i];
+    if (unit.type === "message" && unit.message.role === "user") {
+      closeSegment(i);
+      segmentStart = i + 1;
+    }
+  }
+  closeSegment(units.length);
+  return flags;
 }
 
 function unitIndexAfterMessageCount(
@@ -503,22 +503,16 @@ function unitIndexAfterMessageCount(
   return null;
 }
 
-function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
-  return String(tokens);
-}
-
 function CheckpointDivider() {
   const { t } = useTranslation();
   return (
     <div
-      className="my-4 flex items-center gap-3 text-[11px] text-muted-foreground/70"
+      className="my-4 flex items-center gap-3 text-[13px] text-muted-foreground/70"
       data-testid="thread-checkpoint-divider"
     >
       <span aria-hidden className="h-px flex-1 bg-border/60" />
       <span className="inline-flex shrink-0 items-center gap-1.5">
-        <History className="h-3 w-3" aria-hidden />
+        <History className="h-3.5 w-3.5" aria-hidden />
         <span>
           {t("thread.checkpointSaved", {
             defaultValue: "Restore point saved",
@@ -538,45 +532,9 @@ function CheckpointDivider() {
   );
 }
 
-function ContextCompactionDivider({ notice }: { notice: ContextCompactionNotice }) {
-  const { t } = useTranslation();
-  const label = notice.kind === "idle"
-    ? t("thread.contextCompactedIdle", {
-        defaultValue: "Older conversation summarized after inactivity",
-      })
-    : t("thread.contextCompacted", {
-        defaultValue: "Conversation summarized to stay within the context window",
-      });
-  const parts: string[] = [];
-  if (notice.messagesArchived > 0) {
-    parts.push(
-      t("thread.contextCompactedMessages", {
-        defaultValue: "{{count}} older messages archived",
-        count: notice.messagesArchived,
-      }),
-    );
-  }
-  if (typeof notice.tokensBefore === "number" && typeof notice.tokensAfter === "number") {
-    parts.push(`${formatTokenCount(notice.tokensBefore)} → ${formatTokenCount(notice.tokensAfter)} tokens`);
-  }
-  return (
-    <div className="my-5 flex items-center gap-3 text-[11px] text-muted-foreground/80">
-      <span aria-hidden className="h-px flex-1 bg-border/70" />
-      <span className="inline-flex shrink-0 items-center gap-1.5">
-        <Archive className="h-3 w-3" aria-hidden />
-        <span>
-          {label}
-          {parts.length > 0 ? ` (${parts.join(", ")})` : ""}
-        </span>
-      </span>
-      <span aria-hidden className="h-px flex-1 bg-border/70" />
-    </div>
-  );
-}
-
 function ForkBoundaryDivider({ label }: { label: string }) {
   return (
-    <div className="my-5 flex items-center gap-3 text-[11px] text-muted-foreground/80">
+    <div className="my-5 flex items-center gap-3 text-[13px] text-muted-foreground/80">
       <span aria-hidden className="h-px flex-1 bg-border/70" />
       <span className="shrink-0">{label}</span>
       <span aria-hidden className="h-px flex-1 bg-border/70" />

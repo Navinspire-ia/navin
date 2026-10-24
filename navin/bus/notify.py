@@ -13,6 +13,8 @@ which work gets done, so a full queue or a closed bus must not fail the caller.
 
 from __future__ import annotations
 
+import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 from navin.bus.outbound_events import NotificationEvent, outbound_message_for_event
@@ -62,6 +64,43 @@ def notify(
     )
 
 
+# Set while synchronous work runs in a worker thread on behalf of the event
+# loop (run_off_loop): outbound puts are handed back to that loop, because an
+# asyncio.Queue must only be touched from its own loop's thread.
+_LOOP_FOR_WORKERS: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
+    "navin_bus_loop", default=None,
+)
+
+
+def put_outbound(bus: Any, message: Any) -> None:
+    """``bus.outbound.put_nowait`` that is safe from a run_off_loop worker thread."""
+    loop = _LOOP_FOR_WORKERS.get()
+    if loop is not None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not loop:
+            def _put() -> None:
+                try:
+                    bus.outbound.put_nowait(message)
+                except Exception:
+                    pass
+
+            loop.call_soon_threadsafe(_put)
+            return
+    bus.outbound.put_nowait(message)
+
+
+async def run_off_loop(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Run blocking work in a thread; its bus notifications still reach the loop."""
+    token = _LOOP_FOR_WORKERS.set(asyncio.get_running_loop())
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    finally:
+        _LOOP_FOR_WORKERS.reset(token)
+
+
 def publish_notification(
     bus: Any,
     *,
@@ -84,7 +123,8 @@ def publish_notification(
     if not clean_title:
         return False
     try:
-        bus.outbound.put_nowait(
+        put_outbound(
+            bus,
             outbound_message_for_event(
                 channel="websocket",
                 chat_id=chat_id,

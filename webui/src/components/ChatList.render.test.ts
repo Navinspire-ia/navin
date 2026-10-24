@@ -6,7 +6,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import "@/i18n";
-import { ChatList, RunningDots } from "@/components/ChatList";
+import {
+  ChatList,
+  RunningDots,
+  hasDraggedFiles,
+  navinSessionFileFrom,
+  sessionActionEntries,
+} from "@/components/ChatList";
+import i18n from "@/i18n";
 import type { NavinClient } from "@/lib/navin-client";
 import type { ChatSummary } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
@@ -127,5 +134,70 @@ describe("ChatList running indicator", () => {
     expect(html).toContain("Import sessions");
     expect(html).toContain(">sessions<");
     expect(html).not.toContain("Open the project selector");
+  });
+});
+
+describe("ChatList session export and drop import", () => {
+  const t = i18n.getFixedT("en");
+  const base = {
+    t,
+    title: "Invoice details",
+    isPinned: false,
+    isArchived: false,
+    isUnread: false,
+    onTogglePin: noop,
+    onRequestRename: noop,
+    onToggleArchive: noop,
+    onRequestDelete: noop,
+  };
+
+  it("puts Export session right after Share in the chat menu", () => {
+    const onExportChat = () => {};
+    const entries = sessionActionEntries({ ...base, onShareChat: noop, onExportChat });
+    const ids = entries.map((entry) => entry.id);
+    expect(ids.indexOf("export")).toBe(ids.indexOf("share") + 1);
+    const exportEntry = entries.find((entry) => entry.id === "export");
+    expect(exportEntry?.label).toBe("Export session");
+    expect(exportEntry?.onSelect).toBe(onExportChat);
+  });
+
+  it("has no Export session entry when the host gives no handler", () => {
+    const ids = sessionActionEntries(base).map((entry) => entry.id);
+    expect(ids).not.toContain("export");
+  });
+
+  it("translates the entry in French and Arabic", () => {
+    const fr = sessionActionEntries({ ...base, t: i18n.getFixedT("fr"), onExportChat: noop });
+    const ar = sessionActionEntries({ ...base, t: i18n.getFixedT("ar"), onExportChat: noop });
+    expect(fr.find((entry) => entry.id === "export")?.label).toBe("Exporter la session");
+    expect(ar.find((entry) => entry.id === "export")?.label).toBe("\u062a\u0635\u062f\u064a\u0631 \u0627\u0644\u062c\u0644\u0633\u0629");
+  });
+
+  it("offers a new tab on the web and a new Navin window in the desktop app", () => {
+    const onOpenInNewTab = () => {};
+    const web = sessionActionEntries({ ...base, onOpenInNewTab });
+    const desktop = sessionActionEntries({ ...base, onOpenInNewTab, opensInWindow: true });
+    expect(web.find((entry) => entry.id === "tab")?.label).toBe("Open in new tab");
+    const windowEntry = desktop.find((entry) => entry.id === "tab");
+    expect(windowEntry?.label).toBe("Open in new window");
+    expect(windowEntry?.onSelect).toBe(onOpenInNewTab);
+    const fr = sessionActionEntries({
+      ...base,
+      t: i18n.getFixedT("fr"),
+      onOpenInNewTab,
+      opensInWindow: true,
+    });
+    expect(fr.find((entry) => entry.id === "tab")?.label).toBe("Ouvrir dans une nouvelle fen\u00eatre");
+  });
+
+  it("only treats OS file drags as a session drop and picks the .navin-session", () => {
+    expect(hasDraggedFiles({ types: ["Files"] })).toBe(true);
+    expect(hasDraggedFiles({ types: ["text/plain"] })).toBe(false);
+    expect(hasDraggedFiles(null)).toBe(false);
+    const note = new File(["x"], "notes.txt");
+    const bundle = new File(["x"], "Rapport.NAVIN-SESSION");
+    expect(navinSessionFileFrom([note, bundle])).toBe(bundle);
+    expect(navinSessionFileFrom([note])).toBeNull();
+    expect(navinSessionFileFrom(null)).toBeNull();
   });
 });

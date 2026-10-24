@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DefaultButton,
@@ -128,7 +129,7 @@ function FindingRow({ finding }: { finding: MarketingQAFinding }) {
 
 export function MarketingQA({ projectPath }: { projectPath?: string | null }) {
   const { token } = useClient();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const reducedMotion = Boolean(useReducedMotion());
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
@@ -448,7 +449,7 @@ export function MarketingQA({ projectPath }: { projectPath?: string | null }) {
                         {report.candidate.path}
                       </p>
                       <p className="mt-0.5 text-[10.5px] text-muted-foreground">
-                        {new Intl.DateTimeFormat(i18n.language, {
+                        {new Intl.DateTimeFormat(intlLocale(), {
                           dateStyle: "medium",
                           timeStyle: "short",
                         }).format(new Date(report.created_at))}

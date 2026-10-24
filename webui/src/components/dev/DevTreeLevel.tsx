@@ -90,7 +90,7 @@ export function DevTreeLevel({
     return (
       <p
         className="py-1 text-[11px] italic text-muted-foreground/70"
-        style={{ paddingLeft: `${26 + depth * 14}px` }}
+        style={{ paddingInlineStart: `${26 + depth * 14}px` }}
       >
         {emptyLabel}
       </p>
@@ -131,13 +131,13 @@ export function DevTreeLevel({
           return (
             <div key={entry.path}>
               <div
-                className="flex items-center gap-1.5 py-0.5 pr-2"
-                style={{ paddingLeft: `${8 + depth * 14}px` }}
+                className="flex items-center gap-1.5 py-0.5 pe-2"
+                style={{ paddingInlineStart: `${8 + depth * 14}px` }}
               >
                 {entry.type === "dir" ? (
-                  <FolderTypeIcon name={entry.name} className="ml-[18px]" />
+                  <FolderTypeIcon name={entry.name} className="ms-[18px]" />
                 ) : (
-                  <FileTypeIcon name={entry.name} className="ml-[18px]" />
+                  <FileTypeIcon name={entry.name} className="ms-[18px]" />
                 )}
                 <input
                   autoFocus
@@ -168,7 +168,7 @@ export function DevTreeLevel({
               {renameError ? (
                 <p
                   className="pb-1 text-[11px] text-destructive"
-                  style={{ paddingLeft: `${26 + depth * 14}px` }}
+                  style={{ paddingInlineStart: `${26 + depth * 14}px` }}
                 >
                   {renameError}
                 </p>
@@ -199,9 +199,9 @@ export function DevTreeLevel({
                   onClipboardKey(entry, key as "x" | "c" | "v");
                 }
               }}
-              style={{ paddingLeft: `${8 + depth * 14}px` }}
+              style={{ paddingInlineStart: `${8 + depth * 14}px` }}
               className={cn(
-                "flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[12.5px] leading-5 transition-colors",
+                "flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pe-2 text-start text-[12.5px] leading-5 transition-colors",
                 activePath === entry.path
                   ? "bg-primary/10 text-primary"
                   : "text-foreground/80 hover:bg-muted/60 hover:text-foreground",
@@ -213,12 +213,12 @@ export function DevTreeLevel({
                   {isOpen ? (
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    <ChevronRight className="rtl:-scale-x-100 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   )}
                   <FolderTypeIcon name={entry.name} open={isOpen} />
                 </>
               ) : (
-                <FileTypeIcon name={entry.name} className="ml-[18px]" />
+                <FileTypeIcon name={entry.name} className="ms-[18px]" />
               )}
               <span className={cn("truncate", nameClass)}>
                 {entry.name}
@@ -226,7 +226,7 @@ export function DevTreeLevel({
               {dirtyPaths.has(entry.path) ? (
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/90" aria-hidden />
               ) : null}
-              <span className="ml-auto flex shrink-0 items-center gap-1 pl-1">
+              <span className="ms-auto flex shrink-0 items-center gap-1 ps-1">
                 {severity && diag ? (
                   <span
                     className={cn(
@@ -274,7 +274,7 @@ export function DevTreeLevel({
                 event.stopPropagation();
                 onContextMenu(entry, event);
               }}
-              className="absolute right-1 top-1/2 -translate-y-1/2 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              className="absolute end-1 top-1/2 -translate-y-1/2 rounded bg-background/95 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               aria-label={`${menuLabel} - ${entry.name}`}
               title={menuLabel}
             >
@@ -287,7 +287,7 @@ export function DevTreeLevel({
                 !lookupTreeNode(nodes, entry.path, rootPath)?.entries.length) ? (
                 <div
                   className="flex items-center gap-1.5 py-1 text-[11px] text-muted-foreground"
-                  style={{ paddingLeft: `${26 + depth * 14}px` }}
+                  style={{ paddingInlineStart: `${26 + depth * 14}px` }}
                 >
                   <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 </div>

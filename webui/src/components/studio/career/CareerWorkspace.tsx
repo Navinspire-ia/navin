@@ -1,6 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
+import { phrase } from "@/i18n/phrases";
 import { DESK_PANEL_STYLES } from "../desk-panel";
 import { Children, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -1071,7 +1073,7 @@ export function CareerWorkspace({
   };
 
   const headerNavigation = <>
-            <DefaultButton text={lang === "fr" ? "Missions" : "Missions"} iconProps={{ iconName: "PageList" }} styles={HEADER_BUTTON_STYLES} onClick={() => openOffers()} data-testid="career-open-offers" />
+            <DefaultButton text={lang === "fr" ? "Missions" : phrase("Missions")} iconProps={{ iconName: "PageList" }} styles={HEADER_BUTTON_STYLES} onClick={() => openOffers()} data-testid="career-open-offers" />
             {showDesk && <PrimaryButton text={tx("search", "Search offers")} iconProps={{ iconName: "Search" }} disabled={Boolean(busy)} styles={HEADER_BUTTON_STYLES}
               data-testid="career-search" onClick={() => {
                 if (desk.profile.company_prospecting) {
@@ -1087,11 +1089,11 @@ export function CareerWorkspace({
               }} />}
             <DefaultButton text={tx("candidatePool", "Profils")} iconProps={{ iconName: "People" }} styles={HEADER_BUTTON_STYLES}
               onClick={() => { setError(""); setProspectPanel({ tab: "profiles", offer: "" }); }} data-testid="career-profiles" />
-            <DefaultButton text={lang === "fr" ? "Suivi" : "Tracking"} title={tx("companyTracking", "Suivi société")} iconProps={{ iconName: "ViewDashboard" }} styles={HEADER_BUTTON_STYLES}
+            <DefaultButton text={lang === "fr" ? "Suivi" : phrase("Tracking")} title={tx("companyTracking", "Suivi société")} iconProps={{ iconName: "ViewDashboard" }} styles={HEADER_BUTTON_STYLES}
               onClick={() => { setError(""); setProspectPanel({ tab: "dashboard", offer: "" }); }} data-testid="career-company-dashboard" />
             <DefaultButton text={tx("companyProspecting", "Société")} iconProps={{ iconName: "CityNext" }} styles={HEADER_BUTTON_STYLES}
               onClick={() => { setError(""); setProspectPanel({ tab: "criteria", offer: "" }); }} data-testid="career-company" />
-            <DefaultButton text={lang === "fr" ? "Horaires" : "Schedule"} iconProps={{ iconName: "Calendar" }} styles={HEADER_BUTTON_STYLES}
+            <DefaultButton text={lang === "fr" ? "Horaires" : phrase("Schedule")} iconProps={{ iconName: "Calendar" }} styles={HEADER_BUTTON_STYLES}
               onClick={() => { setScheduleMode(desk.loop?.enabled ? "edit" : "start"); setScheduleOpen(true); }} data-testid="career-schedule-open" />
             <DefaultButton text="Emails" iconProps={{ iconName: "Mail" }} styles={HEADER_BUTTON_STYLES}
               onClick={() => { setError(""); setMailSettingsOpen(true); }} data-testid="career-mail-open" />
@@ -1105,10 +1107,10 @@ export function CareerWorkspace({
       <div
         className={cn(
           "flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background",
-          chatOpen ? "pr-0" : "",
+          chatOpen ? "pe-0" : "",
         )}
         data-desk-scroll-host
-        style={{ paddingRight: NOTIFICATION_GUTTER, WebkitFontSmoothing: "antialiased" }}
+        style={{ paddingInlineEnd: NOTIFICATION_GUTTER, WebkitFontSmoothing: "antialiased" }}
       >
         <header ref={headerRef} data-testid="career-header" className="flex shrink-0 flex-nowrap items-center gap-1 px-2 py-3 sm:gap-2 sm:px-5">
           <div className="min-w-0 shrink-0" style={{ width: headerWidth < 520 ? 76 : undefined }}>
@@ -1124,7 +1126,7 @@ export function CareerWorkspace({
               if (pane === "pipeline" || pane === "interviews") setPane(id === "freelance" ? "pipeline" : "interviews");
               void run("profile", { track: id, engagement: id === "freelance" ? "freelance" : "permanent" });
             }} />
-          <div className="order-last ml-auto flex shrink-0 items-center" data-testid="career-quick-actions" style={{ gap: headerWidth < 600 ? 0 : 4 }}>
+          <div className="order-last ms-auto flex shrink-0 items-center" data-testid="career-quick-actions" style={{ gap: headerWidth < 600 ? 0 : 4 }}>
             {onToggleChat && <IconButton ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")} title={tx("chat", "Chat")} iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }} onClick={onToggleChat}
               checked={Boolean(chatOpen)} styles={quickIconStyles} data-testid="career-toggle-chat" />}
             <IconButton ariaLabel={desk.loop?.enabled ? tx("pause", "Pause") : tx("startLoop", "Start")} title={desk.loop?.enabled ? tx("pause", "Pause") : tx("startLoop", "Start")}
@@ -1135,12 +1137,12 @@ export function CareerWorkspace({
               }} />
             <IconButton ariaLabel={tx("refresh", "Refresh")} title={tx("refresh", "Refresh")} iconProps={{ iconName: "Refresh" }} disabled={Boolean(busy)} styles={quickIconStyles}
               onClick={() => void refreshDesk()} data-testid="career-refresh" />
-            <IconButton ariaLabel={lang === "fr" ? "Vider les offres" : "Clear offers"} title={lang === "fr" ? "Vider les offres" : "Clear offers"} iconProps={{ iconName: "Archive" }} disabled={Boolean(busy)} styles={quickIconStyles}
+            <IconButton ariaLabel={lang === "fr" ? "Vider les offres" : phrase("Clear offers")} title={lang === "fr" ? "Vider les offres" : phrase("Clear offers")} iconProps={{ iconName: "Archive" }} disabled={Boolean(busy)} styles={quickIconStyles}
               onClick={() => { setError(""); setResetOpen(true); }} data-testid="career-reset" />
           </div>
           <div className="flex min-w-0 shrink-0 flex-nowrap items-center gap-1.5" data-testid="career-navigation">
             {headerButtons.slice(0, visibleHeaderButtons)}
-            <IconButton ariaLabel={lang === "fr" ? "Menu Carrière" : "Career menu"} title={lang === "fr" ? "Plus" : "More"}
+            <IconButton ariaLabel={lang === "fr" ? "Menu Carrière" : phrase("Career menu")} title={lang === "fr" ? "Plus" : phrase("More")}
               iconProps={{ iconName: "More" }} styles={quickIconStyles} data-testid="career-menu"
               menuProps={{ items: [
                 ...headerButtons.slice(visibleHeaderButtons).map(button => ({
@@ -1158,7 +1160,7 @@ export function CareerWorkspace({
         </header>
         <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 20px 8px", flexShrink: 0 }}>
           <DefaultButton text="Extensions" iconProps={{ iconName: "Puzzle" }} styles={HEADER_BUTTON_STYLES}
-            title={lang === "fr" ? "Télécharger et installer pour Chrome, Edge ou Firefox" : "Download and install for Chrome, Edge or Firefox"}
+            title={lang === "fr" ? "Télécharger et installer pour Chrome, Edge ou Firefox" : phrase("Download and install for Chrome, Edge or Firefox")}
             onClick={() => setExtensionsOpen(true)} data-testid="career-extensions" />
         </div>
 
@@ -1379,8 +1381,8 @@ export function CareerWorkspace({
           </AnimatePresence>
         </div>
         {extensionsOpen && <Panel isOpen type={PanelType.large} styles={DESK_PANEL_STYLES}
-          headerText={lang === "fr" ? "Carrière · Extensions" : "Career · Extensions"}
-          closeButtonAriaLabel={lang === "fr" ? "Fermer" : "Close"} onDismiss={() => setExtensionsOpen(false)}>
+          headerText={lang === "fr" ? "Carrière · Extensions" : phrase("Career · Extensions")}
+          closeButtonAriaLabel={lang === "fr" ? "Fermer" : phrase("Close")} onDismiss={() => setExtensionsOpen(false)}>
           <BrowserExtensionPanel token={token || ""} />
         </Panel>}
         <TradingLoopSchedulePanel
@@ -1864,7 +1866,7 @@ function postedLabel(value: string | undefined, locale: string): string {
   const day = offerIsoDay(value);
   if (!day) return "";
   try {
-    return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${day}T12:00:00Z`));
+    return new Intl.DateTimeFormat(intlLocale(locale), { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${day}T12:00:00Z`));
   } catch {
     return day;
   }
@@ -1963,7 +1965,7 @@ function OfferCard({
             styles={{ root: { width: 32, height: 32 }, menuIcon: { display: "none" } }}
           />
         </div>
-        <button type="button" className="mt-2 block w-full text-left" onClick={() => onSelect(row.id)}>
+        <button type="button" className="mt-2 block w-full text-start" onClick={() => onSelect(row.id)}>
           <h3 className="text-balance text-lg font-semibold leading-snug hover:underline">{row.title}</h3>
         </button>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1974,7 +1976,7 @@ function OfferCard({
               {tag}
             </span>
           ))}
-          {posted ? <span className="ml-auto text-xs tabular-nums text-muted-foreground">{posted}</span> : null}
+          {posted ? <span className="ms-auto text-xs tabular-nums text-muted-foreground">{posted}</span> : null}
         </div>
         <div className="mt-3 flex gap-3">
           <div
@@ -2001,7 +2003,7 @@ function OfferCard({
           </button>
         </div>
       </div>
-      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-s md:border-t-0">
         <dl className="grid gap-3" data-testid="career-offer-facts">
           {side.map((fact) => (
             <div key={fact.id}>
@@ -2660,7 +2662,7 @@ function ApplicationsPane({
           <Surface key={view.app.id} className="p-5 sm:p-6">
             <button
               type="button"
-              className="w-full min-w-0 text-left"
+              className="w-full min-w-0 text-start"
               onClick={() => setOpenId(view.app.opportunity_id)}
               data-testid="career-application-row"
             >
@@ -3039,7 +3041,7 @@ function PipelinePane({
                 return (
                   <li key={row.id}>
                     <article className={cn(SURFACE, "p-4")}>
-                      <button type="button" className="w-full text-left" onClick={() => onOpen(row.id)}>
+                      <button type="button" className="w-full text-start" onClick={() => onOpen(row.id)}>
                         <div className="text-sm font-medium">{row.title}</div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {row.company} · <span className={scoreTone(row.match_score)}>{row.match_score ?? "-"}%</span>

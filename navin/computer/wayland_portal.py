@@ -15,8 +15,6 @@ later runs skip the dialog.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import json
 import shutil
 import subprocess
@@ -29,6 +27,7 @@ from typing import Any
 from loguru import logger
 
 from navin.computer.base import ComputerError, PermissionMissingError
+from navin.utils.proc import no_window_kwargs
 
 _HELPER = r"""
 import json, sys, threading, secrets

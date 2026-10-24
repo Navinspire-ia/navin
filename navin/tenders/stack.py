@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from navin.linkedin_mcp import (
+# The LinkedIn MCP constants are re-exported: tests and callers import them
+# from this module as the single Tenders stack entry point.
+from navin.linkedin_mcp import (  # noqa: F401
     LINKEDIN_MCP_COMMAND,
     LINKEDIN_MCP_CONFIRM,
     LINKEDIN_MCP_DOCS,

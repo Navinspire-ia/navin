@@ -1,0 +1,14 @@
+{
+  "name": "security-guidance",
+  "version": "1.0.0",
+  "description": "Security reminders when an edit adds a dangerous pattern (eval, pickle, shell=True, raw innerHTML, disabled TLS...), an opt-in AI review of the diff at end of turn and after each commit, and /security-review on demand.",
+  "category": "security",
+  "commands": ["security-review"],
+  "agents": ["code-reviewer"],
+  "skills": ["security-auditor"],
+  "steps": [
+    {"step": "warn on dangerous patterns in edited files (automatic)", "use": "skill:security-auditor"},
+    {"step": "review the pending changes or a commit range", "use": "/security-review"},
+    {"step": "split a large review by area", "use": "agent:code-reviewer"}
+  ]
+}

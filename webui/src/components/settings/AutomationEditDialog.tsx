@@ -274,7 +274,7 @@ export function AutomationEditDialog({
                 disabled={Boolean(validation) || saving}
                 className="rounded-full"
               >
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+                {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden /> : null}
                 {tx("loops.editor.save", "Save")}
               </Button>
             </DialogFooter>

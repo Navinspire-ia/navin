@@ -101,7 +101,7 @@ export function CrmProducts({
                     type="button"
                     onClick={() => onOpen(row.id)}
                     className={cn(
-                      "min-h-10 w-full cursor-pointer rounded-2xl border border-border/60 p-3 text-left hover:bg-muted/30",
+                      "min-h-10 w-full cursor-pointer rounded-2xl border border-border/60 p-3 text-start hover:bg-muted/30",
                       openId === row.id && "border-violet-400/70 bg-muted/30",
                     )}
                   >

@@ -125,7 +125,7 @@ function UserPastedBody({
         onClick={() => setOpen((current) => !current)}
         className={cn(
           "my-0.5 inline-flex max-w-full items-center rounded-md border border-border/60",
-          "bg-muted/70 px-2 py-0.5 text-left text-[12px] text-muted-foreground",
+          "bg-muted/70 px-2 py-0.5 text-start text-[14px] text-muted-foreground",
           "hover:bg-muted hover:text-foreground",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
@@ -139,7 +139,7 @@ function UserPastedBody({
       </button>
       {open ? (
         <div
-          className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-background/50 px-2 py-1.5 text-[12px] leading-relaxed"
+          className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-background/50 px-2 py-1.5 text-[14px] leading-relaxed"
           data-testid="pasted-content-body"
         >
           {renderText(rest)}
@@ -318,7 +318,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
       <div
         className={cn(
-          "group ml-auto flex max-w-[min(85%,36rem)] flex-col items-end gap-1.5",
+          "group ms-auto flex max-w-[min(85%,36rem)] flex-col items-end gap-1.5",
           baseAnim,
         )}
       >
@@ -333,7 +333,7 @@ export const MessageBubble = memo(function MessageBubble({
         ).map((mediaRef) => (
           <span
             key={mediaRef.id}
-            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/55 bg-muted/45 px-2 py-0.5 text-[11px] text-muted-foreground"
+            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/55 bg-muted/45 px-2 py-0.5 text-[13px] text-muted-foreground"
             data-testid="media-template-badge"
           >
             <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
@@ -363,7 +363,7 @@ export const MessageBubble = memo(function MessageBubble({
                   setEditing(false);
                   setDraft(visibleUserChatText(message.content));
                 }}
-                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:text-foreground"
+                className="rounded-md px-2 py-1 text-[14px] text-muted-foreground hover:text-foreground"
               >
                 {t("common.cancel", { defaultValue: "Cancel" })}
               </button>
@@ -371,7 +371,7 @@ export const MessageBubble = memo(function MessageBubble({
                 type="button"
                 onClick={submitEdit}
                 disabled={!draft.trim()}
-                className="rounded-md bg-foreground px-2.5 py-1 text-[12px] font-medium text-background disabled:opacity-50"
+                className="rounded-md bg-foreground px-2.5 py-1 text-[14px] font-medium text-background disabled:opacity-50"
               >
                 {t("thread.revert.submit", { defaultValue: "Submit" })}
               </button>
@@ -414,9 +414,10 @@ export const MessageBubble = memo(function MessageBubble({
               </TooltipProvider>
             ) : null}
             <p
+              dir="auto"
               className={cn(
                 "w-fit max-w-full min-w-0 rounded-[16px] bg-secondary/70 px-3.5 py-2",
-                "text-left text-[length:var(--chat-font-size)] leading-[var(--chat-line-height)]",
+                "text-start text-[length:var(--chat-font-size)] leading-[var(--chat-line-height)]",
                 "whitespace-pre-wrap [overflow-wrap:anywhere]",
               )}
             >
@@ -561,14 +562,14 @@ export const MessageBubble = memo(function MessageBubble({
                 ) : null}
                 {showLatencyFooter ? (
                   <span
-                    className="text-[11px] leading-none text-muted-foreground/70 tabular-nums"
+                    className="text-[13px] leading-none text-muted-foreground/70 tabular-nums"
                     title={t("message.turnLatencyTitle")}
                   >
                     {formatTurnLatency(latencyMs)}
                   </span>
                 ) : null}
                 {showLatencyFooter && phaseTimingEntries.length > 0 ? (
-                  <details className="group/phases text-[11px] leading-none text-muted-foreground/60">
+                  <details className="group/phases text-[13px] leading-none text-muted-foreground/60">
                     <summary
                       className={cn(
                         "cursor-pointer select-none list-none rounded px-1 py-0.5",
@@ -583,7 +584,7 @@ export const MessageBubble = memo(function MessageBubble({
                       {phaseTimingEntries.map(([phase, ms]) => (
                         <div key={phase} className="contents">
                           <dt className="text-muted-foreground/70">{phase}</dt>
-                          <dd className="text-right text-muted-foreground">
+                          <dd className="text-end text-muted-foreground">
                             {Math.round(ms)} ms
                           </dd>
                         </div>
@@ -606,7 +607,7 @@ function AutomationSourceBadge({ label, triggerLabel }: { label: string; trigger
       className={cn(
         "mb-2 inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-1",
         "border border-sky-500/15 bg-sky-500/[0.06]",
-        "text-[11px] font-medium leading-none text-sky-700",
+        "text-[13px] font-medium leading-none text-sky-700",
         "dark:border-sky-300/15 dark:bg-sky-300/[0.08] dark:text-sky-200/80",
       )}
       title={triggerLabel}
@@ -761,7 +762,7 @@ function UserImages({
         className={cn(
           "flex flex-wrap items-end gap-2",
           size === "large" && "gap-3",
-          align === "right" ? "ml-auto justify-end" : "mr-auto justify-start",
+          align === "right" ? "ms-auto justify-end" : "me-auto justify-start",
         )}
       >
         {images.map((img, i) => (
@@ -864,7 +865,7 @@ function UserImageCell({
           aria-label={image.name ? `${downloadLabel}: ${image.name}` : downloadLabel}
           data-testid="user-image-download"
           className={cn(
-            "absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full",
+            "absolute end-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full",
             "border border-border/60 bg-background/85 text-muted-foreground backdrop-blur-sm",
             "opacity-0 transition-opacity duration-150 motion-reduce:transition-none",
             "hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100",
@@ -886,7 +887,7 @@ function UserImageCell({
   return (
     <div className={tileClasses} title={image.name ?? undefined}>
       <div
-        className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-[11px] text-muted-foreground"
+        className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-[13px] text-muted-foreground"
         aria-label={placeholderLabel}
       >
         <ImageIcon className="h-4 w-4 flex-none" aria-hidden />
@@ -1017,7 +1018,7 @@ export function TraceGroup({ message, animClass }: TraceGroupProps) {
         <ChevronRight
           aria-hidden
           className={cn(
-            "ml-auto h-3.5 w-3.5 transition-transform duration-200",
+            "rtl:[&:not(.rotate-90)]:rotate-180 ms-auto h-3.5 w-3.5 transition-transform duration-200",
             open && "rotate-90",
           )}
         />
@@ -1025,14 +1026,14 @@ export function TraceGroup({ message, animClass }: TraceGroupProps) {
       {open && (
         <ul
           className={cn(
-            "mt-1 space-y-0.5 border-l border-muted-foreground/20 pl-3",
+            "mt-1 space-y-0.5 border-s border-muted-foreground/20 ps-3",
             "animate-in fade-in-0 slide-in-from-top-1 duration-200",
           )}
         >
           {lines.map((line, i) => (
             <li
               key={i}
-              className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-muted-foreground/90"
+              className="whitespace-pre-wrap break-words font-mono text-[13.5px] leading-relaxed text-muted-foreground/90"
             >
               {line}
             </li>

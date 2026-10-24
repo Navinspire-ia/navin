@@ -98,7 +98,7 @@ class Section:
 
 CONTEXT_WINDOWS: tuple[tuple[str, str], ...] = tuple(
     (v, f"{int(v):,}")
-    for v in ("65536", "131072", "200000", "262144", "400000", "1000000", "2000000")
+    for v in ("65536", "131072", "200000", "262144", "400000", "500000", "1000000")
 )
 ROUTE_ROLES: tuple[tuple[str, str], ...] = (
     ("deep", "Deep reasoning"),
@@ -237,7 +237,6 @@ def build_sections(
     data: dict[str, Any], *, project_root: Path, version: str, config_label: str, workspace: str
 ) -> tuple[Section, ...]:
     """Sections with their options resolved against the current config."""
-    providers = _provider_choices(data)
     media_providers = _provider_choices(data, auto_label="none (disabled)")
     try:
         from navin.agent.tools.web import SEARCH_PROVIDER_OPTIONS
@@ -314,16 +313,11 @@ def build_sections(
                     "auto: on as soon as the provider has a credential.",
                 ),
                 Field(
-                    "Image provider",
-                    ("tools", "imageGeneration", "provider"),
-                    "select",
-                    options=media_providers,
-                ),
-                Field(
                     "Image model",
                     ("tools", "imageGeneration", "model"),
-                    "text",
-                    placeholder="google/gemini-3.1-flash-image",
+                    "media_model",
+                    "Models of your connected providers, Navin included. Picking one sets its provider.",
+                    key="image",
                 ),
                 Field(
                     "Default aspect",
@@ -358,16 +352,11 @@ def build_sections(
                     "auto: on as soon as the provider has a credential.",
                 ),
                 Field(
-                    "Video provider",
-                    ("tools", "videoGeneration", "provider"),
-                    "select",
-                    options=media_providers,
-                ),
-                Field(
                     "Video model",
                     ("tools", "videoGeneration", "model"),
-                    "text",
-                    placeholder="google/veo-3.1-fast",
+                    "media_model",
+                    "Models of your connected providers, Navin included. Picking one sets its provider.",
+                    key="video",
                 ),
                 Field(
                     "Default aspect",
@@ -402,16 +391,11 @@ def build_sections(
                     "Transcribe audio messages.",
                 ),
                 Field(
-                    "Transcription provider",
-                    ("transcription", "provider"),
-                    "select",
-                    options=providers,
-                ),
-                Field(
-                    "Transcription model",
+                    "Listening model",
                     ("transcription", "model"),
-                    "text",
-                    placeholder="nvidia/parakeet-tdt-0.6b-v3",
+                    "media_model",
+                    "Speech to text: hears you (dictation, Live).",
+                    key="stt",
                 ),
                 Field(
                     "Transcription language",
@@ -441,15 +425,34 @@ def build_sections(
                     "tristate",
                     "auto: on when the provider supports it.",
                 ),
-                Field("TTS provider", ("voice", "ttsProvider"), "select", options=providers),
                 Field(
-                    "TTS model",
+                    "Voice model",
                     ("voice", "ttsModel"),
-                    "text",
-                    placeholder="x-ai/grok-voice-tts-1.0",
+                    "media_model",
+                    "Text to speech: answers you out loud.",
+                    key="tts",
                 ),
                 Field("Voice", ("voice", "voice"), "text", placeholder="eve"),
                 Field("Auto-speak replies", ("voice", "autoSpeak"), "toggle"),
+                Field(
+                    "Live engine",
+                    ("voice", "liveEngine"),
+                    "select",
+                    "Auto: the Live model when one is set, else listening + voice.",
+                    options=(
+                        ("auto", "Auto"),
+                        ("realtime", "Live model (voice to voice)"),
+                        ("pipeline", "Listening + voice"),
+                    ),
+                ),
+                Field(
+                    "Live model",
+                    ("voice", "liveRealtimeModel"),
+                    "media_model",
+                    "Voice-to-voice model: Nova Sonic (Navin plan), GPT Realtime or Gemini Live (your keys).",
+                    key="live",
+                ),
+                Field("Live voice", ("voice", "liveRealtimeVoice"), "text", placeholder="auto", nullable=True),
                 Field("Music generation", ("tools", "musicGeneration", "enabled"), "tristate"),
                 Field(
                     "Music provider",
@@ -1088,6 +1091,11 @@ class SettingsHub(ModalScreen[bool]):
             return "[$success]● on[/]" if value else "[dim]○ off[/dim]"
         if field.kind == "secret":
             return _mask(value)
+        if field.kind == "media_model":
+            from navin.tui.media_models import describe
+
+            shown = describe(self._data, field.key)
+            return escape(shown) if shown else "[dim]not set[/dim]"
         if field.kind == "select":
             label = next(
                 (lab for v, lab in field.options if v == ("" if value is None else str(value))),
@@ -1185,6 +1193,9 @@ class SettingsHub(ModalScreen[bool]):
         if field.kind == "select":
             self.run_worker(self._pick(field, index), exclusive=False)
             return
+        if field.kind == "media_model":
+            self.run_worker(self._pick_media_model(field, index), exclusive=False)
+            return
         # text / secret / number / list: inline input
         self._editing = field
         inp = self.query_one("#value", Input)
@@ -1206,6 +1217,35 @@ class SettingsHub(ModalScreen[bool]):
         if chosen is None:
             return
         self._write(field, None if chosen == "" and field.nullable else chosen)
+        self._refresh_row(index)
+        self.query_one("#rows", OptionList).focus()
+
+    async def _pick_media_model(self, field: Field, index: int) -> None:
+        """The models of the connected providers for this use, like the desktop."""
+        from navin.tui.media_models import NONE_ID, USE_PATHS, apply_media_model, media_model_items
+
+        self._status(f"{escape(field.label)}: loading the models of your providers...")
+        items = await asyncio.to_thread(media_model_items, field.key)
+        if field.key == "live":
+            items = [PickItem(NONE_ID, "None", "Live uses listening + voice"), *items]
+        if not items:
+            self._status(
+                f"[$warning]{escape(field.label)}: no connected provider offers a model for this use. "
+                "Connect one in Providers.[/]"
+            )
+            return
+        self._status("")
+        provider_path, model_path = USE_PATHS[field.key]
+        provider = _get(self._data, provider_path) or ""
+        model = _get(self._data, model_path) or ""
+        current = f"{provider}::{model}".replace("gemini::models/", "gemini::") if model else ""
+        chosen = await self.app.push_screen_wait(PickerScreen(field.label, items, current=current))
+        if chosen is None:
+            return
+        apply_media_model(self._data, field.key, chosen, _set)
+        self._dirty = True
+        self._discard_armed = False
+        self._status(f"{escape(field.label)} changed  [dim]ctrl+s to save[/dim]")
         self._refresh_row(index)
         self.query_one("#rows", OptionList).focus()
 
@@ -1913,20 +1953,29 @@ class SettingsHub(ModalScreen[bool]):
         options = _route_options(self._data)
         fields = [
             FormField(
-                role, label, kind="select", options=options, value=str(routes.get(role) or "")
-            )
-            for role, label in ROUTE_ROLES
+                "model_routing_enabled",
+                "Route each kind of task to its own model",
+                kind="toggle",
+                value="false" if _get(self._data, ("modelRoutingEnabled",), True) is False else "true",
+            ),
+            *(
+                FormField(
+                    role, label, kind="select", options=options, value=str(routes.get(role) or "")
+                )
+                for role, label in ROUTE_ROLES
+            ),
         ]
         answer = await self.app.push_screen_wait(
             FormScreen(
                 "Task routing",
                 fields,
-                hint="Which configuration handles each kind of task.",
+                hint="Off: every chat stays on its model. On: each task uses the model below.",
                 submit_label="Save routing",
             )
         )
         if answer is None:
             return
+        _set(self._data, ("modelRoutingEnabled",), answer.get("model_routing_enabled") == "true")
         for role, _ in ROUTE_ROLES:
             if role in answer:
                 _set(self._data, ("modelRoutes", role), answer[role]) if answer[role] else (

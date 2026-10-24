@@ -90,6 +90,25 @@ def last_verification_summary(root: Path | str, *, limit: int = 3) -> str:
     return "\n".join(lines)
 
 
+def _project_has_tests(root: Path | str) -> bool:
+    """Whether a test runner exists here at all.
+
+    validation=test in a project with no test suite can never be met: the
+    agent kept trying to close the step and kept being refused. The code
+    validation gate already waives tests in that case (no_test_suite); the
+    board gate does the same, and a green verify is then enough.
+    """
+    try:
+        from navin.quality.testing import detect_suites
+
+        return any(
+            suite.get("available") and not suite.get("fallback_only")
+            for suite in detect_suites(Path(root))
+        )
+    except Exception:
+        return True
+
+
 def refusal_to_close_without_proof(
     root: Path | str,
     *,
@@ -118,7 +137,10 @@ def refusal_to_close_without_proof(
         return (
             f"the last verification run ({last.get('source')}, {age_min} min "
             f"ago) FAILED{detail}. Fix the failures and re-run "
-            "`verify action=check` until it passes."
+            "`verify action=check` until it passes. If what fails is unrelated "
+            "to this step and existed before it, do not loop on it: say so in "
+            "the evidence, lower the step's validation (board update "
+            "validation=lint) or report the blocker to the user."
         )
     if age_s > max_age_s:
         return (
@@ -126,7 +148,7 @@ def refusal_to_close_without_proof(
             "predate your changes. Re-run `verify action=check` and close "
             "the step while it is green."
         )
-    if require_tests and not last.get("tests_ran"):
+    if require_tests and not last.get("tests_ran") and _project_has_tests(root):
         return (
             "the last verification passed but did not run any tests, and this "
             "step declares validation=test. Run `test_run action=run` (or "

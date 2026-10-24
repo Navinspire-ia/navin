@@ -14,12 +14,12 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
-from navin.loop_schedule import LoopScheduleError, SCHEDULE_KINDS
+from navin.loop_schedule import SCHEDULE_KINDS, LoopScheduleError
 from navin.marketing.errors import MarketingError
 from navin.marketing.heartbeat import HEARTBEAT_MARKETING_ACTIONS, tick_watch
 from navin.marketing.lock import marketing_desk_lock
 from navin.marketing.loop import maybe_tick, peek_loop, start_loop, stop_loop, update_loop_schedule
-from navin.marketing.store import MarketingStore, STUCK_PHASE_S, heal_loop_state
+from navin.marketing.store import STUCK_PHASE_S, MarketingStore, heal_loop_state
 from navin.marketing.understand import understand_product
 from navin.webui.marketing_desk_api import handle_marketing_action
 

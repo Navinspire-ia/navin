@@ -214,7 +214,7 @@ async def _stream_with_safe_redirects(
     """Open a streamed response while validating every redirect target first."""
     current_url = url
     for _ in range(MAX_REDIRECTS + 1):
-        is_valid, error_msg, _ = _resolve_url_safe(current_url)
+        is_valid, error_msg, _ = await asyncio.to_thread(_resolve_url_safe, current_url)
         if not is_valid:
             return None, None, f"Redirect blocked: {error_msg}"
 
@@ -240,7 +240,7 @@ async def _stream_with_safe_redirects(
             return response, stream, None
 
         next_url = urljoin(str(response.url), location)
-        is_valid, error_msg = _validate_url_safe(next_url)
+        is_valid, error_msg = await asyncio.to_thread(_validate_url_safe, next_url)
         if not is_valid:
             await stream.__aexit__(None, None, None)
             return None, None, f"Redirect blocked: {error_msg}"
@@ -1093,7 +1093,7 @@ class WebFetchTool(Tool):
         url = url.strip(" \t\r\n`\"'")
         extract_mode = kwargs.pop("extractMode", extract_mode)
         max_chars = kwargs.pop("maxChars", max_chars) or self.max_chars
-        is_valid, error_msg = _validate_url_safe(url)
+        is_valid, error_msg = await asyncio.to_thread(_validate_url_safe, url)
         if not is_valid:
             # Failures keep the JSON payload but are marked as errors, so
             # fail_on_tool_error and the "Error:" convention both see them.
@@ -1246,7 +1246,7 @@ class WebFetchTool(Tool):
                 text, extractor = json.dumps(json.loads(body), indent=2, ensure_ascii=False), "json"
             elif "text/html" in ctype or body[:256].lower().startswith(("<!doctype", "<html")):
                 try:
-                    text = self._extract_readable_html(body, extract_mode)
+                    text = await asyncio.to_thread(self._extract_readable_html, body, extract_mode)
                     extractor = "readability"
                 except Exception as e:
                     logger.warning("Readability failed for {}, using raw HTML fallback: {}", url, e)

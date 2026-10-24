@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 
 
@@ -67,7 +68,7 @@ def _config() -> Any | None:
 
 
 def _current_branch(root: Path) -> str:
-    code, out, _err = _run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"])
+    code, out, _err = _run([*(git_argv(root) or ["git", "-C", str(root)]), "rev-parse", "--abbrev-ref", "HEAD"])
     if code != 0:
         return ""
     branch = (out or "").strip()
@@ -160,7 +161,7 @@ def resolve_pr_context(root: Path, pr: int | None = None) -> dict[str, Any]:
             "ok": False,
             "error": (
                 "no forge token for this remote and gh CLI not found - add a "
-                "token in Settings > Git"
+                "token in Settings > Git & GitHub"
             ),
         }
 

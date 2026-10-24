@@ -94,7 +94,7 @@ export function ActivityStep({
               {detail}
             </span>
           ) : null}
-          {aside ? <span className="ml-auto shrink-0">{aside}</span> : null}
+          {aside ? <span className="ms-auto shrink-0">{aside}</span> : null}
         </div>
         {children ? <div className="mt-1 min-w-0">{children}</div> : null}
       </div>

@@ -5,16 +5,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import posixpath
 import re
+import time
 from functools import lru_cache
+from itertools import count, repeat
 from pathlib import Path
 from typing import Any
 
-from rich.cells import cell_len, chop_cells
+from rich.cells import cell_len, get_character_cell_size
+from rich.cells import chop_cells as _rich_chop_cells
 from rich.text import Text
 
-from navin.utils.command_output import is_git_command, output_kind
+from navin.utils.command_output import align_appended, is_git_command, output_kind
 from navin.utils.path import abbreviate_path
 
 # Registry: tool_name -> (key_args, template, is_path, is_command)
@@ -74,6 +78,16 @@ MAX_TRANSCRIPT_LINES = 5000
 # Default open preview: a Codex-sized hunk, not a 80-row wall.
 PREVIEW_OPEN_LINES = 32
 PREVIEW_MIN_WIDTH = 72
+# Visual rows one source line may wrap to in a preview before it is cut.
+PREVIEW_MAX_WRAPPED_ROWS = 12
+# Hard ceiling on what one preview paint may wrap and highlight, whatever the
+# caller asks for: a full view of a huge log shows its head and says so, and
+# the UI thread never spends seconds on one card. Plain text paints ~30k
+# rows a second; zero-width-heavy text is ten times slower, hence the clock.
+PREVIEW_MAX_PAINT_ROWS = 8000
+PREVIEW_MAX_PAINT_CHARS = 600_000
+PREVIEW_MAX_PAINT_SECONDS = 0.35
+PREVIEW_MAX_WIDTH = 1000
 # A single background with readable change colors and explicit +/- markers.
 PREVIEW_ADD_INK = "#E8E8E8"
 PREVIEW_ADD_BG = "#20392B"
@@ -486,7 +500,7 @@ def short_run_target(command: str, *, limit: int = TOOL_LINE_LIMIT) -> str:
     raw = re.sub(r"\s+-\s*$", "", raw).strip()
     tokens = raw.split()
     if not tokens:
-        return _command_label(command, limit)
+        return _command_label(command, limit, _from_target=True)
     name = tokens[0]
     if name == "git" and len(tokens) >= 2:
         return "git " + tokens[1]
@@ -500,16 +514,16 @@ def short_run_target(command: str, *, limit: int = TOOL_LINE_LIMIT) -> str:
             return f"{name} {len(files)} files"
         return name
     if name in {"rg", "grep"}:
-        return _command_label(command, limit)
+        return _command_label(command, limit, _from_target=True)
     pretty = humanize_shell_command(command, max_len=max(limit, 80))
     if _usable_shell_label(pretty) and not _looks_broken_command_head(pretty):
         return pretty if len(pretty) <= limit else pretty[: limit - 1] + "…"
-    return _command_label(command, limit)
+    return _command_label(command, limit, _from_target=True)
 
 
-def _command_label(command: str, limit: int = TOOL_LINE_LIMIT) -> str:
+def _command_label(command: str, limit: int = TOOL_LINE_LIMIT, *, _from_target: bool = False) -> str:
     """Never an empty ``run  "``. Keep the real command, not a 56-char stub."""
-    if "<<" in (command or ""):
+    if "<<" in (command or "") and not _from_target:
         short = short_run_target(command, limit=limit)
         if _usable_shell_label(short):
             return short
@@ -643,6 +657,17 @@ def activity_label(
     elif name == "test_run":
         target = args.get("target") or args.get("runner") or "project"
         text = f"{'Testing' if pending else 'Tests'} {target}"
+    elif name == "write_stdin":
+        # A background command followed up: what was done to it, never the
+        # raw tool name ("Write Stdin" on every poll).
+        if args.get("terminate"):
+            text = "Stopping running command" if pending else "Stopped running command"
+        elif args.get("chars"):
+            text = "Sending input to running command" if pending else "Sent input to running command"
+        else:
+            text = "Checking running command" if pending else "Checked running command"
+    elif name == "list_exec_sessions":
+        text = "Listing running commands" if pending else "Listed running commands"
     elif path or verb in _EDIT_VERBS:
         target = path or _first_path(args) or "files"
         label = "Editing" if pending else file_operation_label(operation)
@@ -653,9 +678,31 @@ def activity_label(
     elif verb == "run":
         command = _command_from_args(args) or tool_target(args) or "command"
         label = "Running" if pending else "Ran"
-        text = f"{label} {command_summary(command)}"
+        # One short line: `cd`, interpreter paths and pipes stay in the
+        # details (and the copy), never wrapped over two rows of the chat.
+        short = short_run_target(command)
+        # Env assignments, `timeout N`, `2>&1` and a trailing `| tail` are
+        # plumbing: drop them so the row fits one line and `-15` never reads
+        # as a deleted-lines count.
+        head, sep, rest = short.partition(" · ")
+        body = rest if sep else head
+        body = re.sub(r"\s*\|\s*(?:tail|head|cat|tee)\b.*$", "", body)
+        body = re.sub(r"\s*\d?>&\d|\s*2>/dev/null", "", body)
+        body = re.sub(r"^(?:\s*[A-Z_][A-Z0-9_]*=\S+)+\s*", "", body)
+        body = re.sub(r"^timeout\s+\S+\s+", "", body).strip() or body
+        if len(body) > 72:
+            body = body[:71].rstrip() + "…"
+        short = f"{head}{sep}{body}" if sep else body
+        if "\n" in command and not short.endswith("lines"):
+            short += f" · {len(command.splitlines())} lines"
+        text = f"{label} {short}"
     elif verb in _EXPLORE_VERBS:
         text = describe_explore_step(name, args, limit=500)
+    elif name == "spawn":
+        text = _spawn_label(args)
+    elif name == "board":
+        # A failed or cancelled board call changed nothing: say what was asked.
+        text = _board_label(args, pending=pending or phase in {"error", "cancelled", "interrupted"})
     else:
         label = "Checking" if pending and verb == "check" else "Checked" if verb == "check" else verb.title()
         text = f"{label} {tool_target(args)}".rstrip()
@@ -664,6 +711,249 @@ def activity_label(
     if phase in {"cancelled", "interrupted"}:
         text = f"Cancelled: {text}"
     return text
+
+
+def _first_line(value: Any, limit: int = 72) -> str:
+    if not isinstance(value, str):
+        return ""
+    for line in value.splitlines():
+        line = " ".join(line.split()).strip(" #*-")
+        if line:
+            return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+    return ""
+
+
+def _spawn_label(args: dict[str, Any]) -> str:
+    """``Agent Audit the login flow``: who was started, not the raw tool."""
+    if args.get("action") == "results":
+        return "Agent results"
+    name = _first_line(args.get("label")) or _first_line(args.get("task")) or _first_line(args.get("agent"))
+    return f"Agent {name}" if name else "Agent"
+
+
+_BOARD_DONE = {"done", "completed", "complete", "closed"}
+
+
+def _board_label(args: dict[str, Any], *, pending: bool = False) -> str:
+    """Say what changed on the board: ``Completed task T3``, ``Updated plan``.
+
+    While the call runs (or when it did not go through) the label says what
+    is asked, not what happened: ``Complete task T3``.
+    """
+    action = str(args.get("action") or "").strip().lower()
+    task = _first_line(args.get("title"), 60) or str(args.get("task_id") or "").strip()
+    status = str(args.get("status") or "").strip().lower()
+    subject = f" {task}" if task else ""
+    if action in {"update", "move"} and status in _BOARD_DONE:
+        return f"{'Complete' if pending else 'Completed'} task{subject}"
+    if action == "move" and status:
+        return f"{'Move' if pending else 'Moved'} task{subject} to {status.replace('_', ' ')}"
+    labels = {
+        "create": ("Add", "Added", f" task{subject}"),
+        "update": ("Update", "Updated", f" task{subject}"),
+        "move": ("Move", "Moved", f" task{subject}"),
+        "claim": ("Claim", "Claimed", f" task{subject}"),
+        "comment": ("Comment", "Commented", f" on task{subject}"),
+        "delete": ("Remove", "Removed", f" task{subject}"),
+        "get": ("Read", "Read", f" task{subject}"),
+        "list": ("Read", "Read", " board"),
+        "next": ("Pick", "Picked", " next task"),
+        "plan": ("Update", "Updated", " plan"),
+        "log": ("Read", "Read", " board log"),
+        "sync_github": ("Sync", "Synced", " board with GitHub"),
+        "milestone_create": ("Add", "Added", " milestone"),
+        "milestone_update": ("Update", "Updated", " milestone"),
+        "ledger_get": ("Read", "Read", " mission ledger"),
+        "ledger_init": ("Start", "Started", " mission ledger"),
+        "ledger_progress": ("Log", "Logged", " mission progress"),
+        "ledger_replan": ("Update", "Updated", " mission plan"),
+        "ledger_pause": ("Pause", "Paused", " mission"),
+        "ledger_resume": ("Resume", "Resumed", " mission"),
+    }
+    if action.startswith("ledger_") and action not in labels:
+        return f"{'Update' if pending else 'Updated'} mission ledger"
+    if action in labels:
+        asked, done, rest = labels[action]
+        return f"{asked if pending else done}{rest}"
+    return f"Board {action.replace('_', ' ')}" if action else "Board"
+
+
+def humanize_tool_error(error: Any, limit: int = 80) -> str:
+    """One short reason for a failed step, never a raw error dump."""
+    text = display_tool_error(str(error or ""))
+    line = next((part.strip() for part in text.splitlines() if part.strip()), "")
+    line = re.sub(r"^(?:Error|ERROR|error)\s*:\s*", "", line).strip()
+    if not line:
+        return ""
+    lower = line.lower()
+    if lower.startswith("invalid parameters") or "missing required" in lower:
+        return "invalid arguments"
+    if "timed out" in lower or "timeout" in lower:
+        return "timed out"
+    if "permission denied" in lower or "not permitted" in lower:
+        return "permission denied"
+    # Three different failures read "not found". Collapsing them all to the same
+    # two words made an edit whose text did not match look like a missing file.
+    if "old_text not found" in lower:
+        return "text to replace not found"
+    if "old_text appears" in lower:
+        return "text appears several times"
+    if "does not exist" in lower and "file" in lower:
+        return "file does not exist"
+    if "file not found" in lower or "no such file" in lower:
+        return "file not found" if len(line) > limit else line
+    if "not found" in lower and len(line) > limit:
+        return "not found"
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def humanize_agent_error(error: Any, *, retrying: bool = False) -> str:
+    """A calm status for a subagent problem instead of the provider's text."""
+    raw = str(error or "").strip()
+    if not raw:
+        return ""
+    lower = raw.lower()
+    if "timed out" in lower or "timeout" in lower or "deadline" in lower:
+        reason = "Model timed out"
+    elif "rate limit" in lower or re.search(r"\b429\b", lower) or "too many requests" in lower:
+        reason = "Rate limited"
+    elif "quota" in lower or ("insufficient" in lower and "credit" in lower) or "billing" in lower:
+        reason = "Out of credits"
+    elif re.search(r"\b40[13]\b", lower) or any(
+        mark in lower for mark in ("unauthorized", "forbidden", "api key", "authentication")
+    ):
+        reason = "Model access refused"
+    elif any(mark in lower for mark in ("context length", "context window", "too many tokens", "maximum context")):
+        reason = "Context too long"
+    elif re.search(r"\b5\d\d\b", lower) or any(
+        mark in lower for mark in ("overloaded", "unavailable", "server error")
+    ):
+        reason = "Model unavailable"
+    elif any(mark in lower for mark in ("connection", "network", "unreachable", "reset by peer")):
+        reason = "Connection lost"
+    elif "cancel" in lower or "interrupted" in lower or "stopped" in lower:
+        reason = "Stopped"
+    else:
+        reason = humanize_tool_error(raw, limit=60) or "Stopped with an error"
+        reason = reason[:1].upper() + reason[1:]
+    return f"{reason}, retrying" if retrying else reason
+
+
+def ask_user_answer_text(result: Any) -> str:
+    """The user's pick from a saved ask_user result, for the transcript echo."""
+    text = str(result or "").strip()
+    if not text:
+        return ""
+    chose = re.match(r'^The user chose "(?P<id>[^"]*)"(?: \((?P<label>[^)]*)\))?', text)
+    if chose:
+        return chose["label"] or chose["id"]
+    if text.startswith("The user did not pick a listed option"):
+        lines = text.splitlines()
+        return lines[1].strip() if len(lines) > 1 else "custom answer"
+    if "skipped" in text.lower().split(" recommended:", 1)[0]:
+        return "skipped"
+    if "timed out" in text.lower() or "no answer" in text.lower():
+        return "no answer"
+    return _first_line(text, 80)
+
+
+_READ_TOTAL_RE = re.compile(r"\(End of file - (\d+) lines total\)")
+_EXIT_IN_ERROR_RE = re.compile(r"\bexit(?:ed)?(?: with)?(?: code| status)?\s*:?\s*(-?\d+)\b", re.I)
+_READ_WINDOW_RE = re.compile(r"\(Showing lines (\d+)-(\d+) of (\d+)\.")
+_READ_NUMBERED_RE = re.compile(r"^\s*\d+\s*[|│:\t]")
+_MATCH_TOTAL_RE = re.compile(r"\(total matches: (\d+) in (\d+) files?\)")
+_MATCH_LINE_RE = re.compile(r"^(?P<path>[^\s:][^:]*):\d+[:-]")
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def result_summary(
+    name: str,
+    arguments: dict | None,
+    result: Any = None,
+    output_lines: list[str] | None = None,
+    *,
+    phase: str = "end",
+    error: str | None = None,
+) -> str:
+    """One short outcome for a finished row: ``120 lines``, ``7 matches in 3
+    files``, ``exit 0 · 42 lines``. Empty when there is nothing worth saying."""
+    from navin.utils.command_output import command_exit_code, is_exit_line
+
+    if phase in {"start", "output", "cancelled", "interrupted"}:
+        return ""
+    del arguments  # the outcome comes from the result, not the request
+    verb = tool_verb(name)
+    if phase == "error" and is_validation_pending(name, error):
+        return ""
+    if verb == "run" or name == "test_run":
+        text = _result_text(result, output_lines)
+        lines = [line for line in text.splitlines() if line.strip() and not is_exit_line(line)]
+        code = command_exit_code(result)
+        if code is None and phase == "error":
+            # "Exit code: 1" / "Command failed with exit code 2" in the error
+            # reads as the same "exit N" as a finished command.
+            code = command_exit_code(error)
+            if code is None:
+                found = _EXIT_IN_ERROR_RE.search(Text.from_ansi(str(error or "")).plain)
+                code = int(found[1]) if found else None
+        bits = []
+        if code is not None:
+            bits.append(f"exit {code}")
+        elif phase == "error":
+            reason = humanize_tool_error(error)
+            if reason:
+                bits.append(reason)
+        bits.append(_plural(len(lines), "line") if lines else "no output")
+        return " · ".join(bits)
+    if phase == "error":
+        return humanize_tool_error(error or _human_result(result))
+    if verb in _EDIT_VERBS:
+        return ""
+    text = _human_result(result) if result is not None else ""
+    if not text and output_lines:
+        text = "\n".join(output_lines)
+    if not text.strip():
+        return ""
+    if verb == "read":
+        if text.startswith("[File unchanged since last read"):
+            return "unchanged since last read"
+        if text.startswith("(Empty file"):
+            return "empty file"
+        window = _READ_WINDOW_RE.search(text)
+        if window:
+            return f"lines {window[1]}-{window[2]} of {window[3]}"
+        total = _READ_TOTAL_RE.search(text)
+        if total:
+            return _plural(int(total[1]), "line")
+        numbered = sum(1 for line in text.splitlines() if _READ_NUMBERED_RE.match(line))
+        return _plural(numbered or len(text.splitlines()), "line")
+    if verb in {"grep", "find", "list", "search"}:
+        if text.lstrip().startswith(("No matches", "No files found", "No results")):
+            return "no matches"
+        total = _MATCH_TOTAL_RE.search(text)
+        if total:
+            return f"{_plural(int(total[1]), 'match')} in {_plural(int(total[2]), 'file')}".replace("matchs", "matches")
+        rows = [
+            line for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith(("(", "[", "Note:"))
+        ]
+        if not rows:
+            return ""
+        hits = [_MATCH_LINE_RE.match(line) for line in rows]
+        if verb == "grep" and all(hits):
+            files = len({hit["path"] for hit in hits if hit})
+            return f"{_plural(len(rows), 'match')} in {_plural(files, 'file')}".replace("matchs", "matches")
+        noun = {"grep": "file", "find": "file", "list": "entry", "search": "result"}[verb]
+        if noun == "entry":
+            return f"{len(rows)} entries" if len(rows) != 1 else "1 entry"
+        return _plural(len(rows), noun)
+    if verb == "fetch":
+        return _plural(len([line for line in text.splitlines() if line.strip()]), "line")
+    first = _first_line(text, 80)
+    return first if len(text.splitlines()) == 1 else ""
 
 
 def activity_head_text(text: str, *, dark: bool = True) -> Text:
@@ -690,12 +980,48 @@ def activity_head_text(text: str, *, dark: bool = True) -> Text:
             family = "tool"
         # Include the tree marker in the accent, on the same line as the target.
         rendered.stylize(palette[family], 0, label.end())
+        # The status icon keeps its own meaning: green done, red failed.
+        prefix = text[: label.start("action")]
+        for mark, color in (("✓", "green"), ("×", "coral")):
+            index = prefix.find(mark)
+            if index >= 0:
+                rendered.stylize(palette[color], index, index + 1)
     for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
         color = palette["green"] if match[0].startswith("+") else palette["coral"]
         rendered.stylize(color, match.start(), match.end())
     for match in re.finditer(r"\[[━·]+\]\s+\d+(?:\.\d+)?%", text):
         live = not match[0].endswith(" 100%")
         rendered.stylize(palette["blue"] if live else palette["muted"], match.start(), match.end())
+    return rendered
+
+
+_OUTPUT_STATUS_RE = re.compile(
+    r"\b(?P<ok>PASSED|PASS|passed|OK|ok|SUCCESS|succeeded)\b"
+    r"|\b(?P<bad>FAILED|FAIL|failed|ERROR|error|Error|Traceback)\b"
+    r"|\b(?P<warn>SKIPPED|skipped|XFAIL|xfail|WARNING|warning|warnings)\b"
+    r"|(?P<pct>\[\s*\d{1,3}%\])"
+    r"|(?P<path>(?<![\w/.-])[\w./-]+\.(?:py|ts|tsx|js|rs|go)(?:::[\w:\[\]-]+)?)"
+)
+
+
+def highlight_output_statuses(rendered: Text, *, dark: bool = True) -> Text:
+    """Color test/run statuses in streamed output: pass, fail, skip, %, paths.
+
+    Only adds styles over plain spans; existing diff or markup styles stay.
+    """
+    palette = activity_palette(dark)
+    colors = {
+        "ok": palette["green"], "bad": palette["coral"], "warn": palette["mustard"],
+        "pct": palette["muted"], "path": palette["blue"],
+    }
+    plain = rendered.plain
+    if len(plain) > 200_000:
+        return rendered
+    for match in _OUTPUT_STATUS_RE.finditer(plain):
+        group = match.lastgroup or ""
+        style = colors.get(group)
+        if style:
+            rendered.stylize(f"bold {style}" if group in {"ok", "bad"} else style, match.start(), match.end())
     return rendered
 
 
@@ -792,8 +1118,28 @@ def _useful_output(text: str) -> str:
     return "\n".join(lines)
 
 
+def _streamed_tail(output_lines: list[str] | None, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
+    """The newest streamed output, at most ``limit`` characters.
+
+    Lines are capped by count upstream but not by length; joining and
+    splitting a few hundred MB of one-line output on the UI thread froze it.
+    """
+    kept: list[str] = []
+    budget = limit
+    for line in reversed(output_lines or []):
+        line = str(line)
+        if len(line) >= budget:
+            if budget > 0:
+                kept.append(line[:budget])
+            break
+        kept.append(line)
+        budget -= len(line) + 1
+    kept.reverse()
+    return "\n".join(kept)
+
+
 def _result_text(result: Any, output_lines: list[str] | None) -> str:
-    streamed = _useful_output("\n".join(str(line) for line in output_lines or []))
+    streamed = _useful_output(_streamed_tail(output_lines))
     preview = _human_result(result) if result is not None else ""
     final = _useful_output(preview)
     # Completion commonly repeats stdout that was already streamed.
@@ -802,6 +1148,118 @@ def _result_text(result: Any, output_lines: list[str] | None) -> str:
     if final and streamed and final in streamed:
         return streamed
     return "\n".join(part for part in (streamed, final) if part)
+
+
+def _stream_line_rows(line: Any, strip_ansi: bool) -> tuple[tuple[str, ...], bool]:
+    """The preview rows of one streamed line, and whether it may start a diff.
+
+    Same filtering as ``_useful_output`` over the joined tail: blank and
+    placeholder lines go, a line holding several breaks gives several rows.
+    """
+    rows = []
+    diff = False
+    for part in str(line).replace("\r\n", "\n").splitlines():
+        stripped = part.strip()
+        if not stripped or _EMPTY_OUTPUT_RE.match(stripped):
+            continue
+        part = part.rstrip()
+        if part.startswith(("@@ ", "diff --git ")) and (part[0] == "d" or _DIFF_HUNK_RE.match(part)):
+            diff = True
+        if strip_ansi and "\x1b" in part:
+            part = Text.from_ansi(part).plain
+        rows.append(part)
+    return tuple(rows), diff
+
+
+class StreamRowsCache:
+    """Preview rows of one live command, processed once per output line.
+
+    A running command repaints ten times a second while its retained tail
+    holds up to 5000 lines; only the lines appended since the last paint
+    (and a rewritten last line) are filtered again.
+    """
+
+    def __init__(self) -> None:
+        self.clear()
+
+    def clear(self) -> None:
+        self._strip: bool | None = None
+        self._lines: list = []
+        # Row texts of every line, flat, with each line's row count, its
+        # diff marker and the total characters of the lines.
+        self._texts: list[str] = []
+        self._counts: list[int] = []
+        self._diffs: list[bool] = []
+        self._diff_count = 0
+        self._chars = 0
+
+    def __len__(self) -> int:
+        return len(self._lines)
+
+    def _forget(self, start: int, stop: int | None = None) -> None:
+        span = slice(start, stop)
+        rows = sum(self._counts[span])
+        if stop is None:
+            del self._texts[len(self._texts) - rows:]
+        else:
+            del self._texts[:rows]
+        self._diff_count -= sum(self._diffs[span])
+        self._chars -= sum(len(str(line)) for line in self._lines[span])
+        del self._counts[span], self._diffs[span], self._lines[span]
+
+    def texts(self, output_lines: list, strip_ansi: bool) -> list[str] | None:
+        """Row texts of ``_useful_output(_streamed_tail(output_lines))``.
+
+        None when the output may be a unified diff: that layout needs the
+        whole text, so the caller recomputes it. The list is shared: read it,
+        do not change it.
+        """
+        if strip_ansi is not self._strip or not output_lines:
+            self.clear()
+            self._strip = strip_ansi
+        lines = list(output_lines)
+        match = align_appended(self._lines, lines)
+        if match is None:
+            self.clear()
+            self._strip = strip_ansi
+            kept = 0
+        else:
+            dropped, kept = match
+            if dropped:
+                self._forget(0, dropped)
+            if len(self._lines) > kept:
+                self._forget(kept)
+        for line in lines[kept:]:
+            rows, diff = _stream_line_rows(line, strip_ansi)
+            self._texts.extend(rows)
+            self._counts.append(len(rows))
+            self._diffs.append(diff)
+            self._diff_count += diff
+            self._chars += len(str(line))
+        self._lines = lines
+        if self._diff_count:
+            return None
+        if self._chars + len(lines) - 1 < MAX_TRANSCRIPT_CHARS:
+            return self._texts
+        # Mirror ``_streamed_tail``: the newest lines that fit, and the head
+        # of the line that overflowed.
+        budget = MAX_TRANSCRIPT_CHARS
+        start, head = len(lines), ""
+        for index in range(len(lines) - 1, -1, -1):
+            size = len(str(lines[index]))
+            if size >= budget:
+                head = str(lines[index])[:budget] if budget > 0 else ""
+                break
+            start = index
+            budget -= size + 1
+        texts: list[str] = []
+        if head:
+            rows, diff = _stream_line_rows(head, strip_ansi)
+            if diff:
+                return None
+            texts.extend(rows)
+        texts.extend(self._texts[sum(self._counts[:start]):])
+        return texts
 
 
 def _count_diff_marks(text: str) -> tuple[int, int]:
@@ -861,8 +1319,13 @@ def preview_rows(
     diff_text: str | None = None,
     limit: int = MAX_TRANSCRIPT_LINES,
     include_run_output: bool = False,
+    cache: StreamRowsCache | None = None,
 ) -> list[tuple[int | None, str, str]]:
-    """Numbered preview rows: ``(line_no, add|del|ctx, text)``."""
+    """Numbered preview rows: ``(line_no, add|del|ctx, text)``.
+
+    ``cache`` (one per tool call) makes repeated calls on a growing live
+    log cost its new lines only.
+    """
     args = arguments if isinstance(arguments, dict) else {}
     rows: list[tuple[int | None, str, str]] = []
     verb = tool_verb(name)
@@ -888,6 +1351,20 @@ def preview_rows(
     metadata_count = len(rows)
     command = _command_from_args(args)
     run_is_git = is_git_command(name, args)
+    row_limit = max(1, int(limit))
+    if (cache is not None and output_lines and result is None and not error and not extra
+            and verb not in {"graph", "index"} and (verb != "run" or run_is_git or include_run_output)):
+        # A live command: the streamed tail is the whole text, and only its
+        # new lines need filtering (same rows as the full pass below).
+        texts = cache.texts(output_lines, verb == "run" or name in {"test_run", "git"})
+        if texts:
+            rows.extend(zip(count(1), repeat("ctx"), texts))
+            if verb == "run" and include_run_output and row_limit >= MAX_TRANSCRIPT_LINES and len(rows) > row_limit:
+                metadata = rows[:min(metadata_count, row_limit - 1)]
+                return metadata + rows[-(row_limit - len(metadata)):]
+            return rows[:row_limit]
+    elif cache is not None and len(cache):
+        cache.clear()
     text = _result_text(result, output_lines)
     if error:
         # A failure may also contain useful stdout. Remove only a duplicate
@@ -896,6 +1373,8 @@ def preview_rows(
     _, body = split_heredoc(command)
     if extra:
         text = extra
+    if text and name in _SESSION_TOOLS:
+        text = strip_session_notes(text)
     if text and _looks_like_unified_diff(text):
         rows.extend(_rows_from_unified_diff(text))
     elif verb in {"graph", "index"} and text:
@@ -918,7 +1397,6 @@ def preview_rows(
         question = args.get("question")
         if isinstance(question, str) and question.strip():
             rows.append((None, "ctx", " ".join(question.split())))
-    row_limit = max(1, int(limit))
     if (verb == "run" and include_run_output and output_lines
             and row_limit >= MAX_TRANSCRIPT_LINES and len(rows) > row_limit
             and not _looks_like_unified_diff(text)):
@@ -927,6 +1405,22 @@ def preview_rows(
         metadata = rows[:min(metadata_count, row_limit - 1)]
         return metadata + rows[-(row_limit - len(metadata)):]
     return rows[:row_limit]
+
+
+_SESSION_TOOLS = frozenset({"exec", "write_stdin"})
+# Lines a background command session adds for the model, not for the user.
+_SESSION_NOTE_RE = re.compile(
+    r"^(?:Process running\. session_id: \S+|You will be told when it finishes\b.*"
+    r"|Still running after \d+s\. The command was not killed\b.*"
+    r"|Elapsed: [\d.]+s|STDERR:|Stdin closed\.|\(no output yet\))$"
+)
+
+
+def strip_session_notes(text: str) -> str:
+    """The command's own output, without the session bookkeeping lines."""
+    return "\n".join(
+        line for line in text.splitlines() if not _SESSION_NOTE_RE.match(line.strip())
+    ).strip("\n")
 
 
 def _graph_compact_rows(text: str, max_rows: int = 8) -> list[tuple[int | None, str, str]]:
@@ -1034,7 +1528,92 @@ def _highlight_preview_source(code: str, filename: str, dark: bool) -> Text:
     return source
 
 
-@lru_cache(maxsize=8192)
+def safe_cell_text(text: str) -> str:
+    """Drop leading zero-width characters (see ``_patch_rich_graphemes``)."""
+    index = _leading_zero_width(text)
+    return text[index:] if index else text
+
+
+def _leading_zero_width(text: str) -> int:
+    index = 0
+    while index < len(text) and (text[index] in "\u200d\ufe0f" or not get_character_cell_size(text[index])):
+        index += 1
+    return index
+
+
+def _patch_rich_graphemes() -> None:
+    """rich 14.3.1 ``split_graphemes`` never advances on a zero-width character
+    (combining mark, U+200B, U+FE0F...) with no span before it, and ``cell_len``
+    raises on a trailing ZWJ. Every width helper (chop_cells, set_cell_size,
+    Textual wrapping) then spins forever on the UI thread and the whole CLI
+    freezes. This is the fixed rich 14.3.4 algorithm, installed over the old one."""
+    import rich.cells as cells
+
+    if getattr(cells.split_graphemes, "_navin_safe", False):
+        return
+    special = {"\u200d", "\ufe0f"}
+
+    def split_graphemes(text: str, unicode_version: str = "auto"):
+        cell_table = cells.load_cell_table(unicode_version)
+        size_of = cells.get_character_cell_size
+        count = len(text)
+        index = 0
+        last_measured: str | None = None
+        total = 0
+        spans: list[tuple[int, int, int]] = []
+        while index < count:
+            character = text[index]
+            if character in special:
+                if not spans:
+                    spans.append((index, index + 1, 0))
+                    index += 1
+                    continue
+                start, _end, size = spans[-1]
+                if character == "\u200d":
+                    index += 2 if index < count - 1 else 1
+                    spans[-1] = (start, index, size)
+                else:
+                    index += 1
+                    if last_measured and last_measured in cell_table.narrow_to_wide:
+                        last_measured = None
+                        size += 1
+                        total += 1
+                    spans[-1] = (start, index, size)
+                continue
+            width = size_of(character, unicode_version)
+            if width:
+                last_measured = character
+                spans.append((index, index + 1, width))
+                total += width
+            elif spans:
+                start, _end, size = spans[-1]
+                spans[-1] = (start, index + 1, size)
+            else:
+                spans.append((index, index + 1, 0))
+            index += 1
+        return spans, total
+
+    def cell_len_text(text: str, unicode_version: str) -> int:
+        if cells._is_single_cell_widths(text):
+            return len(text)
+        if "\u200d" not in text and "\ufe0f" not in text:
+            return sum(cells.get_character_cell_size(c, unicode_version) for c in text)
+        return cells.split_graphemes(text, unicode_version)[1]
+
+    split_graphemes._navin_safe = True  # type: ignore[attr-defined]
+    cells.split_graphemes = split_graphemes
+    cells._cell_len = cell_len_text
+    with contextlib.suppress(Exception):
+        cells.cached_cell_len.cache_clear()
+
+
+_patch_rich_graphemes()
+
+
+def chop_cells(text: str, width: int) -> list[str]:
+    return _rich_chop_cells(safe_cell_text(text), width)
+
+
 def format_preview_markup_line(
     number: int | None,
     kind: str,
@@ -1046,11 +1625,38 @@ def format_preview_markup_line(
     compact: bool = False,
 ) -> str:
     """One flat diff: tinted changes, quiet numbers and readable syntax."""
+    text = str(text)
+    target = min(PREVIEW_MAX_WIDTH, max(1, int(width or PREVIEW_MIN_WIDTH)))
+    # Cut before tab expansion, zero-width stripping and the cache key, so a
+    # multi-MB line costs the same as a short one (see the cut below).
+    keep = target * PREVIEW_MAX_WRAPPED_ROWS * 2 + 1
+    cut = len(text) > keep
+    if cut:
+        text = text[:keep]
+    return _preview_markup_line(number, kind, text, target, dark, filename, compact, cut)
+
+
+@lru_cache(maxsize=8192)
+def _preview_markup_line(
+    number: int | None,
+    kind: str,
+    text: str,
+    target: int,
+    dark: bool,
+    filename: str,
+    compact: bool,
+    cut: bool,
+) -> str:
     prefix = format_preview_line(number, kind, "")
     if kind in {"success", "warning", "failure", "info"} and not text.lstrip().startswith(tuple("ℹ✓✔✗×✖⚠")):
         prefix += {"success": "✓ ", "warning": "! ", "failure": "✗ ", "info": "ℹ "}[kind]
-    code = text.expandtabs(4)
-    target = max(1, int(width or PREVIEW_MIN_WIDTH))
+    code = safe_cell_text(text.expandtabs(4))
+    # A single huge line (minified JSON, a base64 blob, a long model answer)
+    # used to be wrapped and highlighted in full on the UI thread, freezing
+    # the terminal for seconds. Show its head only; copying keeps the source.
+    max_chars = target * PREVIEW_MAX_WRAPPED_ROWS
+    if len(code) > max_chars or cut:
+        code = code[:max_chars] + " ..."
     gutter = cell_len(prefix)
     if compact:
         clipped = Text(code)
@@ -1126,12 +1732,33 @@ def format_tool_preview_markup(
     else:
         rows = rows[:max(1, int(limit))]
     filename = _first_path(arguments or {}) if diff_text or any(row[1] in {"add", "del"} for row in rows) else ""
-    if tool_verb(name) == "run" or name in {"test_run", "git"}:
-        rows = [(number, output_kind(text) if kind == "ctx" else kind, text) for number, kind, text in rows]
-    return "\n".join(
-        format_preview_markup_line(*row, width=width, dark=dark, filename=filename, compact=compact)
-        for row in rows
-    )
+    command_rows = tool_verb(name) == "run" or name in {"test_run", "git"}
+    target = min(PREVIEW_MAX_WIDTH, max(1, int(width or PREVIEW_MIN_WIDTH)))
+    per_row_chars = target * PREVIEW_MAX_WRAPPED_ROWS
+    painted: list[str] = []
+    painted_rows = painted_chars = 0
+    deadline = time.perf_counter() + PREVIEW_MAX_PAINT_SECONDS
+    for index, (number, kind, text) in enumerate(rows):
+        if painted and (
+            painted_rows >= PREVIEW_MAX_PAINT_ROWS
+            or painted_chars >= PREVIEW_MAX_PAINT_CHARS
+            or time.perf_counter() > deadline
+        ):
+            # Whatever the caller asked for, one paint stays bounded. The
+            # rest is still copyable from the activity.
+            hidden = len(rows) - index
+            painted.append(format_preview_markup_line(
+                None, "meta", f"{hidden} more line{'s' if hidden != 1 else ''} not shown. Copy for the full output.",
+                width=width, dark=dark,
+            ))
+            break
+        if command_rows and kind == "ctx":
+            kind = output_kind(text[:per_row_chars])
+        line = format_preview_markup_line(number, kind, text, width=width, dark=dark, filename=filename, compact=compact)
+        painted.append(line)
+        painted_rows += line.count("\n") + 1
+        painted_chars += min(len(text), per_row_chars)
+    return "\n".join(painted)
 
 
 def format_tool_detail(
@@ -1197,7 +1824,7 @@ def _human_result(result: Any, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
                 if chunk:
                     bits.append(chunk)
         if isinstance(code, int) and not isinstance(code, bool):
-            bits.append(f"Exit code: {code}")
+            bits.append(f"exit {code}")
         added = result.get("added")
         removed = result.get("removed")
         if isinstance(added, int) or isinstance(removed, int):

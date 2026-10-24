@@ -99,6 +99,48 @@ def test_round_trip_golden_preserves_every_assemble_field(tmp_path) -> None:
     assert asdict(restored) == asdict(spec)
 
 
+def test_premium_spec_round_trips_through_a_saved_timeline(tmp_path) -> None:
+    from dataclasses import fields
+
+    from navin.montage.assemble import PremiumAssembleSpec
+    from navin.montage.audio import AudioMixOptions, SfxCue, VoiceCue
+    from navin.montage.grade import GradeOptions
+
+    _prepare(tmp_path)
+    (tmp_path / "media" / "look.cube").write_bytes(b"fixture")
+    (tmp_path / "media" / "fonts").mkdir()
+    base = _spec(tmp_path)
+    spec = PremiumAssembleSpec(
+        **{f.name: getattr(base, f.name) for f in fields(AssembleSpec)},
+        fill="blur",
+        ken_burns=True,
+        grade=GradeOptions(sharpen=0.5, lut_path=str(tmp_path / "media" / "look.cube")),
+        encode="social",
+        fonts_dir=str(tmp_path / "media" / "fonts"),
+        voice_cues=(VoiceCue(path=str(tmp_path / "media" / "voice.wav"), at=1.5),),
+        audio_mix=AudioMixOptions(sfx=(SfxCue(kind="whoosh", at=2.0),)),
+    )
+    timeline = timeline_from_spec(spec, tmp_path, name="launch-premium")
+    assert timeline["premium"]["fill"] == "blur"
+    assert timeline["premium"]["grade"]["lut_path"] == "media/look.cube"
+    assert timeline["premium"]["voice_cues"] == [{"path": "media/voice.wav", "at": 1.5}]
+    stored = put_timeline(tmp_path, "launch-premium", timeline)
+    restored = timeline_to_spec(json.loads(json.dumps(stored, sort_keys=True)), tmp_path)
+    assert isinstance(restored, PremiumAssembleSpec)
+    assert asdict(restored) == asdict(spec)
+
+
+def test_premium_block_paths_stay_in_the_workspace(tmp_path) -> None:
+    _prepare(tmp_path)
+    timeline = timeline_from_spec(_spec(tmp_path), tmp_path, name="launch-v1")
+    timeline["premium"] = {"premixed_audio": "../../etc/passwd"}
+    with pytest.raises(TimelineError, match="inside the workspace"):
+        validate_timeline(timeline, tmp_path)
+    timeline["premium"] = {"bogus": 1}
+    with pytest.raises(TimelineError, match="unknown fields"):
+        validate_timeline(timeline, tmp_path)
+
+
 def test_schema_is_strict_and_versioned(tmp_path) -> None:
     _prepare(tmp_path)
     timeline = timeline_from_spec(_spec(tmp_path), tmp_path, name="strict")

@@ -19,8 +19,6 @@ requires, and divides by the pixel-per-point ratio before posting events.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import ctypes
 import ctypes.util
 import json
@@ -50,6 +48,7 @@ from navin.computer.base import (
     WindowInfo,
 )
 from navin.computer.keys import KeyCombo
+from navin.utils.proc import no_window_kwargs
 
 # -- CoreGraphics constants ----------------------------------------------------
 

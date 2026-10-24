@@ -257,4 +257,127 @@ describe("ActivityJournal render", () => {
     expect(nowHtml).toContain('data-sandbox="native"');
     expect(nowHtml).not.toContain(">Sandboxed<");
   });
+
+  it("renders ask_user as one question line and an answer line", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([{
+          kind: "tool",
+          name: "ask_user",
+          args: '{"question":"Which database should the app use?"}',
+          status: "done",
+          output: "The user did not pick a listed option. They wrote this instead:\nPostgres on Neon\nFollow that instruction.",
+        }], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    expect(html).toContain(">Asked<");
+    expect(html).toContain("Which database should the app use?");
+    expect(html).toContain('data-testid="activity-ask-answer"');
+    expect(html).toContain("Postgres on Neon");
+    expect(html).not.toContain("They wrote this instead");
+  });
+
+  it("opens shell output by default with all lines in a scrollable area", () => {
+    const longCommand = `python3 - <<'EOF'\n${"print('x')\n".repeat(5)}EOF`;
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([
+          {
+            kind: "shell",
+            key: "c1",
+            command: longCommand,
+            status: "done",
+            output: "line 1\nline 2\nline 3\nall good",
+          },
+          { kind: "shell", key: "c2", command: "false", status: "error", error: "exit 1" },
+        ], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    expect(html).toContain("whitespace-nowrap");
+    expect(html).not.toContain("flex-wrap items-baseline");
+    expect(html).toContain("+6 lines");
+    expect(html).toContain('data-testid="activity-shell-run"');
+    expect(html).toContain("line 1\nline 2\nline 3\nall good");
+    expect(html).toContain("overflow-auto");
+    expect(html).toContain('aria-expanded="true"');
+    expect(count(html, 'data-testid="activity-journal-show-more"')).toBe(0);
+    // Green check on success, red cross on the failed one, never the word.
+    expect(count(html, 'data-testid="activity-journal-status-done"')).toBe(1);
+    expect(count(html, 'data-testid="activity-journal-status-error"')).toBe(1);
+    expect(html).not.toContain("Failed");
+  });
+
+  it("shows exploration and long test results without clicking", () => {
+    const output = "FIRST RESULT\n" + "passed\n".repeat(3000) + "LAST RESULT";
+    const entries = buildJournalTimeline([
+      read("src/example.ts"), search("example"),
+      { kind: "shell", key: "test", command: "npm test", status: "done", output },
+    ], { streaming: false });
+    const html = renderToStaticMarkup(createElement(ActivityJournal, { entries, streaming: false }));
+    expect(html).toContain('data-testid="activity-explore-operation"');
+    expect(html).toContain("FIRST RESULT");
+    expect(html).toContain("LAST RESULT");
+  });
+
+  it("renders a thinking row in place with a line-preserving preview", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([
+          { kind: "reasoning", key: "r1", text: "Let me check:\n1. the route\n2. the test", status: "done" },
+          shell("npm test"),
+        ], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    expect(html.indexOf('data-kind="reasoning"')).toBeLessThan(html.indexOf('data-kind="shell"'));
+    expect(html).toContain('data-testid="activity-reasoning-preview"');
+    expect(html).toContain("whitespace-pre-line");
+    expect(html).toContain("Let me check:\n1. the route\n2. the test");
+  });
+
+  // The thread follows its tail: a live preview that went one line, two,
+  // one at every token moved the whole screen with it ("l'ecran vibre").
+  it("keeps a fixed two-line slot for live previews and the real height once settled", () => {
+    const render = (streaming: boolean, step: JournalStep) =>
+      renderToStaticMarkup(
+        createElement(ActivityJournal, {
+          entries: buildJournalTimeline([step], { streaming }),
+          streaming,
+        }),
+      );
+    const reasoning = (status: ActivityJournalStatus): JournalStep => (
+      { kind: "reasoning", key: "r1", text: "Short thought", status }
+    );
+    const preview = (html: string) =>
+      html.match(/data-testid="activity-reasoning-preview"[^>]*>(?:<[^>]+>)/)?.[0] ?? "";
+
+    const live = preview(render(true, reasoning("running")));
+    expect(live).toContain('data-live="true"');
+    expect(live).toContain("h-12 overflow-hidden");
+
+    const settled = preview(render(false, reasoning("done")));
+    expect(settled).not.toBe("");
+    expect(settled).not.toContain("data-live");
+    expect(settled).not.toContain("h-12");
+  });
+});
+
+
+describe("activity journal V3 controls", () => {
+  it("offers the Essential / Standard / Debug switch with Standard checked by default", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline(
+          Array.from({ length: 4 }, (_, index) => shell(`cmd-${index + 1}`, "done", `v${index + 1}`)),
+          { streaming: false },
+        ),
+        streaming: false,
+      }),
+    );
+    expect(html).toContain('data-testid="activity-verbosity"');
+    expect(html).toMatch(/data-testid="activity-verbosity-standard"[^>]*aria-checked="true"|aria-checked="true"[^>]*data-testid="activity-verbosity-standard"/);
+    expect(html).not.toContain('data-testid="activity-journal-virtual"');
+  });
 });

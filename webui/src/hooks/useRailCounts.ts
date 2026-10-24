@@ -3,12 +3,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { fetchBoard, fetchProjectRules } from "@/lib/api";
+import { fetchProjectRules } from "@/lib/api";
+import { fetchBoardShared } from "@/lib/board-fetch";
 import {
   PROJECT_RULES_CHANGED_EVENT,
   countBoardTasks,
   type RailTaskCounts,
 } from "@/lib/rail-counts";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 export interface RailCounts {
@@ -34,31 +36,34 @@ export function useRailCounts({
   enabled: boolean;
 }): RailCounts {
   const { token, client } = useClient();
+  // The rotating token is read at call time: a rotation is not a reason to reload.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const [counts, setCounts] = useState<RailCounts>(EMPTY);
 
   const loadRules = useCallback(async () => {
-    if (!token) return;
+    if (!tokenRef.current) return;
     try {
-      const payload = await fetchProjectRules(token, sessionKey);
+      const payload = await fetchProjectRules(tokenRef.current, sessionKey);
       setCounts((prev) => ({ ...prev, rules: payload.total ?? payload.rules.length }));
     } catch {
       // A missing project or an offline gateway simply leaves the pill off.
       setCounts((prev) => ({ ...prev, rules: null }));
     }
-  }, [token, sessionKey]);
+  }, [tokenRef, sessionKey]);
 
   const loadTasks = useCallback(async () => {
-    if (!token) return;
+    if (!tokenRef.current) return;
     try {
-      const payload = await fetchBoard(token, sessionKey);
+      const payload = await fetchBoardShared(tokenRef.current, sessionKey);
       setCounts((prev) => ({ ...prev, tasks: countBoardTasks(payload.tasks) }));
     } catch {
       setCounts((prev) => ({ ...prev, tasks: null }));
     }
-  }, [token, sessionKey]);
+  }, [tokenRef, sessionKey]);
 
   useEffect(() => {
-    if (!enabled || !token) return undefined;
+    if (!enabled || !hasToken) return undefined;
     void loadRules();
     void loadTasks();
     const unsubscribe = client.onBoardUpdate((changedProject) => {
@@ -71,7 +76,7 @@ export function useRailCounts({
       unsubscribe();
       window.removeEventListener(PROJECT_RULES_CHANGED_EVENT, onRulesChanged);
     };
-  }, [enabled, token, client, projectPath, loadRules, loadTasks]);
+  }, [enabled, hasToken, client, projectPath, loadRules, loadTasks]);
 
   return counts;
 }

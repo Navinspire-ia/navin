@@ -54,7 +54,7 @@ from navin.career.sources import html_to_text, infer_country_iso, is_closed_job_
 
 HttpGet = Callable[[str], str]
 
-USER_AGENT = "NavinCareer/1.0 (+https://navin.ai)"
+USER_AGENT = "NavinCareer/1.0 (+https://navin.live)"
 CACHE_TTL_S = 3600.0
 MAX_REQUESTS = 16
 MAX_ROWS_PER_SOURCE = 120

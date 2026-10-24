@@ -128,7 +128,7 @@ export function DevLocationPicker({
                 <span className="text-[12px] font-semibold text-foreground">
                   {title}
                   {symbol ? (
-                    <span className="ml-2 font-mono font-normal text-muted-foreground">
+                    <span className="ms-2 font-mono font-normal text-muted-foreground">
                       {symbol}
                     </span>
                   ) : null}
@@ -166,7 +166,7 @@ export function DevLocationPicker({
                             }}
                             onMouseEnter={() => setHighlightedIndex(index)}
                             className={cn(
-                              "flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+                              "flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-start transition-colors",
                               highlighted
                                 ? "bg-muted text-foreground"
                                 : "text-foreground hover:bg-muted/70",
@@ -180,7 +180,7 @@ export function DevLocationPicker({
                               <span className="block truncate text-[13px] font-medium">
                                 {item.name || item.path.split("/").pop() || item.path}
                                 {item.kind ? (
-                                  <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                                  <span className="ms-1.5 text-[11px] font-normal text-muted-foreground">
                                     {item.kind}
                                   </span>
                                 ) : null}

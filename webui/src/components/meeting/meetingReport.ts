@@ -1,3 +1,4 @@
+import { intlLocale } from "@/i18n/intl";
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -590,7 +591,7 @@ function formatDate(value: string, locale: string): string {
   try {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat(locale, {
+    return new Intl.DateTimeFormat(intlLocale(locale), {
       dateStyle: "medium",
       timeStyle: "short",
     }).format(date);

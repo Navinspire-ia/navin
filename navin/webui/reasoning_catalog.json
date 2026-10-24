@@ -17,7 +17,7 @@
     "back to default_values.",
     "Model names and providers are lowercased before matching."
   ],
-  "version": "2026-07-25",
+  "version": "2026-10-07",
   "default_values": ["", "low", "medium", "high"],
   "families": [
     {
@@ -156,10 +156,14 @@
       "match": { "contains_any": ["gemini"] },
       "rules": [
         {
-          "note": "Gemini 3.x Flash / Flash-Lite: thinking_level minimal..high.",
-          "contains_all": ["gemini-3"],
-          "contains_any": ["flash", "lite"],
+          "note": "Gemini 3.x Flash-Lite: minimal..high; \"none\" is refused (measured 2026-10-07).",
+          "contains_all": ["gemini-3", "lite"],
           "values": ["", "minimal", "low", "medium", "high"]
+        },
+        {
+          "note": "Gemini 3.x Flash: none..high; xhigh/max are refused (measured 2026-10-07).",
+          "contains_all": ["gemini-3", "flash"],
+          "values": ["", "none", "minimal", "low", "medium", "high"]
         },
         {
           "note": "Gemini 3.x Pro: thinking_level low..high, cannot disable.",
@@ -186,6 +190,11 @@
       "rules": [
         {
           "contains_any": ["multi-agent"],
+          "values": ["", "low", "medium", "high", "xhigh"]
+        },
+        {
+          "note": "Grok 4.7+ / 5: same reasoning ladder as Grok 4.6.",
+          "contains_any": ["grok-4.7", "grok-4-7", "grok-4.8", "grok-4-8", "grok-5"],
           "values": ["", "low", "medium", "high", "xhigh"]
         },
         {
@@ -237,6 +246,11 @@
           "contains_any": ["glm-5"],
           "provider_any": ["dashscope"],
           "values": ["", "high", "max"]
+        },
+        {
+          "note": "GLM-5.3 always thinks: Z.ai accepts low, high or max only (measured 2026-10-07).",
+          "contains_any": ["glm-5.3", "glm-5-3"],
+          "values": ["", "low", "high", "max"]
         },
         {
           "contains_any": ["glm-5"],

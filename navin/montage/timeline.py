@@ -17,19 +17,22 @@ from navin.montage import WORKSPACE_MONTAGE_DIR
 from navin.montage.assemble import (
     AssembleError,
     AssembleSpec,
+    PremiumAssembleSpec,
     VisualClip,
     classify_visual,
     run_assemble,
     validate_spec,
 )
+from navin.montage.audio import AudioMixOptions, SfxCue, VoiceCue
 from navin.montage.ffmpeg_runner import run_process
+from navin.montage.grade import GradeOptions
 from navin.utils.atomic_io import InterProcessLock, atomic_write_text
 
 TIMELINE_SCHEMA_VERSION = 1
 TIMELINES_DIR = f"{WORKSPACE_MONTAGE_DIR}/timelines"
 TIMELINE_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://navin.ai/schemas/montage-timeline-v1.json",
+    "$id": "https://navin.live/schemas/montage-timeline-v1.json",
     "title": "Navin Montage Timeline",
     "type": "object",
     "additionalProperties": False,
@@ -82,6 +85,33 @@ TIMELINE_JSON_SCHEMA: dict[str, Any] = {
             "type": "object",
             "additionalProperties": {"type": "string"},
         },
+        # Optional: the premium look/audio options of a PremiumAssembleSpec.
+        "premium": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "fill": {"type": "string"},
+                "fill_color": {"type": ["string", "null"]},
+                "ken_burns": {"type": "boolean"},
+                "grade": {"type": ["object", "null"]},
+                "encode": {"type": "string"},
+                "fonts_dir": {"type": ["string", "null"]},
+                "voice_cues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["path", "at"],
+                        "properties": {
+                            "path": {"type": "string", "minLength": 1},
+                            "at": {"type": "number"},
+                        },
+                    },
+                },
+                "audio_mix": {"type": ["object", "null"]},
+                "premixed_audio": {"type": ["string", "null"]},
+            },
+        },
     },
 }
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -103,7 +133,24 @@ _TOP_KEYS = frozenset(
         "extra_metadata",
     }
 )
+_OPTIONAL_TOP_KEYS = frozenset({"premium"})
 _VISUAL_KEYS = frozenset({"path", "kind", "duration", "start", "end"})
+_PREMIUM_KEYS = frozenset(
+    {
+        "fill",
+        "fill_color",
+        "ken_burns",
+        "grade",
+        "encode",
+        "fonts_dir",
+        "voice_cues",
+        "audio_mix",
+        "premixed_audio",
+    }
+)
+_GRADE_KEYS = frozenset(GradeOptions.__dataclass_fields__)
+_AUDIO_MIX_KEYS = frozenset(AudioMixOptions.__dataclass_fields__)
+_SFX_KEYS = frozenset(SfxCue.__dataclass_fields__)
 
 
 class TimelineError(ValueError):
@@ -194,7 +241,7 @@ def validate_timeline(
     """Strictly validate and return the canonical version 1 JSON document."""
     if not isinstance(document, Mapping):
         raise TimelineError("timeline must be a JSON object")
-    _reject_unknown(document, _TOP_KEYS, "timeline")
+    _reject_unknown(document, _TOP_KEYS | _OPTIONAL_TOP_KEYS, "timeline")
     _require_fields(document, _TOP_KEYS, "timeline")
     if document.get("schema_version") != TIMELINE_SCHEMA_VERSION:
         raise TimelineError(f"schema_version must be {TIMELINE_SCHEMA_VERSION}")
@@ -257,11 +304,78 @@ def validate_timeline(
     }
     if not isinstance(canonical["transition"], str):
         raise TimelineError("transition must be a string")
+    if document.get("premium") is not None:
+        canonical["premium"] = _validate_premium(document["premium"], root)
     try:
         validate_spec(timeline_to_spec(canonical, root, validate=False))
     except AssembleError as exc:
         raise TimelineError(str(exc)) from exc
     return canonical
+
+
+def _validate_premium(raw: Any, root: Path) -> dict[str, Any]:
+    """Canonical premium options, every path kept inside the workspace."""
+    if not isinstance(raw, Mapping):
+        raise TimelineError("premium must be an object")
+    _reject_unknown(raw, _PREMIUM_KEYS, "premium")
+    fill = raw.get("fill", "pad")
+    encode = raw.get("encode", "default")
+    if not isinstance(fill, str) or not isinstance(encode, str):
+        raise TimelineError("premium.fill and premium.encode must be strings")
+    fill_color = raw.get("fill_color")
+    if fill_color is not None and not isinstance(fill_color, str):
+        raise TimelineError("premium.fill_color must be a string")
+    ken_burns = raw.get("ken_burns", False)
+    if not isinstance(ken_burns, bool):
+        raise TimelineError("premium.ken_burns must be a boolean")
+    grade = raw.get("grade")
+    if grade is not None:
+        if not isinstance(grade, Mapping):
+            raise TimelineError("premium.grade must be an object")
+        _reject_unknown(grade, _GRADE_KEYS, "premium.grade")
+        grade = dict(grade)
+        if grade.get("lut_path") is not None:
+            grade["lut_path"] = _safe_path(root, grade["lut_path"], "premium.grade.lut_path")
+    cues = raw.get("voice_cues", [])
+    if not isinstance(cues, (list, tuple)):
+        raise TimelineError("premium.voice_cues must be an array")
+    voice_cues = []
+    for index, cue in enumerate(cues):
+        field = f"premium.voice_cues[{index}]"
+        if not isinstance(cue, Mapping):
+            raise TimelineError(f"{field} must be an object")
+        _reject_unknown(cue, frozenset({"path", "at"}), field)
+        voice_cues.append(
+            {
+                "path": _safe_path(root, cue.get("path"), f"{field}.path", required=True),
+                "at": _number(cue.get("at", 0.0), f"{field}.at"),
+            }
+        )
+    audio_mix = raw.get("audio_mix")
+    if audio_mix is not None:
+        if not isinstance(audio_mix, Mapping):
+            raise TimelineError("premium.audio_mix must be an object")
+        _reject_unknown(audio_mix, _AUDIO_MIX_KEYS, "premium.audio_mix")
+        audio_mix = dict(audio_mix)
+        sfx = audio_mix.get("sfx", [])
+        if not isinstance(sfx, (list, tuple)):
+            raise TimelineError("premium.audio_mix.sfx must be an array")
+        for index, cue in enumerate(sfx):
+            if not isinstance(cue, Mapping):
+                raise TimelineError(f"premium.audio_mix.sfx[{index}] must be an object")
+            _reject_unknown(cue, _SFX_KEYS, f"premium.audio_mix.sfx[{index}]")
+        audio_mix["sfx"] = [dict(cue) for cue in sfx]
+    return {
+        "fill": fill,
+        "fill_color": fill_color,
+        "ken_burns": ken_burns,
+        "grade": grade,
+        "encode": encode,
+        "fonts_dir": _safe_path(root, raw.get("fonts_dir"), "premium.fonts_dir"),
+        "voice_cues": voice_cues,
+        "audio_mix": audio_mix,
+        "premixed_audio": _safe_path(root, raw.get("premixed_audio"), "premium.premixed_audio"),
+    }
 
 
 def timeline_from_spec(
@@ -274,6 +388,8 @@ def timeline_from_spec(
     root = _root(workspace_root)
     raw = asdict(spec)
     raw["visuals"] = list(raw["visuals"])
+    if isinstance(spec, PremiumAssembleSpec):
+        raw["premium"] = {key: raw.pop(key) for key in _PREMIUM_KEYS}
     raw["schema_version"] = TIMELINE_SCHEMA_VERSION
     raw["name"] = validate_name(name)
     return validate_timeline(raw, root)
@@ -298,7 +414,37 @@ def timeline_to_spec(
         if output is not None
         else data["output"]
     )
-    return AssembleSpec(
+    premium = data.get("premium")
+    spec_class: type[AssembleSpec] = AssembleSpec
+    premium_fields: dict[str, Any] = {}
+    if premium:
+        spec_class = PremiumAssembleSpec
+        grade = premium.get("grade")
+        audio_mix = premium.get("audio_mix")
+        premium_fields = {
+            "fill": premium.get("fill", "pad"),
+            "fill_color": premium.get("fill_color"),
+            "ken_burns": bool(premium.get("ken_burns")),
+            "grade": GradeOptions(**{**grade, "lut_path": absolute(grade.get("lut_path"))})
+            if grade
+            else None,
+            "encode": premium.get("encode", "default"),
+            "fonts_dir": absolute(premium.get("fonts_dir")),
+            "voice_cues": tuple(
+                VoiceCue(path=absolute(cue["path"]) or "", at=float(cue.get("at") or 0.0))
+                for cue in premium.get("voice_cues") or ()
+            ),
+            "audio_mix": AudioMixOptions(
+                **{
+                    **audio_mix,
+                    "sfx": tuple(SfxCue(**cue) for cue in audio_mix.get("sfx") or ()),
+                }
+            )
+            if audio_mix
+            else None,
+            "premixed_audio": absolute(premium.get("premixed_audio")),
+        }
+    return spec_class(
         visuals=tuple(
             VisualClip(
                 path=absolute(item["path"]) or "",
@@ -320,6 +466,7 @@ def timeline_to_spec(
         transition=data["transition"],
         transition_duration=data["transition_duration"],
         extra_metadata=dict(data["extra_metadata"]),
+        **premium_fields,
     )
 
 

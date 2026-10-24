@@ -404,7 +404,7 @@ function CrmWorkbenchInner({
 
   return (
     <div className="flex h-full min-h-0 bg-background">
-      <aside className="hidden w-48 shrink-0 flex-col border-r border-border/60 bg-muted/15 p-3 md:flex">
+      <aside className="hidden w-48 shrink-0 flex-col border-e border-border/60 bg-muted/15 p-3 md:flex">
         <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {tx("crm.rail", "CRM")}
         </p>
@@ -419,7 +419,7 @@ function CrmWorkbenchInner({
                 setOpenId(null);
               }}
               className={cn(
-                "flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-[background-color,transform] duration-150 active:scale-[0.96]",
+                "flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-start text-[13px] transition-[background-color,transform] duration-150 active:scale-[0.96]",
                 tab === item.id ? "bg-sidebar-accent font-medium" : "hover:bg-muted/60",
               )}
             >
@@ -459,7 +459,7 @@ function CrmWorkbenchInner({
             className="h-8 cursor-pointer text-[12px]"
             onClick={() => setSettingsOpen(true)}
           >
-            <Building2 className="mr-1.5 h-3.5 w-3.5" />
+            <Building2 className="me-1.5 h-3.5 w-3.5" />
             {tx("crm.configureCompany", "Configurer l'entreprise")}
           </Button>
           <Button
@@ -469,7 +469,7 @@ function CrmWorkbenchInner({
             className="h-8 cursor-pointer text-[12px]"
             onClick={() => setMembersOpen(true)}
           >
-            <Users className="mr-1.5 h-3.5 w-3.5" />
+            <Users className="me-1.5 h-3.5 w-3.5" />
             {tx("crm.members", "Membres")}
           </Button>
           <h1 className="text-sm font-semibold" style={{ textWrap: "balance" } as never}>
@@ -483,7 +483,7 @@ function CrmWorkbenchInner({
               className="h-7 cursor-pointer text-[11px]"
               onClick={() => setOppView((prev) => (prev === "pipeline" ? "table" : "pipeline"))}
             >
-              <Kanban className="mr-1 h-3.5 w-3.5" />
+              <Kanban className="me-1 h-3.5 w-3.5" />
               {oppView === "pipeline" ? tx("crm.viewTable", "Liste") : tx("crm.viewPipeline", "Pipeline")}
             </Button>
           ) : null}
@@ -495,7 +495,7 @@ function CrmWorkbenchInner({
               className="h-7 cursor-pointer text-[11px]"
               onClick={() => setActView((prev) => (prev === "calendar" ? "list" : "calendar"))}
             >
-              <CalendarDays className="mr-1 h-3.5 w-3.5" />
+              <CalendarDays className="me-1 h-3.5 w-3.5" />
               {actView === "calendar" ? tx("crm.viewList", "Liste") : tx("crm.viewCalendar", "Calendrier")}
             </Button>
           ) : null}

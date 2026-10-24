@@ -1,44 +1,67 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Probe every official catalog source, one id at a time.
+"""Probe contract tests and opt-in live checks for official tender sources.
 
-A 404 or a missing DNS name is a catalog bug, except a host that answers
-a fake 404 from some runners. A WAF, a login wall, a timeout abroad, or
-an HTTP 429 is recorded, not treated as an invented notice.
+The regular test gate exercises probe errors with mocked transport. Set
+``NAVIN_TENDERS_LIVE=1`` for current portal/API responses; unhandled HTTP,
+DNS, and timeout failures stay visible rather than becoming host exceptions.
 """
 
 from __future__ import annotations
 
 import os
 import unittest
+import urllib.error
+from unittest import mock
 
 from navin.tenders.fetchers import FETCHERS
-from navin.tenders.probe import probe_catalog
+from navin.tenders.probe import probe_catalog, probe_source
 from navin.tenders.sources import API_SOURCE_IDS, catalog
 
-# Official hosts that time out, fail TLS, or challenge bots from some networks.
-# The catalog URL stays. A 404 here is still a fail.
-_TIMEOUT_ABROAD = frozenset({
-    "egypt-etenders",
-    "monaqasat",
-    "czech-vvz",
-    "tuneps",
-    "niger-marches",
-    "nigeria-nocopo",
-    # GitHub runners sometimes time out on this host. A 404 still fails.
-    "cameroon-armp",
-    # GitHub runners sometimes time out on this host. A 404 still fails.
-    "etimad",
-})
 
-# GitHub-hosted runners sometimes get HTTP 404 from this host and then reach
-# the same URL on the next probe. The catalog URL stays. A DNS miss still fails.
-_WAF_404 = frozenset({
-    "ireland-etenders",
-})
+class TenderProbeNetworkContractTest(unittest.TestCase):
+    def test_timeout_does_not_promote_portal_reachability(self) -> None:
+        source = {
+            "id": "test-portal",
+            "name": "Test portal",
+            "url": "https://portal.example/",
+        }
+        with mock.patch(
+            "navin.tenders.probe.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("timed out"),
+        ):
+            row = probe_source(source)
+
+        self.assertEqual(row["portal_status"], 0)
+        self.assertIn("timed out", row["portal_error"])
+        self.assertFalse(row["portal_ok"])
+        self.assertFalse(row["portal_blocked"])
+        self.assertFalse(row["reachable"])
+
+    def test_http_404_remains_a_real_probe_failure(self) -> None:
+        source = {
+            "id": "test-portal",
+            "name": "Test portal",
+            "url": "https://portal.example/",
+        }
+        error = urllib.error.HTTPError(source["url"], 404, "Not Found", None, None)
+        with mock.patch(
+            "navin.tenders.probe.urllib.request.urlopen",
+            side_effect=error,
+        ):
+            row = probe_source(source)
+
+        self.assertEqual(row["portal_status"], 404)
+        self.assertEqual(row["portal_error"], "Not Found")
+        self.assertFalse(row["portal_ok"])
+        self.assertFalse(row["reachable"])
 
 
+@unittest.skipUnless(
+    os.environ.get("NAVIN_TENDERS_LIVE") == "1",
+    "set NAVIN_TENDERS_LIVE=1 to access official tender portals",
+)
 class TendersCatalogOneByOneTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -52,14 +75,6 @@ class TendersCatalogOneByOneTest(unittest.TestCase):
         self.assertEqual(len(got), len(set(got)))
 
     def test_each_source_one_by_one(self) -> None:
-        offline = (
-            self.by_id["ted"].get("api_ok") is not True
-            and int(self.by_id["ted"].get("portal_status") or 0) == 0
-            and int(self.by_id["world-bank"].get("portal_status") or 0) == 0
-        )
-        if offline:
-            self.skipTest("network blocked; empty pipeline is honest")
-
         for source in catalog():
             sid = source["id"]
             with self.subTest(sid):
@@ -74,33 +89,22 @@ class TendersCatalogOneByOneTest(unittest.TestCase):
                     or int(row.get("api_status") or 0) == 429
                     or "429" in api_err
                 )
-                if sid not in _WAF_404 or status != 404:
-                    self.assertNotIn(status, {404, 410}, row)
+                self.assertNotIn(status, {404, 410}, row)
                 self.assertFalse(dns_miss, row)
                 if sid in API_SOURCE_IDS and sid != "sam-gov" and not rate_limited:
                     self.assertTrue(row.get("api_ok"), row)
                 if sid == "sam-gov":
                     self.assertTrue(row.get("portal_ok"), row)
                     self.assertIn("key", str(row.get("api_error") or "").lower())
-                if sid not in _TIMEOUT_ABROAD and sid not in _WAF_404:
-                    self.assertTrue(
-                        row.get("reachable")
-                        or row.get("portal_blocked")
-                        or row.get("api_ok")
-                        or rate_limited,
-                        row,
-                    )
+                self.assertTrue(
+                    row.get("reachable")
+                    or row.get("portal_blocked")
+                    or row.get("api_ok")
+                    or rate_limited,
+                    row,
+                )
 
     def test_each_wired_fetcher_returns_notices_or_honest_error(self) -> None:
-        if os.environ.get("NAVIN_TENDERS_SKIP_LIVE") == "1":
-            self.skipTest("live fetchers skipped")
-        offline = (
-            self.by_id["ted"].get("api_ok") is not True
-            and int(self.by_id["ted"].get("portal_status") or 0) == 0
-        )
-        if offline:
-            self.skipTest("network blocked; empty pipeline is honest")
-
         for sid, fetcher in FETCHERS.items():
             if sid == "sam-gov" and not (
                 os.environ.get("SAM_API_KEY") or os.environ.get("SAM_GOV_API_KEY")

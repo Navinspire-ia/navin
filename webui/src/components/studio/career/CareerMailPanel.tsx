@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { DESK_PANEL_STYLES } from "../desk-panel";
 import { useEffect, useState } from "react";
 import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
@@ -8,6 +9,7 @@ import {
   ChoiceGroup, DefaultButton, Dropdown, MessageBar, MessageBarType, Panel, PanelType,
   PrimaryButton, ProgressIndicator, TextField, Toggle,
 } from "@fluentui/react";
+import { phrase } from "@/i18n/phrases";
 import { DocumentGenerationNotice } from "@/components/studio/DocumentGenerationNotice";
 import type {
   CareerDesk, CareerMailDraft, CareerMailbox, CareerMailboxStatus, CareerMailReceipt, CareerProfile,
@@ -76,13 +78,13 @@ export function CareerMailReceiptView({ receipt, french }: { receipt: CareerMail
     <div className="grid gap-2 text-sm" data-testid="career-mail-receipt" data-status={receipt.status}>
       <MessageBar messageBarType={accepted ? MessageBarType.success : receipt.status === "failed" ? MessageBarType.error : MessageBarType.warning}>
         {accepted
-          ? (french ? "Candidature acceptée par le serveur de courrier." : "Application accepted by the mail server.")
+          ? (french ? "Candidature acceptée par le serveur de courrier." : phrase("Application accepted by the mail server."))
           : careerMailError(receipt.error || "mail_acceptance_unknown", french)}
       </MessageBar>
-      <p>{receipt.recipient}{receipt.accepted_at ? ` · ${new Date(receipt.accepted_at * 1000).toLocaleString(french ? "fr-FR" : "en-GB")}` : ""}</p>
+      <p>{receipt.recipient}{receipt.accepted_at ? ` · ${new Date(receipt.accepted_at * 1000).toLocaleString(intlLocale())}` : ""}</p>
       <p className="break-all font-mono text-xs">Message-ID: {receipt.message_id}</p>
-      {accepted ? <p className="text-muted-foreground">{french ? "La livraison et la réponse du recruteur seront suivies à partir des messages reçus." : "Delivery reports and recruiter replies will be tracked from incoming messages."}</p> : null}
-      {receipt.delivery_status === "delivery_report" ? <MessageBar messageBarType={MessageBarType.warning}>{french ? "Un rapport de livraison est disponible dans la boîte de réception." : "A delivery report is available in your inbox."}</MessageBar> : null}
+      {accepted ? <p className="text-muted-foreground">{french ? "La livraison et la réponse du recruteur seront suivies à partir des messages reçus." : phrase("Delivery reports and recruiter replies will be tracked from incoming messages.")}</p> : null}
+      {receipt.delivery_status === "delivery_report" ? <MessageBar messageBarType={MessageBarType.warning}>{french ? "Un rapport de livraison est disponible dans la boîte de réception." : phrase("A delivery report is available in your inbox.")}</MessageBar> : null}
     </div>
   );
 }
@@ -96,23 +98,23 @@ export function CareerMailAccountSummary({ profile, status, french, busy, onSett
   return (
     <section className="mb-6 grid gap-4 rounded-2xl p-6 outline outline-1 outline-black/10 dark:outline-white/10" data-testid="career-mail-account">
       <div>
-        <h2 className="text-lg font-semibold">{french ? "Courrier professionnel" : "Professional mail"}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{config?.enabled ? config.sender_email : (french ? "Connectez le compte qui signe vos candidatures et reçoit les réponses." : "Connect the account that sends your applications and receives replies.")}</p>
+        <h2 className="text-lg font-semibold">{french ? "Courrier professionnel" : phrase("Professional mail")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{config?.enabled ? config.sender_email : (french ? "Connectez le compte qui signe vos candidatures et reçoit les réponses." : phrase("Connect the account that sends your applications and receives replies."))}</p>
       </div>
       {config?.enabled ? (
         <dl className="grid gap-3 text-sm sm:grid-cols-3">
-          <div><dt className="text-muted-foreground">{french ? "Envoi automatique" : "Automatic sending"}</dt><dd>{config.auto_send ? `${config.max_per_day} / ${french ? "jour" : "day"}, score ≥ ${config.min_match_score}` : (french ? "Désactivé" : "Disabled")}</dd></div>
-          <div><dt className="text-muted-foreground">{french ? "Relève des réponses" : "Reply sync"}</dt><dd>{config.read_replies ? `${config.poll_interval_minutes} min` : (french ? "Désactivée" : "Disabled")}</dd></div>
-          <div><dt className="text-muted-foreground">{french ? "Acceptées par le fournisseur" : "Accepted by provider"}</dt><dd>{status?.accepted || 0}</dd></div>
+          <div><dt className="text-muted-foreground">{french ? "Envoi automatique" : phrase("Automatic sending")}</dt><dd>{config.auto_send ? `${config.max_per_day} / ${french ? "jour" : phrase("day")}, score ≥ ${config.min_match_score}` : (french ? "Désactivé" : phrase("Disabled"))}</dd></div>
+          <div><dt className="text-muted-foreground">{french ? "Relève des réponses" : phrase("Reply sync")}</dt><dd>{config.read_replies ? `${config.poll_interval_minutes} min` : (french ? "Désactivée" : phrase("Disabled"))}</dd></div>
+          <div><dt className="text-muted-foreground">{french ? "Acceptées par le fournisseur" : phrase("Accepted by provider")}</dt><dd>{status?.accepted || 0}</dd></div>
         </dl>
       ) : null}
-      {sync?.checked_at ? <p className="text-xs text-muted-foreground">{french ? "Dernière relève" : "Last sync"}: {new Date(sync.checked_at * 1000).toLocaleString(french ? "fr-FR" : "en-GB")} · {sync.received || 0} {french ? "nouvelle(s) réponse(s)" : "new replies"}</p> : null}
+      {sync?.checked_at ? <p className="text-xs text-muted-foreground">{french ? "Dernière relève" : phrase("Last sync")}: {new Date(sync.checked_at * 1000).toLocaleString(intlLocale())} · {sync.received || 0} {french ? "nouvelle(s) réponse(s)" : phrase("new replies")}</p> : null}
       {sync?.error ? <MessageBar messageBarType={MessageBarType.error}>{careerMailError(sync.error, french)}</MessageBar> : null}
-      {(sync?.skipped_large || 0) > 0 ? <MessageBar messageBarType={MessageBarType.warning}>{french ? "Un message volumineux reste à consulter dans votre messagerie." : "A large message remains available in your mail app."}</MessageBar> : null}
-      {(status?.pending_notifications || 0) > 0 ? <p className="text-sm text-muted-foreground">{status?.pending_notifications} {french ? "notification(s) en attente de confirmation." : "notification(s) awaiting confirmation."}</p> : null}
+      {(sync?.skipped_large || 0) > 0 ? <MessageBar messageBarType={MessageBarType.warning}>{french ? "Un message volumineux reste à consulter dans votre messagerie." : phrase("A large message remains available in your mail app.")}</MessageBar> : null}
+      {(status?.pending_notifications || 0) > 0 ? <p className="text-sm text-muted-foreground">{status?.pending_notifications} {french ? "notification(s) en attente de confirmation." : phrase("notification(s) awaiting confirmation.")}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <DefaultButton styles={BUTTON} text={french ? "Configurer le compte" : "Account settings"} iconProps={{ iconName: "Mail" }} onClick={onSettings} data-testid="career-mail-settings-open" />
-        <DefaultButton styles={BUTTON} text={french ? "Relever les réponses" : "Sync replies"} iconProps={{ iconName: "Sync" }} disabled={busy || !config?.enabled || !config.read_replies} onClick={onSync} data-testid="career-mail-sync" />
+        <DefaultButton styles={BUTTON} text={french ? "Configurer le compte" : phrase("Account settings")} iconProps={{ iconName: "Mail" }} onClick={onSettings} data-testid="career-mail-settings-open" />
+        <DefaultButton styles={BUTTON} text={french ? "Relever les réponses" : phrase("Sync replies")} iconProps={{ iconName: "Sync" }} disabled={busy || !config?.enabled || !config.read_replies} onClick={onSync} data-testid="career-mail-sync" />
       </div>
     </section>
   );
@@ -128,7 +130,7 @@ export function CareerMailSettings({ open, profile, status, french, busy, error,
   const [imapPassword, setImapPassword] = useState("");
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const text = (fr: string, en: string) => french ? fr : en;
+  const text = (fr: string, en: string) => french ? fr : phrase(en);
   const changed = () => { setSaved(false); setDirty(true); };
   const set = <K extends keyof CareerMailbox>(key: K, value: CareerMailbox[K]) => { changed(); setForm(current => ({ ...current, [key]: value })); };
   const save = async (next = form, method = connection) => {
@@ -221,7 +223,7 @@ export function CareerMailCompose({ open, draft, receipt, french, busy, error, a
   useEffect(() => { setRecipient(draft?.recipient || ""); setReviewed(false); }, [draft]);
   const locked = receipt?.status === "accepted" || receipt?.status === "unknown" || receipt?.status === "sending";
   const fresh = Boolean(draft && recipient.trim() && recipient.trim() === draft.recipient);
-  const text = (fr: string, en: string) => french ? fr : en;
+  const text = (fr: string, en: string) => french ? fr : phrase(en);
   return (
     <Panel styles={DESK_PANEL_STYLES} isOpen={open} onDismiss={onDismiss} isLightDismiss={!busy} type={PanelType.medium} headerText={text("Candidature par email", "Application by email")} closeButtonAriaLabel={text("Fermer", "Close")}>
       <div className="grid gap-5 pb-8" data-testid="career-mail-compose">

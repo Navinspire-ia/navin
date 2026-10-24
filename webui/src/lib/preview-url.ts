@@ -9,9 +9,7 @@ const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 /** Common local app ports (project servers). Never include Navin :8765. */
 const PROJECT_PORT_CANDIDATES = [
-  3000, 3001, 3100, 4173, 4200, 4321, 5000, 5174, 5175, 5176, 5180, 8000, 8080,
-  8081,
-  5173, // last: often Navin Vite - only used if HTML is clearly NOT Navin
+  3000, 3001, 3100, 4173, 4200, 4321, 5000, 5180, 8000, 8080, 8081,
 ] as const;
 
 /** HTML fingerprints unique enough for the Navin WebUI shell. */
@@ -34,7 +32,21 @@ const NAVIN_UI_MARKERS = [
  * own port is added at call time: whatever port served this page is Navin by
  * definition, and hard-coding a list can never keep up with a dynamic one.
  */
-const NAVIN_EDITOR_PORTS = new Set(["8765", "8766", "18790", "18791"]);
+const NAVIN_EDITOR_PORTS = new Set([
+  // Ports reserved by Navin: its dev editor (Vite 5173-5176), WebUI and
+  // engine pairs. A project is never started there, so whatever answers on
+  // them (Navin, or another project) is never this project's Preview.
+  "5173",
+  "5174",
+  "5175",
+  "5176",
+  "8765",
+  "8766",
+  "8767",
+  "8768",
+  "18790",
+  "18791",
+]);
 
 /** True when `port` belongs to Navin: a well-known port, or the page's own. */
 export function isNavinOwnPort(port: string): boolean {

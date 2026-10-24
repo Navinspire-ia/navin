@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check, ExternalLink, Loader2, Search } from "lucide-react";
+import { phrase } from "@/i18n/phrases";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ export function AppTemplatesSettings({
         row.slug,
         row.name,
         row.description,
+        phrase(row.description),
         row.category,
         row.source_name,
         row.stack.join(" "),
@@ -219,7 +221,7 @@ export function AppTemplatesSettings({
       <section className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative min-w-0 flex-1">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
           <Input
@@ -232,7 +234,7 @@ export function AppTemplatesSettings({
             placeholder={t("settings.templates.searchPlaceholder", {
               defaultValue: "Search CRM, finance, chatbot, RAG...",
             })}
-            className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+            className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5 rounded-2xl bg-muted/55 p-1">
@@ -249,7 +251,7 @@ export function AppTemplatesSettings({
               )}
             >
               {option.label}
-              <span className="ml-1 tabular-nums text-[11px] opacity-70">{option.count}</span>
+              <span className="ms-1 tabular-nums text-[11px] opacity-70">{option.count}</span>
             </button>
           ))}
         </div>
@@ -305,7 +307,7 @@ export function AppTemplatesSettings({
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <h3 className="truncate text-[15px] font-semibold leading-5 text-foreground">
-                        {row.name}
+                        {phrase(row.name)}
                       </h3>
                       {row.featured && STUDIO_CATEGORIES.has(row.category) ? (
                         <span className="inline-flex shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
@@ -320,7 +322,7 @@ export function AppTemplatesSettings({
                       ) : null}
                     </div>
                     <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground [text-wrap:pretty]">
-                      {row.description}
+                      {phrase(row.description)}
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <span
@@ -329,14 +331,14 @@ export function AppTemplatesSettings({
                           visual.chip,
                         )}
                       >
-                        {visual.label}
+                        {phrase(visual.label)}
                       </span>
                       {agents.map((agent) => (
                         <span
                           key={agent}
                           className="rounded-full bg-muted/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
                         >
-                          {agentShortName(agent)}
+                          {phrase(agentShortName(agent))}
                         </span>
                       ))}
                     </div>
@@ -357,7 +359,7 @@ export function AppTemplatesSettings({
                       }}
                     >
                       {busySlug === row.slug ? (
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                        <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                       ) : null}
                       {t("settings.templates.use", { defaultValue: "Use" })}
                     </Button>
@@ -407,7 +409,7 @@ export function AppTemplatesSettings({
             </DialogHeader>
             {pending ? (
               <div className="space-y-3 text-[13px]">
-                <p className="text-muted-foreground [text-wrap:pretty]">{pending.description}</p>
+                <p className="text-muted-foreground [text-wrap:pretty]">{phrase(pending.description)}</p>
                 <div>
                   <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
                     {t("settings.templates.agentsLabel", {
@@ -524,7 +526,7 @@ export function AppTemplatesSettings({
                 type="submit"
                 disabled={Boolean(busySlug) || (mode === "create" && !createDest.trim())}
               >
-                {busySlug ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                {busySlug ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
                 {mode === "create"
                   ? t("settings.templates.confirmCreate", { defaultValue: "Create" })
                   : t("settings.templates.confirmInstall", { defaultValue: "Use" })}

@@ -27,6 +27,13 @@ import type {
   GitDiffPayload,
   GitLogPayload,
   GitClonePayload,
+  GitAccountsPayload,
+  GitAccountTestPayload,
+  GitDevicePollPayload,
+  GitDeviceStartPayload,
+  GitIdentityPayload,
+  GitMachinePayload,
+  GitSetupPayload,
   GitStatusPayload,
   DebugStatePayload,
   GithubCiStatusPayload,
@@ -104,7 +111,8 @@ import {
   isUnreachableError,
   transportMessage,
 } from "./http";
-import { ApiError } from "./api-error";
+import { ApiError, parseApiErrorBody } from "./api-error";
+import type { CollabPayload, CollabSettings } from "./team";
 import { noteGatewayAnswered, noteGatewayStalled } from "./gateway-pace";
 import { isRetryableRead } from "./read-routes";
 
@@ -249,8 +257,14 @@ async function request<T>(
       noteGatewayAnswered();
       return value;
     } catch (error) {
-      const transport = isTransportError(error);
-      if (transport) noteGatewayStalled(isUnreachableError(error) ? "unreachable" : "timeout");
+      const callerAborted = Boolean(init?.signal?.aborted);
+      const transport = !callerAborted && isTransportError(error);
+      if (transport) {
+        noteGatewayStalled(isUnreachableError(error) ? "unreachable" : "timeout");
+      } else if (!callerAborted) {
+        // An HTTP error status still proves the engine is answering.
+        noteGatewayAnswered();
+      }
       if (transport && attempt < retries && !init?.signal?.aborted) {
         attempt += 1;
         await pause(READ_RETRY_PAUSE_MS[attempt - 1] ?? 1200, init?.signal);
@@ -294,15 +308,23 @@ async function sendRequest<T>(
     throw error;
   }
   if (res.status === 401 && allowRefresh) {
-    const next = await refreshStaleApiToken(token);
-    if (next) {
-      return sendRequest<T>(url, next, init, timeoutMs, false);
+    const text =
+      typeof res.text === "function" ? (await res.text()).trim() : "";
+    const body = parseApiErrorBody(text);
+    // A forge asking for sign-in (private repo clone) is not a stale gateway
+    // token: refreshing the client would not help and would reconnect it.
+    if (body?.code !== "auth_required") {
+      const next = await refreshStaleApiToken(token);
+      if (next) {
+        return sendRequest<T>(url, next, init, timeoutMs, false);
+      }
     }
+    throw new ApiError(res.status, apiErrorMessage(res.status, text), body);
   }
   if (!res.ok) {
     const text =
       typeof res.text === "function" ? (await res.text()).trim() : "";
-    throw new ApiError(res.status, apiErrorMessage(res.status, text));
+    throw new ApiError(res.status, apiErrorMessage(res.status, text), parseApiErrorBody(text));
   }
   const contentType = res.headers?.get?.("content-type") ?? "";
   if (contentType && !contentType.toLowerCase().includes("application/json")) {
@@ -1698,11 +1720,13 @@ export async function setupSkill(
 /** Server-side local app discovery for Preview (avoids browser CORS). */
 export async function fetchDiscoverPreviewUrl(
   token: string,
-  opts?: { url?: string; preferredPort?: number },
+  opts?: { url?: string; preferredPort?: number; workspace?: string | null },
   base: string = "",
 ): Promise<{ url: string | null; source: string | null }> {
   const query = new URLSearchParams();
   if (opts?.url) query.set("url", opts.url);
+  // The open project: only its own app is previewed, never another one on a nearby port.
+  if (opts?.workspace) query.set("workspace", opts.workspace);
   if (opts?.preferredPort != null) {
     query.set("preferred_port", String(opts.preferredPort));
   }
@@ -2033,6 +2057,157 @@ export async function cloneGitProject(
   );
 }
 
+/** Forge identities the engine can use: stored tokens, env variables, gh CLI. */
+export async function fetchGitAccounts(
+  token: string,
+  base: string = "",
+): Promise<GitAccountsPayload> {
+  return request<GitAccountsPayload>(
+    `${base}/api/webui/git/accounts`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/** Ask the forge who the stored credential for `host` belongs to. */
+export async function testGitAccount(
+  token: string,
+  host: string,
+  base: string = "",
+): Promise<GitAccountTestPayload> {
+  const query = new URLSearchParams({ host });
+  return request<GitAccountTestPayload>(
+    `${base}/api/webui/git/test?${query}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+function gitSetupQuery(values: Record<string, string | null | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value) query.set(key, value);
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+/**
+ * Git on this machine: OS, git version, commit identity, credential helper,
+ * SSH keys and remotes. With `session`, the git that serves that project
+ * (a WSL distribution for a `\\wsl.localhost` project).
+ */
+export async function fetchGitMachine(
+  token: string,
+  options: { session?: string | null } = {},
+  base: string = "",
+): Promise<GitMachinePayload> {
+  return request<GitMachinePayload>(
+    `${base}/api/webui/git/machine${gitSetupQuery({ session: options.session })}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/**
+ * Test the account for `host` and get git ready for it: a missing commit
+ * identity is filled from the account, scopes are checked, and the machine
+ * report comes back with the result.
+ */
+export async function setupGitAccount(
+  token: string,
+  host: string,
+  options: { session?: string | null } = {},
+  base: string = "",
+): Promise<GitSetupPayload> {
+  return request<GitSetupPayload>(
+    `${base}/api/webui/git/setup${gitSetupQuery({ host, session: options.session })}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/** Write the global git `user.name` / `user.email` (overwrites). */
+export async function setGitIdentity(
+  token: string,
+  identity: { name?: string; email?: string; session?: string | null },
+  base: string = "",
+): Promise<GitIdentityPayload> {
+  return request<GitIdentityPayload>(
+    `${base}/api/webui/git/identity${gitSetupQuery({
+      name: identity.name?.trim(),
+      email: identity.email?.trim(),
+      session: identity.session,
+    })}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/** Save the stored token in the OS credential helper, for terminal git. */
+export async function storeGitTokenInHelper(
+  token: string,
+  host: string,
+  options: { session?: string | null } = {},
+  base: string = "",
+): Promise<{ ok: boolean; host: string; helper: string; distro: string | null }> {
+  return request(
+    `${base}/api/webui/git/helper${gitSetupQuery({ host, session: options.session })}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/** Point an SSH remote of the session's project at its HTTPS URL. */
+export async function switchGitRemoteToHttps(
+  token: string,
+  remote: string,
+  session: string,
+  base: string = "",
+): Promise<{ ok: boolean; remote: string; url?: string; push_url?: string }> {
+  return request(
+    `${base}/api/webui/git/remote-https${gitSetupQuery({ remote, session })}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+/** Start a GitHub device sign-in: the user types `user_code` on `verification_uri`. */
+export async function startGitDeviceFlow(
+  token: string,
+  host: string = "github.com",
+  base: string = "",
+): Promise<GitDeviceStartPayload> {
+  const query = new URLSearchParams({ host });
+  return request<GitDeviceStartPayload>(
+    `${base}/api/webui/git/device/start?${query}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function pollGitDeviceFlow(
+  token: string,
+  flowId: string,
+  base: string = "",
+): Promise<GitDevicePollPayload> {
+  const query = new URLSearchParams({ flow_id: flowId });
+  return request<GitDevicePollPayload>(
+    `${base}/api/webui/git/device/poll?${query}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
 export async function fetchProjectAudit(
   token: string,
   path: string,
@@ -2213,6 +2388,230 @@ export async function scanExternalSessions(
   );
 }
 
+/** A live share of a chat (end-to-end encrypted link through the Navin relay). */
+export interface LiveShareGuest {
+  guest_id: string;
+  name: string;
+  drive: boolean;
+  download: boolean;
+  requested_control: boolean;
+  requested_download: boolean;
+  joined_at: number;
+}
+
+export interface LiveShare {
+  share_id: string;
+  chat_id: string;
+  link: string;
+  expires_at: number;
+  max_guests: number;
+  /** read: watch; write: may drive the agent; full: drive and download. */
+  access: LiveShareAccess;
+  /** The running site guests may open (http://localhost:5173), "" when not shared. */
+  site_url?: string;
+  /** Why the site could not be shared: no_site, bad_url, navin. */
+  site_error?: string;
+  /** "session": the chat (with the site when shared); "site": the app alone. */
+  scope?: "session" | "site";
+  online: boolean;
+  guests: LiveShareGuest[];
+}
+
+export type LiveShareAccess = "read" | "write" | "full";
+
+function shareUrl(base: string, action: string, params: Record<string, string>): string {
+  const query = new URLSearchParams({ ...params, _method: "POST" });
+  return `${base}/api/webui/share/${action}?${query.toString()}`;
+}
+
+export async function listLiveShares(token: string, chatId: string, base: string = ""): Promise<LiveShare[]> {
+  const payload = await request<{ shares: LiveShare[] }>(shareUrl(base, "list", { chat_id: chatId }), token);
+  return payload.shares ?? [];
+}
+
+export async function createLiveShare(
+  token: string,
+  chatId: string,
+  ttl: "1h" | "24h" | "7d",
+  access: LiveShareAccess = "read",
+  base: string = "",
+  site: { url?: string } | null = null,
+): Promise<LiveShare> {
+  const params: Record<string, string> = { chat_id: chatId, ttl, access };
+  if (site) {
+    params.site = "true";
+    if (site.url) params.site_url = site.url;
+  }
+  return request<LiveShare>(shareUrl(base, "create", params), token);
+}
+
+/**
+ * A link to the running app alone: visitors open and use it, and see nothing
+ * of the conversation. Answers ``{ site_error }`` (and no link) when no site
+ * can be shared.
+ */
+export async function createAppShare(
+  token: string,
+  chatId: string,
+  ttl: "1h" | "24h" | "7d",
+  siteUrl: string = "",
+  base: string = "",
+): Promise<Partial<LiveShare>> {
+  const params: Record<string, string> = { chat_id: chatId, ttl, scope: "site", max_guests: "20" };
+  if (siteUrl) params.site_url = siteUrl;
+  return request<Partial<LiveShare>>(shareUrl(base, "create", params), token);
+}
+
+/**
+ * Share the running site with the link's guests, or stop. Without ``url``,
+ * the site started from the chat's project is looked up.
+ */
+export async function setLiveShareSite(
+  token: string,
+  shareId: string,
+  enabled: boolean,
+  url: string = "",
+  base: string = "",
+): Promise<LiveShare> {
+  const params: Record<string, string> = { share_id: shareId, enabled: String(enabled) };
+  if (url) params.url = url;
+  return request<LiveShare>(shareUrl(base, "site", params), token);
+}
+
+/** The link's access level, applied to everyone already in as well. */
+export async function setLiveShareAccess(
+  token: string,
+  shareId: string,
+  access: LiveShareAccess,
+  base: string = "",
+): Promise<LiveShare> {
+  return request<LiveShare>(shareUrl(base, "access", { share_id: shareId, access }), token);
+}
+
+export async function revokeLiveShare(token: string, shareId: string, base: string = ""): Promise<void> {
+  await request<{ revoked: boolean }>(shareUrl(base, "revoke", { share_id: shareId }), token);
+}
+
+/** Grant or withdraw a guest's rights, or remove the guest. */
+export async function updateLiveShareGuest(
+  token: string,
+  shareId: string,
+  guestId: string,
+  change: { drive?: boolean; download?: boolean; remove?: boolean },
+  base: string = "",
+): Promise<void> {
+  const params: Record<string, string> = { share_id: shareId, guest_id: guestId };
+  if (change.drive !== undefined) params.drive = String(change.drive);
+  if (change.download !== undefined) params.download = String(change.download);
+  if (change.remove) params.remove = "true";
+  await request<unknown>(shareUrl(base, "guest", params), token);
+}
+
+/** A chat packed as a .navin-session file (conversation + project + memory). */
+export interface SessionBundleExportResult {
+  path: string;
+  project_mode: "git" | "files" | "none";
+  files: number;
+  excluded_secrets: string[];
+  skipped_large: string[];
+}
+
+export interface SessionBundleOpenResult {
+  chat_id: string;
+  project_dir: string;
+  project_mode: "git" | "files" | "none";
+  excluded_secrets: string[];
+  notes: string[];
+}
+
+// Packing or rebuilding a whole repository can take minutes.
+const SESSION_BUNDLE_TIMEOUT_MS = 600_000;
+
+/** Write a chat and its project to `<dir>/<project>-<date>.navin-session` (default: Downloads). */
+export async function exportSessionBundle(
+  token: string,
+  chatId: string,
+  dir?: string | null,
+  base: string = "",
+): Promise<SessionBundleExportResult> {
+  const query = new URLSearchParams({ chat_id: chatId, _method: "POST" });
+  if (dir) query.set("dir", dir);
+  return request<SessionBundleExportResult>(
+    `${base}/api/webui/sessions/bundle/export?${query.toString()}`,
+    token,
+    undefined,
+    SESSION_BUNDLE_TIMEOUT_MS,
+  );
+}
+
+/** Rebuild a shared .navin-session here: a new chat linked to the rebuilt project. */
+export async function openSessionBundle(
+  token: string,
+  path: string,
+  into?: string | null,
+  base: string = "",
+  upload?: { id: string; name: string } | null,
+): Promise<SessionBundleOpenResult> {
+  const query = new URLSearchParams({ _method: "POST" });
+  if (upload) {
+    query.set("upload_id", upload.id);
+    query.set("name", upload.name);
+  } else {
+    query.set("path", path);
+  }
+  if (into) query.set("into", into);
+  return request<SessionBundleOpenResult>(
+    `${base}/api/webui/sessions/bundle/open?${query.toString()}`,
+    token,
+    undefined,
+    SESSION_BUNDLE_TIMEOUT_MS,
+  );
+}
+
+// Request bodies travel in headers here (about 2 MB a request at most):
+// a .navin-session is sent in 1 MB slices, in order.
+const BUNDLE_UPLOAD_SLICE_BYTES = 1024 * 1024;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function base64BodyHeaders(b64: string): Record<string, string> {
+  const headers: Record<string, string> = { "X-Navin-File-Body-0": "" };
+  for (let i = 0, index = 0; i < b64.length; i += FILE_BODY_CHUNK_CHARS, index += 1) {
+    headers[`X-Navin-File-Body-${index}`] = b64.slice(i, i + FILE_BODY_CHUNK_CHARS);
+  }
+  return headers;
+}
+
+/** Upload a .navin-session picked in the browser, then rebuild it like a local one. */
+export async function uploadAndOpenSessionBundle(
+  token: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+  base: string = "",
+): Promise<SessionBundleOpenResult> {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const total = Math.max(1, Math.ceil(file.size / BUNDLE_UPLOAD_SLICE_BYTES));
+  for (let index = 0; index < total; index += 1) {
+    const slice = file.slice(index * BUNDLE_UPLOAD_SLICE_BYTES, (index + 1) * BUNDLE_UPLOAD_SLICE_BYTES);
+    const bytes = new Uint8Array(await slice.arrayBuffer());
+    const query = new URLSearchParams({ upload_id: id, index: String(index), _method: "POST" });
+    await request<{ received: number }>(
+      `${base}/api/webui/sessions/bundle/upload?${query.toString()}`,
+      token,
+      { headers: base64BodyHeaders(bytesToBase64(bytes)) },
+      SESSION_BUNDLE_TIMEOUT_MS,
+    );
+    onProgress?.((index + 1) / total);
+  }
+  return openSessionBundle(token, "", null, base, { id, name: file.name });
+}
+
 export async function importExternalSessions(
   token: string,
   options?: { source?: string; overwrite?: boolean; limit?: number },
@@ -2367,6 +2766,8 @@ export interface UpdateStatus extends Partial<UpdateInfo> {
   progress: number;
   downloadedBytes: number;
   totalBytes: number;
+  /** While installing: copying the new version (progress %), then handing over to it. */
+  phase?: "preparing" | "restarting";
   error?: string | null;
   update?: UpdateInfo;
 }
@@ -2425,8 +2826,29 @@ export async function downloadAndInstallUpdate(
 ): Promise<UpdateStatus> {
   const downloaded = await downloadUpdate(token, base, onProgress);
   if (downloaded.state === "restarting") return downloaded;
-  onProgress?.({ ...downloaded, state: "installing" });
-  const installed = await installUpdate(token, base);
+  onProgress?.({ ...downloaded, state: "installing", phase: "preparing", progress: 0 });
+  // The install request answers only once the new version is ready to take
+  // over: meanwhile the preparation is followed, so the screen shows it.
+  let installing = true;
+  const follow = (async () => {
+    while (installing) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (!installing) return;
+      try {
+        const status = await fetchUpdateStatus(token, base);
+        if (installing && status.state === "installing") onProgress?.({ ...downloaded, ...status });
+      } catch {
+        // The engine is busy handing over: the next poll or the answer tells.
+      }
+    }
+  })();
+  let installed: UpdateStatus;
+  try {
+    installed = await installUpdate(token, base);
+  } finally {
+    installing = false;
+    void follow;
+  }
   if (installed.state !== "restarting") {
     throw new Error(installed.error || "The installer did not confirm the restart.");
   }
@@ -3532,7 +3954,7 @@ export async function fetchProviderModels(
   token: string,
   provider: string,
   base: string = "",
-  options?: { modality?: import("./types").MediaModelKind },
+  options?: { modality?: import("./types").MediaModelKind | "live" },
 ): Promise<ProviderModelsPayload> {
   const query = new URLSearchParams();
   query.set("provider", provider);
@@ -3671,6 +4093,7 @@ export async function listSlashCommands(
   token: string,
   base: string = "",
   module?: string | null,
+  workspace?: string | null,
 ): Promise<SlashCommand[]> {
   type Row = {
     command: string;
@@ -3681,10 +4104,11 @@ export async function listSlashCommands(
     lifecycle?: unknown;
     accepts_args?: unknown;
   };
-  const query =
-    module && module.trim()
-      ? `?module=${encodeURIComponent(module.trim())}`
-      : "";
+  const params = new URLSearchParams();
+  if (module && module.trim()) params.set("module", module.trim());
+  // The project's own Markdown commands (.navin/commands) join the palette.
+  if (workspace && workspace.trim()) params.set("workspace", workspace.trim());
+  const query = params.toString() ? `?${params.toString()}` : "";
   const body = await request<{ commands: Row[] }>(
     `${base}/api/commands${query}`,
     token,
@@ -5838,6 +6262,105 @@ export async function fetchCheckpointDiff(
   );
 }
 
+export type MissionDiff = {
+  from: number;
+  to: number;
+  goal: { from: string; to: string } | null;
+  status: { from: string; to: string } | null;
+  criteria: { added: string[]; removed: string[] };
+  facts: { added: string[]; removed: string[] };
+  constraints: { added: string[]; removed: string[] };
+  evidence: Record<string, { from: string | null; to: string | null }>;
+  steps: {
+    added: string[];
+    removed: string[];
+    changed: { id: string; title: string; from: string; to: string }[];
+  };
+};
+
+export async function restoreMissionVersion(
+  token: string,
+  key: string,
+  version: string,
+  reason: string,
+  base: string = "",
+): Promise<{ restored_from: number; version: number; checkpoint_id: string }> {
+  const query = new URLSearchParams({ version, reason });
+  return request<{ restored_from: number; version: number; checkpoint_id: string }>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/checkpoints/mission-restore?${query}`,
+    token,
+  );
+}
+
+export async function fetchMissionDiff(
+  token: string,
+  key: string,
+  a: number,
+  b: number,
+  base: string = "",
+): Promise<MissionDiff> {
+  const query = new URLSearchParams({ a: String(a), b: String(b) });
+  return request<MissionDiff>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/checkpoints/mission-diff?${query}`,
+    token,
+  );
+}
+
+export type MissionStrategy = {
+  version: number;
+  decision: string;
+  actor: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_s: number | null;
+  tool_events: number;
+  test_events: number;
+  measured: "live" | "snapshot";
+  status: string;
+  steps_total: number;
+  steps_completed: number;
+  retries: number;
+  criteria_total: number;
+  criteria_proven: number;
+};
+
+export type MissionCompare = {
+  a: MissionStrategy;
+  b: MissionStrategy;
+  better: number | null;
+  reasons: string[];
+};
+
+export async function fetchMissionCompare(
+  token: string,
+  key: string,
+  a: number,
+  b: number,
+  base: string = "",
+): Promise<MissionCompare> {
+  const query = new URLSearchParams({ a: String(a), b: String(b) });
+  return request<MissionCompare>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/checkpoints/mission-compare?${query}`,
+    token,
+  );
+}
+
+export async function replayMissionStep(
+  token: string,
+  key: string,
+  step: string,
+  reason: string,
+  version: string = "",
+  base: string = "",
+): Promise<{ replayed: string; version: number; checkpoint_id: string; invalidated: string[] }> {
+  const query = new URLSearchParams({ step, reason });
+  if (version) query.set("version", version);
+  return request<{ replayed: string; version: number; checkpoint_id: string; invalidated: string[] }>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/checkpoints/mission-replay?${query}`,
+    token,
+  );
+}
+
 export async function restoreCheckpoint(
   token: string,
   key: string,
@@ -6358,6 +6881,10 @@ export async function postReviewAction(
 
 export interface AccountUsagePayload {
   budget_micro_usd: number;
+  /** Budget bonus accordé en plus de l'offre (0 si aucun). */
+  extra_budget_micro_usd?: number;
+  /** Fin de validité du bonus (ISO), absente s'il n'a pas de date de fin. */
+  extra_budget_until?: string | null;
   spent_micro_usd: number;
   used_percent: number;
   remaining_equivalent_tokens: number;
@@ -6384,14 +6911,20 @@ export interface AccountPayload {
   period_end?: number | null;
   /** Managed budget from navin.live (same source as the dashboard). */
   usage?: AccountUsagePayload | null;
+  /** Paid plan that expired: this device signed in on Free (offer to renew). */
+  lapsed_plan?: string | null;
+  /** The last browser sign-in reached navin.live but this device was refused (site error code). */
+  connect_error?: { code: string; message: string } | null;
 }
 
 export async function fetchAccount(
   token: string,
-  options?: { refresh?: boolean },
+  options?: { refresh?: boolean | "background" },
   base: string = "",
 ): Promise<AccountPayload> {
-  const suffix = options?.refresh ? "?refresh=1" : "";
+  // "background": the gateway answers with what it knows and validates behind it.
+  const suffix =
+    options?.refresh === "background" ? "?refresh=background" : options?.refresh ? "?refresh=1" : "";
   return request<AccountPayload>(
     `${base}/api/webui/account${suffix}`,
     token,
@@ -6608,6 +7141,27 @@ export async function updateSettings(
     query.set("computer_enabled", String(update.computerEnabled));
   }
   if (update.computerAsk !== undefined) query.set("computer_ask", update.computerAsk);
+  if (update.executionAwsAccepted !== undefined) {
+    query.set("execution_aws_accepted", String(update.executionAwsAccepted));
+  }
+  if (update.executionTarget !== undefined) {
+    query.set("execution_target", update.executionTarget);
+  }
+  for (const [key, param] of [
+    ["mediaModelImage", "media_model_image"],
+    ["mediaModelVideo", "media_model_video"],
+    ["mediaModelTts", "media_model_tts"],
+    ["mediaModelStt", "media_model_stt"],
+    ["mediaModelLive", "media_model_live"],
+  ] as const) {
+    if (update[key] !== undefined) query.set(param, update[key] ?? "");
+  }
+  if (update.voiceLiveEngine !== undefined) {
+    query.set("voice_live_engine", update.voiceLiveEngine);
+  }
+  if (update.voiceLiveRealtimeVoice !== undefined) {
+    query.set("voice_live_realtime_voice", update.voiceLiveRealtimeVoice);
+  }
   if (update.computerSessionMode !== undefined) {
     query.set("computer_session_mode", update.computerSessionMode);
   }
@@ -6785,6 +7339,112 @@ export function setComputerStopped(token: string, stopped: boolean): Promise<{ s
   return request<{ stopped: string | null }>(`/api/settings/computer/${stopped ? "stop" : "go"}`, token);
 }
 
+export type ComputerPermissionLevel = "see" | "click" | "type" | "launch";
+export interface ComputerPermissionRules {
+  levels: ComputerPermissionLevel[];
+  rules: { app: string; level: ComputerPermissionLevel }[];
+}
+
+export function fetchComputerPermissionRules(token: string): Promise<ComputerPermissionRules> {
+  return request<ComputerPermissionRules>("/api/webui/computer-permissions", token);
+}
+
+export function saveComputerPermissionRule(
+  token: string, app: string, level: ComputerPermissionLevel,
+): Promise<ComputerPermissionRules> {
+  const q = new URLSearchParams({ app, level });
+  return request<ComputerPermissionRules>(`/api/webui/computer-permissions/update?${q}`, token);
+}
+
+export function deleteComputerPermissionRule(token: string, app: string): Promise<ComputerPermissionRules> {
+  const q = new URLSearchParams({ app });
+  return request<ComputerPermissionRules>(`/api/webui/computer-permissions/delete?${q}`, token);
+}
+
+export interface ComputerAuditSessionSummary {
+  id: string;
+  chat: string;
+  started: string;
+  ask: string;
+  backend: string;
+  steps: number;
+  denied: number;
+  broken: number;
+}
+
+export interface ComputerAuditStep {
+  step: number | null;
+  t: number | null;
+  action: string;
+  args: Record<string, unknown>;
+  result: string;
+  denied: string;
+  rule: string;
+  screenshot: string;
+}
+
+export interface ComputerAuditSession {
+  id: string;
+  meta: Record<string, unknown>;
+  total: number;
+  broken: number;
+  steps: ComputerAuditStep[];
+}
+
+export function fetchComputerAuditSessions(
+  token: string,
+): Promise<{ root: string; sessions: ComputerAuditSessionSummary[] }> {
+  return request("/api/webui/computer-audit", token);
+}
+
+export function fetchComputerAuditSession(
+  token: string, session: string, last = 200,
+): Promise<{ root: string; session: ComputerAuditSession }> {
+  const q = new URLSearchParams({ session, last: String(last) });
+  return request(`/api/webui/computer-audit?${q}`, token);
+}
+
+/** Settings > Team: the Collaboration Mode team and the editor's catalogs. */
+export function fetchCollabSettings(token: string, base: string = ""): Promise<CollabPayload> {
+  return request<CollabPayload>(`${base}/api/settings/collab`, token, undefined, API_READ_TIMEOUT_MS);
+}
+
+/** Save the team (always the whole thing) or `{ reset: true }` for the default team. */
+export function saveCollabSettings(
+  token: string,
+  values: Partial<CollabSettings> | { reset: true },
+  base: string = "",
+): Promise<CollabPayload> {
+  // No HTTP body on the gateway: the JSON travels as chunked base64 headers.
+  return request<CollabPayload>(`${base}/api/settings/collab/update`, token, {
+    headers: bodyHeaders(JSON.stringify(values)),
+  });
+}
+
+/** Send the manager a test email through the team's SMTP channel. */
+export function sendCollabTestEmail(token: string, base: string = ""): Promise<{ ok: boolean; to: string }> {
+  return request<{ ok: boolean; to: string }>(`${base}/api/settings/collab/test-email`, token, undefined, 30_000);
+}
+
+/** Collaboration Mode on or off for every chat (Settings > Team and the chat menu). */
+export function setCollabEnabled(token: string, enabled: boolean, base: string = ""): Promise<CollabPayload> {
+  return request<CollabPayload>(
+    `${base}/api/settings/collab/update?enabled=${enabled ? "true" : "false"}`,
+    token,
+  );
+}
+
+/** Task routing on or off for every chat (Settings > Models and the chat menu). */
+export async function setModelRoutingEnabled(
+  token: string,
+  enabled: boolean,
+  base: string = "",
+): Promise<SettingsPayload> {
+  const query = new URLSearchParams();
+  query.set("enabled", enabled ? "true" : "false");
+  return request<SettingsPayload>(`${base}/api/settings/model-routes/update?${query}`, token);
+}
+
 export async function updateModelRoute(
   token: string,
   role: string,
@@ -6814,6 +7474,8 @@ export async function updateProviderSettings(
   if (update.endpointRegion !== undefined) query.set("endpoint_region", update.endpointRegion);
   if (update.accessPlan !== undefined) query.set("access_plan", update.accessPlan);
   if (update.wireProtocol !== undefined) query.set("wire_protocol", update.wireProtocol);
+  if (update.awsRegion !== undefined) query.set("aws_region", update.awsRegion);
+  if (update.awsProfile !== undefined) query.set("aws_profile", update.awsProfile);
   return request<SettingsPayload>(
     `${base}/api/settings/provider/update?${query}`,
     token,
@@ -6832,6 +7494,8 @@ export async function testProviderConnection(
   if (update.endpointRegion !== undefined) query.set("endpoint_region", update.endpointRegion);
   if (update.accessPlan !== undefined) query.set("access_plan", update.accessPlan);
   if (update.wireProtocol !== undefined) query.set("wire_protocol", update.wireProtocol);
+  if (update.awsRegion !== undefined) query.set("aws_region", update.awsRegion);
+  if (update.awsProfile !== undefined) query.set("aws_profile", update.awsProfile);
   return request<ProviderConnectionTestPayload>(
     `${base}/api/settings/provider/test?${query}`,
     token,
@@ -7061,6 +7725,10 @@ export async function updateLiveVoiceSettings(
     response_format: voice.responseFormat,
     realtime_enabled: voice.realtimeEnabled === null ? "auto" : String(voice.realtimeEnabled),
   });
+  // Only the Voice settings screen edits the Live engine; other callers leave it alone.
+  if (voice.liveEngine !== undefined) query.set("live_engine", voice.liveEngine);
+  if (voice.liveRealtime !== undefined) query.set("live_realtime", voice.liveRealtime);
+  if (voice.liveRealtimeVoice !== undefined) query.set("live_realtime_voice", voice.liveRealtimeVoice);
   return request<SettingsPayload>(`${base}/api/settings/voice/live/update?${query}`, token);
 }
 
@@ -7476,4 +8144,34 @@ export async function fetchCrmSync(
   base = "",
 ): Promise<{ path: string; wal: boolean; memberCount: number; lastWrite: number; cloud: boolean; note: string }> {
   return request(crmUrl(key, "sync", {}, base), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export interface LiveRealtimeStatus {
+  available: boolean;
+  engine: "auto" | "realtime" | "pipeline";
+  provider?: string;
+  model?: string;
+  pipeline_ready?: boolean;
+  pipeline_reason?: string | null;
+}
+
+/** Whether the Live can run on a realtime (voice-to-voice) model right now. */
+export async function fetchLiveRealtimeStatus(token: string, base: string = ""): Promise<LiveRealtimeStatus> {
+  return request<LiveRealtimeStatus>(`${base}/api/live/realtime/status`, token);
+}
+
+export interface NavinDocResult {
+  title: string;
+  section: string;
+  url: string;
+  excerpt: string;
+}
+
+/** Search Navin's own documentation (the Live answers "how do I..." from it). */
+export async function searchNavinDocs(token: string, query: string, base: string = ""): Promise<NavinDocResult[]> {
+  const body = await request<{ results: NavinDocResult[] }>(
+    `${base}/api/live/docs?q=${encodeURIComponent(query)}`,
+    token,
+  );
+  return body.results ?? [];
 }

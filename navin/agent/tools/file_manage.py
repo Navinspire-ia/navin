@@ -52,6 +52,7 @@ _ACTIONS = ("delete", "move", "copy", "mkdir")
 _PROTECTED_AT_ROOT = frozenset({"sessions", "memory", "history.jsonl", ".dream_cursor"})
 _PROTECTED_PREFIXES_AT_ROOT = (
     (".navin", "memory"),
+    (".navin", "sessions"),
     (".navin", "checkpoints"),
     (".navin", "metadata"),
 )

@@ -51,6 +51,26 @@ class SlimContractTest(unittest.TestCase):
         self.assertNotIn("## Semantic Code Navigation", self.contract)
 
 
+class BuildBeforeDeliveryTest(unittest.TestCase):
+    """User rule: always build before delivering, small changes included."""
+
+    def test_both_contracts_require_a_build_before_delivery(self):
+        for name in ("agent/tool_contract.md", "agent/tool_contract_slim.md"):
+            contract = render_template(name)
+            self.assertIn("Always build before delivering", contract, name)
+            self.assertNotIn("No production build", contract, name)
+            self.assertNotIn("Do not run a production build", contract, name)
+
+    def test_fullstack_skill_gates_delivery_on_a_green_build(self):
+        from pathlib import Path
+
+        import navin
+
+        skill = (Path(navin.__file__).parent / "skills/fullstack-dev/SKILL.md").read_text(encoding="utf-8")
+        gate = skill.split("## Delivery gate", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("Always build before delivering", gate)
+
+
 class HouseStyleTest(unittest.TestCase):
     def test_delivery_summary_is_shared_by_cli_and_desktop(self):
         for channel in ("cli", "websocket"):
@@ -65,6 +85,42 @@ class HouseStyleTest(unittest.TestCase):
         section = contract.split("## Token efficiency", 1)[1].split("\n## ", 1)[0]
         self.assertNotIn("\u2014", section)
         self.assertNotIn("\u2013", section)
+
+
+class CorePromptStaysLeanTest(unittest.TestCase):
+    """Strong models lose quality under a pile of overlapping orders.
+
+    Measured on 2026-10-23 before the trim: identity 11.5k chars, full
+    contract 37.6k, slim contract 10.1k, /forge brief 10.9k. The caps leave
+    room for a few lines, not for the essays to grow back.
+    """
+
+    def test_core_templates_stay_under_their_budget(self):
+        budgets = {
+            "agent/identity.md": 7_000,
+            "agent/tool_contract.md": 13_000,
+            "agent/tool_contract_slim.md": 5_000,
+        }
+        for name, cap in budgets.items():
+            size = len(render_template(name, channel="cli", workspace_path="/w", runtime="x", platform_policy=""))
+            self.assertLess(size, cap, name)
+
+    def test_forge_brief_is_lean_and_does_not_contradict_auto_branch(self):
+        from navin.command.builtin import _WORKFLOW_BRIEFS
+
+        brief = _WORKFLOW_BRIEFS["/forge"][2]
+        self.assertLess(len(brief), 4_000)
+        # Runtime Context owns the branch policy; the briefs used to promise
+        # a navin/task-<id> branch even when auto-branch is off.
+        for command in ("/forge", "/cruise", "/mission"):
+            text = _WORKFLOW_BRIEFS[command][2]
+            self.assertNotIn("navin/task-<id>", text, command)
+            self.assertIn("auto-branch", text, command)
+            # A close-out lists remarks, not work left open.
+            self.assertNotIn("open items", text, command)
+            self.assertNotIn("remaining risks", text, command)
+        # The plan must name every layer, the "front never wired" complaint.
+        self.assertIn("frontend screens, navigation, wiring", brief)
 
 
 if __name__ == "__main__":

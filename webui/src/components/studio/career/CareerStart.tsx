@@ -188,7 +188,7 @@ export function CareerStart({
             </p>
             <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
               {monthlyLabel}
-              <span className="ml-1 text-base font-normal text-muted-foreground">
+              <span className="ms-1 text-base font-normal text-muted-foreground">
                 {tx("start.perMonth", "/ month")}
               </span>
             </p>

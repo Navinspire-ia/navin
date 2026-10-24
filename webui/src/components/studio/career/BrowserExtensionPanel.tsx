@@ -1,18 +1,19 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useState } from "react";
 import { DefaultButton, Dropdown, PrimaryButton, TextField, Stack, MessageBar, MessageBarType, ProgressIndicator } from "@fluentui/react";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 import { extensionPackageBrowser, extensionRequest, saveExtensionPackage, type ExtensionState } from "@/lib/browser-extension";
 import { CareerScene } from "./CareerScene";
 import { extensionPairingAddress } from "@/lib/browser-extension-address";
 import { BUTTON_STYLES } from "./career-ui";
 
 export function BrowserExtensionPanel({ token }: { token: string }) {
-  const { i18n } = useTranslation();
-  const fr = i18n.language.startsWith("fr");
-  const c = (f: string, e: string) => fr ? f : e;
+  useTranslation(); // re-render on language change
+  const c = (f: string, e: string, values?: Record<string, string | number>) => bilingual(f, e, values);
   let address = "";
   try { address = extensionPairingAddress(window.location.href); } catch { /* Not a browser-reachable origin. */ }
   const [state, setState] = useState<ExtensionState>({});
@@ -87,9 +88,9 @@ export function BrowserExtensionPanel({ token }: { token: string }) {
       <strong>{c("Le dossier paraît vide ? Cliquez quand même sur Sélectionner le dossier.", "Does the folder look empty? Click Select Folder anyway.")}</strong>{" "}
       {c("Cette fenêtre sélectionne un dossier et masque les fichiers. Si vous avez vu manifest.json dans ce même dossier avec votre explorateur, vous êtes au bon endroit.", "This window selects a folder and hides files. If you saw manifest.json in this same folder in your file manager, you are in the right place.")}
     </MessageBar>}
-    <ol style={{ paddingLeft: 24, lineHeight: 1.7, listStyleType: "decimal" }}>
-      <li>{chromium ? c(`Dans votre explorateur de fichiers, extrayez navin-import-${browser}.zip. Ouvrez le dossier obtenu et vérifiez qu'il contient manifest.json, app.js et index.html.`, `In your file manager, extract navin-import-${browser}.zip. Open the extracted folder and check that it contains manifest.json, app.js and index.html.`) : c("Conservez le fichier navin-import-firefox.zip téléchargé. Il peut être chargé directement, sans décompression.", "Keep the downloaded navin-import-firefox.zip file. It can be loaded directly, without extraction.")}</li>
-      <li>{chromium ? c(`Collez ${installAddress} dans la barre d'adresse de ${browserName}, puis activez Mode développeur.`, `Paste ${installAddress} into ${browserName}'s address bar, then enable Developer mode.`) : c("Collez about:debugging#/runtime/this-firefox dans la barre d'adresse de Firefox. Utilisez cette page de débogage pour l'installation temporaire.", "Paste about:debugging#/runtime/this-firefox into Firefox's address bar. Use this debugging page for temporary installation.")}</li>
+    <ol style={{ paddingInlineStart: 24, lineHeight: 1.7, listStyleType: "decimal" }}>
+      <li>{chromium ? c("Dans votre explorateur de fichiers, extrayez navin-import-{{browser}}.zip. Ouvrez le dossier obtenu et vérifiez qu'il contient manifest.json, app.js et index.html.", "In your file manager, extract navin-import-{{browser}}.zip. Open the extracted folder and check that it contains manifest.json, app.js and index.html.", { browser }) : c("Conservez le fichier navin-import-firefox.zip téléchargé. Il peut être chargé directement, sans décompression.", "Keep the downloaded navin-import-firefox.zip file. It can be loaded directly, without extraction.")}</li>
+      <li>{chromium ? c("Collez {{address}} dans la barre d'adresse de {{browser}}, puis activez Mode développeur.", "Paste {{address}} into {{browser}}'s address bar, then enable Developer mode.", { address: installAddress, browser: browserName }) : c("Collez about:debugging#/runtime/this-firefox dans la barre d'adresse de Firefox. Utilisez cette page de débogage pour l'installation temporaire.", "Paste about:debugging#/runtime/this-firefox into Firefox's address bar. Use this debugging page for temporary installation.")}</li>
       <li>{chromium ? c("Cliquez sur Charger l'extension non empaquetée. Sélectionnez le dossier qui contient manifest.json, puis validez Sélectionner le dossier, même si aucun fichier n'est affiché.", "Click Load unpacked. Select the folder containing manifest.json, then confirm Select Folder, even if no files are displayed.") : c("Cliquez sur Charger un module complémentaire temporaire, puis sélectionnez navin-import-firefox.zip. Si vous l'avez déjà extrait, sélectionnez le fichier manifest.json à l'intérieur du dossier.", "Click Load Temporary Add-on, then select navin-import-firefox.zip. If you already extracted it, select manifest.json inside the folder.")}</li>
       <li>{c("Vérifiez que Navin Import apparaît dans la liste des extensions, puis générez le code d'appairage ci-dessous.", "Check that Navin Import appears in the extension list, then generate the pairing code below.")}</li>
     </ol>
@@ -115,7 +116,7 @@ export function BrowserExtensionPanel({ token }: { token: string }) {
     <h3>{c("Navigateurs appairés", "Paired browsers")}</h3>
     {!state.devices?.length && <p>{c("Aucun navigateur appairé pour le moment.", "No paired browsers yet.")}</p>}
     {state.devices?.map(device => <Stack key={device.id} horizontal wrap horizontalAlign="space-between" verticalAlign="center" tokens={{ childrenGap: 12 }}>
-      <div><strong>{device.label}</strong><p>{c("Dernier contact", "Last seen")} : {new Date(device.last_seen * 1000).toLocaleString(i18n.language)}</p></div>
+      <div><strong>{device.label}</strong><p>{c("Dernier contact", "Last seen")} : {new Date(device.last_seen * 1000).toLocaleString(intlLocale())}</p></div>
       <DefaultButton text={c("Révoquer l'accès", "Revoke access")} disabled={busy} styles={BUTTON_STYLES} onClick={async () => {
         const result = await run("revoke", { id: device.id }); if (result) setState(result);
       }} />
@@ -123,7 +124,7 @@ export function BrowserExtensionPanel({ token }: { token: string }) {
     <h3>{c("Derniers imports", "Recent imports")}</h3>
     {!state.receipts?.length && <p>{c("Les résultats apparaîtront après votre premier envoi.", "Results will appear after your first import.")}</p>}
     {state.receipts?.slice(-10).reverse().map(receipt => <p key={`${receipt.device}-${receipt.request_id}`}>
-      {new Date(receipt.at * 1000).toLocaleString(i18n.language)} · {receipt.kind} · {receipt.status === "excluded" ? c("Écarté par les critères", "Excluded by criteria") : receipt.status === "updated" ? c("Fiche mise à jour", "Record updated") : c("Import réussi", "Imported")}
+      {new Date(receipt.at * 1000).toLocaleString(intlLocale())} · {receipt.kind} · {receipt.status === "excluded" ? c("Écarté par les critères", "Excluded by criteria") : receipt.status === "updated" ? c("Fiche mise à jour", "Record updated") : c("Import réussi", "Imported")}
       {receipt.reason ? ` (${receipt.reason})` : ""}
     </p>)}
     <DefaultButton text={c("Actualiser", "Refresh")} disabled={busy} styles={BUTTON_STYLES} onClick={() => void refresh().catch(err => setError(String(err.message || err)))} />

@@ -1,0 +1,14 @@
+{
+  "name": "ralph-loop",
+  "version": "1.0.0",
+  "description": "Self-improving iteration loop: the same task comes back at every end of turn, so the agent keeps refining its own work until an honest completion promise or an iteration cap.",
+  "category": "productivity",
+  "commands": ["ralph-loop", "cancel-ralph", "ralph-help"],
+  "agents": [],
+  "skills": [],
+  "steps": [
+    {"step": "learn the technique and how to write the prompt", "use": "/ralph-help"},
+    {"step": "start the loop with a cap and a completion promise", "use": "/ralph-loop"},
+    {"step": "stop the loop early", "use": "/cancel-ralph"}
+  ]
+}

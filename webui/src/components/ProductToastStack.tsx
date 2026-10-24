@@ -96,7 +96,7 @@ function writeDismissed(ids: Set<string>) {
 }
 
 const cardEnter =
-  "animate-in fade-in-0 slide-in-from-left-4 slide-in-from-bottom-2 duration-300 motion-reduce:animate-none";
+  "animate-in fade-in-0 ltr:slide-in-from-left-4 rtl:slide-in-from-right-4 slide-in-from-bottom-2 duration-300 motion-reduce:animate-none";
 
 export function ProductToastStack({
   availableUpdate,
@@ -288,7 +288,7 @@ export function ProductToastStack({
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-5 left-5 z-50 flex w-[min(22.5rem,calc(100vw-2.5rem))] flex-col gap-2.5">
+    <div className="pointer-events-none fixed bottom-5 start-5 z-50 flex w-[min(22.5rem,calc(100vw-2.5rem))] flex-col gap-2.5">
       {updateToast ? (
         <div
           key={updateToast.latestVersion || "update"}
@@ -417,7 +417,7 @@ export function ProductToastStack({
                   type="button"
                   onClick={() => dismissAnnouncement(item.id)}
                   className={cn(
-                    "absolute right-2.5 top-2.5 rounded-full p-1.5 transition-colors",
+                    "absolute end-2.5 top-2.5 rounded-full p-1.5 transition-colors",
                     item.imageUrl
                       ? "bg-black/45 text-white/90 hover:bg-black/65"
                       : "text-muted-foreground/70 hover:bg-muted hover:text-foreground",

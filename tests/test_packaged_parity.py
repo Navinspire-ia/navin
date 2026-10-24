@@ -621,7 +621,8 @@ class WindowsUpdaterHelperTest(unittest.TestCase):
         helper = (REPO_ROOT / "packaging" / "windows" / "NavinUpdater.cs").read_text(
             encoding="utf-8"
         )
-        self.assertIn('/S /UPDATE', helper)
+        # Passive: the installer's progress bar shows, nothing to click; the helper relaunches.
+        self.assertIn('"/P /UPDATE /D="', helper)
         hooks = (
             REPO_ROOT / "desktop" / "src-tauri" / "windows" / "installer-hooks.nsh"
         ).read_text(encoding="utf-8")

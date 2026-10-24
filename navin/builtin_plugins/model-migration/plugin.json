@@ -1,0 +1,31 @@
+{
+  "name": "model-migration",
+  "version": "1.0.0",
+  "description": "Migrate an app's code, config and prompts to a newer model generation for any provider: inventory model ids, update ids and parameters (effort, thinking budget, limits, retired fields), tune prompts for more literal models, compare before and after.",
+  "category": "development",
+  "commands": [
+    "migrate-model"
+  ],
+  "agents": [],
+  "skills": [
+    "model-migration"
+  ],
+  "steps": [
+    {
+      "step": "run the whole migration as one guided command",
+      "use": "/migrate-model"
+    },
+    {
+      "step": "inventory model ids and parameters, pick targets, record a baseline",
+      "use": "skill:model-migration"
+    },
+    {
+      "step": "update ids and parameters, re-run the baseline and compare",
+      "use": "skill:model-migration"
+    },
+    {
+      "step": "tune prompts only for the regressions observed",
+      "use": "skill:model-migration"
+    }
+  ]
+}

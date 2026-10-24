@@ -9,6 +9,7 @@ import {
   Hammer,
   Map as MapIcon,
   MessageCircle,
+  ScanSearch,
   SearchCode,
   ShieldCheck,
   type LucideIcon,
@@ -30,7 +31,7 @@ import { cn } from "@/lib/utils";
  * Composer turn mode.
  *
  * Ask is read-only Q&A. Plan / Agent are the Cursor-style design → build pair.
- * Review / Security / Debug prefix free text with real workflow slash commands
+ * Review / Security / Debug / Reverse prefix free text with real workflow slash commands
  * so the agent runs the matching brief + tools and closes with a report.
  */
 export type ComposerTurnMode =
@@ -40,6 +41,7 @@ export type ComposerTurnMode =
   | "review"
   | "security"
   | "debug"
+  | "reverse"
   | "montage";
 
 export type ComposerModeAccent =
@@ -48,6 +50,7 @@ export type ComposerModeAccent =
   | "review"
   | "security"
   | "debug"
+  | "reverse"
   | "montage";
 
 export const COMPOSER_TURN_MODE_STORAGE_KEY = "navin.composer.turnMode";
@@ -59,6 +62,7 @@ const VALID_MODES: ReadonlySet<ComposerTurnMode> = new Set([
   "review",
   "security",
   "debug",
+  "reverse",
   "montage",
 ]);
 
@@ -70,6 +74,7 @@ const MODE_SLASH: Record<ComposerTurnMode, string> = {
   review: "/inspect",
   security: "/fortify",
   debug: "/debug",
+  reverse: "/reverse",
   montage: "/montage",
 };
 
@@ -97,6 +102,7 @@ const MODE_FROM_SLASH: Record<string, ComposerTurnMode> = {
   "/pentest": "security",
   "/comply": "security",
   "/debug": "debug",
+  "/reverse": "reverse",
   "/montage": "montage",
 };
 
@@ -203,6 +209,7 @@ export function composerModeAccent(
   if (mode === "review") return "review";
   if (mode === "security") return "security";
   if (mode === "debug") return "debug";
+  if (mode === "reverse") return "reverse";
   if (mode === "montage") return "montage";
   return null;
 }
@@ -257,6 +264,13 @@ const MODE_ITEMS: ModeMeta[] = [
     accent: "debug",
     labelKey: "thread.composer.mode.debug",
     labelDefault: "Debug",
+  },
+  {
+    mode: "reverse",
+    icon: ScanSearch,
+    accent: "reverse",
+    labelKey: "thread.composer.mode.reverse",
+    labelDefault: "Reverse",
   },
   {
     mode: "montage",

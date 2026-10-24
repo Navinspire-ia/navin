@@ -28,6 +28,7 @@ export type LiveVoiceErrorKey =
   | "notConfigured"
   | "permission"
   | "planRequired"
+  | "realtimeUnavailable"
   | "sessionLost"
   | "unsupported";
 

@@ -23,11 +23,14 @@ Tasks form a dependency graph through `depends_on`. The board derives from it th
 3. **Record as you go**: `comment` findings, decisions, and file references on the task - humans read these. Move to `review` when a human should check.
 4. **Never close what you did not verify**: `done` requires evidence when
    `validation` is `test`, `lint`, or `verify` (pass `evidence=` on move/update).
-   Also call `ledger_progress` with the same evidence. If you could not verify,
+   A move to `done` records ledger progress itself; pass `claim_next=true` to
+   claim the next ready task in the same call. Call `ledger_progress` only to
+   record a failed attempt (`ok=false`). If you could not verify,
    use `review` and say why. A wrong `done` corrupts every downstream `ready`
    computation.
-5. **File what you find**: audits and reviews (/inspect, /fortify, /probe…) must convert each confirmed finding into a task - `create` with `status=fix`, severity mapped to `priority`, and the file path in the description.
-6. **Mission ledger**: for multi-step systems use `ledger_init` / `ledger_progress` /
+5. **One call per board change**: file a whole plan with one `create tasks=[...]` (dependencies may name earlier titles in the list); never one `create` per task. Every board call is a full model round trip.
+6. **File what you find**: audits and reviews (/inspect, /fortify, /probe…) must convert each confirmed finding into a task - `create` with `status=fix`, severity mapped to `priority`, and the file path in the description.
+7. **Mission ledger**: for multi-step systems use `ledger_init` / `ledger_progress` /
    `ledger_replan`. Prefer local replan; pause on budget/human blockers.
    A one-shot (deck, memo, one file, typo) is not a mission: do it now.
 
@@ -39,14 +42,14 @@ When asked to plan something substantial, decompose before executing:
 2. Create a milestone per outcome (`milestone_create`, with `target_date` when there is a real deadline).
 3. Create tasks under it (`milestone_id`), each one a single verifiable deliverable with acceptance criteria in the description.
 4. **Wire the order with `depends_on`, not with priorities.** Priority says how much it matters; `depends_on` says what is physically impossible before something else. This is what makes the plan executable: the board then computes the ready queue and the critical path for you, and parallel work falls out for free.
-5. Assign each task to whoever should do it (see below), then report the plan: milestone list, critical path length, what starts immediately.
+5. Assign each task to whoever should do it (see below), then report the plan in one line (milestones, critical path length) and start the first ready task, unless the user asked only for a plan.
 
 Keep the graph clean: `plan` reports dependency cycles and references to unknown tasks. Both make tasks permanently unready, so fix them on sight rather than working around them.
 
 ## Intelligent assignment
 
 - **Subagent**: independent, well-scoped task → `spawn` with a complete brief (subagents cannot see history), assignee `subagent:<label>`. The subagent claims, works, comments, and closes its own task via the `board` tool. Several ready tasks with no dependency between them can run in parallel - that is exactly what the ready queue is for.
-- **Human**: decision, approval, credentials, or anything irreversible → set status `blocked`, assignee `human:<name>`, comment what you need, and notify via `message` (see `human-approval`).
+- **Human**: decision, approval, credentials, or anything irreversible → set status `blocked`, assignee `human:<name>`, comment what you need, and ask with `ask_user` (or `message` when the turn has it, see `human-approval`).
 - **Yourself**: sequential or context-heavy work.
 
 ## Board autonomy (per-project consent)
@@ -57,11 +60,14 @@ Projects can enable Autonomy in the Tasks panel (consent stored in
 - **Chain ready tasks** inside the run you were invited into (Run agent,
   /board task, /forge, /cruise, /mission, or a loop cron) without asking the
   user between cards. Stop and notify only on `blocked`.
-- **Git isolation is automatic**: `board claim` creates and switches to an
-  isolated `navin/task-<id>` branch and records it on the task. Commit your
-  work there; never commit to the branch the user was on.
-- **PR on done is automatic**: moving a task to `done` pushes the branch and
-  opens the pull request (the PR URL lands on the task). Do not merge PRs
+- **Git isolation only with Auto-branch ON** (Runtime Context says which):
+  `board claim` then creates and switches to an isolated `navin/task-<id>`
+  branch and records it on the task; commit your work there, never on the
+  branch the user was on. With Auto-branch OFF, stay on the user's branch
+  and follow their commit and push preferences.
+- **PR on done only for a task branch**: moving such a task to `done`
+  pushes its branch and opens the pull request (the PR URL lands on the
+  task). Without a task branch nothing is pushed for you. Do not merge PRs
   yourself; merging stays with the human.
 - **GitHub issues**: `board sync_github` imports open GitHub issues as tasks;
   `board sync_github task_id=<id>` creates the mirror issue for one task.

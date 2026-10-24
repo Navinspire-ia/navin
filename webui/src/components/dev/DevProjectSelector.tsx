@@ -41,7 +41,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { ApiError, cloneGitProject, fetchFsList, fetchFsRoots } from "@/lib/api";
+import { fetchFsList, fetchFsRoots } from "@/lib/api";
+import { useGitImport } from "@/hooks/useGitImport";
+import { GitImportFeedback } from "@/components/dev/GitImportFeedback";
 import { nativeFolderPickerAvailable, pickNativeFolder } from "@/lib/native-dialog";
 import type { FsRootEntry, FsRootsPayload, RecentProjectEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -146,9 +148,6 @@ export function DevProjectSelector({
   const [browseOpen, setBrowseOpen] = useState(false);
   const [browseStartPath, setBrowseStartPath] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState("");
-  const [gitUrlDraft, setGitUrlDraft] = useState("");
-  const [gitError, setGitError] = useState<string | null>(null);
-  const [cloning, setCloning] = useState(false);
   const [roots, setRoots] = useState<FsRootsPayload | null>(null);
 
   // The internal .navin storage is never presented as a project: when the
@@ -162,14 +161,6 @@ export function DevProjectSelector({
       .then(setRoots)
       .catch(() => setRoots(null));
   }, [menuOpen, roots, token, variant]);
-
-  useEffect(() => {
-    if (menuOpen) {
-      setPathDraft("");
-      setGitUrlDraft("");
-      setGitError(null);
-    }
-  }, [menuOpen]);
 
   const label = effectiveProjectPath
     ? projectName || projectNameFromPath(effectiveProjectPath)
@@ -225,45 +216,25 @@ export function DevProjectSelector({
     [applyPath],
   );
 
-  const importFromGit = useCallback(async () => {
-    const url = gitUrlDraft.trim();
-    if (!url || !token || cloning) return;
-    setCloning(true);
-    setGitError(null);
-    try {
-      const result = await cloneGitProject(token, {
-        url,
-        parent: projectsRoot ?? undefined,
-      });
-      applyPath(result.path, result.name);
-    } catch (err) {
-      let detail =
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      if (
-        err instanceof ApiError
-        && err.status >= 500
-        && (!detail || /^HTTP\s*5\d\d$/i.test(detail.trim()))
-      ) {
-        detail = t("dev.project.gitImportGatewayDown", {
-          defaultValue:
-            "Gateway unavailable (HTTP {{status}}). Wait a second and retry.",
-          status: err.status,
-        });
-      }
-      setGitError(
-        t("dev.project.gitImportFailed", {
-          defaultValue: "Import failed: {{detail}}",
-          detail,
-        }),
-      );
-    } finally {
-      setCloning(false);
+  const onGitImported = useCallback(
+    (result: { path: string; name: string }) => applyPath(result.path, result.name),
+    [applyPath],
+  );
+  const gitImport = useGitImport({ token, parent: projectsRoot, onImported: onGitImported });
+  const {
+    url: gitUrlDraft,
+    setUrl: setGitUrlDraft,
+    cloning,
+    importRepo: importFromGit,
+    reset: resetGitImport,
+  } = gitImport;
+
+  useEffect(() => {
+    if (menuOpen) {
+      setPathDraft("");
+      resetGitImport();
     }
-  }, [applyPath, cloning, gitUrlDraft, projectsRoot, t, token]);
+  }, [menuOpen, resetGitImport]);
 
   const visibleRecents = useMemo(
     () =>
@@ -279,7 +250,7 @@ export function DevProjectSelector({
   if (variant === "empty") {
     return (
       <>
-        <div className="flex w-full max-w-md flex-col items-stretch gap-2.5 text-left">
+        <div className="flex w-full max-w-md flex-col items-stretch gap-2.5 text-start">
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
@@ -356,12 +327,9 @@ export function DevProjectSelector({
             <Input
               value={gitUrlDraft}
               disabled={disabled || cloning}
-              onChange={(event) => {
-                setGitUrlDraft(event.target.value);
-                setGitError(null);
-              }}
+              onChange={(event) => setGitUrlDraft(event.target.value)}
               placeholder={t("dev.project.gitUrlPlaceholder", {
-                defaultValue: "https://github.com/org/repo.git",
+                defaultValue: "owner/repo or https://github.com/org/repo.git",
               })}
               aria-label={t("dev.project.gitImport", {
                 defaultValue: "Import from Git",
@@ -376,7 +344,7 @@ export function DevProjectSelector({
               {cloning ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <GitBranch className="mr-1 h-3.5 w-3.5" aria-hidden />
+                <GitBranch className="me-1 h-3.5 w-3.5" aria-hidden />
               )}
               {cloning
                 ? t("dev.project.gitImporting", { defaultValue: "Cloning…" })
@@ -386,16 +354,16 @@ export function DevProjectSelector({
           {projectsRoot ? (
             <p className="text-center text-[10.5px] text-muted-foreground">
               {t("dev.project.gitImportHint", {
-                defaultValue: "Clones into {{folder}}",
+                defaultValue: "Clones into {{folder}}. A URL or owner/repo works.",
                 folder: shortWorkspacePath(projectsRoot),
               })}
             </p>
           ) : null}
-          {gitError ? (
-            <p role="alert" className="text-center text-[11.5px] font-medium text-destructive">
-              {gitError}
-            </p>
-          ) : null}
+          <GitImportFeedback
+            state={gitImport}
+            className="text-center [&>div]:justify-center"
+            errorClassName="text-destructive"
+          />
         </div>
         <FolderBrowserDialog
           open={browseOpen}
@@ -594,7 +562,7 @@ export function DevProjectSelector({
                 void openFolderPicker(effectiveProjectPath ?? null);
               }}
             >
-              <FolderSearch className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <FolderSearch className="me-1.5 h-3.5 w-3.5" aria-hidden />
               {t("dev.project.browse", { defaultValue: "Browse folders…" })}
             </Button>
             <form
@@ -608,12 +576,9 @@ export function DevProjectSelector({
                 <Input
                   value={gitUrlDraft}
                   disabled={cloning}
-                  onChange={(event) => {
-                    setGitUrlDraft(event.target.value);
-                    setGitError(null);
-                  }}
+                  onChange={(event) => setGitUrlDraft(event.target.value)}
                   placeholder={t("dev.project.gitUrlPlaceholder", {
-                    defaultValue: "https://github.com/org/repo.git",
+                    defaultValue: "owner/repo or https://github.com/org/repo.git",
                   })}
                   aria-label={t("dev.project.gitImport", {
                     defaultValue: "Import from Git",
@@ -628,7 +593,7 @@ export function DevProjectSelector({
                   {cloning ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <GitBranch className="mr-1 h-3.5 w-3.5" aria-hidden />
+                    <GitBranch className="me-1 h-3.5 w-3.5" aria-hidden />
                   )}
                   {cloning
                     ? t("dev.project.gitImporting", { defaultValue: "Cloning…" })
@@ -638,16 +603,16 @@ export function DevProjectSelector({
               {projectsRoot ? (
                 <p className="px-0.5 text-[10.5px] text-muted-foreground">
                   {t("dev.project.gitImportHint", {
-                    defaultValue: "Clones into {{folder}}",
+                    defaultValue: "Clones into {{folder}}. A URL or owner/repo works.",
                     folder: shortWorkspacePath(projectsRoot),
                   })}
                 </p>
               ) : null}
-              {gitError ? (
-                <p role="alert" className="px-0.5 text-[11.5px] font-medium text-destructive">
-                  {gitError}
-                </p>
-              ) : null}
+              <GitImportFeedback
+                state={gitImport}
+                className="px-0.5"
+                errorClassName="text-destructive"
+              />
             </form>
           </div>
         </DropdownMenuContent>
@@ -763,7 +728,7 @@ export function FolderBrowserDialog({
           <div className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] text-muted-foreground">
             {crumbs.map((crumb, index) => (
               <span key={crumb.path} className="flex min-w-0 items-center gap-1">
-                {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0" aria-hidden /> : null}
+                {index > 0 ? <ChevronRight className="rtl:-scale-x-100 h-3 w-3 shrink-0" aria-hidden /> : null}
                 <button
                   type="button"
                   className="max-w-[14rem] truncate rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
@@ -773,7 +738,7 @@ export function FolderBrowserDialog({
                 </button>
               </span>
             ))}
-            <label className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1.5 select-none">
+            <label className="ms-auto inline-flex shrink-0 cursor-pointer items-center gap-1.5 select-none">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-primary"
@@ -797,7 +762,7 @@ export function FolderBrowserDialog({
                   <li>
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted-foreground hover:bg-muted/60"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-[12.5px] text-muted-foreground hover:bg-muted/60"
                       onClick={() => void load(parent)}
                     >
                       <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -809,7 +774,7 @@ export function FolderBrowserDialog({
                   <li key={dir.path}>
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground hover:bg-muted/60"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-start text-[12.5px] text-foreground hover:bg-muted/60"
                       onClick={() => void load(dir.path)}
                       onDoubleClick={() => onPick(dir.path)}
                     >

@@ -46,7 +46,7 @@ def _search_html(query: str, limit: int) -> list[dict[str, str]]:
         _DDG_HTML,
         data=data,
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; NavinDesk/1.0; +https://navin.ai)",
+            "User-Agent": "Mozilla/5.0 (compatible; NavinDesk/1.0; +https://navin.live)",
             "Accept": "text/html",
             "Content-Type": "application/x-www-form-urlencoded",
         },

@@ -13,10 +13,11 @@ import type { UIMessage } from "@/lib/types";
 
 import {
   assistantCopyFlags,
-  awaitingFirstOutputPhase,
+  AWAITING_SLOW_HINT_MS,
   promptUnitIndex,
   unitActionIndexes,
   unitKeysForDisplay,
+  turnHasToolFlags,
   type DisplayUnit,
 } from "./ThreadMessages";
 
@@ -56,13 +57,15 @@ describe("promptUnitIndex", () => {
   });
 });
 
-describe("awaitingFirstOutputPhase", () => {
-  it("keeps the clock on one side of Working, never inside the label", () => {
-    expect(awaitingFirstOutputPhase(0)).toBe("thinking");
-    expect(awaitingFirstOutputPhase(14_999)).toBe("thinking");
-    expect(awaitingFirstOutputPhase(15_000)).toBe("working");
-    expect(awaitingFirstOutputPhase(59_999)).toBe("working");
-    expect(awaitingFirstOutputPhase(60_000)).toBe("slow");
+describe("awaiting first output", () => {
+  it("leaves the label and the clock to the composer status", () => {
+    const source = readFileSync(resolve(__dirname, "ThreadMessages.tsx"), "utf8");
+    const indicator = source.slice(source.indexOf("function AwaitingFirstOutputIndicator"));
+    const body = indicator.slice(0, indicator.indexOf("function PulseDot"));
+    expect(body).not.toContain("assistantThinking");
+    expect(body).not.toContain("assistantWorkingFor");
+    expect(body).not.toContain("setInterval");
+    expect(AWAITING_SLOW_HINT_MS).toBe(60_000);
   });
 
   it("does not bake the duration into Working, so the clock cannot print twice", () => {
@@ -70,6 +73,21 @@ describe("awaitingFirstOutputPhase", () => {
     expect(fr.thread.assistantWorkingFor).toBe("En cours");
     expect(en.thread.assistantWorkingFor).not.toContain("{{duration}}");
     expect(fr.thread.assistantWorkingFor).not.toContain("{{duration}}");
+  });
+});
+
+describe("turnHasToolFlags", () => {
+  function activity(types: Array<"reasoning" | "tool">): DisplayUnit {
+    const message = { id: "x", role: "tool", content: "", kind: "trace", createdAt: 1 } as UIMessage;
+    return { type: "activity", messages: [message], items: types.map((type) => ({ type, message })) };
+  }
+
+  it("flags every activity block of a turn that ran a real tool", () => {
+    const units = [
+      user("u1"), activity(["reasoning"]), assistant("a1"), activity(["tool"]),
+      user("u2"), activity(["reasoning"]), assistant("a2"),
+    ];
+    expect(turnHasToolFlags(units)).toEqual([false, true, false, true, false, false, false]);
   });
 });
 

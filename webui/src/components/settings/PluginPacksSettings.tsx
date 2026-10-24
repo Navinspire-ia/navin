@@ -3,12 +3,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Bot,
   Loader2,
   Package,
   PackagePlus,
   Plug,
   Power,
+  Terminal,
   Trash2,
+  Webhook,
   Wrench,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -147,7 +150,7 @@ export function PluginPacksSettings({
             className="h-9 shrink-0 rounded-xl px-3.5"
             onClick={() => setInstallOpen(true)}
           >
-            <PackagePlus className="mr-1.5 h-4 w-4" aria-hidden />
+            <PackagePlus className="me-1.5 h-4 w-4" aria-hidden />
             {t("settings.plugins.install", { defaultValue: "Install skill" })}
           </Button>
         )}
@@ -191,7 +194,7 @@ export function PluginPacksSettings({
                     <p className="truncate text-[13.5px] font-semibold text-foreground">
                       {plugin.display_name || plugin.name}
                       {plugin.version ? (
-                        <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                        <span className="ms-1.5 text-[11px] font-normal text-muted-foreground">
                           v{plugin.version}
                         </span>
                       ) : null}
@@ -230,6 +233,36 @@ export function PluginPacksSettings({
                       defaultValue: "{{count}} MCP server(s)",
                     })}
                   </span>
+                  {plugin.agents && plugin.agents.length > 0 ? (
+                    <span className="inline-flex items-center gap-1" title={plugin.agents.join(", ")}>
+                      <Bot className="h-3 w-3" aria-hidden />
+                      {t("settings.plugins.agentsCount", {
+                        count: plugin.agents.length,
+                        defaultValue: "{{count}} agent(s)",
+                      })}
+                    </span>
+                  ) : null}
+                  {plugin.commands && plugin.commands.length > 0 ? (
+                    <span
+                      className="inline-flex items-center gap-1"
+                      title={plugin.commands.map((name) => `/${name}`).join(", ")}
+                    >
+                      <Terminal className="h-3 w-3" aria-hidden />
+                      {t("settings.plugins.commandsCount", {
+                        count: plugin.commands.length,
+                        defaultValue: "{{count}} command(s)",
+                      })}
+                    </span>
+                  ) : null}
+                  {plugin.hooks && plugin.hooks.length > 0 ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Webhook className="h-3 w-3" aria-hidden />
+                      {t("settings.plugins.hooksList", {
+                        events: plugin.hooks.join(", "),
+                        defaultValue: "Hooks: {{events}}",
+                      })}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="mt-auto flex items-center gap-1.5">
                   <Button
@@ -241,9 +274,9 @@ export function PluginPacksSettings({
                     onClick={() => void toggle(plugin)}
                   >
                     {busy === plugin.name ? (
-                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
+                      <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" aria-hidden />
                     ) : (
-                      <Power className="mr-1 h-3.5 w-3.5" aria-hidden />
+                      <Power className="me-1 h-3.5 w-3.5" aria-hidden />
                     )}
                     {plugin.enabled
                       ? t("settings.plugins.disable", { defaultValue: "Disable" })
@@ -257,7 +290,7 @@ export function PluginPacksSettings({
                     disabled={busy === plugin.name}
                     onClick={() => setRemovalTarget(plugin)}
                   >
-                    <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                    <Trash2 className="me-1 h-3.5 w-3.5" aria-hidden />
                     {t("settings.plugins.remove", { defaultValue: "Remove" })}
                   </Button>
                 </div>

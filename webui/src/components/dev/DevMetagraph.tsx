@@ -362,7 +362,7 @@ export function DevMetagraph({
       <div className="flex flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2">
         <div className="relative">
           <Search
-            className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70"
+            className="pointer-events-none absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70"
             aria-hidden
           />
           <input
@@ -375,7 +375,7 @@ export function DevMetagraph({
                 : tx("dev.graph.search", "Filter files…")
             }
             className={cn(
-              "h-7 rounded-md border border-border/60 bg-background pl-7 pr-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-foreground/50",
+              "h-7 rounded-md border border-border/60 bg-background ps-7 pe-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-foreground/50",
               compact ? "w-32" : "w-44",
             )}
           />
@@ -466,7 +466,7 @@ export function DevMetagraph({
           {tx("dev.graph.connectedOnly", "Connected only")}
         </label>
         ) : null}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ms-auto flex items-center gap-1.5">
           {!compact && payload.has_metadata ? (
             <span className="text-[11px] text-muted-foreground">
               {tx("dev.graph.annotated", "annotated")}: {payload.annotated}
@@ -588,7 +588,7 @@ export function DevMetagraph({
           </div>
         ) : null}
         {!compact ? (
-        <aside className="flex w-64 shrink-0 flex-col gap-2.5 overflow-y-auto border-l border-border/50 bg-muted/10 px-3 py-2.5">
+        <aside className="flex w-64 shrink-0 flex-col gap-2.5 overflow-y-auto border-s border-border/50 bg-muted/10 px-3 py-2.5">
           {detail ? (
             <>
               <div className="flex items-start gap-2">
@@ -675,7 +675,7 @@ export function DevMetagraph({
                               <button
                                 type="button"
                                 onClick={() => setSelected(id)}
-                                className="block w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                                className="block w-full truncate text-start text-[11px] text-muted-foreground hover:text-foreground hover:underline"
                                 title={id}
                               >
                                 {id}
@@ -758,7 +758,7 @@ export function DevMetagraph({
                               }
                               setSelected(id);
                             }}
-                            className="block w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                            className="block w-full truncate text-start text-[11px] text-muted-foreground hover:text-foreground hover:underline"
                             title={id}
                           >
                             {id.split("/").pop()}

@@ -34,7 +34,10 @@ import random
 import re
 from typing import Any, Callable
 
-from navin.providers.user_facing_errors import content_allows_model_switch
+from navin.providers.user_facing_errors import (
+    content_allows_model_switch,
+    is_model_unavailable_text,
+)
 
 #: Failure kinds that mean "the endpoint is busy or unreachable right now".
 TRANSIENT_KINDS: frozenset[str] = frozenset(
@@ -102,11 +105,24 @@ TEXT_PHRASES: tuple[str, ...] = (
     "billing_hard_limit",
 )
 
-_BLOCKING_STATUSES = frozenset({400, 401, 403, 404, 422})
+_BLOCKING_STATUSES = frozenset({400, 401, 422})
 _SWITCHING_STATUSES = frozenset({408, 409, 429})
+#: 403/404 "model unavailable" (provider account lacks access) is often a
+#: transient propagation or region issue: worth retrying before switching.
+_MODEL_UNAVAILABLE_STATUSES = frozenset({403, 404})
 
 #: Statuses that mean "wait, then ask again" rather than "this model is done".
 RETRYABLE_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+
+def _is_transient_model_unavailable(response: Any) -> bool:
+    """True when a 403/404 names the model as unavailable rather than the key."""
+    if getattr(response, "error_status_code", None) not in _MODEL_UNAVAILABLE_STATUSES:
+        return False
+    content = getattr(response, "content", None)
+    if not isinstance(content, str) or not content:
+        return False
+    return is_model_unavailable_text(content)
 
 # Word boundaries matter here: without them "timeoutish" matched "timeout" and a
 # healthy model was swapped out over a word in a sentence. Underscores are allowed
@@ -167,11 +183,17 @@ def is_blocking_failure(response: Any) -> bool:
     Malformed request for this vendor, bad or expired key, unknown slug,
     content filter, exhausted account. None of these clear by waiting, so the
     chosen model is not asked again; the next model of the list is.
+
+    A 403/404 "model unavailable" refusal is not definitive for this purpose:
+    provisioning or regional capacity often clears within seconds, so it is
+    handled as transient by :func:`is_worth_retrying` and never counted here.
     """
     if getattr(response, "error_should_retry", None) is False:
         return True
     if getattr(response, "error_status_code", None) in _BLOCKING_STATUSES:
         return True
+    if _is_transient_model_unavailable(response):
+        return False
     if is_exhausted_account(response):
         return True
     kind, error_type, code = _fields(response)
@@ -245,6 +267,11 @@ def is_worth_retrying(response: Any) -> bool:
         return False
     status = getattr(response, "error_status_code", None)
     if status is not None:
+        if _is_transient_model_unavailable(response):
+            # 403/404 "model unavailable" is worth a few sticky retries:
+            # account access propagation and regional capacity often clear
+            # within seconds, and switching models mid-work is disruptive.
+            return True
         return status in RETRYABLE_STATUSES
     kind, error_type, code = _fields(response)
     if is_availability_failure(response):
@@ -274,11 +301,21 @@ def sticky_retry_budget(response: Any, budget: int) -> int:
     """
     if budget <= 0:
         return 0
+    if _is_transient_model_unavailable(response):
+        # The short cooldown below must not zero the budget: the whole point
+        # of treating this refusal as transient is asking the model again now.
+        return budget
     if not is_worth_retrying(response):
         return 0
     if circuit_cooldown_s(response) is not None:
         return 0
     return budget
+
+
+#: How long the chosen model is skipped after a refusal that cannot clear by
+#: itself: no access to this model (403), unknown model (404), bad key (401).
+#: Probing it again every minute only adds a failed call to the next steps.
+REFUSAL_COOLDOWN_S = 900.0
 
 
 def circuit_cooldown_s(response: Any) -> float | None:
@@ -287,8 +324,16 @@ def circuit_cooldown_s(response: Any) -> float | None:
     A ``Retry-After`` longer than a sticky wait means the provider itself said
     the model is not available before then: asking it again on every step
     until the failure counter trips only burns the wait. An exhausted account
-    does not recover within a turn either.
+    does not recover within a turn either, and an access refusal (Bedrock
+    "not authorized" / "not available for this account") not within the hour.
     """
+    if _is_transient_model_unavailable(response):
+        # 403/404 "model unavailable" may recover within a minute; keep the
+        # cooldown short so the chosen model is not parked for 15 minutes
+        # after a transient refusal.
+        return CIRCUIT_MAX_COOLDOWN_S
+    if getattr(response, "error_status_code", None) in (401, 403, 404):
+        return REFUSAL_COOLDOWN_S
     if is_exhausted_account(response):
         return CIRCUIT_MAX_COOLDOWN_S
     hinted = getattr(response, "error_retry_after_s", None) or getattr(

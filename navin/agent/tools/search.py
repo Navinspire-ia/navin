@@ -24,11 +24,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, TypeVar
+from typing import Any, Callable, Iterable, TypeVar
 
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.filesystem import ListDirTool, _FsTool
@@ -41,6 +43,61 @@ _DEFAULT_HEAD_LIMIT = 250
 _DEFAULT_FILE_HEAD_LIMIT = 200
 _RG_TIMEOUT_S = 20
 _RG_MAX_MATCHES = 20_000
+# Wall-clock budget of the pure-Python scan for one grep call (every pattern of
+# a multi-pattern call shares it). Measured 2026-10-21 on the Windows desktop:
+# with no native module and no ripgrep, four patterns over a 55 000-file WSL
+# project read through \\wsl.localhost took ten minutes while the chat showed
+# nothing but "Preparing grep". A partial answer that says so beats that.
+_FALLBACK_BUDGET_S = 60.0
+# A pattern matching this many files is a topic word, not a target: the agent
+# then reads a pile of loosely related files instead of the code it needs.
+_BROAD_PATTERN_FILES = 40
+# Files whose match lines are kept for the read that usually follows a search.
+_HIT_FILES_REMEMBERED = 50
+_REGEX_META = re.compile(r"[()\[\]{}+?*^$\\]")
+
+
+def _no_match_message(
+    pattern: str,
+    path: str,
+    target: Path,
+    case_insensitive: bool,
+    fixed_strings: bool,
+    glob: str | None,
+    file_type: str | None,
+) -> str:
+    """Zero-result text with the concrete next steps instead of a bare 'no match'.
+
+    Session data showed most empty greps were followed by a guessed retry; the
+    hints name the cheap checks first so the retry is a deliberate one.
+    """
+    head = f"No matches found for pattern '{pattern}' in {path}"
+    steps: list[str] = []
+    if not case_insensitive and target.is_file():
+        try:
+            if target.stat().st_size > 2_000_000:
+                raise OSError("too large for the case check")
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            needle = re.escape(pattern) if fixed_strings else pattern
+            if re.search(needle, text, re.IGNORECASE):
+                steps.append("it DOES match with case_insensitive=true")
+        except (OSError, re.error):
+            pass
+    elif not case_insensitive:
+        steps.append("retry with case_insensitive=true")
+    if not fixed_strings and _REGEX_META.search(pattern):
+        steps.append(
+            "the pattern has regex metacharacters: use fixed_strings=true for a literal"
+        )
+    if glob or file_type:
+        steps.append("drop glob/type to check other file kinds")
+    if target.is_file():
+        steps.append("widen path to the parent directory")
+    if "|" in pattern and not fixed_strings:
+        steps.append("no alternative matched: search one exact identifier from the request")
+    if not steps:
+        steps.append("check the spelling or widen path")
+    return head + " (next step: " + "; ".join(steps) + ")"
 T = TypeVar("T")
 
 # One skip set for the agent's search tools and the code index. Dotfiles are
@@ -484,35 +541,183 @@ def _rg_scan(
     rg = _rg_binary()
     if rg is None:
         return None
-    cmd = [
-        rg, "--json", "--no-follow", "--no-messages", "--hidden",
+    flags = _rg_scan_flags(
+        fixed_strings=fixed_strings,
+        case_insensitive=case_insensitive,
+        include_ignored=include_ignored,
+        max_file_bytes=max_file_bytes,
+        multiline=multiline,
+    )
+    out = _run_rg([rg, *flags, "--", pattern, str(target)])
+    if out is None or out.returncode not in (0, 1):  # 1 = no matches; 2 = unsupported pattern
+        return None
+    return _parse_rg_json(out.stdout)
+
+
+def _rg_scan_flags(
+    *,
+    fixed_strings: bool,
+    case_insensitive: bool,
+    include_ignored: bool,
+    max_file_bytes: int,
+    multiline: bool,
+) -> list[str]:
+    flags = [
+        "--json", "--no-follow", "--no-messages", "--hidden",
         "--max-filesize", str(max_file_bytes),
         "--ignore-case" if case_insensitive else "--case-sensitive",
     ]
     if fixed_strings:
-        cmd.append("--fixed-strings")
+        flags.append("--fixed-strings")
     if multiline:
-        cmd.extend(["--multiline", "--multiline-dotall"])
+        flags.extend(["--multiline", "--multiline-dotall"])
     if include_ignored:
-        cmd.append("--no-ignore-vcs")
-    for skip in sorted(_SEARCH_SKIP_DIRS):
-        cmd.extend(["--glob", f"!{skip}/"])
-    # Glob and type filters are applied in Python for both backends so the two
+        flags.append("--no-ignore-vcs")
+    # Glob and type filters are applied in Python for every backend so they
     # never disagree; ripgrep only prunes directory noise here.
-    cmd.extend(["--", pattern, str(target)])
+    for skip in sorted(_SEARCH_SKIP_DIRS):
+        flags.extend(["--glob", f"!{skip}/"])
+    return flags
+
+
+def _run_rg(cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        out = subprocess.run(  # noqa: S603
+        return subprocess.run(  # noqa: S603
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_RG_TIMEOUT_S,
             **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if out.returncode not in (0, 1):  # 1 = no matches; 2 = unsupported pattern
+
+
+# Runs ripgrep inside the distribution, or exits 127 when it is not installed
+# there: a missing binary through ``wsl.exe --exec`` exits 1, which ripgrep
+# uses for "no matches", and a silent empty answer is the worst outcome.
+_WSL_RG_SCRIPT = 'command -v rg >/dev/null 2>&1 || exit 127; exec rg "$@"'
+
+
+def _wsl_target(target: Path, *, platform: str | None = None) -> tuple[str, PurePosixPath] | None:
+    """``(distro, linux_path)`` for a ``\\\\wsl.localhost`` target seen from Windows."""
+    if (platform or sys.platform) != "win32":
+        return None
+    from navin.utils import wsl
+
+    location = wsl.parse_unc(str(target))
+    if location is None or not wsl.wsl_executable():
+        return None
+    return wsl.resolve_distro(location.distro) or location.distro, location.path
+
+
+def _wsl_rg_scan(
+    target: Path,
+    pattern: str,
+    *,
+    fixed_strings: bool,
+    case_insensitive: bool,
+    include_ignored: bool,
+    max_file_bytes: int,
+    multiline: bool = False,
+    platform: str | None = None,
+) -> dict[str, list[tuple[int, str]]] | None:
+    """Search a WSL project from Windows with the distribution's own ripgrep.
+
+    Every file read through the ``\\\\wsl.localhost`` bridge crosses the 9P
+    redirector, so the native module, a Windows ripgrep and the Python scan
+    all crawl there. Inside the distribution the same search reads ext4
+    directly. Returns None when the target is not a WSL path seen from
+    Windows, or when the distribution has no ripgrep, so the caller tries the
+    next backend. Paths come back spelled under ``target``, as the other
+    backends report them.
+    """
+    found = _wsl_target(target, platform=platform)
+    if found is None:
+        return None
+    distro, linux_path = found
+    from navin.utils import wsl
+
+    flags = _rg_scan_flags(
+        fixed_strings=fixed_strings,
+        case_insensitive=case_insensitive,
+        include_ignored=include_ignored,
+        max_file_bytes=max_file_bytes,
+        multiline=multiline,
+    )
+    out = _run_rg([
+        *wsl.command_prefix(distro), "sh", "-c", _WSL_RG_SCRIPT, "sh",
+        *flags, "--", pattern, str(linux_path),
+    ])
+    if out is None or out.returncode not in (0, 1):
         return None
 
+    # Every match line names its file: thousands of lines for a few hundred
+    # files. Map each path once, by plain string work (pathlib relative_to
+    # cost over five seconds for 20k lines of a common word).
+    prefix = str(linux_path).rstrip("/") + "/"
+    mapped: dict[str, str] = {}
+
+    def to_target(text: str) -> str:
+        hit = mapped.get(text)
+        if hit is None:
+            if text.startswith(prefix):
+                hit = str(target.joinpath(*text[len(prefix):].split("/")))
+            elif text == prefix[:-1]:
+                hit = str(target)
+            else:
+                hit = wsl.to_unc(distro, text)
+            mapped[text] = hit
+        return hit
+
+    return _parse_rg_json(out.stdout, to_target)
+
+
+def _wsl_mtimes(
+    target: Path, paths: list[str], *, platform: str | None = None,
+) -> dict[str, float] | None:
+    """Modification times of ``paths`` (spelled under ``target``), read inside WSL.
+
+    Ranking needs one mtime per matched file. Asked through ``\\\\wsl.localhost``
+    that is one 9P round trip per file: a common word over a large project
+    took ten seconds of stats after a 0.3 s search. One ``stat`` inside the
+    distribution answers for all of them. None when not applicable.
+    """
+    found = _wsl_target(target, platform=platform)
+    if found is None or not paths:
+        return None
+    distro, linux_root = found
+    from navin.utils import wsl
+
+    by_linux: dict[str, str] = {}
+    for text in paths:
+        try:
+            rel = Path(text).relative_to(target)
+        except ValueError:
+            continue
+        by_linux[str(linux_root / PurePosixPath(rel.as_posix()))] = text
+    if not by_linux:
+        return None
+    payload = "\0".join(by_linux).encode("utf-8") + b"\0"
+    try:
+        out = subprocess.run(  # noqa: S603
+            [*wsl.command_prefix(distro), "xargs", "-0", "-r", "stat", "--printf=%Y %n\\0", "--"],
+            input=payload, capture_output=True, timeout=_RG_TIMEOUT_S, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    mtimes: dict[str, float] = {}
+    for record in out.stdout.split(b"\0"):
+        seconds, _, name = record.decode("utf-8", errors="replace").partition(" ")
+        original = by_linux.get(name)
+        if original is not None and seconds.isdigit():
+            mtimes[original] = float(seconds)
+    return mtimes
+
+
+def _parse_rg_json(
+    stdout: str, map_path: Callable[[str], str] | None = None,
+) -> dict[str, list[tuple[int, str]]]:
     hits: dict[str, list[tuple[int, str]]] = {}
     total = 0
-    for raw in out.stdout.splitlines():
+    for raw in stdout.splitlines():
         if total >= _RG_MAX_MATCHES:
             break
         try:
@@ -529,6 +734,8 @@ def _rg_scan(
         line_no = int(data.get("line_number") or 0)
         if line_no <= 0:
             continue
+        if map_path is not None:
+            path_text = map_path(path_text)
         # A multiline match carries every line it spans; the block format is
         # one line per match and context_after shows the rest.
         hits.setdefault(path_text, []).append((line_no, text.rstrip("\n").split("\n", 1)[0]))
@@ -593,6 +800,46 @@ def _rg_files(target: Path, *, include_ignored: bool) -> list[str] | None:
     return [chunk for chunk in out.stdout.split("\0") if chunk][:_WALK_MAX_ENTRIES]
 
 
+def _wsl_rg_files(
+    target: Path, *, include_ignored: bool, platform: str | None = None,
+) -> list[str] | None:
+    """``_rg_files`` for a WSL project seen from Windows, run inside the distribution.
+
+    Listing through ``\\\\wsl.localhost`` reads every directory over the 9P
+    bridge, whatever the backend. None when the target is not such a path or
+    the distribution has no ripgrep, so the caller lists another way. Paths
+    come back spelled under ``target``.
+    """
+    found = _wsl_target(target, platform=platform)
+    if found is None:
+        return None
+    distro, linux_path = found
+    from navin.utils import wsl
+
+    flags = ["--files", "--null", "--hidden", "--no-follow", "--no-messages"]
+    if include_ignored:
+        flags.append("--no-ignore-vcs")
+    for skip in sorted(_SEARCH_SKIP_DIRS):
+        flags.extend(["--glob", f"!{skip}/"])
+    out = _run_rg([
+        *wsl.command_prefix(distro), "sh", "-c", _WSL_RG_SCRIPT, "sh",
+        *flags, "--", str(linux_path),
+    ])
+    if out is None or out.returncode not in (0, 1):
+        return None
+    rows: list[str] = []
+    for chunk in out.stdout.split("\0"):
+        if not chunk:
+            continue
+        try:
+            rows.append(str(target / PurePosixPath(chunk).relative_to(linux_path)))
+        except ValueError:
+            rows.append(wsl.to_unc(distro, chunk))
+        if len(rows) >= _WALK_MAX_ENTRIES:
+            break
+    return rows
+
+
 def _native_walk(target: Path, *, include_dirs: bool) -> list[tuple[str, bool]] | None:
     """``(path, is_dir)`` per entry from the Rust walker, or None to fall back."""
     module = _native_module()
@@ -654,13 +901,21 @@ def _gitignored_paths(root: Path, paths: list[Path]) -> set[Path]:
     """
     if not paths:
         return set()
-    git = shutil.which("git")
-    if git is None:
+    from navin.utils import wsl
+    from navin.utils.git_argv import git_route
+
+    route = git_route(root)
+    if route is None:
         return set()
+    # Through wsl.exe, git reads Linux paths: translate them there and back.
+    spelled: dict[str, Path] = {}
+    for p in paths:
+        location = wsl.parse_unc(str(p)) if route.distro else None
+        spelled[location.posix if location else str(p)] = p
     try:
         out = subprocess.run(  # noqa: S603
-            [git, "-C", str(root), "check-ignore", "--stdin", "-z"],
-            input="\0".join(str(p) for p in paths),
+            [*route.argv, "check-ignore", "--stdin", "-z"],
+            input="\0".join(spelled),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -674,7 +929,7 @@ def _gitignored_paths(root: Path, paths: list[Path]) -> set[Path]:
     # could not answer, so nothing is filtered rather than everything.
     if out.returncode not in (0, 1):
         return set()
-    return {Path(chunk) for chunk in out.stdout.split("\0") if chunk}
+    return {spelled.get(chunk, Path(chunk)) for chunk in out.stdout.split("\0") if chunk}
 
 
 def _read_text_file(
@@ -812,7 +1067,9 @@ class FindFilesTool(_SearchTool):
         if include_dirs:
             files = None  # ``rg --files`` lists files only.
         else:
-            files = _rg_files(target, include_ignored=include_ignored)
+            files = _wsl_rg_files(target, include_ignored=include_ignored)
+            if files is None:
+                files = _rg_files(target, include_ignored=include_ignored)
         if files is not None:
             return [(path, False) for path in files], True
         rows = _native_walk(target, include_dirs=include_dirs)
@@ -1012,7 +1269,8 @@ class GrepTool(_SearchTool):
             "lines with context. Prefer this over shell grep for ordinary "
             "workspace searches. Skips binary files, files >2 MB, dependency "
             "and build directories, and anything .gitignore excludes (pass "
-            "include_ignored to search those too)."
+            "include_ignored to search those too). Several searches to run: "
+            "pass them all in `patterns` in ONE call, never one call per pattern."
         )
 
     @property
@@ -1028,6 +1286,17 @@ class GrepTool(_SearchTool):
                     "type": "string",
                     "description": "Regex or plain text pattern to search for",
                     "minLength": 1,
+                },
+                "patterns": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "description": (
+                        "Several patterns searched in ONE call (instead of pattern), "
+                        "with the same path, glob and options; each gets its own "
+                        "section. Never one call per pattern."
+                    ),
                 },
                 "path": {
                     "type": "string",
@@ -1112,7 +1381,6 @@ class GrepTool(_SearchTool):
                     ),
                 },
             },
-            "required": ["pattern"],
         }
 
     @staticmethod
@@ -1136,8 +1404,12 @@ class GrepTool(_SearchTool):
 
     def _hit_for(
         self, file_path: Path, root: Path, glob: str | None, file_type: str | None,
+        *, mtime: float | None = None,
     ) -> _FileHit | None:
-        """Build an empty hit if the file passes the glob and type filters."""
+        """Build an empty hit if the file passes the glob and type filters.
+
+        ``mtime`` is given when the caller already knows it (read inside WSL).
+        """
         try:
             rel_path = file_path.relative_to(root).as_posix()
         except ValueError:
@@ -1146,10 +1418,11 @@ class GrepTool(_SearchTool):
             return None
         if not _matches_type(file_path.name, file_type):
             return None
-        try:
-            mtime = file_path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
+        if mtime is None:
+            try:
+                mtime = file_path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
         return _FileHit(
             path=file_path,
             display_path=self._display_path(file_path, root),
@@ -1170,8 +1443,9 @@ class GrepTool(_SearchTool):
         file_type: str | None,
         include_ignored: bool,
         multiline: bool = False,
-    ) -> tuple[list[_FileHit], int | None, int | None]:
-        """Return (hits, skipped_binary, skipped_large).
+        deadline: float | None = None,
+    ) -> tuple[list[_FileHit], int | None, int | None, bool]:
+        """Return (hits, skipped_binary, skipped_large, stopped_early).
 
         The skip counts are None when the native or ripgrep backend did the
         scan: both enforce the same binary and size limits themselves but do
@@ -1179,17 +1453,33 @@ class GrepTool(_SearchTool):
         zero read as "nothing was skipped". Unknown is the honest answer, so
         no skip note is printed on those paths; only the Python fallback
         counts exactly.
+
+        ``stopped_early`` is True when the Python fallback reached
+        ``deadline`` (a ``time.monotonic`` value) before reading every file:
+        the hits are then only those found in the part already read.
         """
-        # The Rust scanner matches line by line; a spanning pattern goes to
-        # ripgrep (--multiline) or to the whole-file Python search below.
-        scanned = None if multiline else _native_scan(
+        # A WSL project seen from Windows: search inside the distribution
+        # before anything has to read the files through the 9P bridge.
+        scanned = _wsl_rg_scan(
             target,
             pattern,
             fixed_strings=fixed_strings,
             case_insensitive=case_insensitive,
             include_ignored=include_ignored,
             max_file_bytes=self._MAX_FILE_BYTES,
+            multiline=multiline,
         )
+        # The Rust scanner matches line by line; a spanning pattern goes to
+        # ripgrep (--multiline) or to the whole-file Python search below.
+        if scanned is None and not multiline:
+            scanned = _native_scan(
+                target,
+                pattern,
+                fixed_strings=fixed_strings,
+                case_insensitive=case_insensitive,
+                include_ignored=include_ignored,
+                max_file_bytes=self._MAX_FILE_BYTES,
+            )
         if scanned is None:
             scanned = _rg_scan(
                 target,
@@ -1200,22 +1490,42 @@ class GrepTool(_SearchTool):
                 max_file_bytes=self._MAX_FILE_BYTES,
                 multiline=multiline,
             )
+        # Inside WSL, one stat for every matched file instead of one 9P
+        # round trip each (see _wsl_mtimes).
+        mtimes = _wsl_mtimes(target, list(scanned)) if scanned else None
         if scanned is not None:
             hits: list[_FileHit] = []
             for path_text, matches in scanned.items():
-                hit = self._hit_for(Path(path_text), root, glob, file_type)
+                hit = self._hit_for(
+                    Path(path_text), root, glob, file_type,
+                    mtime=None if mtimes is None else mtimes.get(path_text, 0.0),
+                )
                 if hit is None:
                     continue
                 hit.matches = sorted(matches)
                 hits.append(hit)
-            return hits, None, None
+            return hits, None, None, False
+
+        def out_of_time() -> bool:
+            return deadline is not None and time.monotonic() >= deadline
 
         hits = []
         skipped_binary = 0
         skipped_large = 0
-        candidates = list(self._iter_files(target))
+        stopped = False
+        # Walked lazily against the clock: over a slow mount the listing
+        # alone can outlast the whole budget.
+        candidates: list[Path] = []
+        for file_path in self._iter_files(target):
+            if out_of_time():
+                stopped = True
+                break
+            candidates.append(file_path)
         ignored = set() if include_ignored else _gitignored_paths(root, candidates)
         for file_path in candidates:
+            if out_of_time():
+                stopped = True
+                break
             if file_path in ignored:
                 continue
             hit = self._hit_for(file_path, root, glob, file_type)
@@ -1236,9 +1546,70 @@ class GrepTool(_SearchTool):
                         hit.matches.append((idx, line))
             if hit.matches:
                 hits.append(hit)
-        return hits, skipped_binary, skipped_large
+        return hits, skipped_binary, skipped_large, stopped
+
+    _MAX_PATTERNS = 8
+    # The whole reply stays under the tool result limit (16 000 characters by
+    # default), or it is written to disk and has to be read back.
+    _BATCH_CHARS = 12_000
 
     async def execute(
+        self,
+        pattern: str | None = None,
+        path: str = ".",
+        glob: str | None = None,
+        type: str | None = None,
+        case_insensitive: bool = False,
+        fixed_strings: bool = False,
+        output_mode: str = "files_with_matches",
+        context_before: int = 0,
+        context_after: int = 0,
+        max_matches: int | None = None,
+        max_results: int | None = None,
+        head_limit: int | None = None,
+        offset: int = 0,
+        sort: str = "relevance",
+        include_ignored: bool = False,
+        multiline: bool = False,
+        patterns: list[str] | None = None,
+        **kwargs: Any,
+    ) -> str:
+        options: dict[str, Any] = {
+            "path": path, "glob": glob, "type": type, "case_insensitive": case_insensitive,
+            "fixed_strings": fixed_strings, "output_mode": output_mode,
+            "context_before": context_before, "context_after": context_after,
+            "max_matches": max_matches, "max_results": max_results, "head_limit": head_limit,
+            "offset": offset, "sort": sort, "include_ignored": include_ignored,
+            "multiline": multiline,
+            # One budget for the whole call, so eight patterns cannot each
+            # spend it in turn.
+            "deadline": time.monotonic() + _FALLBACK_BUDGET_S,
+        }
+        if patterns:
+            if pattern:
+                return ToolResult.error("Error: pass either pattern or patterns, not both.")
+            if len(patterns) > self._MAX_PATTERNS:
+                return ToolResult.error(f"Error: at most {self._MAX_PATTERNS} patterns per call.")
+            share = max(1_500, self._BATCH_CHARS // len(patterns))
+            sections: list[str] = []
+            succeeded = 0
+            for item in patterns:
+                if not isinstance(item, str) or not item:
+                    sections.append("=== (empty pattern) ===")
+                    continue
+                result = await self._search_once(item, **options)
+                text = str(result)
+                if len(text) > share:
+                    text = text[:share] + "\n(section truncated: narrow this search with path, glob or head_limit)"
+                sections.append(f"=== pattern: {item} ===\n{text}")
+                succeeded += 0 if getattr(result, "is_error", False) else 1
+            body = "\n\n".join(sections)
+            return ToolResult(body) if succeeded else ToolResult.error(body)
+        if not pattern:
+            return ToolResult.error("Error: grep requires 'pattern' (or 'patterns' for several searches).")
+        return await self._search_once(pattern, **options)
+
+    async def _search_once(
         self,
         pattern: str,
         path: str = ".",
@@ -1256,9 +1627,11 @@ class GrepTool(_SearchTool):
         sort: str = "relevance",
         include_ignored: bool = False,
         multiline: bool = False,
-        **kwargs: Any,
+        deadline: float | None = None,
     ) -> str:
         try:
+            if deadline is None:
+                deadline = time.monotonic() + _FALLBACK_BUDGET_S
             target = await self._bound_path(path or ".", write=False)
             missing_path = None
             recovery_note = ""
@@ -1308,7 +1681,7 @@ class GrepTool(_SearchTool):
             size_truncated = False
             root = target if target.is_dir() else target.parent
 
-            hits, skipped_binary, skipped_large = await asyncio.to_thread(
+            hits, skipped_binary, skipped_large, stopped_early = await asyncio.to_thread(
                 self._collect_hits,
                 target,
                 root,
@@ -1320,28 +1693,42 @@ class GrepTool(_SearchTool):
                 file_type=type,
                 include_ignored=include_ignored,
                 multiline=multiline,
+                deadline=deadline,
             )
             hits = _sort_hits(hits, sort)
             if missing_path is not None and not hits:
                 return missing_path
+            states = self._file_states
+            for hit in hits[:_HIT_FILES_REMEMBERED]:
+                states.record_search_hits(hit.path, [line for line, _ in hit.matches])
             total_matches = sum(len(hit.matches) for hit in hits)
 
             blocks: list[str] = []
             if output_mode == "files_with_matches":
                 if not hits:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
+                    result = _no_match_message(
+                        pattern, path, target, case_insensitive, fixed_strings, glob, type
+                    )
                 else:
                     paged, truncated = _paginate(
                         [hit.display_path for hit in hits], limit, offset
                     )
-                    result = "\n".join(paged)
+                    result = "\n".join(paged) or (
+                        f"No entries at offset {offset} ({len(hits)} files match); "
+                        "lower the offset to see them"
+                    )
             elif output_mode == "count":
                 if not hits:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
+                    result = _no_match_message(
+                        pattern, path, target, case_insensitive, fixed_strings, glob, type
+                    )
                 else:
                     paged_hits, truncated = _paginate(hits, limit, offset)
                     result = "\n".join(
                         f"{hit.display_path}: {len(hit.matches)}" for hit in paged_hits
+                    ) or (
+                        f"No entries at offset {offset} ({len(hits)} files match); "
+                        "lower the offset to see them"
                     )
             else:
                 result_chars = 0
@@ -1375,12 +1762,26 @@ class GrepTool(_SearchTool):
                         result_chars += extra_sep + len(block)
                     if truncated or size_truncated:
                         break
-                if not blocks:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
+                if not blocks and total_matches and offset >= total_matches:
+                    result = (
+                        f"No entries at offset {offset} for pattern '{pattern}' "
+                        f"({total_matches} matches in {len(hits)} files); "
+                        "lower the offset to see them"
+                    )
+                elif not blocks:
+                    result = _no_match_message(
+                        pattern, path, target, case_insensitive, fixed_strings, glob, type
+                    )
                 else:
                     result = "\n\n".join(blocks)
 
             notes: list[str] = []
+            if stopped_early:
+                notes.append(
+                    f"(partial: the search stopped after {_FALLBACK_BUDGET_S:.0f}s before reading "
+                    "every file, so files not yet read may also match. No fast search backend "
+                    "(ripgrep) is available here: narrow path or glob to search the rest)"
+                )
             if output_mode == "content" and truncated:
                 notes.append(
                     f"(pagination: limit={limit}, offset={offset})"
@@ -1403,8 +1804,25 @@ class GrepTool(_SearchTool):
                 notes.append(
                     f"(total matches: {total_matches} in {len(hits)} files)"
                 )
+            elif len(hits) >= _BROAD_PATTERN_FILES:
+                notes.append(
+                    f"(broad pattern: {len(hits)} files match. Search the exact identifier, "
+                    "string or component name from the request, or scope path or glob, "
+                    "before reading any of these files)"
+                )
             if notes:
                 result += "\n\n" + "\n".join(notes)
+            search_key = json.dumps(
+                [pattern, str(target), glob, type, case_insensitive, fixed_strings, output_mode,
+                 context_before, context_after, limit, offset, sort, include_ignored, multiline],
+                default=str,
+            )
+            if states.repeats_search(search_key, result):
+                result += (
+                    "\n\n(Same search as an earlier call in this session, same result: nothing "
+                    "changed since. Act on that result, or change the pattern, path or glob, "
+                    "instead of running it again.)"
+                )
             hint = (
                 symbol_index_hint(pattern)
                 if self._index_hints_shown < _INDEX_HINT_LIMIT and _CODE_FILE.search(result)

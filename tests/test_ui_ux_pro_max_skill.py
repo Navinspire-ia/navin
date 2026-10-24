@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 
 from navin.agent.skills import BUILTIN_SKILLS_DIR
-from navin.command.builtin import _WORKFLOW_BRIEFS
+from navin.command.builtin import _FORGE_UI_CLAUSE, _WORKFLOW_BRIEFS
 
 
 class UiUxProMaxSkillTest(unittest.TestCase):
@@ -56,7 +56,8 @@ class UiUxProMaxSkillTest(unittest.TestCase):
             self.assertIn("ask_user", text)
             self.assertNotIn("Prefer Tailwind unless the user specifies otherwise", text)
         for command in ("/blueprint", "/forge", "/cruise", "/mission"):
-            brief = _WORKFLOW_BRIEFS[command][2]
+            # /forge carries its interface rules only when the request is about UI.
+            brief = _FORGE_UI_CLAUSE if command == "/forge" else _WORKFLOW_BRIEFS[command][2]
             self.assertTrue(
                 "MUI" in brief or "@mui/material" in brief,
                 command,
@@ -71,7 +72,7 @@ class UiUxProMaxSkillTest(unittest.TestCase):
             self.assertIn("ui-ux-pro-max", skills, command)
 
     def test_forge_brief_requires_framer_motion_install(self) -> None:
-        brief = _WORKFLOW_BRIEFS["/forge"][2]
+        brief = _FORGE_UI_CLAUSE
         self.assertIn("framer-motion", brief)
         self.assertIn("ui-ux-pro-max", brief)
         for token in (
@@ -84,7 +85,7 @@ class UiUxProMaxSkillTest(unittest.TestCase):
 
     def test_code_briefs_require_three_stack(self) -> None:
         for command in ("/blueprint", "/forge", "/cruise", "/mission"):
-            brief = _WORKFLOW_BRIEFS[command][2]
+            brief = _FORGE_UI_CLAUSE if command == "/forge" else _WORKFLOW_BRIEFS[command][2]
             self.assertIn("@react-three/fiber", brief, command)
             self.assertIn("@react-three/drei", brief, command)
             self.assertIn("threejs", brief, command)

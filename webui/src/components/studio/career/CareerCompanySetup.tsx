@@ -1,11 +1,13 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useEffect, useRef, useState } from "react";
 import { Checkbox, DefaultButton, Dropdown, Label, Link, MessageBar, MessageBarType, PrimaryButton,
   ProgressIndicator, Stack, TextField } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 import type { CareerDesk } from "@/lib/career-api";
 import { DEFAULT_PLATFORM_CATALOG, emptyProspecting, missionSourcesForCountries, platformRelevant, suggestedMissionSources, type ProspectCriteria } from "@/lib/career-prospecting";
 import { CareerCountryMultiSelect } from "./CareerCountrySelect";
@@ -24,7 +26,7 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
   onAccounts?: (platform?: string) => void;
 }) {
   const { i18n } = useTranslation();
-  const c = (fr: string, en: string) => i18n.language.startsWith("fr") ? fr : en;
+  const c = (fr: string, en: string, values?: Record<string, string | number>) => bilingual(fr, en, values);
   const reduced = useReducedMotion();
   const state = desk.prospecting || emptyProspecting;
   const [criteria, setCriteria] = useState<ProspectCriteria>(() => initializeCompanyCriteria({ ...emptyProspecting.criteria, ...state.criteria,
@@ -74,7 +76,7 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
   const money = (key: "sale_rate_remote" | "sale_rate_onsite" | "min_project_budget" | "margin_percent" | "buy_rate_max" | "salary_max", label: string) => <TextField label={label} type="number" min={0} max={key === "margin_percent" ? 95 : undefined}
     value={criteria[key] ? String(criteria[key]) : ""} onChange={(_, v) => set(key, Number(v || 0))} />;
   const shares = careerRoleShares(criteria.roles, criteria.role_priorities);
-  const shareLabel = (role: string) => shares[role].toLocaleString(i18n.language, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const shareLabel = (role: string) => shares[role].toLocaleString(intlLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const openProvider = (id: string) => { setProvider(id); setApiKey(""); };
   const apiEditor = provider && <div ref={editorRef}><Stack tokens={{ childrenGap: 10 }} styles={{ root: { padding: 16, border: "1px solid rgba(128,128,128,.25)", borderRadius: 12 } }}>
     <strong>{provider === "serpapi" ? "SerpApi" : "Brave Search"}</strong>
@@ -124,7 +126,7 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
               {criteria.roles.map(role => <TextField key={role} label={localizeCareerValue(role, i18n.language)} ariaLabel={`${c("Priorité", "Priority")} ${localizeCareerValue(role, i18n.language)}`}
                 type="number" min={0} max={100} step={1} suffix="%" placeholder={c("Auto", "Auto")} disabled={busy}
                 value={criteria.role_priorities[role] === undefined ? "" : String(criteria.role_priorities[role])}
-                description={c(`Part de recherche indicative : ${shareLabel(role)} %`, `Indicative search share: ${shareLabel(role)}%`)}
+                description={c("Part de recherche indicative : {{share}} %", "Indicative search share: {{share}}%", { share: shareLabel(role) })}
                 onChange={(_, value) => {
                   const next = { ...criteria.role_priorities };
                   if (!value?.trim()) delete next[role];

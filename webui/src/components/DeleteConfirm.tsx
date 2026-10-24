@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { intlLocale } from "@/i18n/intl";
 import type { TFunction } from "i18next";
 import { Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -60,7 +61,7 @@ export function DeleteConfirm({
               : description ?? t("deleteConfirm.description")}
           </AlertDialogDescription>
           {hasAutomations ? (
-            <div className="mt-4 max-h-40 w-full overflow-y-auto rounded-2xl bg-muted/55 px-3 py-2 text-left">
+            <div className="mt-4 max-h-40 w-full overflow-y-auto rounded-2xl bg-muted/55 px-3 py-2 text-start">
               {visibleAutomations.map((job) => (
                 <div key={job.id} className="min-w-0 py-1.5">
                   <div className="truncate text-[13px] font-medium leading-5 text-foreground">
@@ -85,7 +86,7 @@ export function DeleteConfirm({
             </div>
           ) : null}
         </AlertDialogHeader>
-        <AlertDialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 sm:grid-cols-2 sm:space-x-0">
+        <AlertDialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 rtl:space-x-reverse sm:grid-cols-2 sm:space-x-0 rtl:space-x-reverse">
           <AlertDialogCancel
             onClick={onCancel}
             className="mt-0 h-11 w-full min-w-0 rounded-full border-0 bg-muted/70 px-5 text-[15px] font-semibold text-foreground shadow-none hover:bg-muted"
@@ -156,7 +157,7 @@ function formatDuration(ms: number, locale: string): string {
   ];
   for (const [unit, size] of units) {
     if (ms >= size && ms % size === 0) {
-      return new Intl.NumberFormat(locale, {
+      return new Intl.NumberFormat(intlLocale(locale), {
         style: "unit",
         unit,
         unitDisplay: "long",
@@ -164,7 +165,7 @@ function formatDuration(ms: number, locale: string): string {
       }).format(ms / size);
     }
   }
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(intlLocale(locale), {
     style: "unit",
     unit: "minute",
     unitDisplay: "long",

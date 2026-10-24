@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -169,7 +170,7 @@ export function TokenUsageHeatmap({
   const tx = (key: string, fallback: string, values?: Record<string, unknown>) =>
     t(key, { defaultValue: fallback, ...(values ?? {}) });
   const monthFormatter = useMemo(
-    () => new Intl.DateTimeFormat(i18n.language, { month: "short", timeZone: "UTC" }),
+    () => new Intl.DateTimeFormat(intlLocale(), { month: "short", timeZone: "UTC" }),
     [i18n.language],
   );
   const { cells, monthLabels } = useMemo(

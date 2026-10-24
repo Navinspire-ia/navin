@@ -5,8 +5,8 @@ import { deriveTitle } from "@/lib/format";
 import type { ChatSummary, SidebarSortMode } from "@/lib/types";
 import { normalizeWorkspacePath, projectNameFromPath, sameWorkspacePath } from "@/lib/workspace";
 
-export const COLLAPSED_CHATS_VISIBLE_COUNT = 5;
-export const INITIAL_GROUP_VISIBLE_COUNT = 5;
+export const COLLAPSED_CHATS_VISIBLE_COUNT = 3;
+export const INITIAL_GROUP_VISIBLE_COUNT = 3;
 export const GROUP_VISIBLE_INCREMENT = 5;
 export const SECTION_PROJECTS_ID = "section:projects";
 export const SECTION_CHATS_ID = "section:chats";
@@ -406,6 +406,21 @@ export function visibleSessionsForGroup(
   return visibleSessionsForLimit(group.sessions, INITIAL_GROUP_VISIBLE_COUNT, activeKey);
 }
 
+/**
+ * Chats with an agent at work float to the top of their folder, keeping the
+ * order of everything else: a busy chat ranked sixth sat hidden under
+ * "show more" while it ran.
+ */
+export function runningSessionsFirst(
+  sessions: ChatSummary[],
+  runningChatIds: ReadonlySet<string>,
+): ChatSummary[] {
+  if (runningChatIds.size === 0) return sessions;
+  const busy = sessions.filter((session) => runningChatIds.has(session.chatId));
+  if (busy.length === 0) return sessions;
+  return [...busy, ...sessions.filter((session) => !runningChatIds.has(session.chatId))];
+}
+
 export function visibleSessionsForLimit(
   sessions: ChatSummary[],
   limit: number,
@@ -625,4 +640,22 @@ function titleForSort(
 function sessionTime(session: ChatSummary, field: "createdAt" | "updatedAt"): number {
   const ts = Date.parse(session[field] ?? "");
   return Number.isFinite(ts) ? ts : 0;
+}
+
+/** Drop a project folder from persisted sidebar state (recent_projects + module_by_path). */
+export function removeProjectFromSidebarState<
+  T extends { recent_projects?: { path: string }[]; module_by_path?: Record<string, unknown> },
+>(state: T, projectPath: string): T {
+  const key = normalizeWorkspacePath(projectPath);
+  const module_by_path = { ...(state.module_by_path ?? {}) };
+  for (const path of Object.keys(module_by_path)) {
+    if (normalizeWorkspacePath(path) === key) delete module_by_path[path];
+  }
+  return {
+    ...state,
+    module_by_path,
+    recent_projects: (state.recent_projects ?? []).filter(
+      (entry) => normalizeWorkspacePath(entry.path) !== key,
+    ),
+  };
 }

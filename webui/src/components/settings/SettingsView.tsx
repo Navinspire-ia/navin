@@ -1,7 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { isDuplicateDefault } from "@/lib/model-default-visibility";
+import { intlLocale } from "@/i18n/intl";
+import { isDuplicateDefault, presetProviderReady } from "@/lib/model-default-visibility";
 import {
   useCallback,
   useEffect,
@@ -35,6 +36,7 @@ import {
   EyeOff,
   ExternalLink,
   Gem,
+  GitBranch,
   Globe2,
   Grid3X3,
   HardDrive,
@@ -45,6 +47,7 @@ import {
   Layers,
   LayoutGrid,
   Loader2,
+  LockKeyhole,
   Mic,
   Monitor,
   Moon,
@@ -53,6 +56,7 @@ import {
   Plus,
   Orbit,
   Palette,
+  PanelLeft,
   Radio,
   Pencil,
   Puzzle,
@@ -65,17 +69,21 @@ import {
   SlidersHorizontal,
   Star,
   Trash2,
+  Users,
   Waves,
   Wrench,
   X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import { phrase } from "@/i18n/phrases";
 import { useTranslation } from "react-i18next";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AccountSettings } from "@/components/settings/AccountSettings";
 import { ComputerSettings } from "@/components/settings/ComputerSettings";
+import { ExecutionSettings } from "@/components/settings/ExecutionSettings";
+import { MediaModelChoice } from "@/components/settings/MediaModelChoice";
 import { LiveVoiceSettings } from "@/components/settings/LiveVoiceSettings";
 import { MediaModelPicker } from "@/components/settings/MediaModelPicker";
 import { SettingsPicker } from "@/components/settings/SettingsPicker";
@@ -87,6 +95,7 @@ import { TokenUsageHeatmap } from "@/components/settings/TokenUsageHeatmap";
 import { ExecPolicySettings } from "@/components/settings/ExecPolicySettings";
 import { StudioSettings } from "@/components/settings/StudioSettings";
 import { ToggleButton } from "@/components/settings/ToggleButton";
+import { GitConnectPanel } from "@/components/settings/GitConnectPanel";
 import {
   channelFilterTab,
   isHiddenToolsChannel,
@@ -103,6 +112,8 @@ import {
   ChannelSetupPanel,
 } from "@/components/settings/channels/ChannelSetupPanel";
 import { Button } from "@/components/ui/button";
+import { TeamSettings } from "@/components/settings/TeamSettings";
+import { SitesSettings } from "@/components/settings/SitesSettings";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -154,6 +165,7 @@ import {
   updateModelConfiguration,
   deleteModelConfiguration,
   updateModelRoute,
+  setModelRoutingEnabled,
   updateNetworkSafetySettings,
   testProviderConnection,
   updateProviderSettings,
@@ -218,7 +230,6 @@ import type {
   AutomationUpdatePayload,
   CliAppInfo,
   CliAppsPayload,
-  ForgeKind,
   ImageGenerationSettingsUpdate,
   McpPresetInfo,
   McpPresetsPayload,
@@ -230,7 +241,6 @@ import type {
   ProviderModelsPayload,
   SessionAutomationJob,
   SettingsPayload,
-  SettingsUpdate,
   SkillSummary,
   MusicGenerationSettingsUpdate,
   TranscriptionSettingsUpdate,
@@ -240,6 +250,12 @@ import type {
   SemanticSearchSettingsUpdate,
   WebuiDefaultAccessMode,
 } from "@/lib/types";
+import {
+  DEFAULT_TRANSCRIPTION_SETTINGS,
+  DEFAULT_VOICE_SETTINGS,
+  transcriptionFormFromPayload,
+  voiceFormFromPayload,
+} from "@/lib/live-voice-forms";
 import { useAccount } from "@/hooks/useAccount";
 
 export type SettingsSectionKey =
@@ -249,11 +265,13 @@ export type SettingsSectionKey =
   | "studio"
   | "providers"
   | "models"
+  | "team"
   | "image"
   | "video"
   | "voice"
   | "browser"
   | "computer"
+  | "execution"
   | "tools"
   | "channels"
   | "apps"
@@ -261,6 +279,8 @@ export type SettingsSectionKey =
   | "skills"
   | "templates"
   | "runtime"
+  | "sites"
+  | "git"
   | "advanced"
   | "about";
 
@@ -326,6 +346,8 @@ type ProviderForm = {
   endpointRegion: string;
   accessPlan: string;
   wireProtocol: string;
+  awsRegion: string;
+  awsProfile: string;
 };
 
 const emptyProviderForm = (): ProviderForm => ({
@@ -336,7 +358,15 @@ const emptyProviderForm = (): ProviderForm => ({
   endpointRegion: "",
   accessPlan: "",
   wireProtocol: "",
+  awsRegion: "",
+  awsProfile: "",
 });
+
+/** Fields actually set on a stored form, so a merge never overwrites with undefined. */
+const stripUndefined = (form: Partial<ProviderForm> | undefined): Partial<ProviderForm> =>
+  Object.fromEntries(
+    Object.entries(form ?? {}).filter(([, value]) => value !== undefined),
+  ) as Partial<ProviderForm>;
 
 type CustomMcpTransport = "stdio" | "streamableHttp" | "sse";
 
@@ -345,6 +375,7 @@ const CONTEXT_WINDOW_TOKEN_OPTIONS = [
   131_072,
   200_000,
   262_144,
+  500_000,
   1_000_000,
 ] as const;
 
@@ -500,6 +531,8 @@ interface SettingsViewProps {
   showSidebar?: boolean;
   onToggleTheme: () => void;
   onBackToChat: () => void;
+  /** Opens the app sidebar when the window is too narrow to show it. */
+  onToggleSidebar?: () => void;
   onModelNameChange: (modelName: string | null) => void;
   onSettingsChange?: (payload: SettingsPayload) => void;
   skills?: SkillSummary[];
@@ -733,17 +766,6 @@ const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
   maxUploadMb: 25,
 };
 
-const DEFAULT_TRANSCRIPTION_SETTINGS: NonNullable<SettingsPayload["transcription"]> = {
-  enabled: true,
-  provider: "",
-  provider_configured: false,
-  model: "nvidia/parakeet-tdt-0.6b-v3",
-  language: null,
-  max_duration_sec: 120,
-  max_upload_mb: 25,
-  providers: [],
-  managed_models: [],
-};
 
 const DEFAULT_MUSIC_GENERATION_FORM: MusicGenerationSettingsUpdate = {
   enabled: true,
@@ -771,18 +793,6 @@ const DEFAULT_VOICE_FORM: VoiceSettingsUpdate = {
   realtimeEnabled: null,
 };
 
-const DEFAULT_VOICE_SETTINGS: NonNullable<SettingsPayload["voice"]> = {
-  tts_provider: "",
-  tts_provider_configured: false,
-  tts_model: "",
-  voice: "auto",
-  auto_speak: false,
-  response_format: "mp3",
-  realtime_enabled: null,
-  realtime_allowed: false,
-  realtime_required_plans: ["pro", "ultra", "team"],
-  providers: [],
-};
 
 const DEFAULT_NETWORK_SAFETY_FORM: NetworkSafetySettingsUpdate = {
   webuiAllowLocalServiceAccess: true,
@@ -870,17 +880,6 @@ function videoGenerationFormFromPayload(payload: SettingsPayload): VideoGenerati
   };
 }
 
-function transcriptionFormFromPayload(payload: SettingsPayload): TranscriptionSettingsUpdate {
-  const transcription = payload.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
-  return {
-    enabled: transcription.enabled,
-    provider: transcription.provider,
-    model: transcription.model,
-    language: transcription.language ?? "",
-    maxDurationSec: transcription.max_duration_sec,
-    maxUploadMb: transcription.max_upload_mb,
-  };
-}
 
 function musicGenerationFormFromPayload(payload: SettingsPayload): MusicGenerationSettingsUpdate {
   const music = payload.music_generation ?? DEFAULT_MUSIC_GENERATION_SETTINGS;
@@ -891,17 +890,6 @@ function musicGenerationFormFromPayload(payload: SettingsPayload): MusicGenerati
   };
 }
 
-function voiceFormFromPayload(payload: SettingsPayload): VoiceSettingsUpdate {
-  const voice = payload.voice ?? DEFAULT_VOICE_SETTINGS;
-  return {
-    ttsProvider: voice.tts_provider,
-    ttsModel: voice.tts_model,
-    voice: voice.voice,
-    autoSpeak: voice.auto_speak,
-    responseFormat: voice.response_format,
-    realtimeEnabled: voice.realtime_enabled,
-  };
-}
 
 function networkSafetyFormFromPayload(payload: SettingsPayload): NetworkSafetySettingsUpdate {
   return {
@@ -932,6 +920,7 @@ export function SettingsView({
   showSidebar = true,
   onToggleTheme,
   onBackToChat,
+  onToggleSidebar,
   onModelNameChange,
   onSettingsChange,
   skills = [],
@@ -980,7 +969,6 @@ export function SettingsView({
   /** Shown while a browser sign-in is in flight, so the user can open it by hand. */
   const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState<string | null>(null);
   /** Dialog shown once after provider save; banner on Models stays until a model is set. */
-  const [modelSetupPromptProvider, setModelSetupPromptProvider] = useState<string | null>(null);
   const [webSearchSaving, setWebSearchSaving] = useState(false);
   const [imageGenerationSaving, setImageGenerationSaving] = useState(false);
   const [videoGenerationSaving, setVideoGenerationSaving] = useState(false);
@@ -1345,6 +1333,8 @@ export function SettingsView({
           endpointRegion: previous?.endpointRegion ?? provider.endpoint_region ?? provider.connection?.default_region ?? "",
           accessPlan: previous?.accessPlan ?? provider.access_plan ?? provider.connection?.default_plan ?? "",
           wireProtocol: previous?.wireProtocol ?? provider.wire_protocol ?? provider.connection?.default_protocol ?? "",
+          awsRegion: previous?.awsRegion ?? provider.aws_region ?? "",
+          awsProfile: previous?.awsProfile ?? provider.aws_profile ?? "",
         };
       }
       return next;
@@ -1432,7 +1422,10 @@ export function SettingsView({
       voiceForm.voice !== voice.voice ||
       voiceForm.autoSpeak !== voice.auto_speak ||
       voiceForm.responseFormat !== voice.response_format ||
-      voiceForm.realtimeEnabled !== voice.realtime_enabled
+      voiceForm.realtimeEnabled !== voice.realtime_enabled ||
+      voiceForm.liveEngine !== (voice.live_engine ?? "auto") ||
+      voiceForm.liveRealtime !== (settings.media_models?.live.selected ?? "") ||
+      voiceForm.liveRealtimeVoice !== (voice.live_realtime_voice ?? "")
     );
   }, [settings, voiceForm]);
   speechDirtyRef.current = { transcription: transcriptionDirty, voice: voiceDirty };
@@ -1609,10 +1602,8 @@ export function SettingsView({
         });
       }
       applyPayload(payload);
+      window.dispatchEvent(new Event("navin:model-settings-changed"));
       onModelNameChange(payload.agent.model || null);
-      if (activeModelConfigured(payload)) {
-        setModelSetupPromptProvider(null);
-      }
       setError(null);
       setReasoningEffortError(null);
     } catch (err) {
@@ -1633,6 +1624,15 @@ export function SettingsView({
   useEffect(() => {
     setReasoningEffortError(null);
   }, [form.reasoningEffort, form.provider, form.model, form.modelPreset]);
+
+  const handleToggleModelRouting = async (enabled: boolean) => {
+    try {
+      applyPayload(await setModelRoutingEnabled(token, enabled));
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
 
   const handleUpdateModelRoute = async (role: string, preset: string) => {
     try {
@@ -1682,6 +1682,25 @@ export function SettingsView({
   const openModelImportDialog = () => {
     if (!settings) return;
     setModelImportProvider(pickConfiguredModelProvider(form.provider));
+    setModelImportProgress(null);
+    setModelImportOpen(true);
+  };
+
+  /** A provider just connected: go to Models with Import models open on it. */
+  const openImportForNewProvider = (
+    providerName: string,
+    wasConfigured: boolean,
+    payload: SettingsPayload,
+  ) => {
+    const provider = payload.providers.find((item) => item.name === providerName);
+    if (wasConfigured || !provider?.configured || provider.model_selectable === false) return;
+    setForm((prev) => ({
+      ...prev,
+      provider: providerName,
+      model: prev.provider === providerName ? prev.model : "",
+    }));
+    selectSection("models");
+    setModelImportProvider(providerName);
     setModelImportProgress(null);
     setModelImportOpen(true);
   };
@@ -1742,9 +1761,6 @@ export function SettingsView({
       const payload = await updateSettings(token, { modelPreset: name });
       applyPayload(payload);
       onModelNameChange(payload.agent.model || null);
-      if (activeModelConfigured(payload)) {
-        setModelSetupPromptProvider(null);
-      }
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -1893,6 +1909,7 @@ export function SettingsView({
     const provider = settings?.providers.find((item) => item.name === providerName);
     if (!provider) return;
     if (provider.auth_type === "oauth") return;
+    const wasConfigured = Boolean(provider.configured);
     const providerForm = providerForms[providerName] ?? emptyProviderForm();
     const apiKey = providerForm.apiKey.trim();
     const apiKeyRequired = provider.api_key_required ?? true;
@@ -1924,6 +1941,9 @@ export function SettingsView({
               wireProtocol: providerForm.wireProtocol,
             }
           : {}),
+        ...(providerName === "bedrock"
+          ? { awsRegion: providerForm.awsRegion.trim(), awsProfile: providerForm.awsProfile.trim() }
+          : {}),
       });
       applyPayload(payload);
       if (payload.requires_restart) {
@@ -1940,25 +1960,14 @@ export function SettingsView({
           endpointRegion: providerForm.endpointRegion,
           accessPlan: providerForm.accessPlan,
           wireProtocol: providerForm.wireProtocol,
+          awsRegion: providerForm.awsRegion.trim(),
+          awsProfile: providerForm.awsProfile.trim(),
         },
       }));
       setVisibleProviderKeys((prev) => ({ ...prev, [providerName]: false }));
       setEditingProviderKeys((prev) => ({ ...prev, [providerName]: false }));
       setError(null);
-      // Provider prêt mais aucun modèle : redirect Models + dialog (BYOK).
-      // Le rappel (bannière) reste ensuite tant qu'aucun modèle n'est choisi.
-      const savedProvider = payload.providers.find((item) => item.name === providerName);
-      if (savedProvider?.configured && !activeModelConfigured(payload)) {
-        setForm((prev) => ({
-          ...prev,
-          provider: providerName,
-          model: prev.provider === providerName ? prev.model : "",
-        }));
-        selectSection("models");
-        if (!isManagedSubscriber(account)) {
-          setModelSetupPromptProvider(providerName);
-        }
-      }
+      openImportForNewProvider(providerName, wasConfigured, payload);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1982,6 +1991,8 @@ export function SettingsView({
         ...(provider.connection
           ? { endpointRegion: "", accessPlan: "", wireProtocol: "" }
           : {}),
+        // Bedrock counts as connected while a region or an AWS profile is set.
+        ...(providerName === "bedrock" ? { awsRegion: "", awsProfile: "" } : {}),
       });
       applyPayload(payload);
       if (payload.requires_restart) {
@@ -2032,6 +2043,9 @@ export function SettingsView({
 
   const runProviderOAuth = async (providerName: string, action: "login" | "logout") => {
     if (providerSaving) return;
+    const wasConfigured = Boolean(
+      settings?.providers.find((item) => item.name === providerName)?.configured,
+    );
     setProviderSaving(providerName);
     setOauthAuthorizeUrl(null);
     try {
@@ -2043,21 +2057,7 @@ export function SettingsView({
       applyPayload(payload);
       setExpandedProvider(providerName);
       setError(null);
-      // Connexion réussie mais aucun modèle : redirect Models + dialog (BYOK).
-      const loggedIn =
-        action === "login" &&
-        payload.providers.find((item) => item.name === providerName)?.configured;
-      if (loggedIn && !activeModelConfigured(payload)) {
-        setForm((prev) => ({
-          ...prev,
-          provider: providerName,
-          model: prev.provider === providerName ? prev.model : "",
-        }));
-        selectSection("models");
-        if (!isManagedSubscriber(account)) {
-          setModelSetupPromptProvider(providerName);
-        }
-      }
+      if (action === "login") openImportForNewProvider(providerName, wasConfigured, payload);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -2156,6 +2156,8 @@ export function SettingsView({
         endpointRegion: provider.endpoint_region ?? provider.connection?.default_region ?? "",
         accessPlan: provider.access_plan ?? provider.connection?.default_plan ?? "",
         wireProtocol: provider.wire_protocol ?? provider.connection?.default_protocol ?? "",
+        awsRegion: provider.aws_region ?? "",
+        awsProfile: provider.aws_profile ?? "",
       },
     }));
     setVisibleProviderKeys((prev) => ({ ...prev, [providerName]: false }));
@@ -2452,6 +2454,10 @@ export function SettingsView({
       case "providers":
         return (
           <ProvidersSettings
+            onPrepareProviderSupport={async (providerName) => {
+              const supportName = providerName === "bedrock" ? "bedrock" : providerName === "azure_openai" ? "azure" : null;
+              return supportName ? installCapabilities([supportName]) : true;
+            }}
             token={token}
             settings={settings}
             navinFeatures={navinFeatures}
@@ -2478,6 +2484,8 @@ export function SettingsView({
                   endpointRegion: prev[provider]?.endpointRegion ?? "",
                   accessPlan: prev[provider]?.accessPlan ?? "",
                   wireProtocol: prev[provider]?.wireProtocol ?? "",
+                  awsRegion: prev[provider]?.awsRegion ?? "",
+                  awsProfile: prev[provider]?.awsProfile ?? "",
                   ...value,
                 };
                 return {
@@ -2530,6 +2538,7 @@ export function SettingsView({
             onOpenProviders={() => selectSection("providers")}
             onOpenAccount={() => selectSection("account")}
             onUpdateModelRoute={handleUpdateModelRoute}
+            onToggleModelRouting={handleToggleModelRouting}
           />
         );
       case "image":
@@ -2792,6 +2801,9 @@ export function SettingsView({
             requiresRestartPending={pendingRestartSections.runtime}
           />
         );
+      case "execution":
+        return <ExecutionSettings settings={settings} onUpdated={setSettings}
+          onRestart={restartViaSettingsSurface} isRestarting={isRestarting || hostEngineApplying} />;
       case "computer":
         return <ComputerSettings settings={settings} onUpdated={setSettings}
           onRestart={restartViaSettingsSurface} isRestarting={isRestarting || hostEngineApplying} />;
@@ -2808,8 +2820,25 @@ export function SettingsView({
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
             requiresRestartPending={pendingRestartSections.runtime}
+            onOpenGitSettings={() => selectSection("git")}
           />
         );
+      case "team":
+        return (
+          <TeamSettings
+            token={token}
+            onChanged={() => {
+              // Keep collab_enabled in sync for the chat's Team switch.
+              void fetchSettings(token)
+                .then((payload) => applyPayloadRef.current(payload, { syncForm: false }))
+                .catch(() => undefined);
+            }}
+          />
+        );
+      case "sites":
+        return <SitesSettings token={token} />;
+      case "git":
+        return <GitGithubSettings settings={settings} />;
       case "about":
         return <AboutSettings settings={settings} />;
       default:
@@ -2832,6 +2861,7 @@ export function SettingsView({
           activeSection={activeSection}
           onSelectSection={selectSection}
           onBackToChat={onBackToChat}
+          onToggleSidebar={onToggleSidebar}
           hostChromeInset={hostChromeInset}
         />
       ) : null}
@@ -2872,60 +2902,6 @@ export function SettingsView({
         onConfirm={(feature) => handleNavinFeatureAction("enable", feature.name, true)}
       />
 
-      <Dialog
-        open={modelSetupPromptProvider !== null}
-        onOpenChange={(open) => {
-          // Closing the dialog is fine: the Models banner keeps the reminder.
-          if (!open) setModelSetupPromptProvider(null);
-        }}
-      >
-        <DialogContent
-          showCloseButton={false}
-          className="w-[min(calc(100vw-2rem),26rem)] rounded-[26px]"
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle>
-              {t("settings.providers.modelSetupPrompt.title", {
-                defaultValue: "Provider ready",
-              })}
-            </DialogTitle>
-            <DialogDescription>
-              {t("settings.providers.modelSetupPrompt.body", {
-                provider: providerDisplayLabel(
-                  settings?.providers ?? [],
-                  modelSetupPromptProvider ?? "",
-                ),
-                defaultValue:
-                  "Pick a model for {{provider}} next - chat will not work until one is selected.",
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              className="rounded-full"
-              onClick={() => {
-                const providerName = modelSetupPromptProvider;
-                setModelSetupPromptProvider(null);
-                if (providerName) {
-                  setForm((prev) => ({
-                    ...prev,
-                    provider: providerName,
-                    model: prev.provider === providerName ? prev.model : "",
-                  }));
-                }
-                selectSection("models");
-              }}
-            >
-              {t("settings.providers.modelSetupPrompt.chooseModel", {
-                defaultValue: "Choose a model",
-              })}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <AutomationDeleteDialog
         job={automationPendingDelete}
@@ -2975,14 +2951,9 @@ export function SettingsView({
                 onClick={onBackToChat}
                 className="mb-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground lg:hidden"
               >
-                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+                <ChevronLeft className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
                 {t("settings.backToChat")}
               </button>
-            ) : null}
-            {showSidebar ? (
-              <p className="mb-2 text-[12px] font-normal text-muted-foreground">
-                {t("settings.sidebar.title")}
-              </p>
             ) : null}
             {activeSection === "tools" || activeSection === "apps" ? (
               <div
@@ -3063,7 +3034,7 @@ export function SettingsView({
 
           {loading ? (
             <div className="flex h-48 items-center justify-center rounded-[24px] border border-border/50 bg-card/75 text-sm text-muted-foreground shadow-[0_20px_70px_rgba(15,23,42,0.07)]">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="me-2 h-4 w-4 animate-spin" />
               {t("settings.status.loading")}
             </div>
           ) : error && !settings ? (
@@ -3094,7 +3065,7 @@ export function SettingsView({
   );
 }
 
-const SETTINGS_NAV_ITEMS: Array<{
+export const SETTINGS_NAV_ITEMS: Array<{
   key: SettingsSectionKey;
   icon: LucideIcon;
   fallback: string;
@@ -3102,19 +3073,23 @@ const SETTINGS_NAV_ITEMS: Array<{
 }> = [
   { key: "overview", icon: Activity, fallback: "Overview" },
   { key: "account", icon: CircleUserRound, fallback: "Account" },
-  { key: "appearance", icon: Palette, fallback: "Appearance" },
-  { key: "studio", icon: LayoutGrid, fallback: "Studio" },
   { key: "providers", icon: KeyRound, fallback: "Providers" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
-  { key: "computer", icon: Monitor, fallback: "Computer" },
-  { key: "tools", icon: Wrench, fallback: "Tools & Mcp", labelKey: "settings.nav.toolsMcp" },
-  { key: "channels", icon: Radio, fallback: "Channels" },
-  { key: "skills", icon: Brain, fallback: "Skills & Loop", labelKey: "settings.nav.skillsLoop" },
+  { key: "team", icon: Users, fallback: "Team" },
   { key: "image", icon: ImageIcon, fallback: "Image" },
   { key: "video", icon: Clapperboard, fallback: "Video" },
   { key: "voice", icon: Mic, fallback: "Voice" },
+  { key: "appearance", icon: Palette, fallback: "Appearance" },
+  { key: "studio", icon: LayoutGrid, fallback: "Studio" },
+  { key: "computer", icon: Monitor, fallback: "Computer" },
+  { key: "execution", icon: Cloud, fallback: "Execution" },
+  { key: "tools", icon: Wrench, fallback: "Tools & Mcp", labelKey: "settings.nav.toolsMcp" },
+  { key: "channels", icon: Radio, fallback: "Channels" },
+  { key: "skills", icon: Brain, fallback: "Skills & Loop", labelKey: "settings.nav.skillsLoop" },
   { key: "browser", icon: Globe2, fallback: "Web" },
   { key: "runtime", icon: Server, fallback: "System" },
+  { key: "sites", icon: LockKeyhole, fallback: "Sites & logins" },
+  { key: "git", icon: GitBranch, fallback: "Git & GitHub" },
   { key: "advanced", icon: ShieldCheck, fallback: "Security" },
   { key: "about", icon: Info, fallback: "About" },
 ];
@@ -3137,38 +3112,53 @@ function SettingsSidebar({
   activeSection,
   onSelectSection,
   onBackToChat,
+  onToggleSidebar,
   hostChromeInset,
 }: {
   activeSection: SettingsSectionKey;
   onSelectSection: (section: SettingsSectionKey) => void;
   onBackToChat: () => void;
+  onToggleSidebar?: () => void;
   hostChromeInset?: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <aside
       className={cn(
-        "flex w-full shrink-0 flex-col border-b border-border/55 bg-card/62 px-3 pb-2 shadow-[inset_0_-1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl dark:bg-card/45 dark:shadow-none lg:w-[17rem] lg:border-b-0 lg:border-r lg:px-3 lg:pb-4 lg:shadow-[inset_-1px_0_0_rgba(255,255,255,0.55)]",
-        hostChromeInset ? SETTINGS_HOST_CHROME_PAD : "pt-4",
+        "flex w-full shrink-0 flex-col border-b border-border/55 bg-card/62 px-3 pb-2 shadow-[inset_0_-1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl dark:bg-card/45 dark:shadow-none lg:min-h-0 lg:w-[17rem] lg:border-b-0 lg:border-e lg:px-3 lg:pb-3 lg:shadow-[inset_-1px_0_0_rgba(255,255,255,0.55)]",
+        // From lg the app sidebar sits on the left, so this column starts on
+        // the same row as its Search button; below, the window controls of
+        // the desktop app still need their room.
+        hostChromeInset && "pt-11 lg:pt-0",
       )}
     >
-      <button
-        type="button"
-        onClick={onBackToChat}
-        className="host-no-drag mb-2 inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground lg:mb-3"
-      >
-        <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-        {t("settings.backToChat")}
-      </button>
-      <div className="mb-3 px-1 lg:mb-4 lg:px-2">
-        <h2 className="text-[18px] font-normal tracking-normal text-foreground">
-          {t("settings.sidebar.title")}
-        </h2>
+      {/* Same height as the app sidebar's header row (h-10): aligned with Search. */}
+      <div className="host-no-drag flex h-10 shrink-0 items-center gap-1">
+        {onToggleSidebar ? (
+          // The app sidebar is hidden below lg: a way back to it on any screen.
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            aria-label={t("thread.header.toggleSidebar")}
+            title={t("thread.header.toggleSidebar")}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground lg:hidden"
+          >
+            <PanelLeft className="rtl:-scale-x-100 h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onBackToChat}
+          className="inline-flex h-7 w-fit items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+        >
+          <ChevronLeft className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
+          {t("settings.backToChat")}
+        </button>
       </div>
 
       <nav
         aria-label={t("settings.sidebar.ariaLabel")}
-        className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:block lg:space-y-1 lg:overflow-visible lg:px-0 lg:pb-0"
+        className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 max-lg:[scrollbar-width:none] max-lg:[&::-webkit-scrollbar]:hidden lg:mx-0 lg:mt-1 lg:block lg:min-h-0 lg:flex-1 lg:space-y-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0 lg:pb-0 lg:pe-1 lg:[scrollbar-width:thin]"
       >
         {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback, labelKey }) => {
           const active =
@@ -3182,7 +3172,7 @@ function SettingsSidebar({
               aria-current={active ? "page" : undefined}
               onClick={() => onSelectSection(key)}
               className={cn(
-                "relative flex h-9 w-auto shrink-0 snap-start items-center gap-2 rounded-full px-3 text-left text-[13px] font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none lg:w-full lg:rounded-xl lg:px-2.5",
+                "relative flex h-9 w-auto shrink-0 snap-start items-center gap-2 rounded-full px-3 text-start text-[13px] font-medium outline-none transition-colors focus:outline-none focus-visible:outline-none lg:w-full lg:rounded-xl lg:px-2.5",
                 active
                   ? "bg-sidebar-accent text-sidebar-foreground"
                   : "text-muted-foreground/78 hover:bg-muted/45 hover:text-foreground",
@@ -3494,9 +3484,9 @@ function VersionCheckRow({
             className="rounded-full"
           >
             {checking ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <ArrowUpCircle className="me-1.5 h-3.5 w-3.5" aria-hidden />
             )}
             {checking
               ? tx("settings.about.checking", "Checking...")
@@ -3510,7 +3500,7 @@ function VersionCheckRow({
               className="rounded-full"
             >
               {installing ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : null}
               {installing
                 ? tx("settings.about.installing", "Installing...")
@@ -3526,12 +3516,12 @@ function VersionCheckRow({
           </span>
         ) : null}
         {result && !result.available && result.reason ? (
-          <span className="max-w-md text-right text-[12px] text-muted-foreground">
+          <span className="max-w-md text-end text-[12px] text-muted-foreground">
             {result.latestVersion ? `v${result.latestVersion}: ` : ""}{result.reason}
           </span>
         ) : null}
         {result?.available ? (
-          <span className="inline-flex max-w-md items-center gap-1.5 text-right text-[12px] text-foreground">
+          <span className="inline-flex max-w-md items-center gap-1.5 text-end text-[12px] text-foreground">
             <ArrowUpCircle className="h-3 w-3" aria-hidden />
             {t("settings.about.updateAvailable", {
               defaultValue: "Update available v{{version}}",
@@ -3543,7 +3533,7 @@ function VersionCheckRow({
           </span>
         ) : null}
         {result?.notes ? (
-          <span className="max-w-md text-right text-[11px] text-muted-foreground">
+          <span className="max-w-md text-end text-[11px] text-muted-foreground">
             {result.notes}
           </span>
         ) : null}
@@ -3730,7 +3720,7 @@ function AboutSettings({ settings }: { settings: SettingsPayload }) {
                 className="rounded-full"
                 onClick={() => setLicenseOpen(true)}
               >
-                <ScrollText className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <ScrollText className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 {tx("settings.about.viewNavinLicense", "View license")}
               </Button>
               <Button
@@ -4050,7 +4040,7 @@ function NewModelConfigurationDialog({
             onSave();
           }}
         >
-          <DialogHeader className="border-b border-border/45 px-5 py-4 text-left">
+          <DialogHeader className="border-b border-border/45 px-5 py-4 text-start">
             <DialogTitle className="text-[18px] font-semibold tracking-[-0.01em]">
               {tx("settings.models.newConfiguration", "New model configuration")}
             </DialogTitle>
@@ -4120,7 +4110,7 @@ function NewModelConfigurationDialog({
             </div>
           </div>
 
-          <DialogFooter className="border-t border-border/45 px-5 py-4 sm:space-x-2">
+          <DialogFooter className="border-t border-border/45 px-5 py-4 sm:space-x-2 rtl:space-x-reverse">
             <Button
               type="button"
               variant="ghost"
@@ -4137,7 +4127,7 @@ function NewModelConfigurationDialog({
               disabled={!canSave || saving || providers.length === 0}
             >
               {saving ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : null}
               {saving ? tx("settings.actions.saving", "Saving...") : tx("settings.actions.save", "Save")}
             </Button>
@@ -4300,7 +4290,7 @@ function ImportModelsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex min-h-0 max-h-[min(85dvh,48rem)] max-w-[620px] flex-col overflow-hidden rounded-[28px] border-border/55 bg-card/95 p-0 shadow-[0_28px_90px_rgba(15,23,42,0.20)] backdrop-blur-xl dark:border-white/10">
-        <DialogHeader className="shrink-0 border-b border-border/45 px-5 py-4 text-left">
+        <DialogHeader className="shrink-0 border-b border-border/45 px-5 py-4 text-start">
           <DialogTitle className="text-[18px] font-semibold tracking-[-0.01em]">
             {tx("settings.models.importTitle", "Import models")}
           </DialogTitle>
@@ -4328,14 +4318,14 @@ function ImportModelsDialog({
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[180px] flex-1">
               <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
                 aria-hidden
               />
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={tx("settings.models.searchModels", "Search or type model ID")}
-                className="h-9 rounded-full pl-8 pr-3 text-[12.5px]"
+                className="h-9 rounded-full ps-8 pe-3 text-[12.5px]"
               />
             </div>
             {freeCount > 0 ? (
@@ -4407,7 +4397,7 @@ function ImportModelsDialog({
                         disabled={alreadyAdded}
                         onClick={() => toggle(model.id)}
                         className={cn(
-                          "flex w-full items-center gap-2.5 border-b border-border/35 px-3 py-2 text-left last:border-b-0",
+                          "flex w-full items-center gap-2.5 border-b border-border/35 px-3 py-2 text-start last:border-b-0",
                           alreadyAdded
                             ? "cursor-default opacity-55"
                             : "hover:bg-muted/45",
@@ -4435,7 +4425,7 @@ function ImportModelsDialog({
                             </span>
                           ) : null}
                         </span>
-                        <span className="ml-1 flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="ms-1 flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                           {model.free ? (
                             <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">
                               {tx("settings.models.freeBadge", "Free")}
@@ -4457,9 +4447,9 @@ function ImportModelsDialog({
           ) : null}
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-border/45 px-5 py-4 sm:space-x-2">
+        <DialogFooter className="shrink-0 border-t border-border/45 px-5 py-4 sm:space-x-2 rtl:space-x-reverse">
           {progress && progress.total > 1 ? (
-            <span className="mr-auto text-[11.5px] text-muted-foreground">
+            <span className="me-auto text-[11.5px] text-muted-foreground">
               {progress.done}/{progress.total}
             </span>
           ) : null}
@@ -4479,7 +4469,7 @@ function ImportModelsDialog({
             disabled={selected.size === 0 || saving}
             onClick={submit}
           >
-            {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+            {saving ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
             {saving
               ? tx("settings.actions.saving", "Saving...")
               : `${tx("settings.models.importSelected", "Import selection")}${
@@ -4524,13 +4514,11 @@ function ModelsSettings({
   dirty,
   saving,
   reasoningEffortError = null,
-  showBrandLogos,
   providerSaving,
   needsModelReminder = false,
   oauthAuthorizeUrl,
   onProviderOAuthLogin,
   onSave,
-  onCreateConfiguration,
   onImportConfigurations,
   onDeleteConfiguration,
   onToggleConfigurationEnabled,
@@ -4538,6 +4526,7 @@ function ModelsSettings({
   onOpenProviders,
   onOpenAccount,
   onUpdateModelRoute,
+  onToggleModelRouting,
 }: {
   token: string;
   form: AgentSettingsDraft;
@@ -4566,6 +4555,7 @@ function ModelsSettings({
   onOpenProviders: () => void;
   onOpenAccount?: () => void;
   onUpdateModelRoute?: (role: string, preset: string) => Promise<void> | void;
+  onToggleModelRouting?: (enabled: boolean) => Promise<void> | void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -4575,19 +4565,8 @@ function ModelsSettings({
     (provider) =>
       provider.configured && !hiddenSettingsProvider(provider.name),
   );
-  const showAutoProvider = defaultPreset(settings)?.provider === "auto" || form.provider === "auto";
-  const selectableProviders = uniqueProviders(configuredProviders);
-  const providerOptions = showAutoProvider
-    ? [{ name: "auto", label: tx("settings.values.auto", "Auto") }, ...selectableProviders]
-    : selectableProviders;
-  const providerValue = providerOptions.some((provider) => provider.name === form.provider)
-    ? form.provider
-    : "";
   const selectedPreset =
     settings.model_presets.find((preset) => preset.name === form.modelPreset) ?? null;
-  const selectedPresetLocked = Boolean(
-    selectedPreset && !selectedPreset.is_default && selectedPreset.routing_only,
-  );
   const selectedProvider = settings.providers.find((provider) => provider.name === form.provider);
   const selectedProviderNeedsSignIn =
     selectedProvider?.auth_type === "oauth" && !selectedProvider.configured;
@@ -4684,6 +4663,11 @@ function ModelsSettings({
             return false;
           }
           if (isDuplicateDefault(preset, settings)) return false;
+          // Only the models of the providers that are set up (the active one stays).
+          const active = preset.is_default
+            ? !settings.agent.model_preset || settings.agent.model_preset === "default"
+            : settings.agent.model_preset === preset.name;
+          if (!active && !preset.is_default && !presetProviderReady(preset, settings.providers)) return false;
           return true;
         })
         .sort((a, b) => {
@@ -4696,7 +4680,7 @@ function ModelsSettings({
         if (aActive === bActive) return 0;
         return aActive ? -1 : 1;
       }),
-    [settings.agent.model_preset, settings.model_presets],
+    [settings.agent.model_preset, settings.model_presets, settings.providers],
   );
 
   const groupedPresets = useMemo(() => {
@@ -4725,12 +4709,12 @@ function ModelsSettings({
           <div className="mt-3 flex flex-wrap gap-2">
             {onOpenAccount ? (
               <Button size="sm" onClick={onOpenAccount} className="rounded-full">
-                <CircleUserRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <CircleUserRound className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 {tx("settings.models.subscribeOrSignIn", "Subscribe or sign in")}
               </Button>
             ) : null}
             <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
-              <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <KeyRound className="me-1.5 h-3.5 w-3.5" aria-hidden />
               {tx("settings.nav.providers", "Providers")}
             </Button>
           </div>
@@ -4771,60 +4755,22 @@ function ModelsSettings({
       {activeTab === "model" || !showRoutingTab ? (
       <>
       <SettingsGroup>
-        {selectedPreset && !selectedPreset.is_default && !selectedPreset.routing_only ? (
-          <SettingsRow title={tx("settings.models.configurationName", "Configuration name")}>
-            <Input
-              value={form.presetLabel}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, presetLabel: event.target.value }))
-              }
-              className="h-10 max-w-md rounded-full px-4 text-[14px]"
-            />
+        {/* Models come in through Import; the active one is the starred row of
+            the list below. Name / model / provider fields only confused people. */}
+        {onImportConfigurations ? (
+          <SettingsRow
+            title={tx("settings.models.importModels", "Import models")}
+            description={tx(
+              "settings.models.importModelsHelp",
+              "Add the models of your providers in one click, then star the one to use.",
+            )}
+          >
+            <Button size="sm" onClick={onImportConfigurations} className="rounded-full">
+              <DownloadCloud className="me-1.5 h-3.5 w-3.5" aria-hidden />
+              {tx("settings.models.importModels", "Import models")}
+            </Button>
           </SettingsRow>
         ) : null}
-
-        {selectedPreset && !selectedPreset.is_default && !selectedPreset.routing_only ? (
-          <SettingsRow title={tx("settings.rows.model", "Model")}>
-            <ModelIdPicker
-              token={token}
-              settings={settings}
-              provider={form.provider}
-              value={form.model}
-              showProviderLogos={showBrandLogos}
-              onChange={(model) => setForm((prev) => ({ ...prev, model }))}
-            />
-          </SettingsRow>
-        ) : null}
-
-        <SettingsRow
-          title={t("settings.rows.provider")}
-          description={
-            selectedPresetLocked
-              ? tx(
-                  "settings.models.planProviderLocked",
-                  "Plan models keep their provider. Use Add model or Import models to pick another provider.",
-                )
-              : undefined
-          }
-        >
-          <ProviderPicker
-            providers={providerOptions}
-            value={providerValue}
-            ariaLabel={t("settings.rows.provider")}
-            emptyLabel={t("settings.byok.noConfiguredProviders")}
-            showProviderLogos={showBrandLogos}
-            disabled={selectedPresetLocked}
-            onChange={(provider) =>
-              setForm((prev) => ({
-                ...prev,
-                provider,
-                // Model IDs are provider-specific; keep a stale OpenRouter id
-                // would make Import/Add feel "stuck" on the old catalog.
-                model: provider === prev.provider ? prev.model : "",
-              }))
-            }
-          />
-        </SettingsRow>
 
         {selectedProviderNeedsSignIn ? (
           <SettingsRow
@@ -4842,7 +4788,7 @@ function ModelsSettings({
               className="rounded-full"
             >
               {selectedProviderSigningIn ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : null}
               {selectedProviderSigningIn
                 ? tx("settings.oauth.signingIn", "Signing in...")
@@ -4903,7 +4849,7 @@ function ModelsSettings({
                 <p
                   role="alert"
                   data-testid="settings-models-reasoning-effort-error"
-                  className="max-w-[420px] text-right text-[12px] text-destructive"
+                  className="max-w-[420px] text-end text-[12px] text-destructive"
                 >
                   {reasoningEffortError}
                 </p>
@@ -4912,30 +4858,6 @@ function ModelsSettings({
           </SettingsRow>
         ) : null}
 
-        <SettingsRow title={tx("settings.models.importModels", "Import models")}>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {onImportConfigurations ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onImportConfigurations}
-                className="rounded-full"
-              >
-                <DownloadCloud className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                {tx("settings.models.importModels", "Import models")}
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onCreateConfiguration}
-              className="rounded-full"
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {tx("settings.models.addModel", "Add model")}
-            </Button>
-          </div>
-        </SettingsRow>
 
         {settings.model_presets.some(
           (preset) =>
@@ -4990,17 +4912,17 @@ function ModelsSettings({
             <div
               key={preset.name}
               className={cn(
-                "flex items-stretch gap-1 border-l-2 transition-colors",
+                "flex items-stretch gap-1 border-s-2 transition-colors",
                 isSelected
-                  ? "border-l-foreground bg-muted/35"
-                  : "border-l-transparent hover:bg-muted/20",
+                  ? "border-s-foreground bg-muted/35"
+                  : "border-s-transparent hover:bg-muted/20",
                 !isEnabled && "opacity-55",
               )}
             >
               <button
                 type="button"
                 onClick={() => selectPreset(preset.name)}
-                className="min-w-0 flex-1 px-4 py-3 text-left sm:px-5"
+                className="min-w-0 flex-1 px-4 py-3 text-start sm:px-5"
               >
                 <p className="flex items-center gap-1.5 text-[13.5px] font-medium text-foreground">
                   <span className="truncate">{preset.label ?? preset.name}</span>
@@ -5022,7 +4944,7 @@ function ModelsSettings({
                   {isMedia ? (
                     <span
                       className={cn(
-                        "ml-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
+                        "ms-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
                         modalityBadgeClass(modality),
                       )}
                       title={tx(
@@ -5035,7 +4957,7 @@ function ModelsSettings({
                   ) : isVisionChatModel(preset.model) ? (
                     <span
                       className={cn(
-                        "ml-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
+                        "ms-auto shrink-0 rounded px-1 py-px text-[8px] font-semibold lowercase tracking-wide ring-1",
                         visionBadgeClass(),
                       )}
                       title={tx(
@@ -5053,7 +4975,7 @@ function ModelsSettings({
                     : tx("settings.values.notConfigured", "Not configured")}
                 </p>
               </button>
-              <div className="my-auto mr-2 flex shrink-0 items-center gap-0.5">
+              <div className="my-auto me-2 flex shrink-0 items-center gap-0.5">
                 {onSetDefaultConfiguration && !isMedia && Boolean(preset.model) ? (
                   <Button
                     size="sm"
@@ -5149,7 +5071,9 @@ function ModelsSettings({
           );
         })}
 
-      <SettingsGroup>
+      {/* Unsaved changes: the Save bar sticks to the bottom of the screen, people
+          no longer have to find it at the end of a long list. */}
+      <SettingsGroup className={cn(dirty && "sticky bottom-3 z-20 bg-card shadow-[0_14px_44px_rgba(15,23,42,0.22)] ring-1 ring-blue-500/30 dark:shadow-[0_14px_44px_rgba(0,0,0,0.5)]")}>
         <SettingsFooter
           dirty={dirty}
           saving={saving}
@@ -5170,34 +5094,34 @@ function ModelsSettings({
       ) : null}
       {showRoutingTab && activeTab === "routing" && onUpdateModelRoute ? (
         <section>
-          <p className="mb-3 px-1 text-[13px] leading-5 text-muted-foreground">
-            {tx(
-              "settings.modelRoutes.intro",
-              "Assign a model to each task type. Workflows apply it automatically: /blueprint → Planning, /forge and Code → Medium, security audits → Security, studios (RiskLens, SEO…) → their mapped role. You can also switch with /pilot <task>.",
-            )}
-          </p>
-          <div className="mb-4 flex items-start gap-3 rounded-2xl border border-border/50 bg-card px-4 py-3.5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
-            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400">
-              <Zap className="h-3.5 w-3.5" strokeWidth={2} />
-            </span>
-            <div className="min-w-0 text-[12.5px] leading-5 text-muted-foreground">
-              <p className="font-medium text-foreground/85">
-                {tx("settings.modelRoutes.savingsTitle", "Why route by task? Real cost savings.")}
-              </p>
-              <p className="mt-1">
-                {tx(
-                  "settings.modelRoutes.savingsBody",
-                  "Frontier models (Opus, GPT-5…) often cost 10-30x more per token than economy models (Haiku, Flash…). Most day-to-day requests are simple or medium: routing them to a cheaper model can cut your bill by 50-80% with no quality loss where it matters - the hard tasks still get your best model.",
+          <SettingsGroup className="mb-4">
+            <SettingsRow
+              title={tx("settings.modelRoutes.switchTitle", "Task routing")}
+              description={tx(
+                "settings.modelRoutes.switchHelp",
+                "On: each kind of task can use its own model below. Off: every chat stays on its model.",
+              )}
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.model_routing_enabled !== false}
+                onClick={() => void onToggleModelRouting?.(settings.model_routing_enabled === false)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                  settings.model_routing_enabled !== false ? "bg-[#1d6af0]" : "bg-foreground/20",
                 )}
-              </p>
-              <p className="mt-1">
-                {tx(
-                  "settings.modelRoutes.savingsExample",
-                  "Example: a 100K-token turn ≈ $1.50 on a frontier model vs ≈ $0.10 on an economy model. Over hundreds of turns per week, the difference adds up fast.",
-                )}
-              </p>
-            </div>
-          </div>
+                data-testid="settings-routing-toggle"
+              >
+                <span
+                  className={cn(
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                    settings.model_routing_enabled !== false ? "translate-x-4" : "translate-x-0.5",
+                  )}
+                />
+              </button>
+            </SettingsRow>
+          </SettingsGroup>
           <SettingsGroup>
             {MODEL_ROUTE_ROLES.map(({ role, fallbackLabel, fallbackHelp }) => (
               <SettingsRow
@@ -5255,6 +5179,7 @@ function ProvidersSettings({
   onToggleProviderKeyEditing,
   onChangeProviderForm,
   onSaveProvider,
+  onPrepareProviderSupport,
   onDisconnectProvider,
   oauthAuthorizeUrl,
   onProviderOAuthLogin,
@@ -5264,7 +5189,6 @@ function ProvidersSettings({
   imageProviderRestartPending,
   onRestart,
   isRestarting,
-  onOpenAccount,
 }: {
   token: string;
   settings: SettingsPayload;
@@ -5284,6 +5208,8 @@ function ProvidersSettings({
   onToggleProviderKeyEditing: (provider: string) => void;
   onChangeProviderForm: (provider: string, value: Partial<ProviderForm>) => void;
   onSaveProvider: (provider: string) => void;
+  /** Installs what the provider needs (Bedrock: boto3) before a test; false when it could not. */
+  onPrepareProviderSupport: (providerName: string) => Promise<boolean>;
   onDisconnectProvider: (provider: string) => void;
   /** Address of the sign-in in flight, so the user can open it by hand. */
   oauthAuthorizeUrl?: string | null;
@@ -5298,11 +5224,9 @@ function ProvidersSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const { account } = useAccount();
   const [connectionTests, setConnectionTests] = useState<
     Record<string, ProviderConnectionTestPayload | { status: "testing" }>
   >({});
-  const accountConnected = Boolean(account?.connected);
   const configuredProviders = orderUnconfiguredProviders(
     settings.providers.filter((provider) => {
       if (hiddenSettingsProvider(provider.name)) return false;
@@ -5326,14 +5250,19 @@ function ProvidersSettings({
   const filteredUnconfigured = filterProviders(unconfiguredProviders, query);
   const renderProviderRow = (provider: SettingsPayload["providers"][number]) => {
     const expanded = expandedProvider === provider.name;
-    const form = providerForms[provider.name] ?? {
-      apiKey: "",
+    // Always a complete form: a stored entry can miss fields (a partial reset
+    // after sign-out), and one missing string crashed the whole settings view.
+    const form: ProviderForm = {
+      ...emptyProviderForm(),
       apiBase: provider.api_base ?? provider.resolved_api_base ?? provider.default_api_base ?? "",
       apiType: provider.api_type ?? "auto",
       authMode: provider.auth_mode ?? "none",
       endpointRegion: provider.endpoint_region ?? provider.connection?.default_region ?? "",
       accessPlan: provider.access_plan ?? provider.connection?.default_plan ?? "",
       wireProtocol: provider.wire_protocol ?? provider.connection?.default_protocol ?? "",
+      awsRegion: provider.aws_region ?? "",
+      awsProfile: provider.aws_profile ?? "",
+      ...stripUndefined(providerForms[provider.name]),
     };
     const connection = provider.connection;
     const connectionTest = connectionTests[provider.name];
@@ -5357,6 +5286,15 @@ function ProvidersSettings({
     const runConnectionTest = async () => {
       setConnectionTests((prev) => ({ ...prev, [provider.name]: { status: "testing" } }));
       try {
+        // Same as saving: Bedrock / Azure need their SDK before any call.
+        if (!(await onPrepareProviderSupport(provider.name))) {
+          setConnectionTests((prev) => {
+            const next = { ...prev };
+            delete next[provider.name];
+            return next;
+          });
+          return;
+        }
         const result = await testProviderConnection(token, {
           provider: provider.name,
           apiKey: form.apiKey.trim() || undefined,
@@ -5364,6 +5302,7 @@ function ProvidersSettings({
           endpointRegion: form.endpointRegion,
           accessPlan: form.accessPlan,
           wireProtocol: form.wireProtocol,
+          ...(provider.name === "bedrock" ? { awsRegion: form.awsRegion.trim(), awsProfile: form.awsProfile.trim() } : {}),
         });
         setConnectionTests((prev) => ({ ...prev, [provider.name]: result }));
       } catch (err) {
@@ -5401,7 +5340,10 @@ function ProvidersSettings({
       && (
         provider.supports_auth_mode
           ? !apiBase
-          : !apiKey && !apiBase
+          : provider.name === "bedrock"
+            // Bedrock: a key, or an AWS profile / region (role or env credentials).
+            ? !apiKey && !form.awsProfile.trim() && !form.awsRegion.trim()
+            : !apiKey && !apiBase
       );
     const supportName = provider.name === "bedrock"
       ? "bedrock"
@@ -5412,11 +5354,21 @@ function ProvidersSettings({
       ? (navinFeatures?.features ?? []).find((feature) => feature.name === supportName)
       : null;
     return (
-      <div key={provider.name} className="divide-y divide-border/45">
+      <div
+        key={provider.name}
+        className={cn(
+          "relative divide-y divide-border/45",
+          // Configured providers stand out: a soft green row with an accent bar.
+          provider.configured && "bg-emerald-500/[0.06] dark:bg-emerald-400/[0.08]",
+        )}
+      >
+        {provider.configured ? (
+          <span aria-hidden className="pointer-events-none absolute inset-y-0 start-0 w-[3px] bg-emerald-500/85" />
+        ) : null}
         <button
           type="button"
           onClick={() => onToggleProvider(provider.name)}
-          className="flex min-h-[70px] w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/35 sm:px-5"
+          className="flex min-h-[70px] w-full items-center justify-between gap-4 px-4 py-3 text-start transition-colors hover:bg-muted/35 sm:px-5"
         >
           <span className="flex min-w-0 items-center gap-3">
             <ProviderIcon
@@ -5521,7 +5473,7 @@ function ProvidersSettings({
                     disabled={saving || !provider.oauth_login_supported}
                     className="rounded-full"
                   >
-                    {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                    {saving ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
                     {saving
                       ? tx("settings.oauth.signingIn", "Signing in...")
                       : provider.configured
@@ -5661,7 +5613,9 @@ function ProvidersSettings({
               <span className="text-[12px] font-medium text-muted-foreground">
                 {provider.supports_auth_mode
                   ? tx("settings.byok.bearerToken", "Bearer token")
-                  : t("settings.byok.apiKey")}
+                  : provider.name === "bedrock"
+                    ? tx("settings.byok.bedrockApiKey", "Bedrock API key (optional with an AWS profile)")
+                    : t("settings.byok.apiKey")}
               </span>
               <div className="relative">
                 {editingKey ? (
@@ -5677,7 +5631,7 @@ function ProvidersSettings({
                           ? t("settings.byok.apiKeyConfiguredPlaceholder")
                           : t("settings.byok.apiKeyPlaceholder")
                       }
-                      className="h-9 rounded-full pr-11 text-[13px]"
+                      className="h-9 rounded-full pe-11 text-[13px]"
                     />
                     <Button
                       type="button"
@@ -5689,7 +5643,7 @@ function ProvidersSettings({
                           ? t("settings.byok.hideApiKey")
                           : t("settings.byok.showApiKey")
                       }
-                      className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="absolute end-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       {keyVisible ? (
                         <EyeOff className="h-3.5 w-3.5" aria-hidden />
@@ -5700,7 +5654,7 @@ function ProvidersSettings({
                   </>
                 ) : (
                   <>
-                    <div className="flex h-9 items-center rounded-full border border-input bg-background px-3 pr-11 text-[13px] text-muted-foreground">
+                    <div className="flex h-9 items-center rounded-full border border-input bg-background px-3 pe-11 text-[13px] text-muted-foreground">
                       {provider.api_key_hint ?? t("settings.byok.configuredKeyHint")}
                     </div>
                     <Button
@@ -5709,7 +5663,7 @@ function ProvidersSettings({
                       size="icon"
                       onClick={() => onToggleProviderKeyEditing(provider.name)}
                       aria-label={t("settings.actions.edit")}
-                      className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="absolute end-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <Pencil className="h-3.5 w-3.5" aria-hidden />
                     </Button>
@@ -5718,6 +5672,39 @@ function ProvidersSettings({
               </div>
             </label>
             ) : null}
+            {provider.name === "bedrock" ? (
+              <>
+                {/* Bedrock has no API base: the AWS region decides the endpoint. */}
+                <label className="block space-y-1.5">
+                  <span className="text-[12px] font-medium text-muted-foreground">
+                    {tx("settings.byok.awsRegion", "AWS region")}
+                  </span>
+                  <Input
+                    value={form.awsRegion}
+                    onChange={(event) => onChangeProviderForm(provider.name, { awsRegion: event.target.value })}
+                    placeholder="us-east-2"
+                    className="h-9 rounded-full text-[13px]"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-[12px] font-medium text-muted-foreground">
+                    {tx("settings.byok.awsProfile", "AWS profile (optional)")}
+                  </span>
+                  <Input
+                    value={form.awsProfile}
+                    onChange={(event) => onChangeProviderForm(provider.name, { awsProfile: event.target.value })}
+                    placeholder="default"
+                    className="h-9 rounded-full text-[13px]"
+                  />
+                  <span className="block text-[11.5px] text-muted-foreground">
+                    {tx(
+                      "settings.byok.bedrockHelp",
+                      "Either a Bedrock API key (Bedrock console > API keys), or an AWS profile whose access key and secret are in ~/.aws/credentials.",
+                    )}
+                  </span>
+                </label>
+              </>
+            ) : (
             <label className="block space-y-1.5">
               <span className="text-[12px] font-medium text-muted-foreground">
                 {provider.supports_auth_mode
@@ -5733,6 +5720,7 @@ function ProvidersSettings({
                 className="h-9 rounded-full text-[13px]"
               />
             </label>
+            )}
             {provider.name === "openai" ? (
               <label className="block space-y-1.5">
                 <span className="text-[12px] font-medium text-muted-foreground">
@@ -5775,7 +5763,7 @@ function ProvidersSettings({
                     disabled={saving}
                     className="rounded-full text-muted-foreground hover:text-destructive"
                   >
-                    <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    <Trash2 className="me-1.5 h-3.5 w-3.5" aria-hidden />
                     {tx("settings.providers.disconnect", "Disconnect")}
                   </Button>
                 ) : null}
@@ -5847,57 +5835,7 @@ function ProvidersSettings({
   };
   return (
     <div className="space-y-6">
-      {!accountConnected && onOpenAccount ? (
-        <div className="rounded-2xl border border-border/55 bg-card/60 px-4 py-4 sm:px-5">
-          <p className="text-[14px] font-medium text-foreground">
-            {tx(
-              "settings.providers.subscribeTitle",
-              "Prefer managed models?",
-            )}
-          </p>
-          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-            {tx(
-              "settings.providers.subscribeHelp",
-              "Connect your navin.live account to unlock plan models and usage. Or stay here and add your own API keys.",
-            )}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={onOpenAccount} className="rounded-full">
-              <CircleUserRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {tx("settings.models.subscribeOrSignIn", "Subscribe or sign in")}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      <div className="rounded-2xl border border-border/50 bg-gradient-to-br from-primary/[0.07] via-card to-teal/10 px-4 py-5 sm:px-5">
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[0_10px_24px_rgba(3,105,255,0.28)]">
-            <KeyRound className="h-5 w-5" aria-hidden />
-          </span>
-          <div className="min-w-0">
-            <h3 className="text-[16px] font-semibold tracking-[-0.02em] text-foreground">
-              {tx("settings.providers.heroTitle", "Providers")}
-            </h3>
-            <p className="mt-1 max-w-[42rem] text-[13px] leading-6 text-muted-foreground">
-              {t("settings.byok.description")}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
-              <span className="rounded-full bg-background/80 px-2.5 py-1 font-medium text-foreground ring-1 ring-border/60">
-                {t("settings.overview.configuredCount", {
-                  defaultValue: "{{count}} configured",
-                  count: configuredProviders.length,
-                })}
-              </span>
-              <span className="rounded-full bg-background/60 px-2.5 py-1 text-muted-foreground ring-1 ring-border/50">
-                {t("settings.overview.totalProviders", {
-                  defaultValue: "{{count}} available",
-                  count: settings.providers.length,
-                })}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Straight to the providers: search, then the configured ones on top. */}
       {imageProviderRestartPending && onRestart ? (
         <div className="flex min-h-[48px] items-center justify-between gap-3 border-y border-border/55 py-3">
           <p className="text-[13px] leading-5 text-muted-foreground">
@@ -5912,9 +5850,9 @@ function ProvidersSettings({
               className="rounded-full"
             >
               {isRestarting ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <RotateCcw className="me-1.5 h-3.5 w-3.5" aria-hidden />
               )}
               {isRestarting ? t("app.system.restarting") : t("app.system.restart")}
             </Button>
@@ -5922,12 +5860,12 @@ function ProvidersSettings({
         </div>
       ) : null}
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <Input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder={tx("settings.providers.searchPlaceholder", "Search providers")}
-          className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+          className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
         />
       </div>
       <ProviderSection
@@ -5956,7 +5894,6 @@ function VideoGenerationSettings({
   onChangeForm,
   onSave,
   onOpenProviders,
-  showBrandLogos,
   onRestart,
   isRestarting,
   requiresRestartPending,
@@ -6018,39 +5955,17 @@ function VideoGenerationSettings({
             />
           </SettingsRow>
           <SettingsRow
-            title={tx("settings.rows.videoProvider", "Video provider")}
-            description={tx("settings.help.videoProvider", "Choose the provider used by generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).")}
+            title={tx("settings.rows.videoModel", "Video model")}
+            description={tx("settings.mediaModels.help", "Models of your connected providers, Navin included. Picking one sets its provider.")}
           >
-            <ProviderPicker
-              providers={videoGeneration.providers}
-              ariaLabel={tx("settings.rows.videoProvider", "Video provider")}
-              value={form.provider}
-              emptyLabel={tx("settings.video.selectProvider", "Select provider")}
-              showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider, model: "" }))}
+            <MediaModelChoice
+              kind="video"
+              choices={settings.media_models}
+              value={form.provider && form.model ? `${form.provider}::${form.model}` : ""}
+              onChange={({ provider, model }) => onChangeForm((prev) => ({ ...prev, provider, model }))}
+              providers={settings.media_providers}
+              onOpenProviders={onOpenProviders}
             />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.videoProviderStatus", "Provider status")}
-            description={tx("settings.help.videoProviderStatus", "Video generation reuses provider credentials from Providers.")}
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <StatusPill tone={providerConfigured ? "success" : "neutral"}>
-                {providerConfigured
-                  ? tx("settings.values.configured", "Configured")
-                  : tx("settings.values.notConfigured", "Not configured")}
-              </StatusPill>
-              {!providerConfigured ? (
-                <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
-                  {tx("settings.video.configureProvider", "Configure provider")}
-                </Button>
-              ) : null}
-            </div>
-          </SettingsRow>
-          <SettingsRow title={tx("settings.rows.videoProviderBase", "Provider base")}>
-            <span className="max-w-[320px] truncate text-right text-[13px] text-muted-foreground">
-              {selectedProvider?.api_base || selectedProvider?.default_api_base || selectedProvider?.name || tx("settings.values.notAvailable", "Not available")}
-            </span>
           </SettingsRow>
         </SettingsGroup>
       </section>
@@ -6058,19 +5973,6 @@ function VideoGenerationSettings({
       <section>
         <SettingsSectionTitle>{tx("settings.sections.videoDefaults", "Defaults")}</SettingsSectionTitle>
         <SettingsGroup>
-          <SettingsRow
-            title={tx("settings.rows.videoModel", "Video model")}
-            description={tx(
-              "settings.help.videoModel",
-              "Managed list when using Navin, or type any provider model id for BYOK.",
-            )}
-          >
-            <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              <MediaModelPicker key={`video:${form.provider}`} kind="video" provider={form.provider}
-                configured={providerConfigured} model={form.model}
-                onModelChange={(model) => onChangeForm((prev) => ({ ...prev, model }))} />
-            </div>
-          </SettingsRow>
           {videoGeneration.budget_caution ? (
             <div className="rounded-xl border border-amber-200/80 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-950">
               {videoGeneration.budget_caution}
@@ -6148,7 +6050,6 @@ function ImageGenerationSettings({
   onChangeForm,
   onSave,
   onOpenProviders,
-  showBrandLogos,
   onRestart,
   isRestarting,
   requiresRestartPending,
@@ -6167,8 +6068,6 @@ function ImageGenerationSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  // No fallback on the first row: an unset provider must read as unset, not as
-  // whichever provider happens to head the registry.
   const selectedProvider = form.provider
     ? settings.image_generation.providers.find((provider) => provider.name === form.provider)
     : undefined;
@@ -6208,39 +6107,17 @@ function ImageGenerationSettings({
             />
           </SettingsRow>
           <SettingsRow
-            title={tx("settings.rows.imageProvider", "Image provider")}
-            description={tx("settings.help.imageProvider", "Choose the registry provider used by generate_image.")}
+            title={tx("settings.rows.imageModel", "Image model")}
+            description={tx("settings.mediaModels.help", "Models of your connected providers, Navin included. Picking one sets its provider.")}
           >
-            <ProviderPicker
-              providers={settings.image_generation.providers}
-              ariaLabel={tx("settings.rows.imageProvider", "Image provider")}
-              value={form.provider}
-              emptyLabel={tx("settings.image.selectProvider", "Select provider")}
-              showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider, model: "" }))}
+            <MediaModelChoice
+              kind="image"
+              choices={settings.media_models}
+              value={form.provider && form.model ? `${form.provider}::${form.model}` : ""}
+              onChange={({ provider, model }) => onChangeForm((prev) => ({ ...prev, provider, model }))}
+              providers={settings.media_providers}
+              onOpenProviders={onOpenProviders}
             />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.imageProviderStatus", "Provider status")}
-            description={tx("settings.help.imageProviderStatus", "Image generation reuses provider credentials from Providers.")}
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <StatusPill tone={providerConfigured ? "success" : "neutral"}>
-                {providerConfigured
-                  ? tx("settings.values.configured", "Configured")
-                  : tx("settings.values.notConfigured", "Not configured")}
-              </StatusPill>
-              {!providerConfigured ? (
-                <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
-                  {tx("settings.image.configureProvider", "Configure provider")}
-                </Button>
-              ) : null}
-            </div>
-          </SettingsRow>
-          <SettingsRow title={tx("settings.rows.imageProviderBase", "Provider base")}>
-            <span className="max-w-[320px] truncate text-right text-[13px] text-muted-foreground">
-              {selectedProvider?.api_base || selectedProvider?.default_api_base || selectedProvider?.name || tx("settings.values.notAvailable", "Not available")}
-            </span>
           </SettingsRow>
         </SettingsGroup>
       </section>
@@ -6248,30 +6125,11 @@ function ImageGenerationSettings({
       <section>
         <SettingsSectionTitle>{tx("settings.sections.imageDefaults", "Defaults")}</SettingsSectionTitle>
         <SettingsGroup>
-          <SettingsRow
-            title={tx("settings.rows.imageModel", "Image model")}
-            description={tx(
-              "settings.help.imageModel",
-              "Managed list when using Navin, or type any provider model id for BYOK.",
-            )}
-          >
-            <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              <MediaModelPicker key={`image:${form.provider}`} kind="image" provider={form.provider}
-                configured={providerConfigured} model={form.model}
-                onModelChange={(model) => onChangeForm((prev) => ({ ...prev, model }))} />
-              {(() => {
-                const hit = settings.image_generation.managed_models?.find(
-                  (m) => m.slug === form.model,
-                );
-                const note =
-                  hit?.priceNote
-                  || (hit?.unitPriceUsd != null ? `~${hit.unitPriceUsd} $ / image` : null);
-                return note ? (
-                  <p className="text-right text-[11.5px] text-muted-foreground">{note}</p>
-                ) : null;
-              })()}
-            </div>
-          </SettingsRow>
+          {(() => {
+            const hit = settings.image_generation.managed_models?.find((m) => m.slug === form.model);
+            const note = hit?.priceNote || (hit?.unitPriceUsd != null ? `~${hit.unitPriceUsd} $ / image` : null);
+            return note ? <p className="px-1 text-end text-[11.5px] text-muted-foreground">{note}</p> : null;
+          })()}
           {settings.image_generation.budget_caution ? (
             <div className="rounded-xl border border-amber-200/80 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-950">
               {settings.image_generation.budget_caution}
@@ -6472,7 +6330,7 @@ function TranscriptionSettings({
                 const note = hit?.priceNote
                   || (hit?.unitPriceUsd != null ? `~${hit.unitPriceUsd} $ / génération` : null);
                 return note ? (
-                  <p className="text-right text-[11.5px] text-muted-foreground">{note}</p>
+                  <p className="text-end text-[11.5px] text-muted-foreground">{note}</p>
                 ) : null;
               })()}
             </div>
@@ -6635,7 +6493,7 @@ function WebSettings({
                           ? t("settings.byok.apiKeyConfiguredPlaceholder")
                           : t("settings.byok.apiKeyPlaceholder")
                       }
-                      className="h-9 rounded-full pr-11 text-[13px]"
+                      className="h-9 rounded-full pe-11 text-[13px]"
                     />
                     <Button
                       type="button"
@@ -6645,7 +6503,7 @@ function WebSettings({
                       aria-label={
                         keyVisible ? t("settings.byok.hideApiKey") : t("settings.byok.showApiKey")
                       }
-                      className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="absolute end-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       {keyVisible ? (
                         <EyeOff className="h-3.5 w-3.5" aria-hidden />
@@ -6656,7 +6514,7 @@ function WebSettings({
                   </>
                 ) : (
                   <>
-                    <div className="flex h-9 items-center rounded-full border border-input bg-background px-3 pr-11 text-[13px] text-muted-foreground">
+                    <div className="flex h-9 items-center rounded-full border border-input bg-background px-3 pe-11 text-[13px] text-muted-foreground">
                       {settings.web_search.api_key_hint ?? t("settings.byok.configuredKeyHint")}
                     </div>
                     <Button
@@ -6665,7 +6523,7 @@ function WebSettings({
                       size="icon"
                       onClick={onToggleKeyEditing}
                       aria-label={t("settings.actions.edit")}
-                      className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="absolute end-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <Pencil className="h-3.5 w-3.5" aria-hidden />
                     </Button>
@@ -6987,7 +6845,7 @@ function AutomationsSettings({
 
           <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="relative min-w-0">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
               <Input
                 value={query}
                 onChange={(event) => onQueryChange(event.target.value)}
@@ -6995,7 +6853,7 @@ function AutomationsSettings({
                   "settings.automations.search",
                   "Search task, message, linked chat, or schedule",
                 )}
-                className="h-9 w-full rounded-full border-border/45 bg-background/85 pl-9 text-[13px] shadow-[0_8px_22px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-background/40"
+                className="h-9 w-full rounded-full border-border/45 bg-background/85 ps-9 text-[13px] shadow-[0_8px_22px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-background/40"
               />
             </div>
             <DropdownMenu>
@@ -7013,7 +6871,7 @@ function AutomationsSettings({
                 {(Object.keys(sortLabel) as AutomationSort[]).map((value) => (
                   <DropdownMenuItem key={value} onClick={() => onSortChange(value)}>
                     <span>{sortLabel[value]}</span>
-                    {sort === value ? <Check className="ml-auto h-3.5 w-3.5" aria-hidden /> : null}
+                    {sort === value ? <Check className="ms-auto h-3.5 w-3.5" aria-hidden /> : null}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -7031,12 +6889,12 @@ function AutomationsSettings({
 
       {loading && !payload ? (
         <div className="flex h-44 items-center justify-center rounded-[24px] border border-border/45 bg-card/80 text-[13px] text-muted-foreground shadow-[0_22px_70px_rgba(15,23,42,0.055)]">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+          <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden />
           {tx("settings.automations.loading", "Loading automations...")}
         </div>
       ) : filtered.length && selectedJob ? (
         <section className="grid min-h-0 overflow-hidden rounded-[22px] border border-border/45 bg-transparent shadow-none dark:border-white/10 xl:grid-cols-[minmax(16rem,18rem)_minmax(0,1fr)] xl:items-stretch">
-          <aside className="flex min-h-0 flex-col overflow-hidden border-b border-border/35 bg-background/36 dark:border-white/10 dark:bg-background/18 xl:border-b-0 xl:border-r">
+          <aside className="flex min-h-0 flex-col overflow-hidden border-b border-border/35 bg-background/36 dark:border-white/10 dark:bg-background/18 xl:border-b-0 xl:border-e">
             <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
               <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground/85">
                 {tx("settings.automations.queue", "Queue")}
@@ -7120,7 +6978,7 @@ function AutomationListItem({
         aria-pressed={selected}
         onClick={onSelect}
         className={cn(
-          "group grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-[16px] px-3 py-3.5 text-left outline-none transition-colors",
+          "group grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-[16px] px-3 py-3.5 text-start outline-none transition-colors",
           selected
             ? "bg-background text-foreground shadow-[0_10px_28px_rgba(15,23,42,0.055)] ring-1 ring-border/45 dark:bg-background/45 dark:ring-white/10"
             : "text-muted-foreground hover:bg-muted/45 hover:text-foreground dark:hover:bg-background/24",
@@ -7158,7 +7016,7 @@ function AutomationListItem({
           ) : null}
           <ChevronRight
             className={cn(
-              "h-3.5 w-3.5 text-muted-foreground/55 transition-opacity",
+              "rtl:-scale-x-100 h-3.5 w-3.5 text-muted-foreground/55 transition-opacity",
               selected ? "opacity-100" : "opacity-0 group-hover:opacity-70",
             )}
             aria-hidden
@@ -7258,9 +7116,9 @@ function AutomationDetailPanel({
                   }}
                 >
                   {commandCopied ? (
-                    <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    <Check className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   ) : (
-                    <Clipboard className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    <Clipboard className="me-1.5 h-3.5 w-3.5" aria-hidden />
                   )}
                   {commandCopied
                     ? tx("settings.automations.commandCopied", "Copied")
@@ -7319,7 +7177,7 @@ function AutomationDetailPanel({
           ) : null}
         </div>
 
-        <aside className="min-h-0 overflow-y-auto overscroll-contain border-t border-border/35 bg-muted/20 p-4 text-[12px] text-muted-foreground dark:border-white/10 dark:bg-background/16 lg:border-l lg:border-t-0">
+        <aside className="min-h-0 overflow-y-auto overscroll-contain border-t border-border/35 bg-muted/20 p-4 text-[12px] text-muted-foreground dark:border-white/10 dark:bg-background/16 lg:border-s lg:border-t-0">
           <div className="grid gap-3">
             <AutomationDetail
               label={tx("settings.automations.labels.schedule", "Schedule")}
@@ -7373,7 +7231,7 @@ function AutomationSpendDetail({
   const spend = spendState(job);
   const failures = job.state.consecutive_failures ?? 0;
   const pausedReason = job.state.paused_reason;
-  const number = new Intl.NumberFormat(locale);
+  const number = new Intl.NumberFormat(intlLocale(locale));
 
   if (!spend.budget && !spend.used && !failures && !pausedReason) return null;
 
@@ -7616,7 +7474,7 @@ function AutomationDeleteDialog({
             disabled={!job || deleting}
             className="rounded-full"
           >
-            {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+            {deleting ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden /> : null}
             {tx("settings.automations.delete", "Delete")}
           </Button>
         </DialogFooter>
@@ -7658,7 +7516,7 @@ function NavinFeatureInstallDialog({
             )}
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 sm:grid-cols-2 sm:space-x-0">
+        <DialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 rtl:space-x-reverse sm:grid-cols-2 sm:space-x-0 rtl:space-x-reverse">
           <Button
             type="button"
             variant="ghost"
@@ -7674,7 +7532,7 @@ function NavinFeatureInstallDialog({
             disabled={!feature || installing}
             className="h-11 w-full min-w-0 !whitespace-normal rounded-full px-5 text-center text-[15px] font-semibold"
           >
-            {installing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+            {installing ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden /> : null}
             {tx("settings.navinFeatures.installConfirmAction", "Install and enable")}
           </Button>
         </DialogFooter>
@@ -8118,7 +7976,7 @@ function formatAutomationUnit(
   locale: string,
   maximumFractionDigits = 0,
 ): string {
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(intlLocale(locale), {
     style: "unit",
     unit,
     unitDisplay: "long",
@@ -8155,7 +8013,7 @@ function DismissibleStatusMessage({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-[12px] border py-2.5 pl-4 pr-2 text-[13px]",
+        "flex items-center justify-between gap-3 rounded-[12px] border py-2.5 ps-4 pe-2 text-[13px]",
         isError
           ? "border-destructive/20 bg-destructive/5 text-destructive"
           : "border-border/55 bg-muted/35 text-muted-foreground",
@@ -8203,9 +8061,9 @@ function RestartRequiredNotice({
           className="h-8 rounded-full bg-background/80 px-3 text-[12px] font-semibold"
         >
           {isRestarting ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
           ) : (
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <RotateCcw className="me-1.5 h-3.5 w-3.5" aria-hidden />
           )}
           {isRestarting ? t("app.system.restarting") : t("app.system.restart")}
         </Button>
@@ -8363,7 +8221,7 @@ function ToolsSettings({
           </p>
         )}
         <div className="relative min-w-0">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
@@ -8372,7 +8230,7 @@ function ToolsSettings({
                 ? tx("settings.tools.searchChannelsPlaceholder", "Search channels")
                 : tx("settings.tools.searchMcpPlaceholder", "Search MCP")
             }
-            className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+            className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
           />
         </div>
         {showChannels ? (
@@ -8403,7 +8261,7 @@ function ToolsSettings({
                 )}
               >
                 {label}
-                <span className="ml-1.5 text-[11px] font-medium text-muted-foreground">{count}</span>
+                <span className="ms-1.5 text-[11px] font-medium text-muted-foreground">{count}</span>
               </button>
             ))}
           </div>
@@ -8433,7 +8291,7 @@ function ToolsSettings({
       <section className="mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
         {catalogLoading ? (
           <div className="flex h-36 items-center justify-center text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+            <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden />
             {tx("settings.tools.loading", "Loading tools...")}
           </div>
         ) : empty ? (
@@ -8451,7 +8309,7 @@ function ToolsSettings({
                 : "grid-cols-1",
             )}
           >
-            <div className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pr-1">
+            <div className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pe-1">
               {hasMcp ? (
                 <div className="space-y-4" data-testid="tools-mcp">
                   {sharedPresets.length ? (
@@ -8823,7 +8681,7 @@ function AppsCatalogSettings({
       <section className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative min-w-0 flex-1">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
           <Input
@@ -8833,7 +8691,7 @@ function AppsCatalogSettings({
               "settings.apps.searchPlaceholder",
               "Search MCP or plugins (ads, google, meta...)",
             )}
-            className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+            className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
           />
         </div>
         <SegmentedControl
@@ -8872,7 +8730,7 @@ function AppsCatalogSettings({
       <section>
         {loading ? (
           <div className="flex h-36 items-center justify-center rounded-2xl border border-dashed border-border/60 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+            <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden />
             {tx("settings.apps.loading", "Loading plugins & MCP...")}
           </div>
         ) : items.length ? (
@@ -8939,7 +8797,7 @@ function CliAppsCatalogRow({
   const uninstallBusy = actionKey === `uninstall:${app.name}`;
   const testBusy = actionKey === `test:${app.name}`;
   const busy = installBusy || updateBusy || uninstallBusy || testBusy;
-  const description = app.description || app.requires || app.entry_point || app.name;
+  const description = phrase(app.description || app.requires || app.entry_point || app.name);
 
   return (
     <article className="group flex min-w-0 items-center gap-3 rounded-2xl border border-border/45 bg-card/80 px-3.5 py-3.5 shadow-sm transition-colors hover:border-primary/25 hover:bg-primary/[0.03]">
@@ -8967,15 +8825,15 @@ function CliAppsCatalogRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={busy} onClick={() => onAction("test", app.name)}>
-                  <PlayCircle className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  <PlayCircle className="me-2 h-3.5 w-3.5" aria-hidden />
                   {tx("settings.cliApps.test", "Test CLI")}
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled={busy} onClick={() => onAction("update", app.name)}>
-                  <RotateCcw className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  <RotateCcw className="me-2 h-3.5 w-3.5" aria-hidden />
                   {tx("settings.cliApps.update", "Update CLI")}
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled={busy} onClick={() => onAction("uninstall", app.name)}>
-                  <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  <Trash2 className="me-2 h-3.5 w-3.5" aria-hidden />
                   {tx("settings.cliApps.uninstall", "Uninstall CLI")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -9045,7 +8903,7 @@ function McpAppsCatalogRow({
   const enabledTools = preset.enabled_tools ?? ["*"];
   const allowAllTools = enabledTools.includes("*");
   const enabledSet = new Set(allowAllTools ? toolNames : enabledTools);
-  const description = preset.description || preset.note || preset.requires || preset.name;
+  const description = phrase(preset.description || preset.note || preset.requires || preset.name);
   const statusLabel = mcpPresetStatusLabel(preset.status, tx);
 
   useEffect(() => {
@@ -9104,17 +8962,17 @@ function McpAppsCatalogRow({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem disabled={busy} onClick={() => onAction("test", preset.name)}>
-                    <PlayCircle className="mr-2 h-3.5 w-3.5" aria-hidden />
+                    <PlayCircle className="me-2 h-3.5 w-3.5" aria-hidden />
                     {tx("settings.mcp.test", "Test")}
                   </DropdownMenuItem>
                   {toolNames.length ? (
                     <DropdownMenuItem disabled={busy} onClick={() => setToolsOpen((open) => !open)}>
-                      <SlidersHorizontal className="mr-2 h-3.5 w-3.5" aria-hidden />
+                      <SlidersHorizontal className="me-2 h-3.5 w-3.5" aria-hidden />
                       {tx("settings.mcp.toolScope", "Tools")}
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem disabled={busy} onClick={() => onAction("remove", preset.name)}>
-                    <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden />
+                    <Trash2 className="me-2 h-3.5 w-3.5" aria-hidden />
                     {tx("settings.mcp.remove", "Remove")}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -9183,7 +9041,7 @@ function McpAppsCatalogRow({
                 <span className="mb-1 block text-[11.5px] font-medium text-muted-foreground">
                   {field.label}
                   {field.configured ? (
-                    <span className="ml-1 font-normal text-emerald-600 dark:text-emerald-300">
+                    <span className="ms-1 font-normal text-emerald-600 dark:text-emerald-300">
                       {tx("settings.mcp.configured", "configured")}
                     </span>
                   ) : null}
@@ -9211,9 +9069,9 @@ function McpAppsCatalogRow({
               className="h-8 rounded-full px-3 text-[12px] font-semibold"
             >
               {enableBusy ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <Check className="me-1.5 h-3.5 w-3.5" aria-hidden />
               )}
               {preset.installed
                 ? tx("settings.mcp.updateSetup", "Update setup")
@@ -9423,7 +9281,7 @@ function McpCustomServerPanel({
             onClick={() => setActiveMode((mode) => (mode === "custom" ? null : "custom"))}
             className="h-8 rounded-full px-3 text-[12px] font-semibold"
           >
-            <Server className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <Server className="me-1.5 h-3.5 w-3.5" aria-hidden />
             {tx("settings.mcp.customAction", "Custom")}
           </Button>
           <Button
@@ -9433,7 +9291,7 @@ function McpCustomServerPanel({
             onClick={() => setActiveMode((mode) => (mode === "import" ? null : "import"))}
             className="h-8 rounded-full px-3 text-[12px] font-semibold"
           >
-            <Database className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <Database className="me-1.5 h-3.5 w-3.5" aria-hidden />
             {tx("settings.mcp.importAction", "Import")}
           </Button>
         </div>
@@ -9495,7 +9353,7 @@ function McpCustomServerPanel({
               disabled={!canSave || customBusy}
               className="h-9 shrink-0 rounded-full px-4 text-[12.5px] font-semibold"
             >
-              {customBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+              {customBusy ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Check className="me-1.5 h-3.5 w-3.5" aria-hidden />}
               {tx("settings.mcp.saveCustom", "Save MCP")}
             </Button>
           </div>
@@ -9508,7 +9366,7 @@ function McpCustomServerPanel({
             className="mt-2 h-8 rounded-full px-2 text-[12px] font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronDown
-              className={cn("mr-1.5 h-3.5 w-3.5 transition-transform", advancedOpen ? "rotate-180" : "")}
+              className={cn("me-1.5 h-3.5 w-3.5 transition-transform", advancedOpen ? "rotate-180" : "")}
               aria-hidden
             />
             {advancedOpen
@@ -9591,7 +9449,7 @@ function McpCustomServerPanel({
               disabled={!configImport.trim() || importBusy}
               className="h-9 shrink-0 rounded-full px-4 text-[12.5px] font-semibold"
             >
-              {importBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Database className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+              {importBusy ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Database className="me-1.5 h-3.5 w-3.5" aria-hidden />}
               {tx("settings.mcp.importConfig", "Import")}
             </Button>
           </div>
@@ -9713,7 +9571,7 @@ function CliAppReadyPanel({
             onClick={copyPrompt}
             className="h-8 rounded-full px-3 text-[12px] font-medium text-muted-foreground hover:bg-muted/65 hover:text-foreground"
           >
-            {copied ? <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : null}
+            {copied ? <Check className="me-1.5 h-3.5 w-3.5" aria-hidden /> : null}
             {copied
               ? t("settings.cliApps.readyCopied", { defaultValue: "Copied" })
               : t("settings.cliApps.readyTry", { name: app.name, defaultValue: "Try @{{name}}" })}
@@ -9725,7 +9583,7 @@ function CliAppReadyPanel({
             className="h-8 rounded-full px-3 text-[12px] font-semibold"
           >
             {t("settings.cliApps.openChat", { defaultValue: "Open chat" })}
-            <ChevronRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+            <ChevronRight className="rtl:-scale-x-100 ms-1.5 h-3.5 w-3.5" aria-hidden />
           </Button>
         </div>
       </div>
@@ -9980,9 +9838,9 @@ function RuntimeSettings({
                 className="rounded-full"
               >
                 {isRestarting ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
-                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <RotateCcw className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 )}
                 {isRestarting ? restartingActionLabel : restartActionLabel}
               </Button>
@@ -9998,7 +9856,13 @@ function RuntimeSettings({
  * Machine-wide kill-switches for board task git automation. Per-project
  * consent lives in the Tasks panel (Autonomy toggle); these override it.
  */
-function BoardGitSettings({ settings }: { settings: SettingsPayload }) {
+function BoardGitSettings({
+  settings,
+  onOpenGitSettings,
+}: {
+  settings: SettingsPayload;
+  onOpenGitSettings?: () => void;
+}) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const { token } = useClient();
@@ -10068,190 +9932,32 @@ function BoardGitSettings({ settings }: { settings: SettingsPayload }) {
           />
         </SettingsRow>
       </SettingsGroup>
-      <ForgeTokensSettings settings={settings} />
+      {onOpenGitSettings ? (
+        <button
+          type="button"
+          onClick={onOpenGitSettings}
+          className="mt-2 inline-flex items-center gap-1 px-1 text-[12px] font-medium text-foreground/80 underline-offset-2 hover:text-foreground hover:underline"
+        >
+          {tx("settings.git.securityPointer", "Accounts and tokens for GitHub, GitLab and Forgejo are in Git & GitHub")}
+          <ChevronRight className="rtl:-scale-x-100 h-3 w-3" aria-hidden />
+        </button>
+      ) : null}
     </section>
   );
 }
 
 /**
- * Per-host forge tokens.
+ * Git & GitHub: every forge identity the engine can use, in one place.
  *
- * Opening a pull request used to require the `gh` CLI, which meant nothing
- * worked on GitLab or Forgejo and nothing worked on a machine without it.
- * One token per host is all the REST road needs, so this is where a
- * self-hosted Forgejo or a company GitLab becomes usable from the Code panel.
+ * Opening a pull request used to require the `gh` CLI, and cloning a private
+ * repository failed with a raw 401. Accounts here come from three places: a
+ * token stored in Settings, a variable in the environment, or a signed-in
+ * `gh`. GitHub can be connected with its device sign-in; any other forge
+ * (GitLab, Forgejo/Gitea, Bitbucket, a company GitHub) with one token per host.
  */
-function ForgeTokensSettings({ settings }: { settings: SettingsPayload }) {
-  const { t } = useTranslation();
-  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+function GitGithubSettings({ settings }: { settings: SettingsPayload }) {
   const { token } = useClient();
-  const [rows, setRows] = useState(settings.forge?.hosts ?? []);
-  const [envTokens, setEnvTokens] = useState(settings.forge?.env_tokens ?? []);
-  const [host, setHost] = useState("");
-  const [secret, setSecret] = useState("");
-  const [kind, setKind] = useState<ForgeKind | "auto">("auto");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setRows(settings.forge?.hosts ?? []);
-    setEnvTokens(settings.forge?.env_tokens ?? []);
-  }, [settings.forge]);
-
-  const persist = async (update: SettingsUpdate, key: string) => {
-    if (!token) return;
-    setBusy(key);
-    setError(null);
-    try {
-      const payload = await updateSettings(token, update);
-      setRows(payload.forge?.hosts ?? []);
-      setEnvTokens(payload.forge?.env_tokens ?? []);
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return false;
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const addHost = async () => {
-    const cleaned = host.trim();
-    if (!cleaned) return;
-    const ok = await persist(
-      { forgeHost: cleaned, forgeToken: secret.trim(), forgeKind: kind },
-      "add",
-    );
-    if (ok) {
-      setHost("");
-      setSecret("");
-      setKind("auto");
-    }
-  };
-
-  const kindOptions: Array<ForgeKind | "auto"> = [
-    "auto",
-    ...(settings.forge?.kinds ?? ["github", "gitlab", "forgejo"]),
-  ];
-
-  return (
-    <div className="mt-4">
-      <SettingsSectionTitle>
-        {tx("settings.sections.forgeTokens", "Forge tokens")}
-      </SettingsSectionTitle>
-      <SettingsGroup>
-        <SettingsRow
-          title={tx("settings.rows.forgeToken", "Add a forge")}
-          description={tx(
-            "settings.help.forgeToken",
-            "One access token per host lets Create PR work on GitHub, GitLab and Forgejo/Gitea without installing the gh CLI. The token stays on this machine and is never shown again.",
-          )}
-        />
-        <div className="flex flex-col gap-2 px-4 py-3.5 sm:px-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={host}
-              onChange={(event) => setHost(event.target.value)}
-              placeholder={tx(
-                "settings.rows.forgeHostPlaceholder",
-                "forgejo.example.com",
-              )}
-              className="h-9 w-[220px] rounded-full text-[13px]"
-              aria-label={tx("settings.rows.forgeHost", "Host")}
-            />
-            <Input
-              value={secret}
-              onChange={(event) => setSecret(event.target.value)}
-              type="password"
-              autoComplete="off"
-              placeholder={tx("settings.rows.forgeTokenPlaceholder", "Access token")}
-              className="h-9 w-[220px] rounded-full text-[13px]"
-              aria-label={tx("settings.rows.forgeTokenLabel", "Token")}
-            />
-            <select
-              value={kind}
-              onChange={(event) => setKind(event.target.value as ForgeKind | "auto")}
-              className="h-9 rounded-full border border-input bg-background px-3 text-[13px]"
-              aria-label={tx("settings.rows.forgeKind", "Forge type")}
-            >
-              {kindOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option === "auto"
-                    ? tx("settings.rows.forgeKindAuto", "Detect automatically")
-                    : option}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              onClick={() => void addHost()}
-              disabled={busy !== null || !host.trim()}
-              className="h-9 rounded-full text-[13px]"
-            >
-              {busy === "add" ? (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Plus className="mr-1 h-3.5 w-3.5" aria-hidden />
-              )}
-              {tx("settings.actions.forgeAdd", "Save token")}
-            </Button>
-          </div>
-          {error ? (
-            <p className="text-[12px] text-destructive">{error}</p>
-          ) : null}
-        </div>
-
-        {rows.map((row) => (
-          <SettingsRow
-            key={row.host}
-            title={row.host}
-            description={
-              row.token_configured
-                ? `${row.kind}${row.kind_pinned ? "" : " (auto)"} · ${
-                    row.token_hint ?? "••••"
-                  }`
-                : `${row.kind}${row.kind_pinned ? "" : " (auto)"} · ${tx(
-                    "settings.rows.forgeNoToken",
-                    "no token stored",
-                  )}`
-            }
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={busy !== null}
-              onClick={() =>
-                void persist({ forgeHost: row.host, forgeRemove: true }, row.host)
-              }
-              aria-label={tx("settings.actions.forgeRemove", "Remove forge token")}
-              className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted hover:text-destructive"
-            >
-              {busy === row.host ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              )}
-            </Button>
-          </SettingsRow>
-        ))}
-
-        {envTokens.length > 0 ? (
-          <SettingsRow
-            title={tx("settings.rows.forgeEnvTokens", "From the environment")}
-            description={tx(
-              "settings.help.forgeEnvTokens",
-              "These variables are already set on this machine and are used when no token is stored above.",
-            )}
-          >
-            <span className="font-mono text-[12px] text-muted-foreground">
-              {envTokens.map((entry) => entry.name).join(", ")}
-            </span>
-          </SettingsRow>
-        ) : null}
-      </SettingsGroup>
-    </div>
-  );
+  return <GitConnectPanel token={token} forge={settings.forge} />;
 }
 
 function AdvancedSettings({
@@ -10265,6 +9971,7 @@ function AdvancedSettings({
   onSave,
   onRestart,
   isRestarting,
+  onOpenGitSettings,
 }: {
   form: NetworkSafetySettingsUpdate;
   settings: SettingsPayload;
@@ -10276,6 +9983,7 @@ function AdvancedSettings({
   onSave: () => void;
   onRestart?: () => void;
   isRestarting?: boolean;
+  onOpenGitSettings?: () => void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -10347,7 +10055,7 @@ function AdvancedSettings({
         <ExecPolicySettings />
       </section>
 
-      <BoardGitSettings settings={settings} />
+      <BoardGitSettings settings={settings} onOpenGitSettings={onOpenGitSettings} />
 
       <p className="max-w-3xl px-1 text-sm leading-6 text-muted-foreground">
         {tx(
@@ -10384,7 +10092,7 @@ function TimezonePicker({
           )}
         >
           <span className="truncate">{value || tx("settings.timezone.select", "Select timezone")}</span>
-          <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <ChevronDown className="ms-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -10405,7 +10113,7 @@ function TimezonePicker({
           </div>
         </div>
         <div
-          className="mt-1 max-h-[18rem] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-track-transparent"
+          className="mt-1 max-h-[18rem] overflow-y-auto pe-0.5 scrollbar-thin scrollbar-track-transparent"
           data-testid="timezone-picker-list"
         >
           {filteredOptions.length ? (
@@ -10422,7 +10130,7 @@ function TimezonePicker({
                   )}
                 >
                   <span className="min-w-0 truncate font-medium text-foreground">{option.name}</span>
-                  <span className="ml-auto flex shrink-0 items-center gap-2">
+                  <span className="ms-auto flex shrink-0 items-center gap-2">
                     <span className="text-[11.5px] font-medium text-muted-foreground/80">
                       {option.offset}
                     </span>
@@ -10658,7 +10366,7 @@ function ModelIdPicker({
           ) : null}
         </span>
       </span>
-      <span className="ml-2 flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+      <span className="ms-2 flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
         {model.context_window ? <span>{formatContextWindow(model.context_window)}</span> : null}
         {options.selected ? <Check className="h-3.5 w-3.5 text-foreground" aria-hidden /> : null}
       </span>
@@ -10691,7 +10399,7 @@ function ModelIdPicker({
               {value || tx("settings.models.selectModel", "Select model")}
             </span>
           </span>
-          <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <ChevronDown className="ms-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -10701,7 +10409,7 @@ function ModelIdPicker({
         <div className="p-1 pb-1.5">
           <div className="relative">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
             />
             <Input
@@ -10709,7 +10417,7 @@ function ModelIdPicker({
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => event.stopPropagation()}
               placeholder={tx("settings.models.searchModels", "Search or type model ID")}
-              className="h-8 rounded-full pl-8 pr-3 text-[12px]"
+              className="h-8 rounded-full ps-8 pe-3 text-[12px]"
             />
           </div>
         </div>
@@ -10755,7 +10463,7 @@ function ModelIdPicker({
         ) : null}
 
         {showModels && visibleModels.length ? (
-          <div className="max-h-[16rem] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-track-transparent">
+          <div className="max-h-[16rem] overflow-y-auto pe-0.5 scrollbar-thin scrollbar-track-transparent">
             {visibleModels.map((model) =>
               renderModelRow(model, { selected: model.id === value }),
             )}
@@ -10926,17 +10634,6 @@ function orderUnconfiguredProviders(
       return rank || left.index - right.index;
     })
     .map(({ provider }) => provider);
-}
-
-function uniqueProviders(
-  providers: SettingsPayload["providers"],
-): SettingsPayload["providers"] {
-  const seen = new Set<string>();
-  return providers.filter((provider) => {
-    if (seen.has(provider.name)) return false;
-    seen.add(provider.name);
-    return true;
-  });
 }
 
 function providerVisibilityRank(provider: SettingsPayload["providers"][number]): number {
@@ -11193,20 +10890,20 @@ function OverviewListRow({
     <button
       type="button"
       onClick={onClick}
-      className="group flex min-h-[68px] w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-muted/30 sm:px-5"
+      className="group flex min-h-[68px] w-full items-center gap-3 px-4 py-3.5 text-start transition-colors hover:bg-muted/30 sm:px-5"
     >
       <OverviewRowIcon icon={Icon} />
       <span className="min-w-0 flex-1">
         <span className="block text-[14px] font-medium leading-5 text-foreground">{title}</span>
         <span className="mt-0.5 block truncate text-[12px] leading-5 text-muted-foreground">{caption}</span>
       </span>
-      <span className="ml-auto flex min-w-0 max-w-[48%] items-center gap-2">
+      <span className="ms-auto flex min-w-0 max-w-[48%] items-center gap-2">
         <OverviewValueLogo provider={valueLogoProvider} showBrandLogos={showBrandLogos} />
-        <span className="truncate text-right text-[13px] leading-5 text-muted-foreground">
+        <span className="truncate text-end text-[13px] leading-5 text-muted-foreground">
           {value}
         </span>
         <ChevronRight
-          className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5"
+          className="rtl:-scale-x-100 h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5"
           aria-hidden
         />
       </span>
@@ -11222,9 +10919,9 @@ function SettingsSectionTitle({ children }: { children: ReactNode }) {
   );
 }
 
-function SettingsGroup({ children }: { children: ReactNode }) {
+function SettingsGroup({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className="overflow-hidden rounded-[22px] border border-border/45 bg-card/86 shadow-[0_18px_65px_rgba(15,23,42,0.075)] backdrop-blur-xl dark:border-white/10 dark:shadow-[0_18px_65px_rgba(0,0,0,0.24)]">
+    <div className={cn("overflow-hidden rounded-[22px] border border-border/45 bg-card/86 shadow-[0_18px_65px_rgba(15,23,42,0.075)] backdrop-blur-xl dark:border-white/10 dark:shadow-[0_18px_65px_rgba(0,0,0,0.24)]", className)}>
       <div className="divide-y divide-border/45">{children}</div>
     </div>
   );
@@ -11265,7 +10962,7 @@ function ReadOnlyRow({
 }) {
   return (
     <SettingsRow title={title} description={description}>
-      <span className="block max-w-full truncate text-left text-[13px] text-muted-foreground sm:max-w-[320px] sm:text-right">
+      <span className="block max-w-full truncate text-start text-[13px] text-muted-foreground sm:max-w-[320px] sm:text-end">
         {value}
       </span>
     </SettingsRow>
@@ -11331,9 +11028,9 @@ function RestartSettingsFooter({
             className="rounded-full"
           >
             {isRestarting ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <RotateCcw className="me-1.5 h-3.5 w-3.5" aria-hidden />
             )}
             {isRestarting ? restartingLabel : restartLabel}
           </Button>
@@ -11393,7 +11090,13 @@ function SettingsFooter({
         </SettingsStatusMessage>
       </div>
       <div className="flex justify-end">
-        <Button size="sm" variant="outline" onClick={onSave} disabled={!dirty || disabled || saving} className="rounded-full">
+        <Button
+          size="sm"
+          variant={dirty && !disabled ? "default" : "outline"}
+          onClick={onSave}
+          disabled={!dirty || disabled || saving}
+          className="rounded-full"
+        >
           {saving ? t("settings.actions.saving") : t("settings.actions.save")}
         </Button>
       </div>

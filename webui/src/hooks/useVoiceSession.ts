@@ -24,6 +24,7 @@ import {
   type MicrophonePermission,
   type VoiceDeviceList,
 } from "@/lib/voice-devices";
+import { decodeSpeechEnvelope, envelopeLevel, syntheticSpeechLevel } from "@/lib/speech-envelope";
 import { createVoiceMeter, type VoiceMeter } from "@/lib/voice-meter";
 import {
   createVadState,
@@ -191,6 +192,7 @@ export function useVoiceSession({
   const ttsQueueRef = useRef<TtsQueueItem[]>([]);
   const ttsTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsEnvelopeRef = useRef<Float32Array | null>(null);
   const ttsObjectUrlRef = useRef<string | null>(null);
   const ttsActiveRef = useRef(false);
   const audioPlayingRef = useRef(false);
@@ -236,6 +238,7 @@ export function useVoiceSession({
   const releaseAudioElement = useCallback(() => {
     const audio = ttsAudioRef.current;
     ttsAudioRef.current = null;
+    ttsEnvelopeRef.current = null;
     audioPlayingRef.current = false;
     if (audio) {
       audio.onended = null;
@@ -283,6 +286,9 @@ export function useVoiceSession({
       const audio = new Audio(url);
       ttsAudioRef.current = audio;
       audioPlayingRef.current = true;
+      void decodeSpeechEnvelope(bytes).then((envelope) => {
+        if (ttsAudioRef.current === audio) ttsEnvelopeRef.current = envelope;
+      });
       const next = () => {
         releaseAudioElement();
         drainTts();
@@ -867,6 +873,14 @@ export function useVoiceSession({
     [cleanupMedia, client, releaseAudioElement],
   );
 
+  /** Loudness of the voice being played right now, 0..1 (Live avatar). */
+  const speechLevel = useCallback(() => {
+    const audio = ttsAudioRef.current;
+    if (!audio || audio.paused) return 0;
+    const envelope = ttsEnvelopeRef.current;
+    return envelope ? envelopeLevel(envelope, audio.currentTime) : syntheticSpeechLevel(audio.currentTime);
+  }, []);
+
   return {
     isListening: state === "listening",
     isSpeaking,
@@ -889,6 +903,7 @@ export function useVoiceSession({
     requestPrompt,
     setMuted,
     speak,
+    speechLevel,
     start,
     state,
     stop,

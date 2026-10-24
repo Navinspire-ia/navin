@@ -1,0 +1,12 @@
+{
+  "name": "frontend-design",
+  "version": "1.0.0",
+  "description": "Distinctive, production-grade interfaces that avoid the generic generated look: subject-driven direction, typography, palette, restrained motion and interface copy, built inside the locked design system.",
+  "category": "development",
+  "skills": ["frontend-design", "ui-ux-pro-max", "make-interfaces-feel-better"],
+  "steps": [
+    {"step": "choose a visual direction for a new interface", "use": "skill:frontend-design"},
+    {"step": "search styles, palettes and font pairings", "use": "skill:ui-ux-pro-max"},
+    {"step": "polish the finished interface", "use": "skill:make-interfaces-feel-better"}
+  ]
+}

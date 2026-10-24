@@ -19,11 +19,16 @@ already present in the workspace is skipped unless ``overwrite`` is set.
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+
+from loguru import logger
 
 from navin.session.manager import Session, SessionManager
 
@@ -100,9 +105,20 @@ def _rfc3339_to_iso(value: Any) -> str | None:
     return _to_naive_local(parsed).isoformat()
 
 
+# Wrappers tools put around pasted or injected text: a title is the user's
+# words, not "<pasted_content id=...>" or a system reminder.
+_TITLE_NOISE = re.compile(
+    r"<(pasted_content|system-reminder|command-name|command-message|command-args|"
+    r"local-command-stdout|local-command-caveat|environment_context|user_instructions|"
+    r"ide_selection|ide_opened_file)\b[^>]*>.*?</\1>|<[^>]{1,80}>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _title_from_text(text: str) -> str:
     """One-line, bounded title taken from the first user message."""
-    line = " ".join(text.split())
+    cleaned = _TITLE_NOISE.sub(" ", text)
+    line = " ".join((cleaned if cleaned.strip() else text).split())
     if len(line) > _MAX_TITLE_CHARS:
         line = line[: _MAX_TITLE_CHARS - 1].rstrip() + "..."
     return line
@@ -120,7 +136,7 @@ def _title_from_messages(messages: list[dict[str, Any]]) -> str:
     for msg in messages:
         if msg.get("role") != "user":
             continue
-        text = str(msg.get("content", "")).strip()
+        text = _TITLE_NOISE.sub(" ", str(msg.get("content", ""))).strip()
         if (
             len(text) >= _MIN_TITLE_LEN
             and not text.startswith(".")
@@ -157,6 +173,8 @@ class SourceReport:
     status: str  # ready | missing | unsupported
     sessions: list[ExternalSession] = field(default_factory=list)
     note: str = ""
+    # Set by a count-only discovery (sessions stays empty then).
+    count: int | None = None
 
 
 @dataclass
@@ -466,6 +484,11 @@ def _parse_opencode(root: Path) -> list[ExternalSession]:
                 updated_at=(
                     datetime.fromisoformat(updated_iso) if updated_iso else None
                 ),
+                origin_cwd=(
+                    meta["directory"]
+                    if isinstance(meta.get("directory"), str) and meta["directory"].strip()
+                    else None
+                ),
             )
         )
     return sessions
@@ -679,22 +702,172 @@ def _cursor_workspace_folder(conn: Any) -> str | None:
     return None
 
 
-def _parse_cursor(root: Path) -> list[ExternalSession]:
-    """Parse Cursor chat history from workspaceStorage state.vscdb files.
+def _cursor_uri_path(identifier: Any) -> str | None:
+    """Project folder from a composer's workspaceIdentifier (local or WSL remote)."""
+    uri = identifier.get("uri") if isinstance(identifier, dict) else None
+    if not isinstance(uri, dict):
+        return None
+    path = uri.get("path") or uri.get("fsPath")
+    return path if isinstance(path, str) and path.strip() else None
 
-    Two formats exist: per-composer keys ``composerData:<id>`` (newer)
-    and the legacy ``workbench.panel.aichat.view.aichat.chatdata`` blob.
+
+# Cursor's databases belong to another program, often still running (on the
+# Windows side under WSL) and sometimes huge: a real globalStorage/state.vscdb
+# weighs over 100 GB, read through /mnt/c. They are opened read-only and
+# immutable (no lock taken, no -wal/-shm touched, so a live Cursor can never
+# block us), with a short busy timeout, and every scan of one Cursor root
+# runs under a wall-clock budget enforced by a SQLite progress handler: a
+# query past the deadline is interrupted instead of grinding on.
+_CURSOR_SCAN_BUDGET_S = 180.0
+_CURSOR_COUNT_BUDGET_S = 30.0
+_SQLITE_BUSY_TIMEOUT_S = 2.0
+
+
+def _foreign_sqlite_uri(db_path: Path) -> str:
+    # Only the characters that end or escape a URI path are encoded; the
+    # path itself stays native (a Windows UNC share keeps its backslashes).
+    raw = str(db_path).replace("%", "%25").replace("?", "%3F").replace("#", "%23")
+    return f"file:{raw}?mode=ro&immutable=1"
+
+
+def _open_foreign_sqlite(db_path: Path, deadline: float | None = None) -> Any:
+    """Open another program's SQLite file read-only, never waiting on its locks.
+
+    With *deadline* (a ``time.monotonic()`` value), any statement still
+    running past it fails with ``sqlite3.OperationalError`` (interrupted).
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(
+        _foreign_sqlite_uri(db_path), uri=True, timeout=_SQLITE_BUSY_TIMEOUT_S
+    )
+    if deadline is not None:
+        conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10_000)
+    return conn
+
+
+def _parse_cursor_global(db_path: Path, deadline: float | None = None) -> list[ExternalSession]:
+    """Parse the composer conversations Cursor keeps in globalStorage.
+
+    Current Cursor writes every chat to globalStorage/state.vscdb, table
+    cursorDiskKV: ``composerData:<id>`` (title, project, ordered message
+    ids) and ``bubbleId:<id>:<bubble>`` (each message, type 1 user / 2
+    assistant). The workspaceStorage databases the older parser reads are
+    empty there, so a machine with hundreds of Cursor chats imported none.
+    The file can weigh tens of GB: it is opened read-only in place, and each
+    conversation's messages come back in one range query.
+    """
+    import sqlite3
+
+    sessions: list[ExternalSession] = []
+    if not db_path.is_file():
+        return sessions
+    try:
+        conn = _open_foreign_sqlite(db_path, deadline)
+    except sqlite3.Error:
+        return sessions
+    try:
+        try:
+            heads = conn.execute(
+                "SELECT composerId, createdAt, lastUpdatedAt FROM composerHeaders "
+                "WHERE COALESCE(isSubagent, 0) = 0"
+            ).fetchall()
+        except sqlite3.Error:
+            return sessions
+        for composer_id, created, updated in heads:
+            if deadline is not None and time.monotonic() > deadline:
+                logger.warning(
+                    "session import: Cursor history scan stopped after its time budget "
+                    "({} of {} conversations read)", len(sessions), len(heads)
+                )
+                break
+            try:
+                row = conn.execute(
+                    "SELECT value FROM cursorDiskKV WHERE key = ?", (f"composerData:{composer_id}",)
+                ).fetchone()
+            except sqlite3.Error:
+                break
+            if not row:
+                continue
+            try:
+                data = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            order = [
+                (head.get("bubbleId"), head.get("type"))
+                for head in data.get("fullConversationHeadersOnly") or []
+                if isinstance(head, dict) and head.get("bubbleId")
+            ]
+            texts: dict[str, str] = {}
+            try:
+                bubbles = conn.execute(
+                    "SELECT key, value FROM cursorDiskKV WHERE key >= ? AND key < ?",
+                    (f"bubbleId:{composer_id}:", f"bubbleId:{composer_id};"),
+                ).fetchall()
+            except sqlite3.Error:
+                break
+            for key, value in bubbles:
+                try:
+                    bubble = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(bubble, dict) and isinstance(bubble.get("text"), str):
+                    texts[str(key).rsplit(":", 1)[-1]] = bubble["text"]
+            stamp_created = _epoch_ms_to_iso(created or data.get("createdAt"))
+            messages: list[dict[str, Any]] = []
+            for bubble_id, kind in order:
+                text = texts.get(str(bubble_id), "")
+                message = _message("user" if kind == 1 else "assistant", text, None)
+                if message:
+                    messages.append(message)
+            # Older composers kept the conversation inline.
+            if not messages and isinstance(data.get("conversation"), list):
+                messages = _cursor_messages(data["conversation"])
+            if not messages:
+                continue
+            title = str(data.get("name") or "").strip() or _title_from_messages(messages)
+            sessions.append(
+                ExternalSession(
+                    source="cursor",
+                    session_id=str(composer_id),
+                    title=title,
+                    messages=messages,
+                    origin_path=db_path,
+                    created_at=datetime.fromisoformat(stamp_created) if stamp_created else None,
+                    updated_at=(
+                        datetime.fromisoformat(iso)
+                        if (iso := _epoch_ms_to_iso(updated)) else None
+                    ),
+                    origin_cwd=_cursor_uri_path(data.get("workspaceIdentifier")),
+                )
+            )
+    finally:
+        conn.close()
+    return sessions
+
+
+def _parse_cursor(root: Path) -> list[ExternalSession]:
+    """Parse Cursor chat history: the global composer store, then workspaceStorage.
+
+    Formats, newest first: globalStorage cursorDiskKV composers (see
+    _parse_cursor_global), per-workspace ``composerData:<id>`` keys, and the
+    legacy ``workbench.panel.aichat.view.aichat.chatdata`` blob.
     """
     import sqlite3
 
     sessions: list[ExternalSession] = []
     if not root.is_dir():
         return sessions
+    deadline = time.monotonic() + _CURSOR_SCAN_BUDGET_S
+    sessions.extend(_parse_cursor_global(root.parent / "globalStorage" / "state.vscdb", deadline))
     for db_path in sorted(root.glob("*/state.vscdb")):
+        if time.monotonic() > deadline:
+            logger.warning("session import: Cursor workspace scan stopped after its time budget")
+            break
         try:
-            conn = sqlite3.connect(
-                f"file:{db_path}?mode=ro", uri=True, timeout=2.0
-            )
+            conn = _open_foreign_sqlite(db_path, deadline)
         except sqlite3.Error:
             continue
         try:
@@ -762,8 +935,95 @@ class _SourceSpec:
     extra_roots: tuple[Path, ...] = ()
 
 
+def _windows_homes() -> list[Path]:
+    """Windows user folders reachable from WSL (/mnt/c/Users/<name>).
+
+    A WSL user very often runs Cursor, Claude Code or Codex on the Windows
+    side: their history lives under the Windows profile, not ~ in Linux.
+    """
+    if os.name == "nt" or not (
+        os.environ.get("WSL_DISTRO_NAME") or "microsoft" in _kernel_release().lower()
+    ):
+        return []
+    # Only for the account's real home: a relocated home (a sandbox, a test,
+    # another profile) must not reach into the Windows user's data.
+    try:
+        import pwd
+
+        if Path(pwd.getpwuid(os.getuid()).pw_dir).resolve() != Path.home().resolve():
+            return []
+    except (ImportError, KeyError, OSError):
+        return []
+    users = Path("/mnt/c/Users")
+    skip = {"public", "default", "default user", "all users", "wsiaccount", "defaultapppool"}
+    try:
+        return sorted(p for p in users.iterdir() if p.is_dir() and p.name.lower() not in skip)
+    except OSError:
+        return []
+
+
+def _wsl_homes() -> list[Path]:
+    """Linux home folders of the WSL distributions, seen from Windows.
+
+    The other way round from _windows_homes: Navin runs on Windows while
+    Claude Code, Codex or OpenCode run inside WSL (Ubuntu...), so their history
+    lives under the distribution share (wsl.localhost, distro, home, user). Distributions come
+    from the registry, where WSL lists them.
+    """
+    if os.name != "nt":
+        return []
+    try:
+        import winreg
+
+        names: list[str] = []
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Lxss") as lxss:
+            index = 0
+            while True:
+                try:
+                    guid = winreg.EnumKey(lxss, index)
+                except OSError:
+                    break
+                index += 1
+                try:
+                    with winreg.OpenKey(lxss, guid) as entry:
+                        name, _ = winreg.QueryValueEx(entry, "DistributionName")
+                        if name and not str(name).lower().startswith("docker-desktop"):
+                            names.append(str(name))
+                except OSError:
+                    continue
+    except (ImportError, OSError):
+        return []
+    homes: list[Path] = []
+    for name in names:
+        for share in ("wsl.localhost", "wsl$"):
+            root = Path(f"\\\\{share}\\{name}")
+            try:
+                users = [p for p in (root / "home").iterdir() if p.is_dir()]
+            except OSError:
+                continue
+            homes.extend(sorted(users))
+            if (root / "root").is_dir():
+                homes.append(root / "root")
+            break
+    return homes
+
+
+def _kernel_release() -> str:
+    try:
+        return Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _source_specs() -> list[_SourceSpec]:
     home = Path.home()
+    # The other side of the machine: Windows profiles from WSL, WSL homes from Windows.
+    # Best effort: a registry or share error here must not hide the local sources.
+    try:
+        win_homes = _windows_homes() + _wsl_homes()
+    except Exception:  # noqa: BLE001
+        logger.exception("session import: could not list the other side of this machine")
+        win_homes = []
     # Cursor stores its workspaceStorage under platform-specific locations:
     # Linux ~/.config/Cursor, macOS ~/Library/Application Support/Cursor,
     # Windows %APPDATA%/Cursor. All candidates are probed on every platform
@@ -773,6 +1033,7 @@ def _source_specs() -> list[_SourceSpec]:
         home / "Library" / "Application Support" / "Cursor" / "User"
         / "workspaceStorage",
         home / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage",
+        *(win / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage" for win in win_homes),
     )
     return [
         _SourceSpec(
@@ -780,25 +1041,28 @@ def _source_specs() -> list[_SourceSpec]:
             "Claude Code",
             home / ".claude" / "projects",
             _parse_claude_code,
+            extra_roots=tuple(win / ".claude" / "projects" for win in win_homes),
         ),
         _SourceSpec(
             "codex",
             "Codex",
             home / ".codex" / "sessions",
             _parse_codex,
+            extra_roots=tuple(win / ".codex" / "sessions" for win in win_homes),
         ),
         _SourceSpec(
             "opencode",
             "OpenCode",
             home / ".local" / "share" / "opencode" / "storage",
             _parse_opencode,
+            extra_roots=tuple(win / ".local" / "share" / "opencode" / "storage" for win in win_homes),
         ),
         _SourceSpec(
             "oh-my-pi",
             "oh-my-pi",
             home / ".omp",
             _parse_oh_my_pi,
-            extra_roots=(home / ".oh-my-pi",),
+            extra_roots=(home / ".oh-my-pi", *(win / ".omp" for win in win_homes)),
         ),
         _SourceSpec(
             "cursor",
@@ -897,11 +1161,84 @@ def remove_extra_root(source: str, path: str) -> dict[str, list[str]]:
     return roots
 
 
+def _cursor_ids(root: Path) -> set[str]:
+    """Conversation ids Cursor indexes, without reading any conversation."""
+    import sqlite3
+
+    ids: set[str] = set()
+    deadline = time.monotonic() + _CURSOR_COUNT_BUDGET_S
+    global_db = root.parent / "globalStorage" / "state.vscdb"
+    if global_db.is_file():
+        try:
+            conn = _open_foreign_sqlite(global_db, deadline)
+            try:
+                ids.update(
+                    str(row[0]) for row in conn.execute(
+                        "SELECT composerId FROM composerHeaders WHERE COALESCE(isSubagent, 0) = 0"
+                    )
+                )
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+    for db_path in root.glob("*/state.vscdb"):
+        if time.monotonic() > deadline:
+            logger.warning("session import: Cursor count stopped after its time budget")
+            break
+        try:
+            conn = _open_foreign_sqlite(db_path, deadline)
+            try:
+                ids.update(
+                    str(row[0]).split(":", 1)[-1] for row in conn.execute(
+                        "SELECT key FROM ItemTable WHERE key LIKE 'composerData:%'"
+                    )
+                )
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+    return ids
+
+
+def _file_ids(patterns: Sequence[str]) -> Callable[[Path], set[str]]:
+    def count(root: Path) -> set[str]:
+        return {path.stem for pattern in patterns for path in root.glob(pattern)}
+
+    return count
+
+
+# Count-only discovery: the scan shown before an import lists files or one
+# index, never the conversations. Reading every transcript there (hundreds
+# of Cursor chats in a database of tens of GB, through /mnt/c under WSL)
+# took minutes; the content is read by the import job itself.
+_COUNTERS: dict[str, Callable[[Path], set[str]]] = {
+    "claude-code": _file_ids(("*/*.jsonl",)),
+    "codex": _file_ids(("*/*/*/rollout-*.jsonl",)),
+    "opencode": _file_ids(("session/*/ses_*.json",)),
+    "oh-my-pi": _file_ids(("agent/sessions/*/*.jsonl", "sessions/*/*.jsonl")),
+    "cursor": _cursor_ids,
+}
+
+
+def _root_exists(path: Path) -> bool:
+    """``Path.exists`` that never raises.
+
+    On Windows a path under ``\\\\wsl.localhost\\<distro>`` or a mapped drive that
+    is asleep or unreachable can raise (WinError 53, 1326, a permission error)
+    instead of answering "no". One such root must not sink the whole scan.
+    """
+    try:
+        return path.exists()
+    except (OSError, ValueError):
+        return False
+
+
 def discover(
     sources: Sequence[str],
     extra_roots: Mapping[str, Sequence[Path | str]] | None = None,
     *,
     include_saved_roots: bool = True,
+    count_only: bool = False,
 ) -> list[SourceReport]:
     """Locate each requested source on this machine and parse what is ready.
 
@@ -927,7 +1264,7 @@ def discover(
             *(Path(p) for p in saved.get(spec.name, [])),
             *call_time.get(spec.name, []),
         ]
-        existing = list(dict.fromkeys(r for r in roots if r.exists()))
+        existing = list(dict.fromkeys(r for r in roots if _root_exists(r)))
         if not existing:
             reports.append(
                 SourceReport(
@@ -954,14 +1291,64 @@ def discover(
                 )
             )
             continue
+        counter = _COUNTERS.get(spec.name)
+        if count_only and counter is not None:
+            ids: set[str] = set()
+            failure: str | None = None
+            for scan_root in existing:
+                try:
+                    ids |= counter(scan_root)
+                except OSError:
+                    continue
+                except Exception as exc:  # noqa: BLE001 - one unreadable source must not sink the scan
+                    logger.exception("session import: counting {} in {} failed", spec.name, scan_root)
+                    failure = f"{type(exc).__name__}: {exc}"
+            if failure and not ids:
+                reports.append(
+                    SourceReport(
+                        name=spec.name,
+                        label=spec.label,
+                        root=root,
+                        status="unsupported",
+                        note=f"could not read this source ({failure[:160]})",
+                    )
+                )
+                continue
+            reports.append(
+                SourceReport(
+                    name=spec.name,
+                    label=spec.label,
+                    root=root,
+                    status="ready",
+                    note="" if ids else "no readable sessions found",
+                    count=len(ids),
+                )
+            )
+            continue
         sessions: list[ExternalSession] = []
         seen_ids: set[str] = set()
+        failure = None
         for scan_root in existing:
-            for session in spec.parse(scan_root):
-                if session.session_id in seen_ids:
-                    continue
-                seen_ids.add(session.session_id)
-                sessions.append(session)
+            try:
+                for session in spec.parse(scan_root):
+                    if session.session_id in seen_ids:
+                        continue
+                    seen_ids.add(session.session_id)
+                    sessions.append(session)
+            except Exception as exc:  # noqa: BLE001 - one unreadable source must not sink the import
+                logger.exception("session import: reading {} in {} failed", spec.name, scan_root)
+                failure = f"{type(exc).__name__}: {exc}"
+        if failure and not sessions:
+            reports.append(
+                SourceReport(
+                    name=spec.name,
+                    label=spec.label,
+                    root=root,
+                    status="unsupported",
+                    note=f"could not read this source ({failure[:160]})",
+                )
+            )
+            continue
         reports.append(
             SourceReport(
                 name=spec.name,
@@ -991,6 +1378,33 @@ def _naive_messages(
 
 def _existing_session_paths(manager: SessionManager) -> set[str]:
     return {path.name for path in manager.sessions_dir.glob("*.jsonl")}
+
+
+def _origin_project(origin_cwd: str | None) -> Path | None:
+    """The project a session was about, when it still exists here.
+
+    Pinning the import to that folder is what makes Navin load the project's
+    own AGENTS.md / CLAUDE.md, rules (.cursor/rules, .claude, .navin/rules),
+    skills and agents when the conversation is resumed, exactly as if it had
+    started in Navin there. The home directory or a filesystem root is not a
+    project (Codex records ~ when launched there): those fall back to the
+    import workspace.
+    """
+    if not origin_cwd:
+        return None
+    raw = origin_cwd.strip()
+    # Cursor and Windows-side tools record Windows paths; under WSL they are
+    # reachable through /mnt/<drive>.
+    win = re.match(r"^/?([A-Za-z]):[\\/](.*)$", raw)
+    if win and os.name != "nt":
+        raw = f"/mnt/{win.group(1).lower()}/{win.group(2).replace(chr(92), '/')}"
+    try:
+        path = Path(raw).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    if not path.is_dir() or path == Path.home().resolve() or len(path.parts) <= 1:
+        return None
+    return path
 
 
 def import_to_workspace(
@@ -1037,6 +1451,11 @@ def import_to_workspace(
                     else datetime.now()
                 ),
                 metadata={
+                    # Same markers a chat opened in the desktop carries
+                    # (webui + workspace_scope with an access mode), so the
+                    # imported conversation lists, resumes and loads its
+                    # project exactly like one started in Navin.
+                    "webui": True,
                     # Sessions made of throwaway keystrokes (".", ".exit")
                     # have no real title; show something instead of blank.
                     "title": external.title.strip() or "Session importée",
@@ -1047,7 +1466,11 @@ def import_to_workspace(
                     # desktop shows it under that project instead of
                     # falling back to the default scope.
                     "workspace_scope": {
-                        "project_path": str(workspace.expanduser().resolve()),
+                        "project_path": str(
+                            _origin_project(external.origin_cwd)
+                            or workspace.expanduser().resolve()
+                        ),
+                        "access_mode": "full",
                     },
                     **(
                         {"origin_cwd": external.origin_cwd}

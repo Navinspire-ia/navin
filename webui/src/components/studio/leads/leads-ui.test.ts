@@ -116,5 +116,12 @@ describe("leads catalog URLs leave the IDE", () => {
     expect(start).toContain("leads-start-countries");
     expect(start).toContain("countryOptions");
     expect(start).not.toContain('"FR", "BE", "CH"');
+    const workspace = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "LeadsWorkspace.tsx"),
+      "utf8",
+    );
+    // The book always offers a new hunt, not only on first setup.
+    expect(workspace).toContain('data-testid="leads-new-search"');
+    expect(workspace).toMatch(/onNewSearch=\{\(\) => \{\s*setProvidersOpen\(false\);\s*setView\("setup"\);/);
   });
 });

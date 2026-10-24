@@ -35,6 +35,9 @@ class _FakeSessions:
     def save(self, session) -> None:
         self.saved += 1
 
+    async def save_async(self, session) -> None:
+        self.save(session)
+
 
 def _msg(
     content: str = "/stop",
@@ -414,12 +417,24 @@ def _dispatch_stub(bus: _FakeBus, process_message) -> SimpleNamespace:
 
 
 class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
-    async def test_cancelled_turn_drops_pending_leftovers(self) -> None:
+    async def test_cancelled_turn_keeps_user_followups_in_order(self) -> None:
+        from navin.session.turn_continuation import INTERNAL_CONTINUATION_META
+
         bus = _FakeBus()
         started = asyncio.Event()
 
         async def fake_process(msg, on_stream=None, on_stream_end=None, pending_queue=None):
-            pending_queue.put_nowait(_msg("continuation slice"))
+            pending_queue.put_nowait(_msg("first follow-up"))
+            internal = _msg("continuation slice")
+            internal.metadata[INTERNAL_CONTINUATION_META] = True
+            pending_queue.put_nowait(internal)
+            sub = _msg("subagent result")
+            sub.sender_id = "subagent"
+            pending_queue.put_nowait(sub)
+            event = _msg("exec event")
+            event.metadata["injected_event"] = True
+            pending_queue.put_nowait(event)
+            pending_queue.put_nowait(_msg("second follow-up"))
             started.set()
             await asyncio.Event().wait()  # block until cancelled
 
@@ -430,7 +445,11 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
-        self.assertEqual(bus.inbound, [])  # nothing re-published: the run truly stops
+        # User follow-ups survive /stop in order; internal continuations die.
+        self.assertEqual(
+            [m.content for m in bus.inbound], ["first follow-up", "second follow-up"],
+        )
+        self.assertTrue(all(m.session_key == "websocket:chat-1" for m in bus.inbound))
         self.assertEqual(stub._pending_queues, {})
         self.assertEqual(stub._loop_guards, {})
 
@@ -446,3 +465,49 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(bus.inbound), 1)
         self.assertEqual(bus.inbound[0].content, "continuation slice")
+
+
+class ParentTurnConcurrencyTest(unittest.IsolatedAsyncioTestCase):
+    """Busy conversations must not wait on each other behind the agent cap."""
+
+    def _msg(self, chat_id: str) -> InboundMessage:
+        return InboundMessage(channel="websocket", sender_id="u", chat_id=chat_id, content="hi")
+
+    async def _run_two(self, env: dict[str, str]) -> int:
+        import os
+        from unittest import mock
+
+        running = 0
+        peak = 0
+        release = asyncio.Event()
+
+        async def process_message(msg, **_kw):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await release.wait()
+            running -= 1
+            return None
+
+        stub = _dispatch_stub(_FakeBus(), process_message)
+        stub._loop_guards = {}
+        stub._concurrency_gate = asyncio.Semaphore(1)
+        with mock.patch.dict(os.environ, env, clear=False):
+            if not env:
+                os.environ.pop("NAVIN_MAX_CONCURRENT_REQUESTS", None)
+            tasks = [
+                asyncio.create_task(AgentLoop._dispatch(stub, self._msg(c)))
+                for c in ("chat-a", "chat-b")
+            ]
+            for _ in range(20):
+                await asyncio.sleep(0)
+            seen = peak
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
+        return seen
+
+    async def test_plan_cap_does_not_queue_other_conversations(self) -> None:
+        self.assertEqual(await self._run_two({}), 2)
+
+    async def test_explicit_operator_cap_still_applies(self) -> None:
+        self.assertEqual(await self._run_two({"NAVIN_MAX_CONCURRENT_REQUESTS": "1"}), 1)

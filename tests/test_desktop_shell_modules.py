@@ -226,7 +226,17 @@ class DesktopShellModulesTest(unittest.TestCase):
         plan = (ROOT / "webui/src/components/thread/ThreadPlanPanel.tsx").read_text(
             encoding="utf-8"
         )
-        self.assertIn("ReasoningCard", cluster)
+        journal = (
+            ROOT / "webui/src/components/thread/activity/ActivityJournal.tsx"
+        ).read_text(encoding="utf-8")
+        bubble = (ROOT / "webui/src/components/MessageBubble.tsx").read_text(
+            encoding="utf-8"
+        )
+        # In a turn's activity, thinking is a journal step between the calls
+        # it led to, opened from its preview; standalone thoughts keep the card.
+        self.assertIn('kind: "reasoning"', cluster)
+        self.assertIn("ReasoningJournalBody", journal)
+        self.assertIn("<ReasoningCard", bubble)
         self.assertNotIn("<ReasoningRow", cluster)
         self.assertIn('data-testid="activity-reasoning-card"', card)
         self.assertNotIn("rounded-xl border", card)
@@ -299,6 +309,21 @@ class DesktopShellModulesTest(unittest.TestCase):
         rust = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
         self.assertIn("NAVIN_DESKTOP_PID", rust)
         self.assertIn("NAVIN_DESKTOP_APP", rust)
+
+    def test_desktop_startup_recovers_after_an_update_without_terminal_advice(self) -> None:
+        """After an update the first engine start can exit: relaunch it, never send users to a terminal."""
+        electron = (ROOT / "desktop-electron/main.js").read_text(encoding="utf-8")
+        rust = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
+        for name, source in (("electron", electron), ("tauri", rust)):
+            with self.subTest(shell=name):
+                self.assertNotIn("in a terminal", source)
+                self.assertNotIn("to see the logs", source)
+                self.assertIn("STARTUP_RETRIES", source)
+                self.assertIn("desktop-engine.log", source)
+        self.assertIn("await waitPortsReleased(webui, gateway);", electron)
+        self.assertIn("attempts > STARTUP_RETRIES", electron)
+        self.assertIn("wait_ports_released(", rust)
+        self.assertIn("startup_attempts > STARTUP_RETRIES", rust)
 
 
 if __name__ == "__main__":

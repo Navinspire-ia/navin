@@ -1,6 +1,6 @@
 [project]
 name = "navin-ai"
-version = "2.1.0"
+version = "2.3.5"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -38,7 +38,7 @@ dependencies = [
     "loguru>=0.7.3,<1.0.0",
     "readability-lxml>=0.8.4,<1.0.0",
     "lxml-html-clean>=0.4.0,<1.0.0",
-    "rich>=14.0.0,<15.0.0",
+    "rich>=14.3.3,<15.0.0",
     "croniter>=6.0.0,<7.0.0",
     "prompt-toolkit>=3.0.50,<4.0.0",
     "textual>=6.0.0,<7.0.0",
@@ -91,6 +91,9 @@ azure = [
 ]
 bedrock = [
     "boto3>=1.43.0",
+    # Live with Nova Sonic: Bedrock's bidirectional stream (not in boto3).
+    "aws-sdk-bedrock-runtime>=0.11.0; python_version >= '3.12'",
+    "awscrt>=0.27.0; python_version >= '3.12'",
 ]
 documents = [
     # Compatibility extra: document readers are bundled since v0.2.3.
@@ -197,7 +200,9 @@ computer = [
 dev = [
     "aiohttp>=3.9.0,<4.0.0",
     "ruff>=0.1.0",
-    "pymupdf>=1.25.0",
+    # Keep the legacy fitz API on the maintained 1.x line: PyMuPDF 2.0's
+    # source metadata is published as pymupdf-lite and fails uv resolution.
+    "pymupdf>=1.25.0,<2.0.0",
     "pypdf>=5.0.0,<7.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
@@ -257,8 +262,23 @@ include = [
     "navin/skills/**/*.sh",
     "navin/skills/**/*.py",
     "navin/skills/**/*.csv",
+    "navin/builtin_agents/*.md",
+    "navin/builtin_commands/*.md",
+    "navin/builtin_plugins/*/plugin.json",
+    "navin/builtin_plugins/*/README.md",
+    "navin/marketplace.json",
     "navin/web/dist/**/*",
     "navin/browser_extension/*.zip",
+    # Motion engine runtime: vendored three.js / GSAP / Inter + templates
+    # (renders never fetch a CDN; PyInstaller picks these up via
+    # collect_data_files("navin")).
+    "navin/montage/motion/assets/**/*",
+    "navin/montage/motion/templates/*.html",
+    # Footage polish cursor sprites (also drawn as vectors at run time).
+    "navin/montage/assets/*.png",
+    # Canvas kit, inlined into every canvas artifact (no network at view time).
+    "navin/artifacts/canvas/kit.js",
+    "navin/artifacts/canvas/kit.css",
 ]
 # navin/web/dist/ is produced by `cd webui && bun run build` and is
 # git-ignored. List it as an artifact so hatch ships it in both wheel and

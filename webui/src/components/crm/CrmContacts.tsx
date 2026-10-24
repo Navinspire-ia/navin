@@ -161,7 +161,7 @@ export function CrmContacts({
                       type="button"
                       onClick={() => onOpen(row.id)}
                       className={cn(
-                        "flex min-h-10 w-full cursor-pointer items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-muted/40",
+                        "flex min-h-10 w-full cursor-pointer items-center justify-between px-3 py-2 text-start text-[13px] hover:bg-muted/40",
                         openId === row.id && "bg-muted/50",
                       )}
                     >

@@ -37,7 +37,8 @@ def rendered_content(widget):
         elif isinstance(node, MarkdownTableCellContents):
             result.append((type(node).__name__, node.content.plain))
         elif isinstance(node, MarkdownFence):
-            result.append((type(node).__name__, node.query_one("#code-content").content.plain, node.source))
+            # Transcript fences add a copy icon; the block and its code are the same.
+            result.append(("MarkdownFence", node.query_one("#code-content").content.plain, node.source))
         elif isinstance(node, MarkdownBlock):
             result.append((type(node).__name__, node._content.plain, node.source))
     return result
@@ -149,3 +150,84 @@ def test_outcome_words_are_colored_and_prose_stays_neutral():
     assert spans["2 failed"] == ".status_fail"
     assert spans["1 skipped"] == ".status_warn"
     assert "error" not in spans
+
+
+def test_growing_paragraph_relayouts_the_screen_only_when_it_wraps(monkeypatch):
+    from textual.widgets._markdown import MarkdownParagraph
+
+    async def run():
+        app = StreamHost()
+        async with app.run_test(size=(60, 40)) as pilot:
+            stream = app.query_one("#stream", TranscriptMarkdown)
+            await stream.append("Short")
+            await pilot.pause()
+            paragraph = stream.query_one(MarkdownParagraph)
+            layouts = []
+            original = paragraph.refresh
+
+            def refresh(*args, layout=False, **kwargs):
+                layouts.append(layout)
+                return original(*args, layout=layout, **kwargs)
+
+            monkeypatch.setattr(paragraph, "refresh", refresh)
+            await stream.append(" words")
+            assert layouts and not any(layouts)
+            assert paragraph._content.plain == "Short words"
+            await stream.append(" and a sentence long enough to wrap onto a second line here")
+            assert any(layouts)
+            await pilot.pause()
+            assert paragraph.size.height == 2
+            assert stream.query_one(MarkdownParagraph) is paragraph
+    asyncio.run(run())
+
+
+def test_markdown_parser_is_built_once_per_stream():
+    async def run():
+        app = StreamHost()
+        async with app.run_test(size=(100, 40)):
+            stream = app.query_one("#stream", TranscriptMarkdown)
+            await stream.append("One. ")
+            parser = stream._parser()
+            await stream.append("Two.\n\n- three\n")
+            assert stream._parser() is parser
+            stream._parser_factory = lambda: parser
+            assert stream._parser() is parser
+    asyncio.run(run())
+
+
+class ScrolledStreamHost(App):
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Static
+
+        with VerticalScroll(id="scroll"):
+            yield AssistantMessage()
+            yield Static("\n".join(f"filler {index}" for index in range(120)))
+        yield Composer()
+
+
+def test_offscreen_answer_buffers_its_stream_until_visible_or_finished():
+    async def run():
+        app = ScrolledStreamHost()
+        async with app.run_test(size=(80, 20)) as pilot:
+            block = app.query_one(AssistantMessage)
+            await block.delta("First words.")
+            await pilot.pause(0.15)
+            markdown = block.query_one(TranscriptMarkdown)
+            assert markdown.source == "First words."
+            scroll = app.query_one("#scroll", VerticalScroll)
+            scroll.scroll_end(animate=False, immediate=True)
+            await pilot.pause(0.05)
+            await block.delta(" Hidden growth.")
+            await pilot.pause(0.15)
+            # Out of view: no parse and no relayout for it yet.
+            assert markdown.source == "First words."
+            assert block.copy_text() == "First words. Hidden growth."
+            scroll.scroll_home(animate=False, immediate=True)
+            await pilot.pause(0.4)
+            assert markdown.source == "First words. Hidden growth."
+            scroll.scroll_end(animate=False, immediate=True)
+            await pilot.pause(0.05)
+            await block.delta(" Final.")
+            await block.finish(latency_ms=1, model=None, preset=None)
+            assert "Final." in block.query_one(TranscriptMarkdown).source
+    asyncio.run(run())

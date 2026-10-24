@@ -1,24 +1,22 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Which business desk a chat turn is actually about.
+"""Which business desk a chat turn explicitly opened.
 
 The desk tools (``tenders``, ``career``, ``leads``, ``marketing``,
-``trading``) declare dozens of actions each, so their schemas cost ~9k
-tokens together. Measured 2026-09-01: a 57k prompt is ~2.3s slower per
-model call than a small one *even at a 100% cache hit*, and a multi-step
-turn pays that on every step. Shipping all five desks on a turn about
-Python was renting that penalty permanently.
+``trading``, ``montage``, ``crm``) declare dozens of actions each, so their
+schemas cost ~9k tokens together. Measured 2026-09-01: a 57k prompt is ~2.3s
+slower per model call than a small one *even at a 100% cache hit*.
 
-Inside a product module the WebUI already scopes them (see
-``extra_denied_tools_for_module``). This module covers the rest - CLI,
-Telegram, and a plain chat with no module - by reading the user's text the
-same rule-based way :mod:`navin.agent.media_intent` reads an image request:
-name the desk (or its slash command) and it comes back for the turn.
+Each desk is an isolated module: inside its product module the WebUI keeps
+it (see ``extra_denied_tools_for_module``); everywhere else, Navin Code (CLI,
+Code workbench) included, only the desk's own slash command opens it.
 
-Rule-based on purpose: the routing must hold when the primary model has
-failed over to a smaller one, which is exactly when a model-based router
-would drop it.
+Plain words used to open desks too, and on a coding turn they misfired all
+the time: "resume en 3 points" opened ``career``, "navin/trading/store.py"
+opened ``trading``, "un champ contacts" opened ``crm``. Each misfire added
+its schema to every later step and, because tools lead the prompt, threw
+away the whole prompt cache of the conversation.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ TRADING_TOOL = "trading"
 MONTAGE_TOOL = "montage"
 CRM_TOOL = "crm"
 
-#: Desks the Code workbench keeps out of the schema until a turn names them.
+#: Desks the Code workbench keeps out of the schema until their slash command.
 #: Measured 2026-09-02: montage 1 633 + crm 372 tokens on every step of a
 #: code turn that never edits a video or a contact.
 CODE_WORKBENCH_LIFTABLE_DESKS: frozenset[str] = frozenset({MONTAGE_TOOL, CRM_TOOL})
@@ -52,110 +50,11 @@ _DESK_COMMANDS: dict[str, tuple[str, ...]] = {
     "/crm": (CRM_TOOL,),
 }
 
-# Nouns that name the desk's subject. Accents are stripped before matching,
-# so "marché" and "marche" are the same token. Kept deliberately narrow: a
-# false positive only costs prompt tokens, but it costs them on every step.
-_DESK_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        TENDERS_TOOL,
-        re.compile(
-            r"\b("
-            r"appels? d offres?|appel d offre|"
-            r"marches? publics?|marche public|"
-            r"consultations?|dce|boamp|ted europa|"
-            r"tenders?|tendering|rfp|rfps|rfq|rfi|"
-            r"soumissions?|candidatures? (?:administrative|technique)|"
-            r"memoires? techniques?|cctp|ccap|"
-            r"procurement|bid|bids|bidding"
-            r")\b"
-        ),
-    ),
-    (
-        CAREER_TOOL,
-        re.compile(
-            r"\b("
-            r"cv|cvs|resume|resumes|curriculum vitae|"
-            r"lettres? de motivation|cover letters?|"
-            r"offres? d emploi|offre d emploi|recherche d emploi|"
-            r"job (?:search|application|applications|offer|offers|board)|"
-            r"candidatures? spontanees?|entretiens? d embauche|"
-            r"job interviews?|ats|linkedin profile|"
-            r"salaire|salary negotiation|negociation salariale"
-            r")\b"
-        ),
-    ),
-    (
-        LEADS_TOOL,
-        re.compile(
-            r"\b("
-            r"leads?|prospects?|prospection|prospecting|"
-            r"icp|ideal customer profile|"
-            r"cold (?:email|emails|outreach|call|calls)|"
-            r"sequences? d outreach|outreach sequences?|"
-            r"sirene|pappers|apollo|hunter io|opencorporates|"
-            r"lead (?:gen|generation|enrichment|scoring|qualification)|"
-            r"pipeline commercial"
-            r")\b"
-        ),
-    ),
-    (
-        MARKETING_TOOL,
-        re.compile(
-            r"\b("
-            r"campagnes? marketing|marketing campaigns?|"
-            r"brand book|livre de marque|charte de marque|"
-            r"calendriers? editoriaux?|editorial calendar|"
-            r"creatives? publicitaires?|ad creatives?|"
-            r"posts? (?:instagram|linkedin|facebook|tiktok|x)|"
-            r"newsletters?|email marketing|"
-            r"growth (?:loop|marketing)|"
-            r"budget ads?|paid ads?|google ads|meta ads"
-            r")\b"
-        ),
-    ),
-    (
-        TRADING_TOOL,
-        re.compile(
-            r"\b("
-            r"trading|trade setups?|"
-            r"portefeuilles? (?:boursier|d actions|titres)|"
-            r"portfolios?|"
-            r"actions? (?:cotees?|en bourse)|bourse|"
-            r"tickers?|watchlists?|"
-            r"backtests?|backtesting|"
-            r"crypto|bitcoin|ethereum|altcoins?|"
-            r"dividendes?|dividends?|"
-            r"stop loss|take profit"
-            r")\b"
-        ),
-    ),
-    (
-        MONTAGE_TOOL,
-        re.compile(
-            r"\b("
-            r"montage|montages|"
-            r"videos?|clips?|reels?|shorts?|"
-            r"youtube|tiktok|"
-            r"sous titres?|subtitles?|srt|captions?|"
-            r"b roll|stock footage|footage|"
-            r"voix off|voice ?over|"
-            r"demo video|video demo|screencast|"
-            r"content calendar|calendrier de contenu"
-            r")\b"
-        ),
-    ),
-    (
-        CRM_TOOL,
-        re.compile(
-            r"\b("
-            r"crm|"
-            r"contacts?|fiches? (?:client|contact|societe|entreprise)|"
-            r"opportunites?|opportunit(?:y|ies)|deals?|"
-            r"pipeline (?:de ventes?|commercial)|sales pipeline|"
-            r"devis|quotes?|line items?"
-            r")\b"
-        ),
-    ),
+# A command only counts as its own token: "/career refais mon CV" opens the
+# desk, a path such as "navin/career/loop.py" does not.
+_COMMAND_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple(
+    (re.compile(r"(?:^|\s)" + re.escape(command) + r"(?![\w/.])"), tools)
+    for command, tools in _DESK_COMMANDS.items()
 )
 
 
@@ -175,15 +74,12 @@ def normalize_intent_text(text: str | None) -> str:
 
 
 def desk_tools_for_text(text: str | None) -> frozenset[str]:
-    """Desk tool names this turn asked for, empty when it named no desk."""
+    """Desk tools this turn opened with a slash command, empty otherwise."""
     normalized = _normalize(text)
     if not normalized:
         return frozenset()
     wanted: set[str] = set()
-    for command, tools in _DESK_COMMANDS.items():
-        if command in normalized:
-            wanted.update(tools)
-    for tool, pattern in _DESK_NOUNS:
+    for pattern, tools in _COMMAND_PATTERNS:
         if pattern.search(normalized):
-            wanted.add(tool)
+            wanted.update(tools)
     return frozenset(wanted)

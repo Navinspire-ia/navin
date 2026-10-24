@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-MobileKind = Literal["expo", "react-native", "flutter", "none"]
+MobileKind = Literal[
+    "expo", "react-native", "flutter", "android-native", "ios-native", "none"
+]
 PackageManager = Literal["npm", "yarn", "pnpm", "bun", "unknown"]
 
 _APP_CONFIG_NAMES = (
@@ -61,7 +63,9 @@ class MobileProject:
             return (
                 "No mobile project detected in this workspace.\n"
                 "Looked for Expo (expo + app config), React Native "
-                "(react-native dependency), and Flutter (pubspec.yaml)."
+                "(react-native dependency), Flutter (pubspec.yaml), native "
+                "Android Kotlin/Java (settings.gradle + app/build.gradle) and "
+                "native iOS Swift (*.xcodeproj / *.xcworkspace)."
             )
         lines = [
             f"Mobile project: {self.kind}",
@@ -107,6 +111,9 @@ def detect_mobile_project(root: Path) -> MobileProject:
 
     package = _read_package_json(root)
     if package is None:
+        native = _detect_android_native(root) or _detect_ios_native(root)
+        if native is not None:
+            return native
         return MobileProject(kind="none", root=root)
 
     deps = {
@@ -210,6 +217,79 @@ def _detect_flutter(root: Path) -> MobileProject | None:
         entry="lib/main.dart" if (root / "lib" / "main.dart").is_file() else "",
         evidence=["pubspec.yaml (flutter sdk)"],
         dependencies=["flutter"],
+    )
+
+
+_GRADLE_APP_FILES = ("app/build.gradle.kts", "app/build.gradle")
+
+
+def _detect_android_native(root: Path) -> MobileProject | None:
+    """Kotlin / Java Android app built with Gradle (Android Studio layout)."""
+    settings = next(
+        (root / n for n in ("settings.gradle.kts", "settings.gradle") if (root / n).is_file()),
+        None,
+    )
+    if settings is None:
+        return None
+    build_file = next(
+        (root / rel for rel in _GRADLE_APP_FILES if (root / rel).is_file()), None
+    )
+    if build_file is None:
+        return None
+    try:
+        text = build_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if "com.android.application" not in text and "android.application" not in text:
+        return None
+    app_id = re.search(r"applicationId\s*=?\s*[\"']([\w.]+)[\"']", text)
+    namespace = re.search(r"namespace\s*=?\s*[\"']([\w.]+)[\"']", text)
+    application_id = (app_id or namespace).group(1) if (app_id or namespace) else ""
+    kotlin = "kotlin" in text.lower() or build_file.suffix == ".kts"
+    compose = "compose" in text.lower()
+    deps = ["gradle", "kotlin" if kotlin else "java"]
+    if compose:
+        deps.append("jetpack-compose")
+    evidence = [settings.name, f"{build_file.relative_to(root)} (com.android.application)"]
+    if (root / "gradlew").is_file() or (root / "gradlew.bat").is_file():
+        evidence.append("gradle wrapper")
+    return MobileProject(
+        kind="android-native",
+        root=root,
+        name=application_id or root.name,
+        has_android=True,
+        has_ios=False,
+        entry="app/src/main/AndroidManifest.xml"
+        if (root / "app/src/main/AndroidManifest.xml").is_file()
+        else "",
+        evidence=evidence,
+        dependencies=deps,
+    )
+
+
+def _detect_ios_native(root: Path) -> MobileProject | None:
+    """Swift / Objective-C app with an Xcode project or workspace at the root."""
+    workspaces = sorted(
+        p for p in root.glob("*.xcworkspace") if p.is_dir() and p.stem != "project"
+    )
+    projects = sorted(p for p in root.glob("*.xcodeproj") if p.is_dir())
+    if not workspaces and not projects:
+        return None
+    container = workspaces[0] if workspaces else projects[0]
+    evidence = [container.name]
+    if (root / "Podfile").is_file():
+        evidence.append("Podfile")
+    if (root / "Package.swift").is_file():
+        evidence.append("Package.swift")
+    return MobileProject(
+        kind="ios-native",
+        root=root,
+        name=container.stem,
+        has_android=False,
+        has_ios=True,
+        entry=container.name,
+        evidence=evidence,
+        dependencies=["xcode", "swift"],
     )
 
 

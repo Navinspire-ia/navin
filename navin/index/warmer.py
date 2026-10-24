@@ -18,12 +18,19 @@ serve a stale snapshot right after an edit.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 from loguru import logger
 
 _warming: set[str] = set()
 _warming_lock = threading.Lock()
+
+# A WSL project opened from Windows pays every stat through the 9P bridge:
+# chat opens and workspace switches re-warm it at most this often. Lookups
+# still revalidate on their own (throttled) schedule.
+_BRIDGED_WARM_COOLDOWN_S = 600.0
+_last_bridged_warm: dict[str, float] = {}
 
 
 def schedule_warm(root: Path | str | None) -> bool:
@@ -36,16 +43,25 @@ def schedule_warm(root: Path | str | None) -> bool:
     if root is None:
         return False
     try:
-        resolved = Path(root).expanduser().resolve(strict=False)
+        from navin.utils.resolve_cache import resolve_root
+
+        resolved = resolve_root(root)
     except (OSError, RuntimeError):
         return False
     if not resolved.is_dir():
         return False
 
+    from navin.index.service import is_bridged_root
+
     key = str(resolved)
+    bridged = is_bridged_root(resolved)
     with _warming_lock:
         if key in _warming:
             return False
+        if bridged:
+            last = _last_bridged_warm.get(key)
+            if last is not None and time.monotonic() - last < _BRIDGED_WARM_COOLDOWN_S:
+                return False
         _warming.add(key)
 
     def _work() -> None:
@@ -59,6 +75,7 @@ def schedule_warm(root: Path | str | None) -> bool:
                 resolved,
                 stats.total if stats else 0,
             )
+            index.warm_refs()
             _warm_fulltext(index)
             _warm_semantic(resolved, index)
         except Exception as exc:
@@ -66,6 +83,10 @@ def schedule_warm(root: Path | str | None) -> bool:
         finally:
             with _warming_lock:
                 _warming.discard(key)
+                if bridged:
+                    # Failures too: a bridge that broke a warm will break the
+                    # next one, and retrying at once only loads it again.
+                    _last_bridged_warm[key] = time.monotonic()
 
     threading.Thread(target=_work, daemon=True, name="index-warmer").start()
     return True
@@ -143,7 +164,7 @@ def note_file_written(path: Path | str) -> None:
                 resolved.relative_to(root_key)
             except ValueError:
                 continue
-            index.mark_dirty()
+            index.mark_dirty(resolved)
             touched_roots.append(root_key)
         if touched_roots:
             from navin.webui.metagraph_notify import schedule_metagraph_refresh

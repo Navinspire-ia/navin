@@ -62,6 +62,16 @@ def module_tasks(rng, repeat):
             {"id": ids[3], "cost": budget // 2, "priority": 2, "approved": True, "country": country},
             {"id": ids[4], "cost": 0, "priority": 6, "approved": True, "country": "XX"}]}, [ids[1], ids[3]])
 
+    add("campaigns", "Build the send list of an email campaign: subscribed contacts only (skip unsubscribed and "
+        "bounced), a valid email required, one per case-insensitive email keeping the first occurrence. Return "
+        "the IDs in input order. Do not send anything.", {"contacts": [
+            {"id": ids[0], "email": "Lea@example.test", "status": "subscribed"},
+            {"id": ids[1], "email": "lea@EXAMPLE.test", "status": "subscribed"},
+            {"id": ids[2], "email": "out@example.test", "status": "unsubscribed"},
+            {"id": ids[3], "email": "", "status": "subscribed"},
+            {"id": ids[4], "email": "bad@example.test", "status": "bounced"},
+            {"id": ids[5], "email": "max@example.test", "status": "subscribed"}]}, [ids[0], ids[5]])
+
     add("ads", "Prepare a pause recommendation. Return sorted IDs of active ads with spend at least 100 "
         "and CPA above target. Zero conversions at that spend also qualifies. Exclude paused ads.",
         {"target_cpa": 25, "ads": [

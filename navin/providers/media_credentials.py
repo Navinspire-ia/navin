@@ -34,6 +34,11 @@ def media_credentials_ready(provider_name: str, provider_config: Any | None) -> 
         return bool(api_key or api_base)
     if spec.is_oauth:
         return False
+    if spec.backend == "bedrock":
+        # A Bedrock API key, or an AWS profile / environment, is enough.
+        from navin.providers.bedrock_media import provider_credentials
+
+        return bool(provider_credentials(provider_config)[0])
     if spec.is_local:
         return bool(api_base or spec.default_api_base)
     if spec.is_direct:

@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from navin.agent.tools.marketing import MarketingTool
 from navin.gateway.heartbeat_desks import tick_heartbeat_desks
 from navin.marketing.content import generate_content
 from navin.marketing.growth import ingest_metrics
-from navin.agent.tools.marketing import MarketingTool
 from navin.marketing.heartbeat import HEARTBEAT_MARKETING_ACTIONS, heartbeat_prompt_note, tick_watch
 from navin.marketing.positioning import build_positioning
 from navin.marketing.store import MarketingStore

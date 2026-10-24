@@ -29,7 +29,7 @@ import { useNotifications } from "@/providers/NotificationProvider";
 
 /**
  * Legacy gutter kept so call sites that still import it compile; the bell now
- * lives in the sidebar next to Settings, so no top-right padding is required.
+ * lives in the sidebar header next to Search, so no top-right padding is required.
  */
 export const NOTIFICATION_GUTTER = "";
 
@@ -135,7 +135,7 @@ function NotificationRow({
         type="button"
         aria-label={t("notifications.dismiss")}
         onClick={onDismiss}
-        className="absolute right-1.5 top-1.5 rounded p-1 text-muted-foreground/0 transition-colors hover:bg-muted hover:text-foreground group-hover:text-muted-foreground"
+        className="absolute end-1.5 top-1.5 rounded p-1 text-muted-foreground/0 transition-colors hover:bg-muted hover:text-foreground group-hover:text-muted-foreground"
       >
         <X className="h-3.5 w-3.5" strokeWidth={2} />
       </button>
@@ -186,7 +186,7 @@ function computePanelCoords(anchor: DOMRect): PanelCoords {
  * capture.
  */
 export default function NotificationCenter({
-  /** Sidebar placement: panel opens next to Settings via a fixed portal. */
+  /** Sidebar placement: panel opens next to the bell via a fixed portal. */
   placement = "sidebar",
 }: {
   placement?: "sidebar" | "corner";
@@ -319,7 +319,7 @@ export default function NotificationCenter({
         {unreadCount > 0 ? (
           <span
             aria-hidden
-            className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white"
+            className="absolute -end-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white"
           >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
@@ -337,8 +337,8 @@ export default function NotificationCenter({
             // Keep transient alerts readable above the workbench, not clipped
             // by the sidebar scroll area.
             sidebar
-              ? "fixed right-3 top-[calc(0.75rem+env(safe-area-inset-top))]"
-              : "absolute right-0 top-9",
+              ? "fixed end-3 top-[calc(0.75rem+env(safe-area-inset-top))]"
+              : "absolute end-0 top-9",
           )}
         >
           {toasts.map((entry) => {
@@ -348,7 +348,7 @@ export default function NotificationCenter({
                 key={entry.id}
                 type="button"
                 onClick={() => setOpen(true)}
-                className="flex w-full gap-2 rounded-lg border border-border/70 bg-popover px-3 py-2 text-left shadow-lg"
+                className="flex w-full gap-2 rounded-lg border border-border/70 bg-popover px-3 py-2 text-start shadow-lg"
               >
                 <Icon
                   className={cn("mt-0.5 h-4 w-4 shrink-0", LEVEL_TONE[entry.level])}

@@ -4,6 +4,7 @@
 import { DefaultButton, DetailsList, DetailsListLayoutMode, MessageBar, MessageBarType, SelectionMode, Stack, Text } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import { bilingual } from "@/i18n/phrases";
 
 import type { AlertReceipt, TenderDesk } from "@/lib/tenders-api";
 import { BUTTON_STYLES } from "@/components/studio/tenders/tenders-ui";
@@ -18,10 +19,10 @@ export function TenderAlertDeliveries({ desk, busy, onRetry, onConfigure }: {
   onRetry: () => void;
   onConfigure: () => void;
 }) {
-  const { i18n } = useTranslation();
-  const fr = i18n.language.startsWith("fr");
+  // Re-render on language change; the copy itself goes through bilingual().
+  useTranslation();
   const reduced = useReducedMotion();
-  const copy = (french: string, english: string) => fr ? french : english;
+  const copy = (french: string, english: string, values?: Record<string, string | number>) => bilingual(french, english, values);
   const delivery = desk.alert_deliveries;
   const statuses: Record<AlertReceipt["status"], string> = {
     new: copy("À préparer", "To prepare"),
@@ -61,8 +62,9 @@ export function TenderAlertDeliveries({ desk, busy, onRetry, onConfigure }: {
           <div>
             <Text as="h2" variant="large" block>{copy("Suivi des alertes", "Alert delivery tracking")}</Text>
             <Text block styles={{ root: { fontVariantNumeric: "tabular-nums" } }}>
-              {copy(`${delivery?.accepted || 0} confirmations · ${delivery?.pending || 0} en attente · ${delivery?.failed || 0} échecs`,
-                `${delivery?.accepted || 0} confirmations · ${delivery?.pending || 0} pending · ${delivery?.failed || 0} failed`)}
+              {copy("{{accepted}} confirmations · {{pending}} en attente · {{failed}} échecs",
+                "{{accepted}} confirmations · {{pending}} pending · {{failed}} failed",
+                { accepted: delivery?.accepted || 0, pending: delivery?.pending || 0, failed: delivery?.failed || 0 })}
             </Text>
           </div>
           <Stack horizontal wrap tokens={{ childrenGap: 8 }}>

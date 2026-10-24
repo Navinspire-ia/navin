@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import type { CareerApplication, CareerOpportunity, CareerTrack } from "@/lib/career-api";
 
 export type ApplicationView = {
@@ -76,7 +77,7 @@ export function formatCareerDate(
   if (!n) return unknown;
   const ms = n > 1e12 ? n : n * 1000;
   try {
-    return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(ms));
+    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium" }).format(new Date(ms));
   } catch {
     return unknown;
   }

@@ -1,8 +1,8 @@
 # Composer modes
 
-The chat composer has a **Mode** menu (left of the model picker). It controls the agent posture for the next turn: design, build, review, security audit, debug, or montage. Investigate modes tint the composer shell with a matching accent color.
+The chat composer has a **Mode** menu (left of the model picker). It controls the agent posture for the next turn: design, build, review, security audit, debug, reverse engineering, or montage. Investigate modes tint the composer shell with a matching accent color.
 
-When you type free text (no leading `/`), Plan / Review / Security / Debug / Montage **prefix** your message with the matching slash workflow so the agent loads the right brief, skills, and tools. Agent mode prefixes `/forge`. Explicit slash commands are never double-prefixed.
+When you type free text (no leading `/`), Plan / Review / Security / Debug / Reverse / Montage **prefix** your message with the matching slash workflow so the agent loads the right brief, skills, and tools. Agent mode prefixes `/forge`. Explicit slash commands are never double-prefixed.
 
 The agent can also switch the UI mode itself via the `set_composer_mode` tool (WebSocket event `composer_mode_request`), so the menu and accent stay in sync when a workflow starts or when the agent hands off.
 
@@ -15,6 +15,7 @@ The agent can also switch the UI mode itself via the `set_composer_mode` tool (W
 | **Review** | `/inspect` | `review` | Expert code review (read-only by default) | `review-report-*.html` + numbered remediation choices |
 | **Security** | `/fortify` | `security` | Expert AppSec audit (read-only by default) | `security-report-*.html` + numbered hardening choices |
 | **Debug** | `/debug` | `deep` | Reproduce and prove root cause | `debug-report-*.html` + numbered fix choices |
+| **Reverse** | `/reverse` | `deep` | Static-first reverse engineering (read-only by default) | `.navin/reverse/<id>/evidence.json` + `reverse-report-*.html` |
 | **Montage** | `/montage` | `docs` | Project marketing kit, calendar, creatives | `marketing/montage/` + `montage-report-*.html` |
 
 The model routing role for `/debug` is `deep`; the composer UI mode is `debug` (`set_composer_mode(mode=debug)`). Montage uses `docs` and `set_composer_mode(mode=montage)`.
@@ -28,6 +29,7 @@ Related slash families also sync the UI mode when typed explicitly:
 | Review | `/inspect`, `/turbo` |
 | Security | `/fortify`, `/probe`, `/unmask`, `/lineage`, `/xray`, `/gatekeeper`, `/perimeter`, `/bastion`, `/vault`, `/recon`, `/threatmap`, `/dast`, `/redteam`, `/pentest`, `/comply` |
 | Debug | `/debug` |
+| Reverse | `/reverse` |
 | Montage | `/montage` |
 
 Full command tables: [Commands](./commands.md). One-click audits: [Actions](./actions.md).
@@ -200,6 +202,31 @@ Full ledger details: [Plan Mode](./plan-mode.md).
 
 ---
 
+## Reverse
+
+**When to use:** you want to understand an existing artifact you own or are authorized to study (binary, APK, web bundle, Electron app, folder) before rebuilding or securing it.
+
+**How to start:**
+
+- Mode **Reverse** + free text, or `/reverse [binary|apk|bundle|url|path]`. In the CLI: `/mode reverse` (shortcut 8 in the picker).
+
+**Process:**
+
+1. **Target** - lock the artifact: hash, size, type, platform.
+2. **Inventory** - formats, sections, imports/exports, dependencies, embedded assets, entry points, endpoints.
+3. **Architecture** - modules, data flows, protocols, storage, auth, each with evidence.
+4. **Evidence** - `.navin/reverse/<id>/evidence.json` (target, engine and version, findings with a real excerpt or offset, gaps).
+5. **Rebuild plan** - components and behaviours an identical rebuild must match, plus coverage gaps.
+6. **Report** - `reverse-report-[YYYYMMDD-HHMMSS].html` in the same folder, opened in File Preview, with numbered `#N` choices.
+
+**Static first:** dynamic tools (process capture, gdb, rizin, browser or Electron scenario, adb) run only after you approve each call.
+
+**Engine:** REA (`rea-agents@6.5.0`) through MCP when available, else the `npx` CLI (Node >=24.11), else the standard static tools on the machine.
+
+**Model routing:** role `deep` (UI mode `reverse`).
+
+---
+
 ## Montage
 
 **When to use:** you imported a project and want a marketing push plan - kit, day-by-day calendar, social images/videos - without packaging HyperFrames in the Navin install.
@@ -231,16 +258,16 @@ Full ledger details: [Plan Mode](./plan-mode.md).
 | Mechanism | Role |
 | --- | --- |
 | Mode menu | You pick Plan / Agent / Review / Security / Debug / Montage; choice is persisted for the chat |
-| Free-text prefix | Non-Agent modes prepend `/blueprint`, `/inspect`, `/fortify`, `/debug`, or `/montage` |
+| Free-text prefix | Non-Agent modes prepend `/blueprint`, `/inspect`, `/fortify`, `/debug`, `/reverse`, or `/montage` |
 | Slash → mode | Sending a known workflow slash updates the menu + accent to match |
 | `set_composer_mode` | Agent tool; emits `composer_mode_request` over WebSocket |
-| Workflow start | Starting `/inspect`, `/fortify`, `/debug`, `/montage`, `/blueprint`, `/forge`, … also requests the matching UI mode |
+| Workflow start | Starting `/inspect`, `/fortify`, `/debug`, `/reverse`, `/montage`, `/blueprint`, `/forge`, … also requests the matching UI mode |
 
 The tool does not change mid-turn tools by itself - it updates what you see in the composer so the accent matches the posture.
 
 ---
 
-## HTML reports (Review / Security / Debug)
+## HTML reports (Review / Security / Debug / Reverse)
 
 Investigate modes **must** close with a polished, self-contained HTML report (skill `studio-html-report`):
 
@@ -249,6 +276,7 @@ Investigate modes **must** close with a polished, self-contained HTML report (sk
 | Review | `review-report-[YYYYMMDD-HHMMSS].html` |
 | Security | `security-report-[YYYYMMDD-HHMMSS].html` |
 | Debug | `debug-report-[YYYYMMDD-HHMMSS].html` |
+| Reverse | `.navin/reverse/<id>/reverse-report-[YYYYMMDD-HHMMSS].html` |
 
 **Report contents:**
 

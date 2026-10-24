@@ -94,7 +94,7 @@ export function ChannelCatalogRow({
         })}
         aria-pressed={selected}
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border/80"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border/80"
       >
         <ChannelLogo feature={feature} showBrandLogos={showBrandLogos} />
         <div className="min-w-0 flex-1">
@@ -121,8 +121,8 @@ export function ChannelCatalogRow({
         <ChannelStatusBadge>{channelStatusLabel(feature, tx)}</ChannelStatusBadge>
         <ChevronRight
           className={cn(
-            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-            selected && "translate-x-0.5 text-foreground",
+            "rtl:-scale-x-100 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            selected && "translate-x-0.5 rtl:-translate-x-0.5 text-foreground",
           )}
           aria-hidden
         />
@@ -194,9 +194,9 @@ export function ChannelSetupPanel({
                 className="mt-2 h-8 rounded-full px-3 text-[12px] font-semibold"
               >
                 {enableBusy ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
-                  <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  <Plus className="me-1.5 h-3.5 w-3.5" aria-hidden />
                 )}
                 {installSupportLabel}
               </Button>
@@ -478,7 +478,7 @@ function ChannelSetupSurface({
                 disabled={loginBusy}
               >
                 {loginBusy ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : null}
                 {t(`settings.channels.items.${feature.name}.setup.primaryAction`, {
                   defaultValue: setup.primaryActionLabel ?? tx("settings.channels.connect", "Connect"),
@@ -566,7 +566,7 @@ function ChannelSetupSurface({
                 disabled={saving}
               >
                 {saving || validating ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : null}
                 {primaryActionLabel}
               </Button>

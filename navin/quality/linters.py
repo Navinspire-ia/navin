@@ -22,7 +22,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from navin.quality import wsl_route
 from navin.utils.proc import no_window_kwargs
+from navin.utils.wsl import host_tool_path
 
 _TABLE_PATH = Path(__file__).with_name("linters.json")
 _MAX_DIAGNOSTICS = 500
@@ -189,11 +191,54 @@ def _packaged_interpreter(name: str) -> str | None:
     return str(_first_executable(shims / name) or "") or None
 
 
+_VENV_NAMES = (".venv", "venv", "env")
+_VENV_SKIP_DIRS = frozenset({"node_modules", "dist", "build", "target", "__pycache__"})
+
+
+def _project_venv_bins(root: Path) -> tuple[str, ...]:
+    """Script dirs of the project's virtualenvs: at the root, then one level down.
+
+    A generated app keeps its venv next to its code (``backend/.venv``). Tests
+    and linters run with navin's own interpreter otherwise, fail with "No module
+    named fastapi", and the agent then spends turns installing packages into
+    the system Python. Recomputed per call (a few stats), so a venv created
+    mid-session is picked up even though the resolution below is cached.
+    """
+    candidates = [root / name for name in _VENV_NAMES]
+    try:
+        children = sorted(
+            child for child in root.iterdir()
+            if child.is_dir() and not child.name.startswith(".") and child.name not in _VENV_SKIP_DIRS
+        )[:64]
+    except OSError:
+        children = []
+    for child in children:
+        candidates.extend(child / name for name in _VENV_NAMES)
+    bins: list[str] = []
+    for venv in candidates:
+        if not (venv / "pyvenv.cfg").is_file():
+            continue
+        for sub in ("bin", "Scripts"):
+            if (venv / sub).is_dir():
+                bins.append(str(venv / sub))
+    return tuple(bins)
+
+
 @lru_cache(maxsize=256)
-def _resolve_binary(name: str, project_paths: tuple[str, ...], python_env: bool, root: str) -> str | None:
+def _resolve_binary(
+    name: str,
+    project_paths: tuple[str, ...],
+    python_env: bool,
+    root: str,
+    venv_bins: tuple[str, ...] = (),
+) -> str | None:
     root_path = Path(root)
     for rel in project_paths:
         found = _first_executable(root_path / rel)
+        if found is not None:
+            return str(found)
+    for directory in venv_bins:
+        found = _first_executable(Path(directory) / name)
         if found is not None:
             return str(found)
     if python_env:
@@ -224,11 +269,13 @@ def _binary_for(spec: dict[str, Any], root: Path) -> str | None:
     name = str(binary.get("name") or "")
     if not name:
         return None
+    python_env = bool(binary.get("python_env"))
     return _resolve_binary(
         name,
         tuple(str(p) for p in binary.get("project_paths", [])),
-        bool(binary.get("python_env")),
+        python_env,
         str(root),
+        _project_venv_bins(Path(root)) if python_env else (),
     )
 
 
@@ -376,6 +423,9 @@ def _normalize_path(raw: str, root: Path, fallback: str, base: Path | None = Non
     text = (raw or "").strip()
     if not text:
         return fallback
+    # A tool run inside WSL reports Linux paths; on Windows they would not even
+    # read as absolute and would land under the project a second time.
+    text = host_tool_path(text, str(root))
     candidate = Path(text)
     if not candidate.is_absolute():
         candidate = (base or root) / candidate
@@ -523,14 +573,16 @@ def _run_linter(
     root: Path,
     target: Path | None,
 ) -> LinterResult:
-    import time
-
     if not _requirements_met(spec, root):
         return LinterResult(
             linter=name,
             ran=False,
             skipped_reason="no matching config file in the project",
         )
+    location = wsl_route.wsl_root(root)
+    if location is not None:
+        # A WSL project seen from Windows: its tools are Linux tools, run there.
+        return _run_linter_in_wsl(name, spec, root, target, location)
     launch = tool_argv(spec, root)
     if launch is None:
         wanted = (spec.get("binary") or {}).get("name", name)
@@ -549,11 +601,47 @@ def _run_linter(
         argv.append(text)
 
     work_dir = _work_dir(spec, root)
+    return _finish_linter(name, spec, root, target, argv, work_dir, cwd=str(work_dir))
+
+
+def _run_linter_in_wsl(
+    name: str, spec: dict[str, Any], root: Path, target: Path | None, location: Any,
+) -> LinterResult:
+    args: list[str] = []
+    for arg in spec.get("args", []):
+        text = str(arg).replace("{root}", location.posix)
+        if "{file}" in text:
+            if target is None:
+                continue
+            text = text.replace("{file}", wsl_route.linux_path(target, location))
+        args.append(text)
+    work_dir = _work_dir(spec, root)
+    argv = wsl_route.tool_argv(spec, root, work_dir, args, location=location)
+    if argv is None:
+        wanted = (spec.get("binary") or {}).get("name", name)
+        return LinterResult(linter=name, ran=False, skipped_reason=f"{wanted} not installed")
+    result = _finish_linter(name, spec, root, target, argv, work_dir, cwd=wsl_route.launch_cwd())
+    if result.exit_code == wsl_route.MISSING_EXIT and not result.diagnostics:
+        wanted = (spec.get("binary") or {}).get("name", name)
+        return LinterResult(
+            linter=name, ran=False,
+            skipped_reason=f"{wanted} not installed in the WSL distribution {location.distro}",
+            duration_ms=result.duration_ms,
+        )
+    return result
+
+
+def _finish_linter(
+    name: str, spec: dict[str, Any], root: Path, target: Path | None,
+    argv: list[str], work_dir: Path, *, cwd: str | None,
+) -> LinterResult:
+    import time
+
     started = time.monotonic()
     try:
         completed = subprocess.run(  # noqa: S603
             argv,
-            cwd=str(work_dir),
+            cwd=cwd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -727,8 +815,15 @@ def lint_project(
 def available_linters(root: Path) -> list[dict[str, Any]]:
     """Report which linters are usable for this project, and why not."""
     out: list[dict[str, Any]] = []
-    for name, spec in sorted(linter_table().items()):
-        launch = tool_argv(spec, root)
+    table = sorted(linter_table().items())
+    location = wsl_route.wsl_root(root)
+    found = wsl_route.available(dict(table), root, location) if location is not None else None
+    for name, spec in table:
+        if location is not None:
+            # One probe in the distribution answered for every tool.
+            launch = [name] if found is not None and name in found else None
+        else:
+            launch = tool_argv(spec, root)
         reason = ""
         if launch is None:
             reason = f"{(spec.get('binary') or {}).get('name', name)} not installed"

@@ -57,7 +57,7 @@ export function ConfirmDialog({
             {description}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <AlertDialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 sm:grid-cols-2 sm:space-x-0">
+        <AlertDialogFooter className="mt-7 !grid grid-cols-1 gap-3 space-x-0 rtl:space-x-reverse sm:grid-cols-2 sm:space-x-0 rtl:space-x-reverse">
           <AlertDialogCancel
             onClick={onCancel}
             className="mt-0 h-11 w-full min-w-0 rounded-full border-0 bg-muted/70 px-5 text-[15px] font-semibold text-foreground shadow-none hover:bg-muted"

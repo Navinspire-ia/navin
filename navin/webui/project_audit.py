@@ -19,13 +19,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
 from navin.webui.audit_ast import scan_python_file_ast
 from navin.webui.audit_sql import extract_sql_audit
@@ -214,12 +214,12 @@ def _is_pattern_definition_line(line: str) -> bool:
 
 
 def _run_git(root: Path, *args: str) -> str:
-    git = shutil.which("git")
+    git = git_argv(root)
     if git is None:
         return ""
     try:
         out = subprocess.run(  # noqa: S603
-            [git, "-C", str(root), *args],
+            [*git, *args],
             capture_output=True,
             text=True,
             encoding="utf-8",

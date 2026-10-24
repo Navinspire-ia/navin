@@ -386,3 +386,10 @@ class ContractTest(_ManageTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConversationStoreIsProtected(_ManageTest):
+    def test_navin_sessions_cannot_be_deleted(self) -> None:
+        target = self._write(".navin/sessions/websocket_a.jsonl", "{}\n")
+        out = self._call(action="delete", paths=[".navin/sessions"], recursive=True)
+        self.assertTrue(target.exists(), out)

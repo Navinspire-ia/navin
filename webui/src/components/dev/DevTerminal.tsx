@@ -1,9 +1,11 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
@@ -72,8 +74,12 @@ export default function DevTerminal({
 }) {
   const { client } = useClient();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation();
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const openedRef = useRef(false);
   // Last confinement announced in the terminal: null until the first open.
   const sandboxStateRef = useRef<boolean | null>(null);
@@ -98,6 +104,16 @@ export default function DevTerminal({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    const search = new SearchAddon();
+    searchRef.current = search;
+    term.loadAddon(search);
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "f") {
+        setSearchOpen(true);
+        return false;
+      }
+      return true;
+    });
     term.open(container);
     paintTerminalViewport(container, isDark);
     // GPU renderer: the default DOM renderer is visibly sluggish, especially
@@ -265,13 +281,39 @@ export default function DevTerminal({
   }, [active, client, terminalId]);
 
   return (
+    <div className="relative h-full w-full" style={{ display: active ? undefined : "none" }}>
+      {searchOpen ? (
+        <div className="absolute end-3 top-2 z-10 flex items-center gap-1 rounded-lg bg-background/95 px-2 py-1 shadow-md" data-testid="terminal-search">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              searchRef.current?.findNext(e.target.value, { incremental: true });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (e.shiftKey) searchRef.current?.findPrevious(query);
+                else searchRef.current?.findNext(query);
+              }
+              if (e.key === "Escape") {
+                setSearchOpen(false);
+                searchRef.current?.clearDecorations();
+                termRef.current?.focus();
+              }
+            }}
+            aria-label={t("dev.terminalSearch", { defaultValue: "Search the terminal" })}
+            placeholder={t("dev.terminalSearch", { defaultValue: "Search the terminal" })}
+            className="w-44 bg-transparent text-[12px] outline-none"
+          />
+        </div>
+      ) : null}
     <div
       ref={containerRef}
+      dir="ltr"
       className="navin-terminal h-full w-full overflow-hidden px-2 py-1"
-      style={{
-        ...terminalSurfaceStyle(isDark),
-        display: active ? undefined : "none",
-      }}
+      style={terminalSurfaceStyle(isDark)}
     />
+    </div>
   );
 }

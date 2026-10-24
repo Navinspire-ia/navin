@@ -438,3 +438,29 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
                 [row.text for row in app.query(AssistantMessage)],
                 ["hi from other"],
             )
+
+    async def test_switch_reveals_latest_rows_first_then_keeps_order(self):
+        app = self.app
+        heavy = []
+        for index in range(12):
+            heavy.extend(_history_turn(index))
+        app.runtime.history_snapshot = lambda: heavy
+        original_finish = AssistantMessage.finish
+        seen: list[tuple[str, int]] = []
+
+        async def slow_finish(self, *args, **kwargs):
+            await asyncio.sleep(0.01)
+            transcript = app.transcript
+            seen.append((str(transcript.styles.visibility), len(list(app.query(UserMessage)))))
+            return await original_finish(self, *args, **kwargs)
+
+        async with app.run_test(size=(100, 32)) as pilot:
+            with patch.object(AssistantMessage, "finish", slow_finish):
+                await app._render_history()
+            await pilot.pause()
+            users = [row.text for row in app.query(AssistantMessage)]
+        # The chat is visible before the older rows of the page are built.
+        self.assertTrue(any(vis != "hidden" for vis, _count in seen[:-1]))
+        self.assertGreater(len(users), 3)
+        self.assertEqual(users, sorted(users, key=lambda text: int("".join(ch for ch in text if ch.isdigit()) or 0)))
+        self.assertEqual(len(users), len({*users}))

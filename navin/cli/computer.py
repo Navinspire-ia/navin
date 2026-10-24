@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import os
 import re
 import shutil
@@ -20,6 +18,8 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+
+from navin.utils.proc import no_window_kwargs
 
 
 def _xvfb_transport_args() -> list[str]:

@@ -9,9 +9,9 @@ import httpx
 import pytest
 
 from navin.providers.captcha import (
+    CapSolverProvider,
     CaptchaChallenge,
     CaptchaSolverError,
-    CapSolverProvider,
     TwoCaptchaProvider,
     captcha_provider_names,
     create_captcha_solver,

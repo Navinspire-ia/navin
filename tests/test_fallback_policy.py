@@ -98,7 +98,7 @@ class TestTextMatchingIsSpecific:
 class TestBlockingFailures:
     """Definitive for this model: switch at once, never retry."""
 
-    @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 422])
+    @pytest.mark.parametrize("status", [400, 401, 402, 422])
     def test_client_errors_switch_without_a_retry(self, status):
         # A bad key, a dropped slug, a request shape this vendor rejects: asking
         # the same model again returns the same answer, another model may not.
@@ -216,6 +216,28 @@ class TestCircuitCooldown:
             circuit_cooldown_s(Err(error_status_code=429, retry_after=3600))
             == CIRCUIT_MAX_COOLDOWN_S
         )
+
+    def test_a_model_unavailable_cooldown_is_short(self):
+        # 403/404 "model unavailable" may recover within a minute: the model is
+        # not parked for a quarter of an hour after a transient refusal.
+        unavailable = Err(
+            error_status_code=403,
+            content="gemini-4-aragon is not available for this account",
+        )
+        assert circuit_cooldown_s(unavailable) == CIRCUIT_MAX_COOLDOWN_S
+        not_found = Err(
+            error_status_code=404,
+            content="not have access to the model with the specified model id",
+        )
+        assert circuit_cooldown_s(not_found) == CIRCUIT_MAX_COOLDOWN_S
+        # A bad key stays definitive: long cooldown, no sticky retry.
+        from navin.providers.fallback_policy import REFUSAL_COOLDOWN_S
+
+        assert circuit_cooldown_s(Err(error_status_code=401)) == REFUSAL_COOLDOWN_S
+        # A bare 403/404 without a "model unavailable" phrase stays a
+        # definitive refusal: long cooldown, no sticky retry.
+        assert circuit_cooldown_s(Err(error_status_code=403)) == REFUSAL_COOLDOWN_S
+        assert circuit_cooldown_s(Err(error_status_code=404)) == REFUSAL_COOLDOWN_S
 
     def test_an_exhausted_account_is_skipped_for_the_full_cooldown(self):
         assert circuit_cooldown_s(Err(error_status_code=402)) == CIRCUIT_MAX_COOLDOWN_S
@@ -423,7 +445,6 @@ class TestStickyPrimary:
         [
             Err(error_status_code=400, content="bad request"),
             Err(error_status_code=401, content="invalid api key"),
-            Err(error_status_code=404, content="model not found"),
             Err(error_kind="refusal", content="I cannot help with that"),
             Err(error_kind="content_filter", content="blocked"),
             Err(error_kind="timeout", content="request timed out"),
@@ -439,6 +460,39 @@ class TestStickyPrimary:
         assert primary.calls == 1
         assert fallback.calls == 1
         assert result.content == "from deepseek"
+
+    @pytest.mark.parametrize(
+        "err",
+        [
+            Err(error_status_code=403, content="gemini-4-aragon is not available for this account"),
+            Err(error_status_code=403, content="gemini-4-aragon don't have access to the model"),
+            Err(error_status_code=404, content="model not have access to the model with the specified model id"),
+        ],
+    )
+    def test_a_model_unavailable_is_retried_before_switching(self, monkeypatch, err):
+        # A 403/404 "model unavailable" is often transient (access propagation,
+        # regional capacity): the chosen model is retried with the full sticky
+        # budget before the next model of the plan takes the step.
+        from navin.providers.fallback_provider import PRIMARY_STICKY_RETRIES
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        primary = FakeProvider([err] * 10)
+        fallback = FakeProvider([Err(finish_reason="stop", content="from deepseek")])
+        result = asyncio.run(_provider(primary, [Preset()], fallback).chat(model="gemini-4-aragon"))
+        assert primary.calls == PRIMARY_STICKY_RETRIES + 1
+        assert fallback.calls == 1
+        assert result.content == "from deepseek"
+
+    def test_a_model_unavailable_recovers_within_the_budget(self, monkeypatch):
+        # The refusal clears on the third attempt: the fallback is never touched.
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        err = Err(error_status_code=403, content="gemini-4-aragon is not available for this account")
+        primary = FakeProvider([err, err, Err(finish_reason="stop", content="from aragon")])
+        fallback = FakeProvider([])
+        result = asyncio.run(_provider(primary, [Preset()], fallback).chat(model="gemini-4-aragon"))
+        assert result.content == "from aragon"
+        assert primary.calls == 3
+        assert fallback.calls == 0
 
     def test_an_unclassified_error_is_retried_then_switched(self, monkeypatch):
         from navin.providers.fallback_provider import PRIMARY_STICKY_RETRIES
@@ -597,30 +651,6 @@ class TestLadderAndChainCompose:
         ))
         assert result.finish_reason == "error"
         assert primary.calls == len(LLMProvider._CHAT_RETRY_DELAYS) + 1
-
-    def test_a_stalled_provider_gets_one_retry_not_the_whole_ladder(self, monkeypatch):
-        """Each timeout already cost a full request window (two minutes).
-
-        Retrying four times parked one step for eight silent minutes; two
-        consecutive stalls mean the provider is down for this step.
-        """
-        monkeypatch.setattr("asyncio.sleep", _no_sleep)
-        primary = FakeProvider(
-            [Err(error_kind="timeout", content="request timed out")] * 50
-        )
-        fallback = FakeProvider(
-            [Err(error_kind="timeout", content="request timed out")] * 50
-        )
-        provider = _provider(primary, [Preset()], fallback)
-        result = asyncio.run(provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
-            model="gemini-3.6",
-            max_tokens=100,
-            temperature=0.5,
-            reasoning_effort=None,
-        ))
-        assert result.finish_reason == "error"
-        assert fallback.calls == 2
 
     def test_a_stalled_provider_gets_one_retry_not_the_whole_ladder(self, monkeypatch):
         """Each timeout already cost a full request window (two minutes).

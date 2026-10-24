@@ -95,7 +95,7 @@ export function MediaPlayerLightbox({
             )}
           </div>
 
-          <div className="absolute right-4 top-4 flex items-center gap-2">
+          <div className="absolute end-4 top-4 flex items-center gap-2">
             <button
               type="button"
               onClick={(e) => void handleDownload(e)}

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +133,58 @@ def _runtime_context_lines(root: Path) -> list[str]:
             lines.append("")
         lines.extend(upkeep)
     return lines
+
+
+# The map is advisory and moves slowly, but building it re-validates the
+# index, which after an agent edit re-derives every import edge (seconds on a
+# large repo). Turns get the last lines at once; a background thread rebuilds
+# them at most every _CONTEXT_REFRESH_S, so the next turn sees the update.
+_CONTEXT_REFRESH_S = 5.0
+_context_lines: dict[str, tuple[float, list[str]]] = {}
+_context_refreshing: set[str] = set()
+_context_lock = threading.Lock()
+
+
+def _refresh_context_lines(root: Path, key: str) -> list[str]:
+    try:
+        lines = _runtime_context_lines(root)
+        with _context_lock:
+            _context_lines[key] = (time.monotonic(), lines)
+        return lines
+    finally:
+        with _context_lock:
+            _context_refreshing.discard(key)
+
+
+def _refresh_context_lines_quietly(root: Path, key: str) -> None:
+    try:
+        _refresh_context_lines(root, key)
+    except BaseException:  # a Rust panic included; the old lines stay served
+        pass
+
+
+def _cached_runtime_context_lines(root: Path) -> list[str]:
+    """Last known map lines (stale-while-revalidate); built inline only once."""
+    key = str(root)
+    with _context_lock:
+        cached = _context_lines.get(key)
+        stale = cached is None or time.monotonic() - cached[0] >= _CONTEXT_REFRESH_S
+        start = stale and key not in _context_refreshing
+        if start:
+            _context_refreshing.add(key)
+    if cached is None:
+        if not start:
+            # Another turn is building it right now; do not wait twice.
+            return []
+        return _refresh_context_lines(root, key)
+    if start:
+        threading.Thread(
+            target=_refresh_context_lines_quietly,
+            args=(root, key),
+            name="navin-metagraph-context",
+            daemon=True,
+        ).start()
+    return cached[1]
 
 
 def _format_node(node: dict[str, Any]) -> str:
@@ -278,7 +332,7 @@ class MetagraphTool(_FsTool):
         if root is None:
             return None
         try:
-            lines = await asyncio.to_thread(_runtime_context_lines, Path(root))
+            lines = await asyncio.to_thread(_cached_runtime_context_lines, Path(root))
         except BaseException:
             # Orientation metadata is never worth failing a turn over.
             # Include BaseException: a Rust PanicException from navin_core

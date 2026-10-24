@@ -58,3 +58,76 @@ class ListDirTreeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_recursive_listing_runs_off_the_event_loop(tmp_path):
+    """A slow disk (\\\\wsl$, /mnt/c) must not freeze the loop every chat shares."""
+    import asyncio
+    import threading
+    import time
+    from unittest.mock import patch
+
+    from navin.agent.tools.filesystem import ListDirTool
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "f.txt").write_text("x")
+    tool = ListDirTool(workspace=tmp_path, allowed_dir=tmp_path)
+    real_walk = __import__("os").walk
+    walk_threads: list[str] = []
+
+    def slow_walk(*args, **kwargs):
+        walk_threads.append(threading.current_thread().name)
+        time.sleep(0.4)
+        return real_walk(*args, **kwargs)
+
+    async def scenario():
+        ticks = 0
+
+        async def heartbeat():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.05)
+                ticks += 1
+
+        beat = asyncio.create_task(heartbeat())
+        with patch("navin.agent.tools.filesystem.os.walk", slow_walk):
+            out = await tool.execute(path=".", recursive=True)
+        beat.cancel()
+        return out, ticks
+
+    out, ticks = asyncio.run(scenario())
+    assert "a/f.txt" in str(out)
+    assert walk_threads and walk_threads[0] != "MainThread"
+    assert ticks >= 4  # the loop kept running while the disk was slow
+
+
+def test_write_and_edit_do_disk_io_off_the_event_loop(tmp_path):
+    """Writes/edits on \\\\wsl$ must not freeze the loop every chat shares."""
+    import asyncio
+    import threading
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from navin.agent.tools.filesystem import EditFileTool, WriteFileTool
+
+    threads: list[str] = []
+    real_read, real_write = Path.read_bytes, Path.write_bytes
+
+    def spy_read(self):
+        threads.append(threading.current_thread().name)
+        return real_read(self)
+
+    def spy_write(self, data):
+        threads.append(threading.current_thread().name)
+        return real_write(self, data)
+
+    async def scenario():
+        with patch.object(Path, "read_bytes", spy_read), patch.object(Path, "write_bytes", spy_write):
+            await WriteFileTool(workspace=tmp_path, allowed_dir=tmp_path).execute(path="a.txt", content="hello\n")
+            await EditFileTool(workspace=tmp_path, allowed_dir=tmp_path).execute(
+                path="a.txt", old_text="hello", new_text="bye"
+            )
+
+    asyncio.run(scenario())
+    assert (tmp_path / "a.txt").read_text() == "bye\n"
+    assert threads and "MainThread" not in threads

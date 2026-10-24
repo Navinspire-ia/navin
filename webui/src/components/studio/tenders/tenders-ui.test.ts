@@ -105,7 +105,7 @@ describe("tenders loop chrome", () => {
     // The follow-up digest lives in a header button, not a banner above the list.
     expect(workspace).not.toContain("FollowUpBanner");
     expect(workspace).toContain("<FollowUpButton");
-    expect(workspace).toContain('className="ml-auto flex shrink-0 items-center gap-2"');
+    expect(workspace).toContain('className="ms-auto flex shrink-0 items-center gap-2"');
     expect(workspace.indexOf('tx("title", "Tenders")')).toBeLessThan(workspace.indexOf('tx("tenderBook"'));
     expect(workspace.indexOf('tx("collectNow"')).toBeLessThan(workspace.indexOf("tenders-open-setup"));
     expect(workspace).toContain('run("stop")');

@@ -46,12 +46,10 @@ describe("connectionBadgeState", () => {
 describe("ConnectionBadge", () => {
   beforeEach(() => resetGatewayPace());
 
-  it("renders a quiet green dot with the connection label when all is well", () => {
+  it("renders nothing when all is well", () => {
     const html = render("open");
-    expect(html).toContain('data-state="connected"');
-    expect(html).toContain("bg-emerald-500");
-    expect(html).not.toContain("animate-ping");
-    expect(html).not.toContain("data-stall=");
+    expect(html).not.toContain("connection-badge");
+    expect(html).not.toContain("bg-emerald-500");
   });
 
   it("turns amber and pulses while the engine is stalled, naming the engine in the hint", () => {
@@ -72,7 +70,7 @@ describe("ConnectionBadge", () => {
     expect(html).not.toContain("animate-ping");
   });
 
-  it("is mounted in the sidebar footer, next to the notification bell", () => {
+  it("is mounted in the sidebar header, next to the notification bell", () => {
     const sidebar = readFileSync(resolve(__dirname, "./Sidebar.tsx"), "utf8");
     expect(sidebar).toContain('import { ConnectionBadge } from "@/components/ConnectionBadge";');
     expect(sidebar).toContain('<ConnectionBadge />\n        <NotificationCenter placement="sidebar" />');

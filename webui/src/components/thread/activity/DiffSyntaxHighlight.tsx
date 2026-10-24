@@ -155,10 +155,10 @@ function DiffLineRow({
         kind === "delete" && "bg-rose-500/[0.09] dark:bg-rose-300/[0.11]",
       )}
     >
-      <td className="w-10 select-none border-r border-border/35 px-1.5 text-right text-muted-foreground/55">
+      <td className="w-10 select-none border-e border-border/35 px-1.5 text-end text-muted-foreground/55">
         {line.old_lineno ?? ""}
       </td>
-      <td className="w-10 select-none border-r border-border/35 px-1.5 text-right text-muted-foreground/55">
+      <td className="w-10 select-none border-e border-border/35 px-1.5 text-end text-muted-foreground/55">
         {line.new_lineno ?? ""}
       </td>
       <td

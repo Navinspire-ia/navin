@@ -20,7 +20,10 @@ def publish_board_update(bus: Any, project_path: str) -> None:
     if bus is None:
         return
     try:
-        bus.outbound.put_nowait(
+        from navin.bus.notify import put_outbound
+
+        put_outbound(
+            bus,
             outbound_message_for_event(
                 channel="websocket",
                 chat_id="*",

@@ -269,7 +269,7 @@ export function CareerEmployers({
                 >
                   <button
                     type="button"
-                    className="min-w-0 max-w-[16rem] truncate text-left font-medium text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
+                    className="min-w-0 max-w-[16rem] truncate text-start font-medium text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
                     onClick={() => row.careers_url && openOfficialCareerUrl(token, row.careers_url)}
                     title={row.careers_url || row.name}
                   >
@@ -291,7 +291,7 @@ export function CareerEmployers({
                       {row.last_error}
                     </span>
                   ) : null}
-                  <span className="ml-auto flex items-center gap-1">
+                  <span className="ms-auto flex items-center gap-1">
                     <span className="text-[11px] text-muted-foreground">{row.markets.slice(0, 4).join(" ")}</span>
                     {row.user ? (
                       <IconButton

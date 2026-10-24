@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import platform
 import shutil
@@ -38,6 +39,8 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -51,6 +54,13 @@ VENDOR_ROOT = PACKAGING_DIR / "vendor" / "ffmpeg"
 
 DOWNLOAD_TIMEOUT_S = 900
 _CHUNK = 1 << 20
+
+# The providers are single hosts (johnvansickle.com, gyan.dev, osxexperts.net).
+# A CI runner that cannot reach one for a minute used to fail the whole
+# platform job on the first connect timeout, so transient errors are retried
+# with a growing pause before the build gives up.
+DOWNLOAD_ATTEMPTS = 4
+RETRY_BACKOFF_S = (15, 30, 60)
 
 TARGETS = (
     "linux-x64",
@@ -121,6 +131,32 @@ def _download(url: str, dest: Path) -> str:
                 handle.write(chunk)
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _retryable(exc: Exception) -> bool:
+    """True for network hiccups, False for answers that will not change."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500 or exc.code in {408, 429}
+    return isinstance(exc, (OSError, http.client.HTTPException))
+
+
+def _download_with_retry(url: str, dest: Path) -> str:
+    """``_download`` with retries on timeouts, resets and 5xx answers."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            return _download(url, dest)
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt == DOWNLOAD_ATTEMPTS or not _retryable(exc):
+                raise
+            delay = RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S)) - 1]
+            print(
+                f"[ffmpeg] attempt {attempt}/{DOWNLOAD_ATTEMPTS} failed for {url}: "
+                f"{exc}; retrying in {delay}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _is_ffmpeg_member(name: str, target: str, program: str = "ffmpeg") -> bool:
@@ -197,8 +233,8 @@ def _download_verified(
     url = source["url"]
     expected = source.get("sha256") or ""
     archive = tmp / "archive"
-    print(f"[ffmpeg] {target}: downloading {url}")
-    actual = _download(url, archive)
+    print(f"[ffmpeg] {target}: downloading {url}", flush=True)
+    actual = _download_with_retry(url, archive)
     if update_manifest:
         source["sha256"] = actual
     elif not expected:
@@ -323,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     except VendorError as exc:
         print(f"[ffmpeg] error: {exc}", file=sys.stderr)
         return 1
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         print(f"[ffmpeg] download failed: {exc}", file=sys.stderr)
         return 1
 

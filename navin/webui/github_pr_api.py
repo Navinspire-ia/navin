@@ -115,7 +115,7 @@ def forge_context(root: Path, *, allow_probe: bool = True) -> ForgeContext:
 def _no_remote_error() -> ForgeError:
     return ForgeError(
         "No supported forge on remote 'origin'. Add a GitHub, GitLab or "
-        "Forgejo remote, or set its type in Settings > Git.",
+        "Forgejo remote, or set its type in Settings > Git & GitHub.",
         status=409,
         code="forge_unknown_remote",
     )
@@ -124,7 +124,7 @@ def _no_remote_error() -> ForgeError:
 def _unknown_kind_error(remote: ForgeRemote) -> ForgeError:
     return ForgeError(
         f"Could not tell what {remote.host} runs. Set its type "
-        f"(github / gitlab / forgejo) in Settings > Git.",
+        f"(github / gitlab / forgejo) in Settings > Git & GitHub.",
         status=409,
         code="forge_unknown_kind",
         host=remote.host,

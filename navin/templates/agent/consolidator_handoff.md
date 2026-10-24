@@ -21,4 +21,8 @@ Rules:
 - Omit any section the conversation does not support rather than padding it.
 - No preamble, no closing remark.
 
+If the input starts with a previous handover note, it covers turns that are already gone. Merge it into the new note: keep its goal, task, decisions, corrections and open items, and drop only what the newer messages show as finished or obsolete. Never lose the user's original goal.
+
+The user's own messages are carried separately and verbatim; do not copy them as a list, but do reflect their requests and corrections in Goal and Next.
+
 If the chunk contains no work worth carrying, output: (nothing)

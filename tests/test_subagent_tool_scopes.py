@@ -52,10 +52,14 @@ class MediaToolScopeTest(unittest.TestCase):
         self.assertNotIn("generate_video", loaded)
 
     def test_parent_only_tools_stay_out_of_the_subagent_scope(self) -> None:
-        """Spawn, message and db_query remain deliberately parent-only."""
+        """Message and db_query remain deliberately parent-only."""
         loaded = _loaded(ToolsConfig(), "subagent")
-        for name in ("spawn", "message", "db_query"):
+        for name in ("message", "db_query"):
             self.assertNotIn(name, loaded)
+
+    def test_subagents_can_delegate_further(self) -> None:
+        """A subagent splits its own chapter, up to MAX_SPAWN_DEPTH levels."""
+        self.assertIn("spawn", _loaded(ToolsConfig(), "subagent"))
 
 
 class SubagentConfigInheritanceTest(unittest.TestCase):

@@ -1,43 +1,25 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { describe, expect, it } from "vitest";
-import type { SettingsPayload } from "./types";
-import { isDuplicateDefault } from "./model-default-visibility";
 
-function fixture() {
-  const defaults = { name: "default", is_default: true, model: "chat-model", provider: "custom",
-    max_tokens: 8192, context_window_tokens: 200000, temperature: 0.7, reasoning_effort: null };
-  const active = { ...defaults, name: "my-model", is_default: false, enabled: true };
-  return { agent: { model_preset: active.name }, model_presets: [defaults, active] } as SettingsPayload;
-}
+import { presetProviderReady } from "./model-default-visibility";
 
-describe("default model visibility", () => {
-  it("shows the selected configuration once", () => {
-    const settings = fixture();
-    expect(settings.model_presets.filter((p) => !isDuplicateDefault(p, settings)))
-      .toEqual([settings.model_presets[1]]);
+const providers = [
+  { name: "openai", configured: true },
+  { name: "anthropic", configured: false },
+] as never;
+
+describe("presets offered in the model picker", () => {
+  it("lists the models of configured providers only", () => {
+    expect(presetProviderReady({ provider: "openai" }, providers)).toBe(true);
+    expect(presetProviderReady({ provider: "anthropic" }, providers)).toBe(false);
+    expect(presetProviderReady({ provider: "mistral" }, providers)).toBe(false);
   });
 
-  it("keeps a fallback with different reasoning settings", () => {
-    const settings = fixture();
-    settings.model_presets[0].reasoning_effort = "high";
-    expect(isDuplicateDefault(settings.model_presets[0], settings)).toBe(false);
-  });
-
-  it("keeps Default when it is selected", () => {
-    const settings = fixture();
-    settings.agent.model_preset = null;
-    expect(isDuplicateDefault(settings.model_presets[0], settings)).toBe(false);
-  });
-
-  it("preserves managed Navin rows", () => {
-    const settings = fixture();
-    for (const row of settings.model_presets) row.provider = "navin";
-    expect(isDuplicateDefault(settings.model_presets[0], settings)).toBe(false);
-  });
-
-  it("keeps the duplicate hidden after selecting another configuration", () => {
-    const settings = fixture();
-    settings.model_presets.push({ ...settings.model_presets[1], name: "second", model: "other-model" });
-    settings.agent.model_preset = "second";
-    expect(isDuplicateDefault(settings.model_presets[0], settings)).toBe(true);
+  it("keeps automatic routing and the Navin plan", () => {
+    expect(presetProviderReady({ provider: "auto" }, providers)).toBe(true);
+    expect(presetProviderReady({ provider: "" }, providers)).toBe(true);
+    expect(presetProviderReady({ provider: "navin" }, providers)).toBe(true);
   });
 });

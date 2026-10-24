@@ -33,7 +33,7 @@ When the user attaches media references from the Montage library (up to 6 per tu
 These tools are registered in Montage mode - **never claim they are unavailable**. Call them; if one fails, show the error.
 
 - **`browser`** - live product demos: `record_start` → drive UI → `record_stop`. Prefer `open_preview` for local apps.
-- **`montage`** - `detect` | `doctor` | `setup` | `stock_search` | `analyze` | `calendar` | `screenshot` | `demo_register` | `package` | `render` | `assemble` | `probe` | `timeline_list` | `timeline_get` | `timeline_save` | `timeline_render` | `timeline_delete` | `transcribe` | `voicetrack` | `dub` | `lipsync` | `profiles` | `jobs` | `job` | `resume_job` | `cancel_job`
+- **`montage`** - `detect` | `doctor` | `setup` | `stock_search` | `analyze` | `calendar` | `screenshot` | `demo_register` | `package` | `render` | `assemble` | `probe` | `timeline_list` | `timeline_get` | `timeline_save` | `timeline_render` | `timeline_delete` | `transcribe` | `voicetrack` | `dub` | `lipsync` | `profiles` | `jobs` | `job` | `resume_job` | `cancel_job` | `motion_templates` | `motion_render` | `footage_polish`
 - **`generate_image` / `generate_video` / `generate_music`** - AI creatives when providers are configured
 
 ## Project target (mandatory)
@@ -123,6 +123,20 @@ Turn any clip into another language: transcribe -> translate -> voicetrack -> du
 
 If `transcribe` reports no STT configured, tell the user which setting to fill and stop - do not fake a transcript. Timing edits to `translated.srt` are forbidden; only the text changes.
 
+## Premium demo video (product demo, promo, launch film)
+
+The default for "make a demo video of my app". Storyboard first, then real footage, then motion, then one premium edit, then QA. Load `motion-design` for the storyboard craft. The Marketing desk runs the same pipeline automatically (Produce > clips, `navin/marketing/demo_video.py`); by hand it is:
+
+1. **Brief** - the launch kit "Demo video brief" (`marketing/launch/demo_video.md`) or ask once: product, audience, the one outcome, CTA, primary format.
+2. **Storyboard JSON first** - `montage(action=motion_templates)` for the template list, then write `{"version":1,"format":"16:9","fps":30,"brand":{...},"scenes":[...],"audio":{...}}` following `motion-design`: hook in the first 2 s, one idea per scene, 2-4 s scenes (footage 3-6 s), a `device_mockup_3d` or `hero_intro` scene, `cta_end_card` last. Show it to the user before spending render time on a long film.
+3. **Scripted capture** - one shot per `footage` scene: `browser(action=record_start)`, log in only through the stored `secret_ref` (never type or show a password), replay the scene `steps`, wait for spinners to clear, `record_stop`. Keep the `<rec>.actions.json` click/scroll log next to the recording.
+4. **Polish** - `montage(action=footage_polish, path=<rec>, ...)` per format: auto zoom/pan on the actions, cursor highlight, dead-time trim, smart crop to 9:16 and 1:1. Never ship raw screen recordings.
+5. **Motion scenes** - `montage(action=motion_render, storyboard=<json>)` per format. Three.js is always in the rendered video through `device_mockup_3d` / `hero_intro`; it frames the real product, never as wallpaper.
+6. **Premium assemble** - `montage(action=assemble, ..., quality=premium)`: scene clips in order, segmented narration from the scene `narration` lines, music bed ducked under the voice, captions, cuts snapped to beats, grade, loudness -14 LUFS.
+7. **Video QA** - run the video QA (frames at every scene boundary and every 2 s plus a contact sheet, vision rubric, and ffprobe/ffmpeg checks: blackdetect, freezedetect, silencedetect, ebur128, resolution/fps/duration). Findings come back with scene index and timestamp.
+8. **Revise loop** - fix only the failing scenes (see the QA table in `motion-design`), re-render those scenes, re-assemble, re-run QA. Two rounds maximum, then hand the open findings and the contact sheet to the user.
+9. **Deliver** - 16:9, 9:16 and 1:1 MP4s, a 1280x720 thumbnail, a poster per format and social cover stills (1200x630, 1080x1920, 1080x1080) via `message` `media`. **Never auto-publish.**
+
 ## Live demo → platform video (preferred)
 
 1. Start the app (`open_preview` / known URL).
@@ -151,6 +165,7 @@ If `transcribe` reports no STT configured, tell the user which setting to fill a
 - **Never say** `record_start` / `montage` are missing from the session. They are core tools - use them.
 - Prefer **real browser demos** of the **linked** project over invented UI footage or unrelated repos.
 - **Three.js always** on Montage web surfaces (kinetic HTML, report UI, any page): `three` + `@react-three/fiber` + `@react-three/drei`, run ui-ux-pro-max `--stack threejs`, designed scene not wallpaper. Never put WebGL on a PPT slide.
+- **Three.js always in the rendered video** too: every premium demo video storyboard has a `device_mockup_3d` or `hero_intro` scene.
 - **No auto-publish.** Propose + generate files only.
 - Explain Plus vs BYOK before AI spend.
 - Tell the user before several `generate_video` / `generate_music` calls.

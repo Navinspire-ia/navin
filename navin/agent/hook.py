@@ -28,6 +28,10 @@ class AgentHookContext:
     tool_events: list[dict[str, str]] = field(default_factory=list)
     streamed_content: bool = False
     streamed_reasoning: bool = False
+    # Set only while ``on_stream_end`` runs for a segment whose partial text
+    # was abandoned (mid-stream retry / model failover): the retry streams
+    # the whole answer again, so the UI must drop that segment, not keep it.
+    stream_discarded: bool = False
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
@@ -36,6 +40,9 @@ class AgentHookContext:
     # What the loop asked the model to spend on reasoning for this step, so
     # the usage it reports can be checked against the request.
     requested_reasoning_effort: str | None = None
+    # Seconds from sending the request to the first streamed text or
+    # reasoning delta: what the user waits before anything moves.
+    first_token_s: float | None = None
     # UI evidence is persisted separately from the model-facing tool output.
     file_edit_events: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
@@ -150,6 +157,14 @@ class AgentHook:
         post-batch bookkeeping; lets a UI show the result as soon as it exists."""
 
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
+        pass
+
+    async def emit_live_status(self, label: str) -> None:
+        """A short "what is happening right now" line while the model works."""
+        pass
+
+    async def emit_user_notice(self, text: str) -> None:
+        """A message meant for the user only (for example a hook ``systemMessage``)."""
         pass
 
     async def emit_reasoning_end(self) -> None:
@@ -276,6 +291,26 @@ class CompositeHook(AgentHook):
 
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
         await self._for_each_hook_safe("emit_reasoning", reasoning_content)
+
+    async def emit_live_status(self, label: str) -> None:
+        for h in self._hooks:
+            method = getattr(h, "emit_live_status", None)
+            if method is None:
+                continue
+            try:
+                await method(label)
+            except Exception:
+                logger.debug("live status hook failed in {}", type(h).__name__, exc_info=True)
+
+    async def emit_user_notice(self, text: str) -> None:
+        for h in self._hooks:
+            method = getattr(h, "emit_user_notice", None)
+            if method is None:
+                continue
+            try:
+                await method(text)
+            except Exception:
+                logger.debug("user notice hook failed in {}", type(h).__name__, exc_info=True)
 
     async def emit_reasoning_end(self) -> None:
         await self._for_each_hook_safe("emit_reasoning_end")

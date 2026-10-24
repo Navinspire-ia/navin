@@ -66,7 +66,7 @@ export function PresenceAvatars({
         count: people.length,
       })}
     >
-      <div className="flex -space-x-1.5">
+      <div className="flex -space-x-1.5 rtl:space-x-reverse">
         {visible.map((member) => (
           <span
             key={member.member_id}

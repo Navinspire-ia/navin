@@ -22,7 +22,7 @@ from navin.utils.progress_events import (
     on_progress_accepts_tool_events,
 )
 from navin.utils.task_progress import bind_task_progress_emitter, build_agent_ui_blob
-from navin.utils.tool_hints import format_tool_hints
+from navin.utils.tool_hints import activity_label, format_tool_hints
 
 
 class AgentProgressHook(AgentHook):
@@ -64,6 +64,33 @@ class AgentProgressHook(AgentHook):
         return format_tool_hints(tool_calls, max_length=self._tool_hint_max_length)
 
     @staticmethod
+    def _running_label(tool_calls: list[Any]) -> str:
+        """Live-strip line once the calls run: ``Search OCR_PURCHASE…`` (+1 more).
+
+        Until now the strip kept the drafting line ("Preparing grep…") for as
+        long as the tool ran, so a ten-minute search read as a call that
+        never started.
+        """
+        if not tool_calls:
+            return ""
+        first = tool_calls[0]
+        arguments = getattr(first, "arguments", None)
+        name = str(getattr(first, "name", "") or "")
+        args = dict(arguments) if isinstance(arguments, dict) else {}
+        patterns = args.get("patterns")
+        if not args.get("pattern") and isinstance(patterns, list) and patterns:
+            # A multi-pattern grep: name the first pattern, not just its folder.
+            args["pattern"] = str(patterns[0])
+        text = activity_label(name, args, phase="start")
+        text = (text.splitlines() or [""])[0].strip() or name
+        if len(text) > 80:
+            text = text[:79].rstrip()
+        if not text.endswith("…"):
+            text += "…"
+        more = len(tool_calls) - 1
+        return f"{text} (+{more} more)" if more > 0 else text
+
+    @staticmethod
     def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
         try:
             sig = inspect.signature(cb)
@@ -92,7 +119,11 @@ class AgentProgressHook(AgentHook):
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
         await self.emit_reasoning_end()
         if self._on_stream_end:
-            await self._on_stream_end(resuming=resuming)
+            discarded = bool(getattr(context, "stream_discarded", False))
+            if discarded and self._on_progress_accepts(self._on_stream_end, "discarded"):
+                await self._on_stream_end(resuming=resuming, discarded=True)
+            else:
+                await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
         self._think_extractor.reset()
 
@@ -119,6 +150,7 @@ class AgentProgressHook(AgentHook):
                 tool_hint=True,
                 tool_events=tool_events,
             )
+            await self.emit_live_status(self._running_label(context.tool_calls))
             # Let long-running tools (shell builds/installs) stream their
             # output live into the same activity card as the start/end events.
             if on_progress_accepts_tool_events(self._on_progress):
@@ -193,6 +225,17 @@ class AgentProgressHook(AgentHook):
         ):
             self._reasoning_open = True
             await self._on_progress(reasoning_content, reasoning=True)
+
+    async def emit_live_status(self, label: str) -> None:
+        """Update the live strip (desktop) / spinner (CLI) without a new row."""
+        if label:
+            await self._emit_task_progress({"label": label, "indeterminate": True})
+
+    async def emit_user_notice(self, text: str) -> None:
+        """Show a hook ``systemMessage`` as its own activity row."""
+        from navin.agent.user_hooks import announce_hook_messages
+
+        await announce_hook_messages(self._on_progress, [text], self._session_key)
 
     async def emit_reasoning_end(self) -> None:
         """Close the current reasoning stream segment, if any was open."""

@@ -176,6 +176,12 @@ class ToolRegistry:
                     recovery_hint=self._parameter_recovery_hint(tool),
                 )
             )
+        ctx = current_request_context()
+        if ctx is not None and getattr(ctx, "workspace", None):
+            from navin.agent.constraint_guard import check_call
+
+            if refusal := check_call(ctx.workspace, name, cast_params):
+                return tool, cast_params, ToolResult.error(refusal)
         return tool, cast_params, None
 
     @staticmethod
@@ -299,6 +305,19 @@ class ToolRegistry:
             return params
         return cls._coerce_argument_value(params.get("arguments"))
 
+    def _observe_failure(self, name: str, params: Any, result: Any) -> Any:
+        """Feed the error registry; never raises, never changes the error status."""
+        ctx = current_request_context()
+        workspace = getattr(ctx, "workspace", None) if ctx is not None else None
+        if not workspace:
+            return result
+        from navin.agent.error_registry import FailureTracker
+
+        tracker = getattr(self, "_failure_tracker", None)
+        if tracker is None:
+            tracker = self._failure_tracker = FailureTracker()
+        return tracker.observe(workspace, name, params, result)
+
     async def execute(self, name: str, params: Any) -> Any:
         """Execute a tool by name with given parameters."""
         hint = "\n\n[Analyze the error above and try a different approach.]"
@@ -312,8 +331,8 @@ class ToolRegistry:
             assert tool is not None  # guarded by prepare_call()
             result = await tool.execute(**params)
             if is_tool_error_result(name, result):
-                return ToolResult.error(str(result) + tool_error_hint(result), recovery_hint=result.recovery_hint)
-            return result
+                result = ToolResult.error(str(result) + tool_error_hint(result), recovery_hint=result.recovery_hint)
+            return self._observe_failure(name, params, result)
         except Exception as e:
             return ToolResult.error(f"Error executing {name}: {str(e)}" + hint)
 

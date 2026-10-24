@@ -16,6 +16,7 @@ export default {
     extend: {
       fontFamily: {
         sans: [
+          '"Inter Variable"',
           '"DM Sans"',
           "ui-sans-serif",
           "system-ui",
@@ -24,6 +25,7 @@ export default {
           '"Segoe UI Emoji"',
         ],
         mono: [
+          '"JetBrains Mono Variable"',
           '"IBM Plex Mono"',
           '"JetBrains Mono"',
           '"Fira Code"',

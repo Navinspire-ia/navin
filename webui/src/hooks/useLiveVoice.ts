@@ -4,7 +4,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useRealtimeVoiceSession } from "@/hooks/useRealtimeVoiceSession";
 import { useVoiceSession, type VoiceSessionErrorKey } from "@/hooks/useVoiceSession";
+import { fetchLiveRealtimeStatus, searchNavinDocs } from "@/lib/api";
 import type { PendingApproval } from "@/lib/approvals";
 import type { PendingChoice } from "@/lib/choices";
 import {
@@ -25,19 +27,27 @@ import {
   type LiveVoiceState,
   type SpeechTextStrings,
 } from "@/lib/live-voice";
+import { type LiveDigest, liveDigest, offerAnswer } from "@/lib/live-digest";
 import { playCompletionChime, playSentCue } from "@/lib/live-voice-chime";
 import type { NavinClient } from "@/lib/navin-client";
 import { notifyUser } from "@/lib/os-notification";
 import type { UIMessage } from "@/lib/types";
+import { describeScreen, openPlace, showControl } from "@/lib/ui-tour";
 import type { MicrophonePermission, VoiceDeviceList } from "@/lib/voice-devices";
 
 /** Everything the voice bar and the composer toggle need. */
 export interface LiveVoiceControl {
   state: LiveVoiceState;
+  /** "realtime" = one voice-to-voice model; "pipeline" = STT -> chat -> TTS. */
+  engine: LiveVoiceEngine;
+  /** The realtime model in use, when engine is "realtime". */
+  realtimeModel: string | null;
   enabled: boolean;
   error: LiveVoiceErrorKey | null;
   errorDetail: string | null;
   muted: boolean;
+  /** Loudness of the agent's voice right now, 0..1; read per frame (Live avatar). */
+  speechLevel: () => number;
   /** Recent meter history, 0..1 per frame, oldest first. */
   levels: number[];
   /** Current microphone level, 0..1, relative to the room's noise floor. */
@@ -70,6 +80,22 @@ export interface LiveVoiceControl {
   /** Cut the assistant voice short without leaving the conversation. */
   skipSpeech: () => void;
   dismissError: () => void;
+}
+
+export type LiveVoiceEngine = "pipeline" | "realtime";
+
+const LIVE_DICTATION_KEY = "navin.live.dictation";
+
+/** Dictation: every utterance goes to the chat as a typed prompt (no voice model deciding). */
+export function liveDictationEnabled(): boolean {
+  try { return globalThis.localStorage?.getItem(LIVE_DICTATION_KEY) === "1"; } catch { return false; }
+}
+
+export function setLiveDictation(on: boolean): void {
+  try {
+    if (on) globalThis.localStorage?.setItem(LIVE_DICTATION_KEY, "1");
+    else globalThis.localStorage?.removeItem(LIVE_DICTATION_KEY);
+  } catch { /* storage unavailable: keep the default */ }
 }
 
 /** Plain text of the last assistant message, as context for the prompt rewrite. */
@@ -106,6 +132,10 @@ interface UseLiveVoiceOptions {
   onUtterance: (text: string) => void;
   wantsWav?: boolean;
   disabled?: boolean;
+  /** Gateway API token: realtime availability, Navin docs search, realtime bridge. */
+  token?: string;
+  /** Voice of the realtime model (empty = the model's default). */
+  realtimeVoice?: string;
 }
 
 const NO_APPROVALS: PendingApproval[] = [];
@@ -175,6 +205,8 @@ export function useLiveVoice({
   onUtterance,
   wantsWav = false,
   disabled = false,
+  token = "",
+  realtimeVoice = "",
 }: UseLiveVoiceOptions): LiveVoiceControl {
   const { t, i18n } = useTranslation();
   const [enabled, setEnabled] = useState(false);
@@ -259,6 +291,33 @@ export function useLiveVoice({
     }),
     [t],
   );
+  // A plan, a review or a long report is offered as a summary, not read out.
+  const digestStrings = useMemo(() => {
+    const phrase = (when: "last" | "new", digest: LiveDigest) =>
+      t(`thread.composer.liveVoice.digest.${when}.${digest.kind}`, {
+        count: digest.count,
+        defaultValue: when === "last"
+          ? "The last message is long. Shall I sum it up?"
+          : "Done. It is a long answer. Shall I sum it up?",
+      });
+    return {
+      last: (digest: LiveDigest) => phrase("last", digest),
+      fresh: (digest: LiveDigest) => phrase("new", digest),
+      request: (digest: LiveDigest) =>
+        t("thread.composer.liveVoice.digest.request", {
+          what: t(`thread.composer.liveVoice.digest.what.${digest.kind}`, { defaultValue: "the message" }),
+          defaultValue: "Sum up the message above for me out loud, like a colleague would.",
+        }),
+      ok: t("thread.composer.liveVoice.digest.ok", { defaultValue: "Okay." }),
+    };
+  }, [t]);
+  const digestStringsRef = useRef(digestStrings);
+  digestStringsRef.current = digestStrings;
+  /** The summary the voice just offered; the next yes or no answers it. */
+  const offerRef = useRef<LiveDigest | null>(null);
+  /** The agent is giving the summary it was asked for: read it, never offer to sum it up. */
+  const summaryAskedRef = useRef(false);
+
   const approvalRetryRef = useRef("");
   approvalRetryRef.current = t("thread.composer.liveVoice.speech.approvalRetry", {
     defaultValue: "I did not catch that. Yes or no?",
@@ -283,7 +342,7 @@ export function useLiveVoice({
     const context = lastAssistantContext(messagesRef.current, speechStringsRef.current);
     // A bare "oui" / "yeah" is an answer when a question is on the table,
     // otherwise it is a breath the STT put words on.
-    const expected = Boolean(approval) || Boolean(choice) || answerExpected(context);
+    const expected = Boolean(approval) || Boolean(choice) || Boolean(offerRef.current) || answerExpected(context);
     if (!transcriptIsMeaningful(raw, { answerExpected: expected })) return;
     setLastHeard(raw);
     setLastPrompt(null);
@@ -308,6 +367,24 @@ export function useLiveVoice({
         respondToChoiceRef.current(choice.requestId, answer.optionId, answer.skipped, answer.customText);
         setLastPrompt(raw);
         void playSentCue();
+        return;
+      }
+    }
+    const offer = offerRef.current;
+    if (offer) {
+      offerRef.current = null;
+      const answer = offerAnswer(raw);
+      if (answer === "yes") {
+        // Like asking a colleague: the agent explains its own plan or report.
+        const request = digestStringsRef.current.request(offer);
+        summaryAskedRef.current = true;
+        onUtteranceRef.current(request);
+        setLastPrompt(request);
+        void playSentCue();
+        return;
+      }
+      if (answer === "no") {
+        speakRef.current(digestStringsRef.current.ok);
         return;
       }
     }
@@ -354,10 +431,144 @@ export function useLiveVoice({
     onTranscript: handleTranscript,
     onError: handleError,
   });
-  stopSessionRef.current = session.stop;
   requestPromptRef.current = session.requestPrompt;
 
-  const { speak, start: startSession, stop: stopSession, stopSpeaking, setMuted } = session;
+  // Realtime engine: a voice-to-voice model converses; the agent works. Its
+  // tools are the same actions the pipeline performs from transcripts.
+  const [engine, setEngine] = useState<LiveVoiceEngine>("pipeline");
+  const engineRef = useRef<LiveVoiceEngine>(engine);
+  engineRef.current = engine;
+  const [realtimeModel, setRealtimeModel] = useState<string | null>(null);
+  const pipelineReadyRef = useRef<boolean | undefined>(undefined);
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+  const choiceStringsRef = useRef(choiceStrings);
+  choiceStringsRef.current = choiceStrings;
+  const approvalStringsRef = useRef(approvalStrings);
+  approvalStringsRef.current = approvalStrings;
+
+  const realtimeTool = useCallback(async (name: string, args: Record<string, unknown>): Promise<string> => {
+    switch (name) {
+      case "ask_agent": {
+        const request = String(args.request ?? "").trim();
+        if (!request) return "error: empty request";
+        onUtteranceRef.current(request);
+        setLastPrompt(request);
+        void playSentCue();
+        return "Sent to the agent, which is working on it. Its updates will arrive as [Navin agent] messages.";
+      }
+      case "stop_agent":
+        onUtteranceRef.current("/stop");
+        return "The agent was asked to stop.";
+      case "answer_approval": {
+        const approval = respondToApprovalRef.current ? pendingApprovalsRef.current[0] : undefined;
+        if (!approval) return "No approval is waiting.";
+        const allow = args.allow === true;
+        respondToApprovalRef.current?.(approval.requestId, allow, false);
+        void playSentCue();
+        return allow ? "Approved: the agent goes on." : "Refused: the agent will not do it.";
+      }
+      case "answer_question": {
+        const choice = pendingChoicesRef.current[0];
+        if (!choice) return "No question is waiting.";
+        const text = String(args.answer ?? "").trim();
+        const match = matchChoiceFromSpeech(text, choice) ?? { kind: "other" as const, text };
+        const answer = choiceAnswerFromMatch(match, choice);
+        respondToChoiceRef.current(choice.requestId, answer.optionId, answer.skipped, answer.customText);
+        void playSentCue();
+        return "Answer sent to the agent.";
+      }
+      case "chat_status": {
+        const approval = respondToApprovalRef.current ? pendingApprovalsRef.current[0] : undefined;
+        const choice = pendingChoicesRef.current[0];
+        return JSON.stringify({
+          agentWorking: isStreamingRef.current,
+          // Enough for the voice to sum up a plan or a report itself.
+          lastAgentMessage: lastAssistantContext(messagesRef.current, speechStringsRef.current, 4000) ?? null,
+          pendingApproval: approval ? speechForApproval(approval, approvalStringsRef.current) : null,
+          pendingQuestion: choice ? speechForChoice(choice, choiceStringsRef.current) : null,
+        });
+      }
+      case "navin_docs": {
+        const query = String(args.query ?? "").trim();
+        if (!query || !tokenRef.current) return "The documentation is not reachable right now.";
+        const results = await searchNavinDocs(tokenRef.current, query);
+        if (!results.length) return "Nothing in the documentation matches. Say so rather than guessing.";
+        return results
+          .map((result) => `## ${result.title} > ${result.section}\n${result.excerpt}\n(${result.url})`)
+          .join("\n\n")
+          .slice(0, 6000);
+      }
+      case "open_in_app":
+        return openPlace(String(args.place ?? "").trim());
+      case "screen_controls":
+        return describeScreen();
+      case "show_control": {
+        const label = String(args.label ?? "").trim();
+        if (!label) return "error: which control?";
+        return showControl(label, args.click === true);
+      }
+      default:
+        return `Unknown tool ${name}.`;
+    }
+  }, []);
+
+  const startPipelineRef = useRef<() => Promise<void>>(async () => undefined);
+  const realtime = useRealtimeVoiceSession({
+    client,
+    token,
+    language: speechStrings.language,
+    voice: realtimeVoice || undefined,
+    inputDeviceId: session.inputDeviceId,
+    outputDeviceId: session.outputDeviceId,
+    onTool: realtimeTool,
+    onUserTranscript: (text) => setLastHeard(text),
+    // The realtime model is unavailable (busy, unreachable, dropped): the
+    // conversation goes on with the pipeline, without a dead end.
+    onFallback: (_code, detail) => {
+      if (!enabledRef.current) return;
+      if (pipelineReadyRef.current === false) {
+        conversationEpochRef.current += 1;
+        enabledRef.current = false;
+        setEnabled(false);
+        setError("realtimeUnavailable");
+        // The provider's own words when there are some; never a raw error code.
+        setErrorDetail(detail || null);
+        void stopSessionRef.current();
+        return;
+      }
+      engineRef.current = "pipeline";
+      setEngine("pipeline");
+      setRealtimeModel(null);
+      void startPipelineRef.current();
+    },
+    onError: (key, detail) => handleError(key, detail),
+  });
+
+  const { start: startSession } = session;
+  startPipelineRef.current = startSession;
+  const stopSession = useCallback(async () => {
+    await Promise.all([session.stop(), realtime.stop()]);
+  }, [realtime.stop, session.stop]);
+  stopSessionRef.current = stopSession;
+  const speak = useCallback(
+    (text: string) => (engineRef.current === "realtime" ? realtime.speak(text) : session.speak(text)),
+    [realtime.speak, session.speak],
+  );
+  const stopSpeaking = useCallback(
+    () => (engineRef.current === "realtime" ? realtime.stopSpeaking() : session.stopSpeaking()),
+    [realtime.stopSpeaking, session.stopSpeaking],
+  );
+  const setMuted = useCallback(
+    (value: boolean) => {
+      session.setMuted(value);
+      realtime.setMuted(value);
+    },
+    [realtime.setMuted, session.setMuted],
+  );
+  const activeState = engine === "realtime" ? realtime.state : session.state;
 
   const stop = useCallback(() => {
     conversationEpochRef.current += 1;
@@ -385,9 +596,30 @@ export function useLiveVoice({
     runStartedAtRef.current = isStreaming ? Date.now() : null;
     wasStreamingRef.current = isStreaming;
     enabledRef.current = true;
+    offerRef.current = null;
     setEnabled(true);
-    void startSession();
-  }, [disabled, isStreaming, speechStrings, startSession, stop]);
+    void (async () => {
+      // Realtime when the gateway has a voice-to-voice model and the user did
+      // not pick the pipeline; the pipeline otherwise (and on any failure).
+      let useRealtime = false;
+      pipelineReadyRef.current = undefined;
+      if (tokenRef.current && !liveDictationEnabled()) {
+        try {
+          const status = await fetchLiveRealtimeStatus(tokenRef.current);
+          pipelineReadyRef.current = status.pipeline_ready;
+          useRealtime = status.available && status.engine !== "pipeline";
+          setRealtimeModel(useRealtime ? status.model ?? null : null);
+        } catch {
+          useRealtime = false;
+        }
+      }
+      if (!enabledRef.current) return;
+      engineRef.current = useRealtime ? "realtime" : "pipeline";
+      setEngine(engineRef.current);
+      if (useRealtime) void realtime.start();
+      else void startSession();
+    })();
+  }, [disabled, isStreaming, realtime.start, speechStrings, startSession, stop]);
 
   const dismissError = useCallback(() => {
     setError(null);
@@ -407,12 +639,20 @@ export function useLiveVoice({
   // Read each finished assistant message once, in order, as soon as it lands:
   // the plan before the work, the report after it.
   useEffect(() => {
-    if (!enabled || session.state !== "listening") return;
+    if (!enabled || activeState !== "listening") return;
     let onScreen: Map<string, number> | null = null;
     for (const message of messages) {
       if (message.role !== "assistant" || message.kind === "trace" || message.isStreaming) continue;
       if (spokenIdsRef.current.has(message.id)) continue;
       spokenIdsRef.current.add(message.id);
+      const digest = summaryAskedRef.current ? null : liveDigest(message.content);
+      summaryAskedRef.current = false;
+      if (digest) {
+        // A plan, review or long report: say what it is, offer the summary.
+        offerRef.current = digest;
+        speak(digestStringsRef.current.fresh(digest));
+        continue;
+      }
       const text = speechTextFromMarkdown(message.content, speechStrings);
       if (!text) continue;
       if (spokenProgressRef.current.has(`${message.turnId ?? ""}:${speechDedupeKey(text)}`)) continue;
@@ -420,12 +660,12 @@ export function useLiveVoice({
       if (!claimSpeechKey(spokenKeysRef.current, onScreen, speechDedupeKey(text))) continue;
       speak(text);
     }
-  }, [enabled, messages, session.state, speak, speechStrings]);
+  }, [activeState, enabled, messages, speak, speechStrings]);
 
   // The transcript groups progress with tool traces. Hear the agent's actual
   // explanations as they arrive, while keeping raw tool output silent.
   useEffect(() => {
-    if (!enabled || !chatId || session.state !== "listening") return;
+    if (!enabled || !chatId || activeState !== "listening") return;
     return client.onChat(chatId, (event) => {
       const progress = spokenProgressFromEvent(event);
       if (!progress || !enabledRef.current) return;
@@ -435,28 +675,45 @@ export function useLiveVoice({
       spokenProgressRef.current.add(key);
       speak(text);
     });
-  }, [chatId, client, enabled, session.state, speak, speechStrings]);
+  }, [activeState, chatId, client, enabled, speak, speechStrings]);
 
   speakRef.current = speak;
+
+  // The agent "calls" the user when it needs them and they are elsewhere
+  // (another window, another app): a ring and an OS banner that brings the
+  // chat back. In front of the chat, the spoken question is the call.
+  const callUser = useCallback((key: string, body: string) => {
+    if (typeof document === "undefined" || !document.hidden) return;
+    void playCompletionChime();
+    void notifyUser({
+      key: `live-voice-call:${key}`,
+      title: t("thread.composer.liveVoice.callTitle", { defaultValue: "Navin needs you" }),
+      body: body.length > 180 ? `${body.slice(0, 180).trimEnd()}...` : body,
+      onActivate: () => window.focus(),
+    });
+  }, [t]);
 
   // An approval card is read aloud once; the next utterance answers it. It
   // comes before any question card: the run is suspended on it.
   useEffect(() => {
-    if (!enabled || session.state !== "listening") return;
+    if (!enabled || activeState !== "listening") return;
     const approval = respondToApproval ? pendingApprovals[0] : undefined;
     if (!approval || announcedApprovalsRef.current.has(approval.requestId)) return;
     announcedApprovalsRef.current.add(approval.requestId);
-    speak(speechForApproval(approval, approvalStrings));
-  }, [approvalStrings, enabled, pendingApprovals, respondToApproval, session.state, speak]);
+    const spoken = speechForApproval(approval, approvalStrings);
+    speak(spoken);
+    callUser(approval.requestId, spoken);
+  }, [activeState, approvalStrings, callUser, enabled, pendingApprovals, respondToApproval, speak]);
 
   // A question card is read aloud once; the next utterance answers it.
   useEffect(() => {
-    if (!enabled || session.state !== "listening") return;
+    if (!enabled || activeState !== "listening") return;
     const choice = pendingChoices[0];
     if (!choice || announcedChoicesRef.current.has(choice.requestId)) return;
     announcedChoicesRef.current.add(choice.requestId);
     speak(speechForChoice(choice, choiceStrings));
-  }, [choiceStrings, enabled, pendingChoices, session.state, speak]);
+    callUser(choice.requestId, choice.question);
+  }, [activeState, callUser, choiceStrings, enabled, pendingChoices, speak]);
 
   // "Calls" the user back after a long run: chime, plus an OS banner when the
   // tab is in the background.
@@ -472,6 +729,13 @@ export function useLiveVoice({
       const startedAt = runStartedAtRef.current;
       runStartedAtRef.current = null;
       const duration = startedAt === null ? null : Date.now() - startedAt;
+      // A turn that ends on a question (blocked, a decision to make) calls
+      // the user back whatever its length.
+      const lastWords = lastAssistantContext(messagesRef.current, speechStringsRef.current);
+      if (answerExpected(lastWords)) {
+        callUser(`question:${Date.now()}`, lastWords ?? "");
+        return;
+      }
       if (!completionCueWanted(duration)) return;
       void playCompletionChime();
       if (typeof document !== "undefined" && document.hidden) {
@@ -485,7 +749,7 @@ export function useLiveVoice({
         });
       }
     }
-  }, [enabled, isStreaming, t]);
+  }, [callUser, enabled, isStreaming, t]);
 
   // The session belongs to one chat: switching threads hangs up.
   const chatIdRef = useRef(chatId);
@@ -495,31 +759,35 @@ export function useLiveVoice({
     if (enabledRef.current) stop();
   }, [chatId, stop]);
 
+  const rt = engine === "realtime";
   const state = liveVoiceStateFrom({
     enabled,
-    sessionState: session.state,
-    muted: session.muted,
-    ttsPlaying: session.ttsPlaying,
+    sessionState: activeState,
+    muted: rt ? realtime.muted : session.muted,
+    ttsPlaying: rt ? realtime.ttsPlaying : session.ttsPlaying,
     agentWorking: isStreaming,
     error,
   });
 
   return {
     state,
+    engine,
+    realtimeModel: rt ? realtimeModel : null,
     enabled,
     error,
     errorDetail,
-    muted: session.muted,
-    levels: session.levels,
-    inputLevel: session.inputLevel,
-    hearing: session.hearing,
-    noiseFloorDb: session.noiseFloorDb,
+    muted: rt ? realtime.muted : session.muted,
+    speechLevel: rt ? realtime.speechLevel : session.speechLevel,
+    levels: rt ? realtime.levels : session.levels,
+    inputLevel: rt ? realtime.inputLevel : session.inputLevel,
+    hearing: rt ? realtime.hearing : session.hearing,
+    noiseFloorDb: rt ? null : session.noiseFloorDb,
     lastHeard,
     lastPrompt,
-    isTranscribing: session.isTranscribing,
+    isTranscribing: rt ? realtime.isTranscribing : session.isTranscribing,
     isRewriting: rewriting > 0,
-    userSpeaking: session.isSpeaking,
-    awaitingPermission: session.awaitingPermission,
+    userSpeaking: rt ? realtime.isSpeaking : session.isSpeaking,
+    awaitingPermission: rt ? realtime.awaitingPermission : session.awaitingPermission,
     permission: session.permission,
     devices: session.devices,
     inputDeviceId: session.inputDeviceId,

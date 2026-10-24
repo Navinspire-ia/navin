@@ -1,0 +1,33 @@
+/* Campaigns email editor: the bits Tailwind typography leaves out. */
+.campaign-email-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: inline-start;
+  height: 0;
+  pointer-events: none;
+  color: hsl(var(--muted-foreground));
+}
+.campaign-email-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75em 0;
+}
+.campaign-email-editor th,
+.campaign-email-editor td {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.campaign-email-editor th {
+  background: hsl(var(--muted) / 0.6);
+}
+.campaign-email-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.campaign-email-editor img.ProseMirror-selectednode {
+  outline: 2px solid #1d6af0;
+}
+.campaign-email-editor a {
+  color: #1d6af0;
+}

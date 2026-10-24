@@ -129,13 +129,32 @@ def _rules_included(project_path: str | Path | None) -> list[tuple[str, str]]:
         return []
 
 
-def _configured_context_window() -> int:
+def _configured_context_window(preset_name: str | None = None) -> int:
+    """Window of the model the chat runs on, read from the saved config.
+
+    Live on purpose: changing the context size in Settings must show at once,
+    not after the next turn rewrites the persisted row. ``preset_name`` is the
+    chat's pinned model; without it the account default applies.
+    """
     from navin.config.loader import load_config
+    from navin.providers.factory import snapshot_context_window
 
     try:
-        return int(load_config().agents.defaults.context_window_tokens or 0)
+        config = load_config()
     except Exception:
         return 0
+    names: list[str | None] = []
+    if preset_name and preset_name != "auto":
+        names.append(preset_name)
+    names.append(None)
+    for name in names:
+        try:
+            value = int(snapshot_context_window(config, preset_name=name) or 0)
+        except Exception:
+            continue
+        if value > 0:
+            return value
+    return 0
 
 
 def _peak_from_row(last: dict[str, Any] | None) -> int | None:
@@ -152,6 +171,7 @@ def context_usage_payload(
     session_data: dict[str, Any] | None,
     *,
     project_path: str | Path | None = None,
+    prefer_persisted_window: bool = False,
 ) -> dict[str, Any]:
     """Attributed prompt fill against the configured window."""
     rows = _message_rows(session_data)
@@ -167,12 +187,19 @@ def context_usage_payload(
     last = last_context_usage_row(top_meta if isinstance(top_meta, dict) else None)
     peak = _peak_from_row(last)
 
-    window = _configured_context_window()
+    pin = top_meta.get("_last_model_preset") if isinstance(top_meta, dict) else None
+    persisted_window = 0
     if last and last.get("context_window"):
         try:
-            window = int(last["context_window"]) or window
+            persisted_window = int(last["context_window"])
         except (TypeError, ValueError):
-            pass
+            persisted_window = 0
+    if prefer_persisted_window and persisted_window:
+        window = persisted_window
+    else:
+        window = _configured_context_window(pin if isinstance(pin, str) else None)
+    if not window:
+        window = persisted_window
 
     from navin.session.context_usage_meta import last_preload_skills
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from navin.agent.token_budget import input_budget_for, soft_clear_limit
 from navin.config.schema import ToolResultClearing
 from navin.utils.helpers import (
     estimate_message_tokens,
@@ -195,11 +196,11 @@ class ContextGovernor:
             "max_tokens",
             4096,
         )
-        max_output = config.max_tokens if isinstance(config.max_tokens, int) else (
-            provider_max_tokens if isinstance(provider_max_tokens, int) else 4096
+        max_output = (
+            config.max_tokens if isinstance(config.max_tokens, int) else provider_max_tokens
         )
-        budget = config.context_block_limit or (
-            config.context_window_tokens - max_output - SNIP_SAFETY_BUFFER
+        budget = config.context_block_limit or input_budget_for(
+            config.context_window_tokens, max_output
         )
         return budget if budget > 0 else 0
 
@@ -443,7 +444,8 @@ class ContextGovernor:
         if stale_turns <= 0:
             return messages
         user_indexes = [
-            i for i, m in enumerate(messages) if m.get("role") == "user"
+            i for i, m in enumerate(messages)
+            if m.get("role") == "user" and not _is_runtime_turn(m)
         ]
         # Keep the current turn plus the last `stale_turns` completed turns.
         if len(user_indexes) <= stale_turns:
@@ -455,6 +457,17 @@ class ContextGovernor:
         for idx, msg in enumerate(messages):
             if idx >= cutoff:
                 break
+            if msg.get("role") == "assistant" and _has_thought_signatures(msg):
+                # Gemini validates thought signatures on the current turn
+                # only; on older calls they are opaque base64 (a quarter of a
+                # tool-heavy history). Dropped at the same monotone boundary
+                # as the results, so the cache cost is the one already paid.
+                if updated is None:
+                    updated = [dict(m) for m in messages]
+                updated[idx]["tool_calls"] = [
+                    _without_thought_signature(call) for call in msg["tool_calls"]
+                ]
+                continue
             if msg.get("role") != "tool" or msg.get("name") in excluded:
                 continue
             content = msg.get("content")
@@ -494,7 +507,7 @@ class ContextGovernor:
             config, updated, tools, _estimate_memo
         )
         soft_ratio = float(getattr(config.clearing, "soft_clear_ratio", 0.0) or 0.0)
-        soft_limit = int(budget * soft_ratio) if soft_ratio > 0 else 0
+        soft_limit = soft_clear_limit(budget, soft_ratio)
         hard_overflow = estimate > budget
         if not hard_overflow and (soft_limit <= 0 or estimate <= soft_limit):
             return updated
@@ -722,3 +735,43 @@ class ContextGovernor:
 
     def _compact_tool_result_at(self, messages: list[dict[str, Any]], idx: int) -> None:
         messages[idx]["content"] = self._summary_for(messages[idx])
+
+
+def _thought_signature(call: Any) -> bool:
+    extra = call.get("extra_content") if isinstance(call, dict) else None
+    google = extra.get("google") if isinstance(extra, dict) else None
+    return isinstance(google, dict) and "thought_signature" in google
+
+
+def _has_thought_signatures(message: dict[str, Any]) -> bool:
+    calls = message.get("tool_calls")
+    return isinstance(calls, list) and any(_thought_signature(call) for call in calls)
+
+
+def _is_runtime_turn(message: dict[str, Any]) -> bool:
+    """A reminder the agent loop sent itself, not a turn the user typed.
+
+    Counting those as turns aged the current request's own reads out after
+    two reminders, and the model re-read files it had just opened.
+    """
+    from navin.session.history_visibility import is_runtime_nudge_message
+
+    try:
+        return is_runtime_nudge_message(message)
+    except Exception:  # noqa: BLE001 - never let a heuristic break the request
+        return False
+
+
+def _without_thought_signature(call: Any) -> Any:
+    if not _thought_signature(call):
+        return call
+    google = {k: v for k, v in call["extra_content"]["google"].items() if k != "thought_signature"}
+    extra = {k: v for k, v in call["extra_content"].items() if k != "google"}
+    if google:
+        extra["google"] = google
+    trimmed = dict(call)
+    if extra:
+        trimmed["extra_content"] = extra
+    else:
+        trimmed.pop("extra_content", None)
+    return trimmed

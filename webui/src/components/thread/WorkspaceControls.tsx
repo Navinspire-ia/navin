@@ -31,7 +31,9 @@ import {
   rootLabel,
   rootsPathPlaceholder,
 } from "@/components/dev/DevProjectSelector";
-import { ApiError, cloneGitProject, fetchFsRoots, fetchSidebarState } from "@/lib/api";
+import { fetchFsRoots, fetchSidebarState } from "@/lib/api";
+import { GitImportFeedback } from "@/components/dev/GitImportFeedback";
+import { useGitImport } from "@/hooks/useGitImport";
 import type {
   FsRootEntry,
   FsRootsPayload,
@@ -97,9 +99,6 @@ export function WorkspaceProjectPicker({
   const [open, setOpen] = useState(false);
   const [pathDraft, setPathDraft] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
-  const [gitUrlDraft, setGitUrlDraft] = useState("");
-  const [gitError, setGitError] = useState<string | null>(null);
-  const [cloning, setCloning] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [roots, setRoots] = useState<FsRootsPayload | null>(null);
   const [recents, setRecents] = useState<RecentProjectEntry[]>([]);
@@ -111,7 +110,7 @@ export function WorkspaceProjectPicker({
     : t("thread.composer.workspace.projectPlaceholder");
   const visible = workspaceProjectPickerVisible({ isHero, defaultScope, controls, onChange });
   const trailingTools = trailing ? (
-    <div className="ml-auto flex shrink-0 items-center gap-0.5 pl-2">{trailing}</div>
+    <div className="ms-auto flex shrink-0 items-center gap-0.5 ps-2">{trailing}</div>
   ) : null;
   const pickFolder = getRuntimeHost().pickFolder;
   const nativeProjectPicker = !!pickFolder;
@@ -133,13 +132,6 @@ export function WorkspaceProjectPicker({
     </button>
   ) : null;
 
-  useEffect(() => {
-    if (!open) return;
-    setPathDraft(currentProjectScope?.project_path ?? "");
-    setPathError(null);
-    setGitUrlDraft("");
-    setGitError(null);
-  }, [currentProjectScope?.project_path, open]);
 
   const projectsRoot = useMemo(
     () => roots?.roots.find((root) => root.kind === "workspace")?.path ?? null,
@@ -213,45 +205,30 @@ export function WorkspaceProjectPicker({
     }
   }, [applyProjectPath, disabled, pickFolder]);
 
-  const importFromGit = useCallback(async () => {
-    const url = gitUrlDraft.trim();
-    if (!url || !token || cloning || disabled) return;
-    setCloning(true);
-    setGitError(null);
-    try {
-      const result = await cloneGitProject(token, {
-        url,
-        parent: projectsRoot ?? undefined,
-      });
-      applyProjectPath(result.path, result.name);
-    } catch (err) {
-      let detail =
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      if (
-        err instanceof ApiError
-        && err.status >= 500
-        && (!detail || /^HTTP\s*5\d\d$/i.test(detail.trim()))
-      ) {
-        detail = t("dev.project.gitImportGatewayDown", {
-          defaultValue:
-            "Gateway unavailable (HTTP {{status}}). Wait a second and retry.",
-          status: err.status,
-        });
-      }
-      setGitError(
-        t("dev.project.gitImportFailed", {
-          defaultValue: "Import failed: {{detail}}",
-          detail,
-        }),
-      );
-    } finally {
-      setCloning(false);
-    }
-  }, [applyProjectPath, cloning, disabled, gitUrlDraft, projectsRoot, t, token]);
+  const onGitImported = useCallback(
+    (result: { path: string; name: string }) => applyProjectPath(result.path, result.name),
+    [applyProjectPath],
+  );
+  const gitImport = useGitImport({
+    token,
+    parent: projectsRoot,
+    disabled,
+    onImported: onGitImported,
+  });
+  const {
+    url: gitUrlDraft,
+    setUrl: setGitUrlDraft,
+    cloning,
+    importRepo: importFromGit,
+    reset: resetGitImport,
+  } = gitImport;
+
+  useEffect(() => {
+    if (!open) return;
+    setPathDraft(currentProjectScope?.project_path ?? "");
+    setPathError(null);
+    resetGitImport();
+  }, [currentProjectScope?.project_path, open, resetGitImport]);
 
   if (!visible || !defaultScope || !onChange) return null;
 
@@ -276,7 +253,7 @@ export function WorkspaceProjectPicker({
         </button>
         {newChatButton}
         {pathError || error ? (
-          <span role="alert" className="ml-2 min-w-0 truncate text-[11.5px] font-medium text-amber-700 dark:text-amber-300">
+          <span role="alert" className="ms-2 min-w-0 truncate text-[11.5px] font-medium text-amber-700 dark:text-amber-300">
             {pathError ?? error}
           </span>
         ) : null}
@@ -438,7 +415,7 @@ export function WorkspaceProjectPicker({
                 setOpen(false);
               }}
             >
-              <FolderSearch className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              <FolderSearch className="me-1.5 h-3.5 w-3.5" aria-hidden />
               {t("dev.project.browse", { defaultValue: "Browse folders…" })}
             </Button>
             <form
@@ -452,12 +429,9 @@ export function WorkspaceProjectPicker({
                 <Input
                   value={gitUrlDraft}
                   disabled={disabled || cloning}
-                  onChange={(event) => {
-                    setGitUrlDraft(event.target.value);
-                    setGitError(null);
-                  }}
+                  onChange={(event) => setGitUrlDraft(event.target.value)}
                   placeholder={t("dev.project.gitUrlPlaceholder", {
-                    defaultValue: "https://github.com/org/repo.git",
+                    defaultValue: "owner/repo or https://github.com/org/repo.git",
                   })}
                   aria-label={t("dev.project.gitImport", {
                     defaultValue: "Import from Git",
@@ -475,7 +449,7 @@ export function WorkspaceProjectPicker({
                   {cloning ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <GitBranch className="mr-1 h-3.5 w-3.5" aria-hidden />
+                    <GitBranch className="me-1 h-3.5 w-3.5" aria-hidden />
                   )}
                   {cloning
                     ? t("dev.project.gitImporting", { defaultValue: "Cloning…" })
@@ -485,16 +459,17 @@ export function WorkspaceProjectPicker({
               {projectsRoot ? (
                 <p className="px-1 text-[10.5px] text-muted-foreground">
                   {t("dev.project.gitImportHint", {
-                    defaultValue: "Clones into {{folder}}",
+                    defaultValue: "Clones into {{folder}}. A URL or owner/repo works.",
                     folder: shortWorkspacePath(projectsRoot),
                   })}
                 </p>
               ) : null}
-              {gitError ? (
-                <p role="alert" className="px-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-300">
-                  {gitError}
-                </p>
-              ) : null}
+              <GitImportFeedback
+                state={gitImport}
+                className="px-1"
+                errorClassName="text-amber-700 dark:text-amber-300"
+                buttonClassName="rounded-full"
+              />
             </form>
           </div>
         </DropdownMenuContent>
@@ -553,14 +528,14 @@ export function WorkspaceAccessMenu({
           )}
         >
           {isFull ? (
-            <AlertTriangle className={cn("mr-1.5 shrink-0", isHero ? "h-3.5 w-3.5" : "h-3.5 w-3.5")} />
+            <AlertTriangle className={cn("me-1.5 shrink-0", isHero ? "h-3.5 w-3.5" : "h-3.5 w-3.5")} />
           ) : (
-            <Hand className={cn("mr-1.5 shrink-0", isHero ? "h-3.5 w-3.5" : "h-3.5 w-3.5")} />
+            <Hand className={cn("me-1.5 shrink-0", isHero ? "h-3.5 w-3.5" : "h-3.5 w-3.5")} />
           )}
           <span className="truncate">
             {t(isFull ? "thread.composer.workspace.full" : "thread.composer.workspace.default")}
           </span>
-          <ChevronDown className={cn("ml-1.5 shrink-0", isHero ? "h-3 w-3" : "h-3 w-3")} />
+          <ChevronDown className={cn("ms-1.5 shrink-0", isHero ? "h-3 w-3" : "h-3 w-3")} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">

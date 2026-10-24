@@ -18,8 +18,6 @@ With the project flag off, ``note_turn`` returns before touching anything.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import json
 import os
 import queue
@@ -34,6 +32,7 @@ from loguru import logger
 
 from navin.policy.journal import journal
 from navin.policy.settings import read_settings
+from navin.utils.proc import no_window_kwargs
 
 # Do not re-run training for the same project sooner than this.
 _MIN_INTERVAL_S = 15 * 60

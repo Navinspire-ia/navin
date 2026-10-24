@@ -514,7 +514,6 @@ def enable_optional_feature(
         load_channel_class,
     )
     from navin.config.loader import get_config_path
-
     from navin.marketing.social_channels import is_social_channel, set_social_channel_enabled
 
     if is_social_channel(name):
@@ -604,7 +603,6 @@ def disable_optional_feature(
 ) -> dict[str, Any]:
     from navin.channels.registry import discover_channel_names, discover_plugins
     from navin.config.loader import get_config_path
-
     from navin.marketing.social_channels import is_social_channel, set_social_channel_enabled
 
     if is_social_channel(name):

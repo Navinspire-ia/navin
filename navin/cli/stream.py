@@ -13,10 +13,13 @@ that plagued earlier approaches.
 from __future__ import annotations
 
 import sys
+import time
 from contextlib import contextmanager, nullcontext
 
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 from rich.text import Text
 
 from navin.cli.markdown import ResponseMarkdown
@@ -47,13 +50,25 @@ def _make_console() -> Console:
 
 
 class ThinkingSpinner:
-    """Spinner that shows '<bot_name> is thinking...' with pause support."""
+    """One live status line: what the agent is doing now, with pause support."""
 
-    def __init__(self, console: Console | None = None, bot_name: str = "navin"):
+    def __init__(self, console: Console | None = None, bot_name: str = "navin", text: str = ""):
         c = console or _make_console()
         self._console = c
-        self._spinner = c.status(f"[dim]{bot_name} is thinking...[/dim]", spinner="dots")
+        self.text = text or f"{bot_name} is working..."
+        self._spinner = c.status(f"[dim]{escape(self.text)}[/dim]", spinner="dots")
         self._active = False
+
+    def update(self, text: str) -> None:
+        """Show the current activity ("Running pytest", "Working…")."""
+        text = " ".join((text or "").split())
+        if not text or text == self.text:
+            return
+        if cell_len(text) > 96:
+            # Cut by terminal cells, not characters: wide glyphs count twice.
+            text = set_cell_size(text, 95).rstrip() + "…"
+        self.text = text
+        self._spinner.update(f"[dim]{escape(text)}[/dim]")
 
     def __enter__(self):
         self._spinner.start()
@@ -111,10 +126,22 @@ class StreamRenderer:
         self._console = _make_console()
         from navin.cli.activity import ActivityPrinter
 
-        self.activity = ActivityPrinter(self._console)
+        self.activity = ActivityPrinter(
+            self._console, on_status=self.set_status, on_step_end=self.mark_llm_start,
+        )
         self._live: Live | None = None
         self._spinner: ThinkingSpinner | None = None
         self._header_printed = False
+        self._status_text = ""
+        self._closed = False
+        # When the model call in flight started: the turn start, the end of
+        # the previous round, or the last tool that finished. A thought is
+        # timed from there, so a reasoning block delivered in one piece does
+        # not read as "1s".
+        self.llm_started = time.monotonic()
+        # Consecutive thoughts with nothing printed between them share one
+        # "Thought for Ns" line, printed just before the next output.
+        self._pending_thought: float | None = None
         self._start_spinner()
 
     def _renderable(self):
@@ -130,9 +157,40 @@ class StreamRenderer:
         return cap.get()
 
     def _start_spinner(self) -> None:
-        if self._show_spinner:
-            self._spinner = ThinkingSpinner(bot_name=self._bot_name)
+        if self._show_spinner and self._spinner is None:
+            self._spinner = ThinkingSpinner(bot_name=self._bot_name, text=self._status_text)
             self._spinner.__enter__()
+
+    def mark_llm_start(self) -> None:
+        """A new model call starts now (a round ended or a tool finished)."""
+        self.llm_started = time.monotonic()
+
+    def note_thought(self, seconds: float) -> None:
+        """Hold a finished thought; the next printed output shows it once."""
+        self._pending_thought = (self._pending_thought or 0.0) + max(0.0, seconds)
+        # The next thought of the same call is timed from here.
+        self.mark_llm_start()
+
+    def flush_thought(self) -> None:
+        """Print the held ``Thought for Ns`` line (spinner already paused)."""
+        seconds = self._pending_thought
+        if seconds is None:
+            return
+        self._pending_thought = None
+        self._console.print(
+            f"✻ Thought for {max(1, round(seconds))}s", style="dim italic", markup=False, highlight=False,
+        )
+
+    def set_status(self, text: str) -> None:
+        """Keep the single live status on the current step."""
+        self._status_text = text
+        if self._spinner is not None:
+            self._spinner.update(text)
+
+    def resume_spinner(self) -> None:
+        """Bring the live status back after trace lines while the turn runs."""
+        if not self._closed and self._live is None and not self._buf.strip():
+            self._start_spinner()
 
     def _stop_spinner(self) -> None:
         if self._spinner:
@@ -162,6 +220,11 @@ class StreamRenderer:
         self._console.print(f"[cyan]{header}[/cyan]")
         self._header_printed = True
 
+    def begin_output(self) -> None:
+        """Before any persistent line: header once, then a held thought."""
+        self.ensure_header()
+        self.flush_thought()
+
     def pause_spinner(self):
         """Context manager: temporarily stop transient output for clean trace lines."""
         @contextmanager
@@ -190,7 +253,7 @@ class StreamRenderer:
         if self._live is None:
             if not self._buf.strip():
                 return
-            self.ensure_header()
+            self.begin_output()
             self._live = Live(
                 self._renderable(),
                 console=self._console,
@@ -202,7 +265,17 @@ class StreamRenderer:
             self._live.update(self._renderable())
         self._live.refresh()
 
-    async def on_end(self, *, resuming: bool = False) -> None:
+    async def on_end(self, *, resuming: bool = False, discarded: bool = False) -> None:
+        if discarded:
+            # A mid-stream retry restarts the answer: the transient Live view
+            # vanishes on stop(), so the partial text is never printed.
+            if self._live:
+                self._live.stop()
+                self._live = None
+            self._buf = ""
+            self.set_status("Working…")
+            self._start_spinner()
+            return
         if self._live:
             # Double-refresh to sync _shape before stop() calls refresh().
             self._live.refresh()
@@ -213,15 +286,25 @@ class StreamRenderer:
         self._stop_spinner()
         if self._buf.strip():
             # Print final rendered content (persists after Live is gone).
+            self.flush_thought()
             out = sys.stdout
             out.write(self._render_str())
             out.flush()
         if resuming:
+            # Tools run next, then a new model call: one calm status until
+            # a step names itself, never a fresh "navin is working...".
             self._buf = ""
+            self.mark_llm_start()
+            self.set_status("Working…")
             self._start_spinner()
+        else:
+            self._closed = True
+            if self._pending_thought is not None:
+                self.begin_output()
 
     def stop_for_input(self) -> None:
         """Stop spinner before user input to avoid prompt_toolkit conflicts."""
+        self._closed = True
         self._stop_spinner()
 
     def pause(self):
@@ -232,7 +315,11 @@ class StreamRenderer:
 
     async def close(self) -> None:
         """Stop spinner/live without rendering a final streamed round."""
+        self._closed = True
         if self._live:
             self._live.stop()
             self._live = None
         self._stop_spinner()
+        if self._pending_thought is not None:
+            # The answer is printed next, under the same header.
+            self.begin_output()

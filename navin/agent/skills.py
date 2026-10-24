@@ -25,6 +25,9 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
     re.DOTALL,
 )
 
+_RESOLVED_PATH_CACHE: dict = {}
+_SKILL_META_TTL: dict = {}
+
 # Frontmatter metadata per SKILL.md, validated by (mtime_ns, size). The
 # context builder asks for every skill's metadata several times per turn
 # (summary, description, always-flag, requirements); without this cache each
@@ -135,9 +138,11 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
             if not skill_file.is_file() or child.name in seen:
                 continue
             # A symlinked SKILL.md (or a symlinked folder) resolving outside
-            # the library must not reach the prompt.
+            # the library must not reach the prompt. Only links can leave the
+            # folder: resolving every plain file (a realpath per path part, per
+            # skill, every turn) froze the event loop for seconds under WSL.
             try:
-                if not skill_file.resolve().is_relative_to(resolved_base):
+                if (child.is_symlink() or skill_file.is_symlink()) and not skill_file.resolve().is_relative_to(resolved_base):
                     continue
             except OSError:
                 continue
@@ -154,7 +159,7 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
         if not name or name in seen:
             continue
         try:
-            if not child.resolve().is_relative_to(resolved_base):
+            if child.is_symlink() and not child.resolve().is_relative_to(resolved_base):
                 continue
         except OSError:
             continue
@@ -306,6 +311,8 @@ def clear_skills_index_cache() -> None:
         _INDEX_CACHE.clear()
         _SCAN_GENERATION += 1
         _WHICH_CACHE.clear()
+    _SKILL_META_TTL.clear()
+    _RESOLVED_PATH_CACHE.clear()
     _PLUGIN_SKILL_DIRS_CACHE = None
 
 
@@ -543,6 +550,8 @@ class SkillsLoader:
     def invalidate_scan(self) -> None:
         """Forget the cached directory scan (after writing a skill file)."""
         self._scan_cache = None
+        _SKILL_META_TTL.clear()
+        _RESOLVED_PATH_CACHE.clear()
 
     def skill_source(self, name: str) -> str:
         """Where a skill comes from: workspace / user / plugin:<pack> / builtin."""
@@ -633,11 +642,13 @@ class SkillsLoader:
             if is_owned_skill_source(entry.get("source"))
         ]
 
-    def mentioned_skill_names(self, text: str) -> list[str]:
+    def mentioned_skill_names(self, text: str, *, explicit_only: bool = False) -> list[str]:
         """Explicit $mentions and distinct skill slugs in prose, in order.
 
         Bare generic names such as git or memory are ordinary task words;
         only compound slugs or quoted names count without the $ prefix.
+        ``explicit_only`` keeps the $mentions alone: a workflow brief names its
+        own skills in prose, and that is not the user asking for them.
         """
         known = {entry["name"].lower(): entry["name"] for entry in self.list_skills(filter_unavailable=False)}
         matches: dict[str, int] = {}
@@ -645,6 +656,8 @@ class SkillsLoader:
             name = known.get(match.group(1).lower())
             if name:
                 matches.setdefault(name, match.start())
+        if explicit_only:
+            return sorted(matches, key=matches.get)
         for key, name in known.items():
             escaped = re.escape(key)
             pattern = (
@@ -667,10 +680,21 @@ class SkillsLoader:
 
     def _contained_in_skill_roots(self, path: Path) -> bool:
         """True when the file, symlinks resolved, stays under a skill root."""
-        try:
-            resolved = path.resolve()
-        except OSError:
-            return False
+        # resolve() is several stats per call; on WSL/Windows drives that is
+        # the dominant cost of building a prompt. A 5 s TTL still rejects a
+        # retargeted symlink almost immediately.
+        now = time.monotonic()
+        hit = _RESOLVED_PATH_CACHE.get(path)
+        if hit is not None and now - hit[0] < 5.0:
+            resolved = hit[1]
+        else:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return False
+            if len(_RESOLVED_PATH_CACHE) >= 4096:
+                _RESOLVED_PATH_CACHE.clear()
+            _RESOLVED_PATH_CACHE[path] = (now, resolved)
         # Build ancestors once. Path.is_relative_to walks and reconstructs
         # them for every root, multiplying prompt work by the library count.
         # Keep resolving the file on every read so retargeted symlinks are
@@ -1108,6 +1132,21 @@ class SkillsLoader:
         Returns:
             Metadata dict or None.
         """
+        # Prompt building asks for every skill of every agent; each lookup
+        # costs a resolve() plus two stats. Within 2 s the answer is reused,
+        # which collapses a fan-out of hundreds of subagents to one disk pass.
+        memo_key = (tuple(str(r) for r in self._skill_roots()), name)
+        now = time.monotonic()
+        memo = _SKILL_META_TTL.get(memo_key)
+        if memo is not None and now - memo[0] < 2.0:
+            return memo[1]
+        result = self._get_skill_metadata_uncached(name)
+        if len(_SKILL_META_TTL) >= 4096:
+            _SKILL_META_TTL.clear()
+        _SKILL_META_TTL[memo_key] = (now, result)
+        return result
+
+    def _get_skill_metadata_uncached(self, name: str) -> dict | None:
         path = self._skill_path(name)
         if path is None:
             return None

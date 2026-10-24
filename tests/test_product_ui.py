@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -169,6 +170,62 @@ class ProductUiGateTests(unittest.TestCase):
                     codes = {d.code for d in lint_product_ui(root, [rel]).diagnostics}
                     self.assertIn("missing-framer-motion", codes)
                     self.assertIn("missing-three-stack", codes)
+
+    def test_existing_app_keeps_its_stack_and_a_new_one_gets_the_defaults(self) -> None:
+        bare = {
+            "name": "phone-dashboard",
+            "dependencies": {"react": "19.0.0", "react-dom": "19.0.0"},
+            "scripts": {"dev": "vite"},
+        }
+        defaults = {"missing-official-ds", "missing-framer-motion", "missing-three-stack"}
+
+        def git(root: Path, *args: str) -> None:
+            subprocess.run(
+                ["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                check=True,
+                capture_output=True,
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            git(root, "init", "-q")
+            (root / "package.json").write_text(json.dumps(bare), encoding="utf-8")
+            git(root, "add", "package.json")
+            git(root, "commit", "-q", "-m", "existing app")
+            # Adding a screen edits the committed package.json: no design
+            # system, motion or 3D demand on an app that already has its UI.
+            (root / "package.json").write_text(
+                json.dumps({**bare, "dependencies": {**bare["dependencies"], "zustand": "5.0.0"}}),
+                encoding="utf-8",
+            )
+            codes = {d.code for d in lint_product_ui(root, ["package.json"]).diagnostics}
+            self.assertFalse(codes & defaults, codes)
+
+            # A front end created now in the same repository, even staged, is new.
+            (root / "apps" / "web").mkdir(parents=True)
+            (root / "apps" / "web" / "package.json").write_text(json.dumps(bare), encoding="utf-8")
+            git(root, "add", "apps/web/package.json")
+            codes = {d.code for d in lint_product_ui(root, ["apps/web/package.json"]).diagnostics}
+            self.assertEqual(codes & defaults, defaults)
+
+    def test_outside_git_an_existing_ui_stack_counts_as_an_existing_app(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "dash",
+                        "dependencies": {"react": "19.0.0", "@radix-ui/react-dialog": "1.1.0"},
+                        "devDependencies": {"tailwindcss": "3.4.0"},
+                        "scripts": {"dev": "vite"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            codes = {d.code for d in lint_product_ui(root, ["package.json"]).diagnostics}
+            self.assertNotIn("missing-official-ds", codes)
+            self.assertNotIn("missing-framer-motion", codes)
+            self.assertNotIn("missing-three-stack", codes)
 
     def test_allows_hyphen_and_real_handler(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

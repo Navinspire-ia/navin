@@ -35,10 +35,12 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from navin.evolve.devport import detect_dev_port, quote_folder, split_cd, start_folder
 from navin.utils import wsl
 from navin.utils.proc import detached_no_window_kwargs, no_window_kwargs
 
@@ -55,6 +57,7 @@ _ARTEFACT_DIRS = {
 
 _MAX_ITEMS_PER_KIND = 12
 _SOCKET_TIMEOUT_S = 10.0
+_STATUS_TIMEOUT_S = 3.0
 _CONNECT_TIMEOUT_S = 3.0
 _CLI_TIMEOUT_S = 120.0
 # WSL and cold starts routinely take more than 8s. The WebUI client waits 35s.
@@ -252,7 +255,9 @@ def clear_endpoint(root: Path) -> None:
         pass
 
 
-def daemon_call(root: Path, method: str, params: Any) -> Any:
+def daemon_call(
+    root: Path, method: str, params: Any, *, timeout: float | None = None
+) -> Any:
     """One-shot request to the daemon; raises EvolveApiError(503) when no
     daemon serves this workspace.
 
@@ -279,7 +284,7 @@ def daemon_call(root: Path, method: str, params: Any) -> Any:
     except OSError as exc:
         raise EvolveApiError(503, f"engine daemon not reachable: {exc}") from exc
     try:
-        client.settimeout(_SOCKET_TIMEOUT_S)
+        client.settimeout(_SOCKET_TIMEOUT_S if timeout is None else timeout)
         client.sendall(request.encode("utf-8"))
         buffer = b""
         while True:
@@ -347,7 +352,10 @@ def daemon_snapshot(root: Path) -> dict[str, Any]:
             "reason": DAEMON_REASON_UNSUPPORTED,
         }
     try:
-        status = daemon_call(root, "engine.status", {})
+        # Short on purpose: the dashboard polls this, and a daemon busy for
+        # 10 s per refresh is what made the Engine screen crawl. A late
+        # answer is reported as unreachable and the next refresh tries again.
+        status = daemon_call(root, "engine.status", {}, timeout=_STATUS_TIMEOUT_S)
     except EvolveApiError as exc:
         return {
             "online": False,
@@ -454,7 +462,40 @@ _FRAMEWORK_PORTS = {
 }
 
 
+_HINT_TTL_S = 300.0
+_HINT_MISS_TTL_S = 30.0
+_hint_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+_hint_lock = threading.Lock()
+_hint_root_locks: dict[str, threading.Lock] = {}
+
+
 def _manifest_hint(root: Path) -> dict[str, Any] | None:
+    """Cached, single-flight front of the inspector.
+
+    The inspector can take up to 20 s and the dashboard refreshes often, so
+    uncached calls piled up and exhausted the server threads. Concurrent
+    callers for one project share one computation; a result stays valid for
+    a few minutes (a miss for a short while only).
+    """
+    key = str(root)
+    with _hint_lock:
+        entry = _hint_cache.get(key)
+        if entry and time.monotonic() < entry[0]:
+            return entry[1]
+        root_lock = _hint_root_locks.setdefault(key, threading.Lock())
+    with root_lock:
+        with _hint_lock:
+            entry = _hint_cache.get(key)
+            if entry and time.monotonic() < entry[0]:
+                return entry[1]
+        hint = _compute_manifest_hint(root)
+        ttl = _HINT_TTL_S if hint is not None else _HINT_MISS_TTL_S
+        with _hint_lock:
+            _hint_cache[key] = (time.monotonic() + ttl, hint)
+        return hint
+
+
+def _compute_manifest_hint(root: Path) -> dict[str, Any] | None:
     """What the engine's inspector knows about this project: detected
     commands, framework and a suggested probe URL. Best effort."""
     manifest: Any = None
@@ -479,27 +520,49 @@ def _manifest_hint(root: Path) -> dict[str, Any] | None:
                 manifest = None
     if not isinstance(manifest, dict):
         return None
-    units = manifest.get("units") or []
-    unit = units[0] if units and isinstance(units[0], dict) else {}
+    units = [unit for unit in manifest.get("units") or [] if isinstance(unit, dict)]
+    first = units[0] if units else {}
+    # The engine resolves the start command across units, Procfile and
+    # Makefile; the first unit is only a fallback for older daemons.
+    start = manifest.get("start_command") or (first.get("commands") or {}).get("start") or (first.get("commands") or {}).get("dev")
+    # The unit the start command runs in (`cd equipe && npm run dev`): its
+    # framework, test command and config are the ones that matter.
+    folder, _ = split_cd(start)
+    unit = next(
+        (candidate for candidate in units if folder and str(candidate.get("path") or "").strip("/") == folder.strip("/")),
+        first,
+    )
     commands = unit.get("commands") or {}
     framework = unit.get("framework")
+    test = commands.get("test")
+    # Unit commands are relative to the unit, the start command already
+    # carries its `cd`: give the test command the same one.
+    if test and folder and str(unit.get("path") or "").strip("/") == folder.strip("/") and not test.lstrip().startswith("cd "):
+        test = f"cd {quote_folder(folder)} && {test}"
     port = None
+    explicit = False
     for service in manifest.get("services") or []:
         if isinstance(service, dict) and service.get("kind") == "app" and service.get("ports"):
             port = service["ports"][0]
+            explicit = True
             break
+    if port is None:
+        detected = detect_dev_port(start_folder(root, start), split_cd(start)[1])
+        if detected:
+            port, explicit = detected.port, detected.explicit
     if port is None and isinstance(framework, str):
         port = _FRAMEWORK_PORTS.get(framework)
-    # The engine resolves the start command across units, Procfile and
-    # Makefile; the first unit is only a fallback for older daemons.
-    start = manifest.get("start_command") or commands.get("start") or commands.get("dev")
     guessed = f"http://127.0.0.1:{port}/" if port else None
+    probed = _probed_url(root, start)
     return {
         "framework": framework,
         "start": start,
-        "test": commands.get("test"),
+        "test": test,
         # A URL already observed beats any guess: it is the one a run uses.
-        "url": _probed_url(root, start) or guessed,
+        "url": probed or guessed,
+        # Measured before, or read from the project's own config: safe to
+        # hand to the engine so it skips booting the app once to find it.
+        "url_certain": bool(probed or (guessed and explicit)),
     }
 
 
@@ -518,6 +581,46 @@ def _probed_url(root: Path, start: str | None) -> str | None:
 
 
 def overview(raw_path: str) -> dict[str, Any]:
+    """Single-flight front of the dashboard payload: refreshes that arrive
+    while one is being built wait for it and share its result."""
+    key = str(_project_root(raw_path))
+    with _overview_lock:
+        flight = _overview_flights.get(key)
+        leader = flight is None
+        if leader:
+            flight = _OverviewFlight()
+            _overview_flights[key] = flight
+    assert flight is not None
+    if not leader:
+        flight.done.wait(timeout=60)
+        if flight.error is not None:
+            raise flight.error
+        if flight.payload is not None:
+            return flight.payload
+    try:
+        flight.payload = _build_overview(raw_path)
+        return flight.payload
+    except Exception as exc:
+        flight.error = exc
+        raise
+    finally:
+        with _overview_lock:
+            _overview_flights.pop(key, None)
+        flight.done.set()
+
+
+class _OverviewFlight:
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.payload: dict[str, Any] | None = None
+        self.error: Exception | None = None
+
+
+_overview_lock = threading.Lock()
+_overview_flights: dict[str, _OverviewFlight] = {}
+
+
+def _build_overview(raw_path: str) -> dict[str, Any]:
     """Everything the dashboard needs in one round trip: daemon state,
     recent artefacts of every kind, and the promotion history."""
     root = _project_root(raw_path)
@@ -845,9 +948,16 @@ def enqueue_campaign(raw_path: str, kind: str, query: dict[str, list[str]]) -> A
         elif key in _BOOL_PARAMS:
             params[key] = value.lower() in {"1", "true", "yes"}
 
-    # `start` and `url` are deliberately not filled in here: the engine
-    # resolves whatever is missing from the project itself, and finds the
-    # probe URL by booting the app once in a shadow.
+    # The engine finds a missing probe URL by booting the app once in a
+    # shadow, then boots it again for the run. With a pinned port (Vite
+    # strictPort) the two collided and the proof failed at once. When the URL
+    # is certain (measured before, or set in the project's config), hand it
+    # over with the start command it belongs to; otherwise let the engine look.
+    if "url" not in params and "start" not in params:
+        hint = _manifest_hint(root)
+        if hint and hint.get("url_certain") and hint.get("url") and hint.get("start"):
+            params["start"] = hint["start"]
+            params["url"] = hint["url"]
     if kind in _GENERATIVE_KINDS:
         bridge = _bridge_command()
         if bridge:

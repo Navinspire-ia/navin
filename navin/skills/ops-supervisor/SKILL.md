@@ -42,7 +42,7 @@ The platform runs on Linux, macOS, and Windows. Before running or delegating any
 3. Write the plan as explicit steps with the tool/skill per step. For multi-domain work, spawn subagents (one domain each) with complete briefs and merge their results yourself.
 4. Prefer the GitOps path for any production change: modify manifests in git, open a PR/MR, let ArgoCD or CI apply it. Direct kubectl/cloud mutations on prod are the exception, not the rule.
 5. Verify after every mutation: re-read the resource, check rollout status, tail logs, confirm health.
-6. Close with a report: what changed, evidence it works, what is left, and rollback instructions.
+6. Close with a report: what changed, evidence it works, rollback instructions, and remarks (risks, observations).
 
 ## Rules
 

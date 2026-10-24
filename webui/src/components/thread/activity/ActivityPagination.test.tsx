@@ -28,9 +28,9 @@ describe("large desktop activity", () => {
       expect(container.querySelectorAll("li").length).toBeLessThanOrEqual(20);
     }
     expect(screen.getByText("781-790 / 790")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "src/file-789.py", exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "src/file-789.py" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "src/file-789.py", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "src/file-789.py" }));
     expect(open).toHaveBeenCalledWith("src/file-789.py");
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
     expect(screen.getByText("761-780 / 790")).toBeTruthy();

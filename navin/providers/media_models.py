@@ -46,6 +46,16 @@ def media_model_kinds(model: str, row: dict[str, Any] | None = None) -> list[str
     architecture = architecture if isinstance(architecture, dict) else {}
     outputs = row.get("output_modalities", architecture.get("output_modalities"))
     declared = set()
+    # OmniRoute's catalog: ``type`` image / video / music, audio + ``subtype``.
+    row_type = str(row.get("type") or "").lower()
+    if row_type in {"image", "video", "music"}:
+        declared.add(row_type)
+    elif row_type == "audio":
+        subtype = str(row.get("subtype") or "").lower()
+        if subtype in {"speech", "tts", "text-to-speech"}:
+            declared.add("tts")
+        elif subtype in {"transcription", "stt", "speech-to-text", "asr"}:
+            declared.add("stt")
     for value in (row.get("task"), row.get("pipeline_tag")):
         if isinstance(value, str) and value.lower() in _TASK_KINDS:
             declared.add(_TASK_KINDS[value.lower()])
@@ -66,3 +76,13 @@ def media_model_kinds(model: str, row: dict[str, Any] | None = None) -> list[str
 
 def supports_media_model(model: str, kind: str, row: dict[str, Any] | None = None) -> bool:
     return kind in media_model_kinds(model, row)
+
+
+_REALTIME_PATTERN = r"(?:^|[-_.])(?:live|realtime|sonic|native-audio|omni-realtime|voice-latest|voice-think)(?:[-_.0-9]|$)"
+
+
+def is_realtime_voice_model(model: str) -> bool:
+    """Voice-to-voice models for the Live realtime engine (Gemini Live, GPT
+    Realtime, Nova Sonic, Qwen Omni Realtime...)."""
+    slug = model.strip().lower().rsplit("/", 1)[-1]
+    return bool(re.search(_REALTIME_PATTERN, slug)) and not re.search(r"embed|transcri|translat|tts(?:[-_.]|$)", slug)

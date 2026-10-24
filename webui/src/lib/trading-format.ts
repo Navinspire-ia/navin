@@ -1,3 +1,4 @@
+import { intlLocale } from "@/i18n/intl";
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -39,7 +40,7 @@ export function formatMoney(value: number | null | undefined, currency = "USD"):
   const amount = Number(value);
   const digits = Math.abs(amount) > 0 && Math.abs(amount) < 1 ? 4 : 2;
   if (MONEY_CODES.has(raw)) {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(intlLocale(), {
       style: "currency",
       currency: raw,
       maximumFractionDigits: digits,
@@ -47,9 +48,9 @@ export function formatMoney(value: number | null | undefined, currency = "USD"):
   }
   // Crypto tickers and NFT floors (ETH, SOL, USDT) are not ISO codes: keep the unit visible.
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: raw, maximumFractionDigits: digits }).format(amount);
+    return new Intl.NumberFormat(intlLocale(), { style: "currency", currency: raw, maximumFractionDigits: digits }).format(amount);
   } catch {
-    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(amount)} ${raw}`;
+    return `${new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: digits }).format(amount)} ${raw}`;
   }
 }
 
@@ -245,7 +246,7 @@ export function stopDistancePct(last: number | null | undefined, stop: number | 
 
 export function formatCompact(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return "-";
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(Number(value));
+  return new Intl.NumberFormat(intlLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(Number(value));
 }
 
 export function formatQty(value: number | null | undefined): string {

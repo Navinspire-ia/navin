@@ -17,7 +17,12 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from navin.leads.errors import LeadsError
-from navin.leads.heartbeat import HEARTBEAT_LEADS_ACTIONS, heartbeat_prompt_note, profile_is_armed, tick_watch
+from navin.leads.heartbeat import (
+    HEARTBEAT_LEADS_ACTIONS,
+    heartbeat_prompt_note,
+    profile_is_armed,
+    tick_watch,
+)
 from navin.leads.lock import leads_desk_lock
 from navin.leads.loop import (
     MAX_HUNT_S,

@@ -1,0 +1,26 @@
+{
+  "name": "pr-review-toolkit",
+  "version": "1.0.0",
+  "description": "Specialised review agents for comments, tests, error handling, type design, code quality and simplification, orchestrated by /review-pr.",
+  "category": "productivity",
+  "commands": ["review-pr"],
+  "agents": [
+    "code-reviewer",
+    "comment-analyzer",
+    "pr-test-analyzer",
+    "silent-failure-hunter",
+    "type-design-analyzer",
+    "code-simplifier"
+  ],
+  "skills": ["code-reviewer", "test-generator"],
+  "steps": [
+    {"step": "review a change from every angle", "use": "/review-pr"},
+    {"step": "review local changes against the guidelines", "use": "agent:code-reviewer"},
+    {"step": "check comments and docstrings", "use": "agent:comment-analyzer"},
+    {"step": "check test coverage", "use": "agent:pr-test-analyzer"},
+    {"step": "hunt silent failures in error handling", "use": "agent:silent-failure-hunter"},
+    {"step": "review new types and invariants", "use": "agent:type-design-analyzer"},
+    {"step": "simplify code after the review", "use": "agent:code-simplifier"},
+    {"step": "write the missing tests", "use": "skill:test-generator"}
+  ]
+}

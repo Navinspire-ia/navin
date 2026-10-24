@@ -1,7 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Camera, History, Loader2, RefreshCw, Undo2 } from "lucide-react";
+import { intlLocale } from "@/i18n/intl";
+import { Camera, History, Loader2, Play, RefreshCw, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -11,14 +12,43 @@ import {
   createCheckpoint,
   fetchCheckpointDiff,
   fetchCheckpoints,
+  fetchMissionDiff,
+  fetchMissionCompare,
+  replayMissionStep,
   restoreCheckpoint,
+  restoreMissionVersion,
 } from "@/lib/api";
+import type { MissionCompare, MissionDiff, MissionStrategy } from "@/lib/api";
 import { parseCheckpointError } from "@/lib/checkpointError";
 import { cn } from "@/lib/utils";
 
+type TimelinePayload = {
+  events: {
+    kind: string;
+    title: string;
+    at: string;
+    version: number | null;
+    restorable?: boolean;
+  }[];
+  steps?: { id: string; title: string; status: string; retry_count: number }[];
+  last_coherent: { checkpoint_id: string } | null;
+};
+
+function strategyLine(s: MissionStrategy, tx: (key: string, fallback: string) => string): string {
+  const parts = [
+    `v${s.version}`,
+    `${s.criteria_proven}/${s.criteria_total} ${tx("dev.checkpoints.mission.criteria", "criteria")}`,
+    `${s.steps_completed}/${s.steps_total} ${tx("dev.checkpoints.mission.stepsShort", "steps")}`,
+    `${s.retries} ${tx("dev.checkpoints.mission.retries", "retries")}`,
+  ];
+  if (s.duration_s !== null) parts.push(`${s.duration_s}s`);
+  parts.push(`${s.test_events} ${tx("dev.checkpoints.mission.tests", "tests")}`);
+  return `${parts.join(" - ")}${s.decision ? ` (${s.decision})` : ""}`;
+}
+
 function formatTs(ts: number): string {
   try {
-    return new Date(ts * 1000).toLocaleString([], {
+    return new Date(ts * 1000).toLocaleString(intlLocale(), {
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -150,8 +180,329 @@ export function DevCheckpointsPanel({
     [expanded, diffFiles, token, sessionKey],
   );
 
+  const [tl, setTl] = useState<TimelinePayload | null>(null);
+  const [tlState, setTlState] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [tlReload, setTlReload] = useState(0);
+  const [missionTarget, setMissionTarget] = useState<number | null>(null);
+  const [missionBusy, setMissionBusy] = useState(false);
+  const [missionMsg, setMissionMsg] = useState<
+    { ok: boolean; text: string } | null
+  >(null);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [mDiff, setMDiff] = useState<MissionDiff | null>(null);
+  const [mDiffState, setMDiffState] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [mCompare, setMCompare] = useState<MissionCompare | null>(null);
+  const [replayTarget, setReplayTarget] = useState<string | null>(null);
+
+  const handleReplay = useCallback(
+    async (stepId: string) => {
+      setMissionBusy(true);
+      setMissionMsg(null);
+      try {
+        const r = await replayMissionStep(token, sessionKey, stepId, "Time Machine (UI)");
+        setMissionMsg({
+          ok: true,
+          text: `${tx("dev.checkpoints.mission.replayed", "Step replayed")}: ${r.replayed} -> v${r.version}`,
+        });
+        setPicked([]);
+        setMDiff(null);
+        setMCompare(null);
+        setMDiffState("idle");
+        setTlReload((n) => n + 1);
+      } catch (err) {
+        setMissionMsg({ ok: false, text: describeError(err) });
+      } finally {
+        setMissionBusy(false);
+      }
+    },
+    [token, sessionKey, tx, describeError],
+  );
+
+  const handleMissionRestore = useCallback(
+    async (version: number) => {
+      setMissionBusy(true);
+      setMissionMsg(null);
+      try {
+        const r = await restoreMissionVersion(
+          token,
+          sessionKey,
+          String(version),
+          "Time Machine (UI)",
+        );
+        setMissionMsg({
+          ok: true,
+          text: `${tx("dev.checkpoints.mission.restored", "Mission restored")}: v${r.restored_from} -> v${r.version}`,
+        });
+        setPicked([]);
+        setMDiff(null);
+        setMCompare(null);
+        setMDiffState("idle");
+        setTlReload((n) => n + 1);
+      } catch (err) {
+        setMissionMsg({ ok: false, text: describeError(err) });
+      } finally {
+        setMissionBusy(false);
+      }
+    },
+    [token, sessionKey, tx, describeError],
+  );
+
+  const togglePick = useCallback((version: number) => {
+    setPicked((prev) =>
+      prev.includes(version)
+        ? prev.filter((v) => v !== version)
+        : [...prev, version].slice(-2),
+    );
+    setMDiff(null);
+    setMCompare(null);
+    setMDiffState("idle");
+  }, []);
+
+  const handleCompare = useCallback(async () => {
+    if (picked.length !== 2) return;
+    const [a, b] = [...picked].sort((x, y) => x - y);
+    setMDiffState("loading");
+    try {
+      const [diff, compare] = await Promise.all([
+        fetchMissionDiff(token, sessionKey, a, b),
+        fetchMissionCompare(token, sessionKey, a, b),
+      ]);
+      setMDiff(diff);
+      setMCompare(compare);
+      setMDiffState("ready");
+    } catch {
+      setMDiffState("error");
+    }
+  }, [picked, token, sessionKey]);
+
+  useEffect(() => {
+    let alive = true;
+    setTlState("loading");
+    fetch(
+      `/api/sessions/${encodeURIComponent(sessionKey)}/checkpoints/timeline`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: TimelinePayload) => {
+        if (!alive) return;
+        setTl(data);
+        setTlState("ready");
+      })
+      .catch(() => alive && setTlState("error"));
+    return () => {
+      alive = false;
+    };
+  }, [token, sessionKey, tlReload]);
+
+  const diffLines: string[] = [];
+  if (mDiff) {
+    if (mDiff.goal) diffLines.push(`goal: ${mDiff.goal.from} -> ${mDiff.goal.to}`);
+    if (mDiff.status)
+      diffLines.push(`status: ${mDiff.status.from} -> ${mDiff.status.to}`);
+    for (const [name, d] of [
+      ["criteria", mDiff.criteria],
+      ["facts", mDiff.facts],
+      ["constraints", mDiff.constraints],
+    ] as const) {
+      d.added.forEach((x) => diffLines.push(`+ ${name}: ${x}`));
+      d.removed.forEach((x) => diffLines.push(`- ${name}: ${x}`));
+    }
+    Object.entries(mDiff.evidence).forEach(([k, v]) =>
+      diffLines.push(`proof ${k}: ${v.from ?? "-"} -> ${v.to ?? "-"}`),
+    );
+    mDiff.steps.added.forEach((x) => diffLines.push(`+ step: ${x}`));
+    mDiff.steps.removed.forEach((x) => diffLines.push(`- step: ${x}`));
+    mDiff.steps.changed.forEach((x) =>
+      diffLines.push(`step ${x.title}: ${x.from} -> ${x.to}`),
+    );
+  }
+
+  const timelineSection = (
+    <div className="border-b border-border/50 px-3 py-2 text-[11px]">
+      <div className="font-medium">
+        {tx("dev.checkpoints.timeline.title", "Mission timeline")}
+      </div>
+      {tlState === "loading" ? (
+        <p className="text-muted-foreground">
+          {tx("dev.checkpoints.timeline.loading", "Loading timeline...")}
+        </p>
+      ) : tlState === "error" ? (
+        <p className="text-destructive">
+          {tx("dev.checkpoints.timeline.error", "Timeline unavailable.")}
+        </p>
+      ) : !tl || tl.events.length === 0 ? (
+        <p className="text-muted-foreground">
+          {tx("dev.checkpoints.timeline.empty", "No mission events yet.")}
+        </p>
+      ) : (
+        <>
+          {tl.last_coherent ? (
+            <p className="text-muted-foreground">
+              {tx("dev.checkpoints.timeline.lastCoherent", "Last coherent state")}
+              {": "}
+              {tl.last_coherent.checkpoint_id}
+            </p>
+          ) : null}
+          <ul className="max-h-40 overflow-y-auto">
+            {tl.events.slice(-30).map((ev, i) => (
+              <li key={i} className="flex items-center gap-1.5">
+                {ev.kind === "decision" && ev.version !== null ? (
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(ev.version)}
+                    disabled={!ev.restorable}
+                    onChange={() => ev.version !== null && togglePick(ev.version)}
+                    aria-label={tx("dev.checkpoints.mission.pick", "Select for comparison")}
+                    className="h-3 w-3 shrink-0"
+                  />
+                ) : null}
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {ev.version !== null ? `v${ev.version}` : ev.kind}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{ev.title}</span>
+                {ev.kind === "decision" && ev.version !== null && ev.restorable ? (
+                  <button
+                    type="button"
+                    disabled={missionBusy}
+                    onClick={() => setMissionTarget(ev.version)}
+                    title={tx("dev.checkpoints.mission.restore", "Restore this version")}
+                    className="flex h-5 shrink-0 items-center rounded px-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  >
+                    <Undo2 className="h-3 w-3" aria-hidden />
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={picked.length !== 2 || mDiffState === "loading"}
+              onClick={() => void handleCompare()}
+              className="flex h-6 items-center gap-1 rounded-md border border-border/60 px-2 transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              {mDiffState === "loading" ? (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              ) : null}
+              {tx("dev.checkpoints.mission.compare", "Compare 2 versions")}
+            </button>
+            <span className="text-muted-foreground tabular-nums">
+              {picked.length}/2
+            </span>
+          </div>
+          {missionMsg ? (
+            <p className={missionMsg.ok ? "text-muted-foreground" : "text-destructive"}>
+              {missionMsg.text}
+            </p>
+          ) : null}
+          {mDiffState === "error" ? (
+            <p className="text-destructive">
+              {tx("dev.checkpoints.mission.diffError", "Comparison unavailable.")}
+            </p>
+          ) : mDiffState === "ready" ? (
+            diffLines.length === 0 ? (
+              <p className="text-muted-foreground">
+                {tx("dev.checkpoints.mission.noDiff", "No difference between these versions.")}
+              </p>
+            ) : (
+              <ul className="mt-1 max-h-32 overflow-y-auto font-mono text-[10px]">
+                {diffLines.map((line, i) => (
+                  <li key={i} className="break-words">{line}</li>
+                ))}
+              </ul>
+            )
+          ) : null}
+          {mDiffState === "ready" && mCompare ? (
+            <div className="mt-1" role="region" aria-label={tx("dev.checkpoints.mission.strategies", "Strategy comparison")}>
+              <div className="font-medium">
+                {tx("dev.checkpoints.mission.strategies", "Strategy comparison")}
+              </div>
+              <ul className="font-mono text-[10px]">
+                {[mCompare.a, mCompare.b].map((s) => (
+                  <li key={s.version} className="break-words">
+                    {mCompare.better === s.version ? "* " : "  "}
+                    {strategyLine(s, tx)}
+                    {s.measured === "snapshot"
+                      ? ` [${tx("dev.checkpoints.mission.fromSnapshot", "start state only")}]`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-muted-foreground">
+                {mCompare.better === null
+                  ? tx("dev.checkpoints.mission.tie", "Same measured result.")
+                  : `${tx("dev.checkpoints.mission.better", "Better strategy")}: v${mCompare.better} (${mCompare.reasons.join("; ")})`}
+              </p>
+            </div>
+          ) : null}
+        </>
+      )}
+      {tlState === "ready" && tl?.steps && tl.steps.length > 0 ? (
+        <div className="mt-1.5">
+          <div className="font-medium">{tx("dev.checkpoints.mission.steps", "Mission steps")}</div>
+          <ul className="max-h-32 overflow-y-auto">
+            {tl.steps.map((step) => (
+              <li key={step.id} className="flex items-center gap-1.5">
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{step.status}</span>
+                <span className="min-w-0 flex-1 truncate">{step.title}</span>
+                {step.retry_count > 0 ? (
+                  <span className="shrink-0 tabular-nums text-muted-foreground">x{step.retry_count}</span>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={missionBusy}
+                  onClick={() => setReplayTarget(step.id)}
+                  aria-label={`${tx("dev.checkpoints.mission.replay", "Replay this step")} ${step.title}`}
+                  title={tx("dev.checkpoints.mission.replay", "Replay this step")}
+                  className="flex h-5 shrink-0 items-center rounded px-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                >
+                  <Play className="h-3 w-3" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {timelineSection}
+      <ConfirmDialog
+        open={replayTarget !== null}
+        title={tx("dev.checkpoints.mission.replayTitle", "Replay this step?")}
+        description={tx(
+          "dev.checkpoints.mission.replayConfirm",
+          "This step and the steps that depend on it go back to planned, as a new version. Earlier steps keep their results.",
+        )}
+        confirmLabel={tx("dev.checkpoints.mission.replayAction", "Replay")}
+        onCancel={() => setReplayTarget(null)}
+        onConfirm={() => {
+          const id = replayTarget;
+          setReplayTarget(null);
+          if (id) void handleReplay(id);
+        }}
+      />
+      <ConfirmDialog
+        open={missionTarget !== null}
+        title={tx("dev.checkpoints.mission.restoreTitle", "Restore this mission version?")}
+        description={tx(
+          "dev.checkpoints.mission.restoreConfirm",
+          "The mission registry returns to this version as a new version. History is kept.",
+        )}
+        confirmLabel={tx("dev.checkpoints.restore", "Restore")}
+        onCancel={() => setMissionTarget(null)}
+        onConfirm={() => {
+          const v = missionTarget;
+          setMissionTarget(null);
+          if (v !== null) void handleMissionRestore(v);
+        }}
+      />
       <ConfirmDialog
         open={restoreTarget !== null}
         title={tx("dev.checkpoints.restoreTitle", "Restore this checkpoint?")}
@@ -228,7 +579,7 @@ export function DevCheckpointsPanel({
               <button
                 type="button"
                 onClick={() => void toggleDiff(checkpoint.id)}
-                className="flex min-w-0 flex-1 flex-col text-left"
+                className="flex min-w-0 flex-1 flex-col text-start"
                 title={checkpoint.id}
               >
                 <span className="truncate text-[11.5px] text-foreground">
@@ -252,7 +603,7 @@ export function DevCheckpointsPanel({
                 {busy === checkpoint.id ? (
                   <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 ) : (
-                  <Undo2 className="h-3 w-3" aria-hidden />
+                  <Undo2 className="rtl:-scale-x-100 h-3 w-3" aria-hidden />
                 )}
                 {tx("dev.checkpoints.restore", "Restore")}
               </button>

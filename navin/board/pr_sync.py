@@ -88,7 +88,7 @@ def check_pr_merged(
             "pr_url": url,
             "detail": (
                 "no forge token for this pull request and gh CLI not installed - "
-                "add a token in Settings > Git"
+                "add a token in Settings > Git & GitHub"
             ),
         }
     code, out, err = _gh(
@@ -209,7 +209,7 @@ def pr_sync_payload(
             "suggestions": [],
             "detail": (
                 "no forge token for this project and gh CLI not installed - "
-                "add a token in Settings > Git"
+                "add a token in Settings > Git & GitHub"
             ),
         }
     try:

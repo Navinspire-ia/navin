@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Callout, DirectionalHint } from "@fluentui/react";
-import { Check, ChevronRight, Eye, EyeOff, FlaskConical, Loader2, X } from "lucide-react";
+import { Check, ChevronRight, CircleCheck, Eye, EyeOff, FileDiff, FlaskConical, Loader2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 
@@ -34,6 +34,11 @@ function listPath(path: string): string {
  * Pending edits and decisions, with a header mode beside the session plan.
  * The header opens files in a callout without pushing the chat down.
  */
+const ACTION_CLASS =
+  "shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50";
+/** In the thread header the actions read at the size of the journal sections. */
+const HEADER_ACTION_CLASS = "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] hover:bg-foreground/[0.04]";
+
 export function PendingReviewPanel({
   changes,
   busy = false,
@@ -169,15 +174,24 @@ export function PendingReviewPanel({
           aria-expanded={expanded}
           title={filesLabel}
           data-testid="pending-review-toggle"
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] font-medium"
+          className={cn(
+            "flex min-w-0 flex-1 items-center text-start",
+            header
+              ? "min-w-[2.75rem] gap-2 overflow-hidden rounded-md px-1.5 py-1 text-[14px] font-semibold transition-colors hover:bg-foreground/[0.04]"
+              : "gap-1.5 text-[12px] font-medium",
+          )}
         >
-          <ChevronRight
-            aria-hidden
-            className={cn(
-              "h-3 w-3 shrink-0 text-muted-foreground/65 transition-transform duration-150",
-              expanded && "rotate-90",
-            )}
-          />
+          {header ? (
+            <FileDiff aria-hidden className="h-[18px] w-[18px] shrink-0 text-muted-foreground" strokeWidth={2} />
+          ) : (
+            <ChevronRight
+              aria-hidden
+              className={cn(
+                "rtl:[&:not(.rotate-90)]:rotate-180 h-3 w-3 shrink-0 text-muted-foreground/65 transition-transform duration-150",
+                expanded && "rotate-90",
+              )}
+            />
+          )}
           <span className="min-w-0 truncate text-foreground/90">
             {filesLabel}
           </span>
@@ -186,7 +200,16 @@ export function PendingReviewPanel({
               added={lineStats.added}
               deleted={lineStats.deleted}
               hideZero
-              className="text-[12px] font-medium"
+              className={header ? "pending-review-diff shrink-0 text-[13.5px] font-normal tabular-nums" : "text-[12px] font-medium"}
+            />
+          ) : null}
+          {header ? (
+            <ChevronRight
+              aria-hidden
+              className={cn(
+                "rtl:[&:not(.rotate-90)]:rotate-180 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                expanded && "rotate-90",
+              )}
             />
           ) : null}
         </button>
@@ -199,7 +222,7 @@ export function PendingReviewPanel({
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
         ) : null}
         {prove?.available ? (
-          <ProveButton prove={prove} compact={compact} tx={tx} href={proveHref} />
+          <ProveButton prove={prove} compact={compact} header={header} tx={tx} href={proveHref} />
         ) : null}
         <button
           type="button"
@@ -208,9 +231,9 @@ export function PendingReviewPanel({
           data-testid="pending-review-reject-all"
           aria-label={rejectAllLabel}
           title={rejectAllLabel}
-          className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          className={cn(ACTION_CLASS, header && HEADER_ACTION_CLASS)}
         >
-          {compact || header ? <X className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {compact || header ? <X className={cn(header ? "h-3.5 w-3.5" : "h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
           {!compact ? <span className="pending-review-label">{rejectAllLabel}</span> : null}
         </button>
         <button
@@ -220,9 +243,9 @@ export function PendingReviewPanel({
           data-testid="pending-review-accept-all"
           aria-label={acceptAllLabel}
           title={acceptAllLabel}
-          className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          className={cn(ACTION_CLASS, header && HEADER_ACTION_CLASS)}
         >
-          {compact || header ? <Check className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {compact || header ? <Check className={cn(header ? "h-3.5 w-3.5" : "h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
           {!compact ? <span className="pending-review-label">{acceptAllLabel}</span> : null}
         </button>
         <button
@@ -231,9 +254,9 @@ export function PendingReviewPanel({
           data-testid="pending-review-hide"
           title={hideLabel}
           aria-label={hideLabel}
-          className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
+          className={cn(ACTION_CLASS, header && HEADER_ACTION_CLASS)}
         >
-          {compact || header ? <EyeOff className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {compact || header ? <EyeOff className={cn(header ? "h-3.5 w-3.5" : "h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
           {!compact ? <span className="pending-review-label">{hideLabel}</span> : null}
         </button>
       </div>
@@ -274,27 +297,71 @@ export function PendingReviewPanel({
 function ProveButton({
   prove,
   compact,
+  header = false,
   tx,
   href,
 }: {
   prove: ProveChange;
   compact: boolean;
+  header?: boolean;
   tx: (key: string, fallback: string) => string;
   href: string;
 }) {
   const { t } = useTranslation();
   const label = tx("dev.review.prove", "Prove this change");
 
+  if (prove.state.phase === "done") {
+    const { proof, detail } = prove.state;
+    const score = proof ? Math.round(proof.robustness_score) : null;
+    const label = !proof
+      ? detail || tx("dev.review.proveFinished", "Proof finished")
+      : proof.verdict === "pass"
+        ? t("dev.review.provePassed", { defaultValue: "Proof passed · {{score}}/100", score })
+        : proof.verdict === "weak"
+          ? t("dev.review.proveWeak", { defaultValue: "Proof weak · {{score}}/100", score })
+          : t("dev.review.proveProblems", { defaultValue: "Proof found problems · {{score}}/100", score });
+    const tone = !proof
+      ? "text-muted-foreground hover:text-foreground"
+      : proof.verdict === "pass"
+        ? "text-emerald-600 hover:text-emerald-500 dark:text-emerald-400"
+        : proof.verdict === "weak"
+          ? "text-amber-600 hover:text-amber-500 dark:text-amber-400"
+          : "text-[hsl(var(--tone-error))] hover:opacity-80";
+    return (
+      <a
+        href={href}
+        onClick={() => prove.reset()}
+        data-testid="pending-review-prove-result"
+        data-verdict={proof?.verdict ?? "none"}
+        className={cn(
+          "flex shrink-0 items-center gap-1 font-medium transition-colors",
+          tone,
+          header ? "rounded-md px-1.5 py-1 text-[13px] hover:bg-foreground/[0.04]" : "px-1 py-0.5 text-[11.5px]",
+        )}
+        title={tx("dev.review.proveOpenResults", "Open the results in Evolve")}
+        aria-label={label}
+      >
+        {proof?.verdict === "pass"
+          ? <CircleCheck className={header ? "h-3.5 w-3.5" : "h-3 w-3"} aria-hidden />
+          : <FlaskConical className={header ? "h-3.5 w-3.5" : "h-3 w-3"} aria-hidden />}
+        <span className="pending-review-label">{label}</span>
+      </a>
+    );
+  }
+
   if (prove.state.phase === "started") {
     return (
       <a
         href={href}
         data-testid="pending-review-prove-open"
-        className="flex shrink-0 items-center gap-1 px-1 py-0.5 text-[11.5px] text-emerald-600 transition-colors hover:text-emerald-500 dark:text-emerald-400"
+        className={cn(
+          "flex shrink-0 items-center gap-1 text-emerald-600 transition-colors hover:text-emerald-500 dark:text-emerald-400",
+          header ? "rounded-md px-1.5 py-1 text-[13px] hover:bg-foreground/[0.04]" : "px-1 py-0.5 text-[11.5px]",
+        )}
         title={tx("dev.review.proveOpen", "Open Evolve")}
         aria-label={tx("dev.review.proveOpen", "Open Evolve")}
       >
-        <FlaskConical className="h-3 w-3" aria-hidden />
+        <FlaskConical className={header ? "h-3.5 w-3.5" : "h-3 w-3"} aria-hidden />
         <span className="pending-review-label">{prove.state.job !== null
           ? t("dev.review.proveStarted", {
               defaultValue: "Proof #{{job}} running",
@@ -326,7 +393,8 @@ function ProveButton({
             )
       }
       className={cn(
-        "flex shrink-0 items-center gap-1 px-1 py-0.5 text-[11.5px] transition-colors disabled:opacity-60",
+        "flex shrink-0 items-center gap-1 transition-colors disabled:opacity-60",
+        header ? "rounded-md px-1.5 py-1 text-[13px] hover:bg-foreground/[0.04]" : "px-1 py-0.5 text-[11.5px]",
         failed
           ? "text-destructive hover:text-destructive/80"
           : "text-muted-foreground hover:text-foreground",
@@ -335,7 +403,7 @@ function ProveButton({
       {starting ? (
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
       ) : (
-        <FlaskConical className="h-3 w-3" aria-hidden />
+        <FlaskConical className={header ? "h-3.5 w-3.5" : "h-3 w-3"} aria-hidden />
       )}
       {compact ? null : <span className="pending-review-label">{failed ? tx("dev.review.proveRetry", "Proof failed - retry") : label}</span>}
     </button>
@@ -377,7 +445,7 @@ function ReviewRow({
         onClick={() => onOpenFile?.(change.path)}
         title={change.display_path}
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 text-left",
+          "flex min-w-0 flex-1 items-center gap-2 text-start",
           openable && "cursor-pointer",
         )}
       >

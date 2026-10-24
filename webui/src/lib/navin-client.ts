@@ -27,6 +27,7 @@ import {
   type PendingChoice,
 } from "./choices";
 import { shouldResolvePendingNewChat } from "./project-session";
+import { parseTeamEntry, parseTeamIdentity, type TeamFeedEntry, type TeamIdentity } from "./team";
 import { createHostWebSocket } from "./runtime";
 
 /** WebSocket readyState constants, referenced by value to stay portable
@@ -179,6 +180,7 @@ export type ComposerModeRequestMode =
   | "review"
   | "security"
   | "debug"
+  | "reverse"
   | "montage";
 export interface ComposerModeRequest {
   chatId: string;
@@ -195,6 +197,7 @@ export const PRODUCT_MODULES = [
   "ads",
   "seo",
   "leads",
+  "campaigns",
   "tenders",
   "career",
   "trading",
@@ -223,8 +226,72 @@ export interface SubagentProgressUpdate {
   /** Set on a replay after a refresh, where the frame's arrival time says
    * nothing about how long the subagent has actually been running. */
   startedMsAgo?: number;
+  /** Tokens processed so far (prompt + completion, all iterations). */
+  tokens?: number;
+  /** Recent steps, newest last, for the expanded card. */
+  steps?: SubagentStep[];
+  /** Stable reason for an error phase: timeout | stalled | cancelled | limit | other. */
+  errorKind?: string;
+  /** Collaboration Mode teammate running this agent, if any. */
+  member?: TeamIdentity;
+}
+export interface SubagentStep {
+  /** Stable action key (read, write, edit, run, search...) used for i18n. */
+  kind: string;
+  /** English verb from the gateway, used when ``kind`` is unknown. */
+  verb: string;
+  /** Short target: a file basename, a clipped command or query. */
+  target: string;
+  status: "ok" | "error" | "running";
+  /** Raw tool name, for a generic "Used {{name}}" label. */
+  name?: string;
+}
+export interface SubagentRecord {
+  task_id: string;
+  label: string;
+  task_description?: string;
+  phase: string;
+  status_line?: string;
+  model?: string;
+  done: boolean;
+  error?: string | null;
+  recoverable?: boolean;
+  requires_relaunch?: boolean;
+}
+export interface SubagentHistoryEvent {
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  created_at: number;
+}
+export interface SubagentHistory {
+  agent: SubagentRecord | null;
+  events: SubagentHistoryEvent[];
+  next_cursor: number;
+  has_more: boolean;
 }
 type SubagentProgressHandler = (update: SubagentProgressUpdate) => void;
+type TeamMessageHandler = (entry: TeamFeedEntry) => void;
+
+/** Keep only well-formed step entries from a ``subagent_progress`` frame. */
+export function parseSubagentSteps(raw: unknown): SubagentStep[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const steps: SubagentStep[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const status =
+      entry.status === "error" || entry.status === "running" ? entry.status : "ok";
+    steps.push({
+      kind: typeof entry.kind === "string" ? entry.kind : "tool",
+      verb: typeof entry.verb === "string" ? entry.verb : "",
+      target: typeof entry.target === "string" ? entry.target : "",
+      status,
+      name: typeof entry.name === "string" && entry.name ? entry.name : undefined,
+    });
+  }
+  return steps.length ? steps : undefined;
+}
 export interface PreviewOpenRequest {
   chatId: string;
   kind: "web" | "mobile";
@@ -357,6 +424,7 @@ export function reconnectDelayMs(
  * per chat. Reconnects are transparent and re-attach every known chat_id.
  */
 export class NavinClient {
+  private subagentQueries = new Map<string, { chatId: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private socket: WebSocket | null = null;
   private statusHandlers = new Set<StatusHandler>();
   private runtimeModelHandlers = new Set<RuntimeModelHandler>();
@@ -379,6 +447,7 @@ export class NavinClient {
   private composerModeRequestHandlers = new Set<ComposerModeRequestHandler>();
   private productModuleRequestHandlers = new Set<ProductModuleRequestHandler>();
   private subagentProgressHandlers = new Set<SubagentProgressHandler>();
+  private teamMessageHandlers = new Set<TeamMessageHandler>();
   private previewOpenRequestHandlers = new Set<PreviewOpenRequestHandler>();
   private filePreviewOpenRequestHandlers = new Set<FilePreviewOpenRequestHandler>();
   private artifactUpsertHandlers = new Set<ArtifactUpsertHandler>();
@@ -540,6 +609,16 @@ export class NavinClient {
   }
 
   /** Swap the URL (e.g. after fetching a fresh token) then reconnect. */
+  /** The gateway socket URL in use (other gateway sockets derive from it). */
+  get socketUrl(): string {
+    return this.currentUrl;
+  }
+
+  /** Open another socket to the gateway the same way (desktop host bridge or browser). */
+  openSocket(url: string): WebSocket {
+    return this.socketFactory(url);
+  }
+
   updateUrl(url: string, socketFactory?: (url: string) => WebSocket): void {
     this.currentUrl = url;
     if (socketFactory) {
@@ -647,6 +726,34 @@ export class NavinClient {
     };
   }
 
+  /** Collaboration Mode: one live team exchange (assign, message, result...). */
+  onTeamMessage(handler: TeamMessageHandler): Unsubscribe {
+    this.teamMessageHandlers.add(handler);
+    return () => {
+      this.teamMessageHandlers.delete(handler);
+    };
+  }
+
+  querySubagents<T>(chatId: string, operation: "list" | "history" | "recover" | "relaunch" | "team_feed" | "team_message" | "team_assign" | "team_select", extra: { task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string } = {}): Promise<T> {
+    if (this.socket?.readyState !== WS_OPEN) return Promise.reject(new Error("The agent connection is offline. Reconnect to inspect agents."));
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.subagentQueries.delete(requestId);
+        reject(new Error("Agent request timed out. Retry to reconnect."));
+      }, 15000);
+      this.subagentQueries.set(requestId, { chatId, resolve: (value) => resolve(value as T), reject, timer });
+      // Inspection and explicit recovery are never replayed later from an offline queue.
+      try {
+        this.socket!.send(JSON.stringify({ type: operation === "list" ? "subagents_list" : `subagent_${operation}`, chat_id: chatId, request_id: requestId, ...extra }));
+      } catch {
+        clearTimeout(timer);
+        this.subagentQueries.delete(requestId);
+        reject(new Error("The agent request could not be sent. Reconnect and retry."));
+      }
+    });
+  }
+
   /** The agent asked the Dev workbench to open Preview (web) or Mobile. */
   onPreviewOpenRequest(handler: PreviewOpenRequestHandler): Unsubscribe {
     this.previewOpenRequestHandlers.add(handler);
@@ -749,6 +856,21 @@ export class NavinClient {
       skipped: Boolean(skipped),
       ...(typed ? { custom_text: typed } : {}),
     });
+  }
+
+  /** Close a credential card: a status and a login name only, never a secret value. */
+  sendCredentialAnswer(requestId: string, status: "saved" | "connected" | "declined", login = ""): void {
+    this.queueSend({
+      type: "credential_answer",
+      request_id: requestId,
+      status,
+      ...(login ? { login: login.slice(0, 80) } : {}),
+    });
+  }
+
+  /** Answer a Multitask merge card: resolve, keep separate, or discard. */
+  sendWorktreeMergeAction(chatId: string, taskId: string, action: "resolve" | "keep" | "discard"): void {
+    this.queueSend({ type: "worktree_merge_action", chat_id: chatId, task_id: taskId, action });
   }
 
   /** Answer a pending approval, releasing the tool call that is waiting on it. */
@@ -1570,6 +1692,17 @@ export class NavinClient {
       return;
     }
 
+    if (parsed.event === "subagent_query_result") {
+      const request = this.subagentQueries.get(parsed.request_id);
+      if (request && request.chatId === parsed.chat_id) {
+        clearTimeout(request.timer);
+        this.subagentQueries.delete(parsed.request_id);
+        if (parsed.error) request.reject(new Error(parsed.error));
+        else request.resolve(parsed.result);
+      }
+      return;
+    }
+
     if (wsInboundDebugEnabled()) {
       console.log("[navin ws inbound]", summarizeInboundWsPayload(parsed));
     }
@@ -1830,6 +1963,7 @@ export class NavinClient {
         && mode !== "review"
         && mode !== "security"
         && mode !== "debug"
+        && mode !== "reverse"
         && mode !== "montage"
       ) {
         return;
@@ -1876,6 +2010,9 @@ export class NavinClient {
         error?: string;
         task_description?: string;
         started_ms_ago?: number;
+        tokens?: number;
+        steps?: unknown;
+        error_kind?: string;
       };
       const taskId = typeof frame.task_id === "string" ? frame.task_id.trim() : "";
       if (!taskId) return;
@@ -1906,9 +2043,25 @@ export class NavinClient {
           typeof frame.started_ms_ago === "number" && frame.started_ms_ago >= 0
             ? frame.started_ms_ago
             : undefined,
+        tokens:
+          typeof frame.tokens === "number" && frame.tokens > 0 ? frame.tokens : undefined,
+        steps: parseSubagentSteps(frame.steps),
+        errorKind:
+          typeof frame.error_kind === "string" && frame.error_kind
+            ? frame.error_kind
+            : undefined,
+        member: parseTeamIdentity((parsed as { member?: unknown }).member) ?? undefined,
       };
       for (const handler of this.subagentProgressHandlers) {
         handler(update);
+      }
+      return;
+    }
+
+    if (parsed.event === "team_message") {
+      const entry = parseTeamEntry(parsed);
+      if (entry) {
+        for (const handler of this.teamMessageHandlers) handler(entry);
       }
       return;
     }
@@ -2264,6 +2417,11 @@ export class NavinClient {
 
   private handleClose(event?: { code?: number }): void {
     this.socket = null;
+    for (const pending of this.subagentQueries.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("The agent connection was interrupted. Reconnect and retry."));
+    }
+    this.subagentQueries.clear();
     for (const pending of this.pendingBrowserControls.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error("The live view is disconnected."));

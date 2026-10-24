@@ -836,8 +836,10 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `F1` | This help |
 | `Ctrl+C` | Copy selected text or clear the prompt. Active work continues |
 | `Enter` while working | Queue the message for after the current reply |
-| `Ctrl+Enter` / queued **Send now** | Add the message to the current task immediately |
+| `Alt+Enter` / `Alt+S` / queued **Send now** | Add the message to the current task immediately: the agent reads it at its next step |
+| `F8` / `/agents` / click the agents panel | Inspect running and recent agents |
 | Queued **Remove** / **Resume queue** | Remove a waiting message or resume the queue after stopping |
+| `F6` / `/multitask` / queued **Run in parallel** | Start every queued message now, each in its own parallel agent (`/multitask <task>` runs one task) |
 | Scroll up in a restored chat | Load earlier messages in pages while keeping your reading position |
 | `Cmd+C` / `Ctrl+Insert` | Copy the selection |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |

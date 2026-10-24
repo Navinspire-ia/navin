@@ -41,7 +41,33 @@ def test_the_turn_announces_its_context_once() -> None:
     assert len(sent) == 1
     event = sent[0][0]
     assert event["name"] == "context" and event["call_id"] == "context-t1"
-    assert event["result"] == "Context loaded - project map; skills: style-editor"
+    assert event["result"] == "Context loaded - skills: style-editor"
+
+
+def test_project_map_alone_is_not_announced() -> None:
+    """The map is joined on every message: a row each time was noise."""
+    sent: list = []
+
+    async def on_progress(*_a: Any, **_k: Any) -> None:
+        sent.append(1)
+
+    blocks = [RuntimeContextBlock(source="metagraph", content="repo map")]
+    asyncio.run(announce_runtime_context(on_progress, blocks, "t1"))
+    assert sent == []
+
+
+def test_mcp_context_is_announced() -> None:
+    sent: list[list[dict]] = []
+
+    async def on_progress(text: str, *, tool_hint: bool = False, tool_events: Any = None, **_: Any) -> None:
+        sent.append(tool_events)
+
+    blocks = [
+        RuntimeContextBlock(source="metagraph", content="repo map"),
+        RuntimeContextBlock(source="mcp", content="context7\ndetails"),
+    ]
+    asyncio.run(announce_runtime_context(on_progress, blocks, "t1"))
+    assert sent[0][0]["result"] == "Context loaded - MCP: context7"
 
 
 def test_nothing_is_announced_without_context() -> None:

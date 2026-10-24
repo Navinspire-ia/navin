@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from navin.trading.indicators import rsi, sma, support_resistance, summarize_technicals
+from navin.trading.indicators import rsi, sma, summarize_technicals, support_resistance
 
 
 class TradingIndicatorsTest(unittest.TestCase):

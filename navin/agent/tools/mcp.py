@@ -1128,6 +1128,38 @@ def _server_stderr(name: str) -> Iterator[TextIO]:
         reader.join(timeout=5)
 
 
+def _load_mcp_sdk() -> None:
+    """Import the MCP SDK (the imports below are then instant on the loop)."""
+    import mcp  # noqa: F401
+    import mcp.client.sse  # noqa: F401
+    import mcp.client.stdio  # noqa: F401
+    import mcp.client.streamable_http  # noqa: F401
+
+
+_UNREACHABLE_LOGGED: set[str] = set()
+
+
+def _is_local_url(url: str) -> bool:
+    """A server on this machine (an editor extension, a desktop app)."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _log_unreachable(name: str, url: str) -> None:
+    """A local MCP server that is not running is normal (VS Code closed): say it
+    once, then stay quiet. It connects on the next attempt once it is started."""
+    if _is_local_url(url):
+        if name in _UNREACHABLE_LOGGED:
+            logger.debug("MCP server '{}' still not running", name)
+            return
+        _UNREACHABLE_LOGGED.add(name)
+        logger.info("MCP server '{}' is not running; it connects once started", name)
+        return
+    logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(url))
+
+
 async def connect_mcp_servers(
     mcp_servers: dict, registry: ToolRegistry
 ) -> dict[str, MCPConnection]:
@@ -1138,6 +1170,9 @@ async def connect_mcp_servers(
     AnyIO cancel scopes from their owning task.
     """
     try:
+        # The SDK import takes ~2 s of CPU; off the loop, the WebUI and the
+        # first messages are served while it loads at startup.
+        await asyncio.to_thread(_load_mcp_sdk)
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.sse import sse_client
         from mcp.client.stdio import stdio_client
@@ -1196,7 +1231,7 @@ async def connect_mcp_servers(
                 )
             elif transport_type == "sse":
                 if not await _probe_http_url(cfg.url):
-                    logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
+                    _log_unreachable(name, cfg.url)
                     return name, None
 
                 def httpx_client_factory(
@@ -1223,7 +1258,7 @@ async def connect_mcp_servers(
                 )
             elif transport_type == "streamableHttp":
                 if not await _probe_http_url(cfg.url):
-                    logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
+                    _log_unreachable(name, cfg.url)
                     return name, None
 
                 http_client = await server_stack.enter_async_context(
@@ -1380,7 +1415,16 @@ async def connect_mcp_servers(
                         ready.set_result(True)
                     await close_requested.wait()
             except Exception as exc:
-                logger.warning("MCP server '{}': connection closed: {}", name, _describe_failure(exc))
+                detail = _describe_failure(exc)
+                if "405" in detail and "Method Not Allowed" in detail:
+                    # Not an MCP endpoint (or the wrong transport): one clear line, no traceback spam.
+                    logger.warning(
+                        "MCP server '{}': {} answered 405 - it is not an MCP streamable HTTP endpoint. "
+                        "Set \"type\": \"sse\" or fix the url; skipping this server.",
+                        name, _redact_url(getattr(cfg, "url", "") or ""),
+                    )
+                else:
+                    logger.warning("MCP server '{}': connection closed: {}", name, detail)
             except BaseException as exc:
                 if not ready.done():
                     ready.set_exception(exc)
@@ -1460,8 +1504,16 @@ async def connect_missing_servers(state: Any, registry: ToolRegistry) -> None:
         failed_at = _failed_connect_log(state)
         now = time.monotonic()
         missing_servers = {}
+        from navin.agent.managed_policy import mcp_server_allowed
+
         for name, cfg in state._mcp_servers.items():
             if name in state._mcp_stacks:
+                continue
+            if not mcp_server_allowed(name):
+                refused = state.__dict__.setdefault("_mcp_policy_refused", set())
+                if name not in refused:
+                    refused.add(name)
+                    logger.warning("MCP server '{}' refused by the organization policy", name)
                 continue
             last_failure = failed_at.get(name)
             if last_failure is not None and now - last_failure < _FAILED_CONNECT_COOLDOWN_S:
@@ -1486,7 +1538,8 @@ async def connect_missing_servers(state: Any, registry: ToolRegistry) -> None:
             if connected:
                 logger.info("MCP connected servers: {}", sorted(connected))
             else:
-                logger.warning(
+                quiet = all(_is_local_url(getattr(cfg, "url", "") or "") for cfg in missing_servers.values())
+                (logger.debug if quiet else logger.warning)(
                     "No MCP servers connected successfully (next attempt in {}s)",
                     int(_FAILED_CONNECT_COOLDOWN_S),
                 )

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -64,6 +65,25 @@ def _default_webui_dist() -> Path | None:
 
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
+# One channel.send attempt may not block a chat lane longer than this; a
+# timeout counts as a failed (retryable) attempt.
+_SEND_ATTEMPT_TIMEOUT_S = 60.0
+# Per-chat lane cap: past it the oldest progress / tool-hint items are dropped
+# first so a stalled client cannot grow memory without bound.
+_SEND_LANE_MAX_ITEMS = 512
+# A held stream delta goes out early once this much text is waiting behind it.
+_STREAM_FLUSH_MAX_CHARS = 2048
+
+
+def _stream_flush_interval(channel: BaseChannel | None) -> float:
+    """Seconds a channel wants stream deltas coalesced over (0 = send each)."""
+    value = getattr(channel, "stream_flush_interval_s", 0.0)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    return max(0.0, float(value))
+# Bounded LRU of (channel, chat_id, message_id) -> reply fingerprint.
+_ORIGIN_FINGERPRINT_MAX = 10_000
+_DISPATCHER_RESTART_DELAY_S = 1.0
 _RESTART_NOTICE_START_TIMEOUT_S = 30.0
 _RESTART_NOTICE_START_POLL_S = 0.25
 
@@ -129,8 +149,18 @@ class ChannelManager:
         self.channels: dict[str, BaseChannel] = {}
         self._channel_tasks: dict[str, asyncio.Task] = {}
         self._dispatch_task: asyncio.Task | None = None
+        # One sender per (channel, chat_id): a slow or failing chat (retry
+        # backoff, stalled client) only delays its own messages, while each
+        # chat keeps its order. Lanes exist only while they hold messages.
+        self._send_lanes: dict[tuple[str, str], deque[OutboundMessage]] = {}
+        self._send_lane_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        # Stream delta throttle (channels with ``stream_flush_interval_s``):
+        # when each chat last flushed a delta, and the event a held delta
+        # waits on so a new lane item can end the hold early.
+        self._lane_last_delta_at: dict[tuple[str, str], float] = {}
+        self._lane_wakeups: dict[tuple[str, str], asyncio.Event] = {}
         self._started = False
-        self._origin_reply_fingerprints: dict[tuple[str, str, str], str] = {}
+        self._origin_reply_fingerprints: OrderedDict[tuple[str, str, str], str] = OrderedDict()
 
         self._init_channels()
 
@@ -472,7 +502,7 @@ class ChannelManager:
 
         self._started = True
         # Start outbound dispatcher
-        self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+        self._start_dispatcher()
 
         # Start channels
         tasks = []
@@ -540,11 +570,44 @@ class ChannelManager:
             self._dispatch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._dispatch_task
+        await self._stop_send_lanes()
         await stop_alert_dispatch(self.bus)
 
         # Stop all channels
         for name in list(self.channels):
             await self._stop_channel(name)
+
+    def _start_dispatcher(self) -> None:
+        task = asyncio.create_task(self._dispatch_outbound())
+        task.add_done_callback(self._on_dispatcher_done)
+        self._dispatch_task = task
+
+    def _on_dispatcher_done(self, task: asyncio.Task) -> None:
+        """Restart the outbound dispatcher if it died while channels run."""
+        if task is not self._dispatch_task or task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None or not self._started:
+            return
+        logger.opt(exception=exc).error("Outbound dispatcher crashed; restarting")
+
+        def _restart() -> None:
+            # Skip if stopped or someone else already replaced the task.
+            if self._started and self._dispatch_task is task:
+                self._start_dispatcher()
+
+        try:
+            # Short delay so a crash at startup cannot spin the loop.
+            asyncio.get_running_loop().call_later(_DISPATCHER_RESTART_DELAY_S, _restart)
+        except RuntimeError:
+            logger.error("Outbound dispatcher could not be restarted (no running loop)")
+
+    def _remember_fingerprint(self, key: tuple[str, str, str], fingerprint: str) -> None:
+        cache = self._origin_reply_fingerprints
+        cache[key] = fingerprint
+        cache.move_to_end(key)
+        while len(cache) > _ORIGIN_FINGERPRINT_MAX:
+            cache.popitem(last=False)
 
     @staticmethod
     def _fingerprint_content(content: str) -> str:
@@ -563,13 +626,14 @@ class ChannelManager:
         if isinstance(origin_message_id, str) and origin_message_id:
             key = (msg.channel, msg.chat_id, origin_message_id)
             if self._origin_reply_fingerprints.get(key) == fingerprint:
+                self._origin_reply_fingerprints.move_to_end(key)
                 return True
-            self._origin_reply_fingerprints[key] = fingerprint
+            self._remember_fingerprint(key, fingerprint)
 
         message_id = metadata.get("message_id")
         if isinstance(message_id, str) and message_id:
             key = (msg.channel, msg.chat_id, message_id)
-            self._origin_reply_fingerprints[key] = fingerprint
+            self._remember_fingerprint(key, fingerprint)
 
         return False
 
@@ -612,7 +676,7 @@ class ChannelManager:
                     # content silently drops here.
                     channel = self.channels.get(msg.channel)
                     if channel is not None and channel.show_reasoning:
-                        await self._send_with_retry(channel, msg)
+                        self._enqueue_send(msg)
                     continue
 
                 if progress_event:
@@ -655,7 +719,7 @@ class ChannelManager:
                         if self._should_suppress_outbound(msg):
                             logger.info("Suppressing duplicate outbound message to {}:{}", msg.channel, msg.chat_id)
                             continue
-                    await self._send_with_retry(channel, msg)
+                    self._enqueue_send(msg)
                 else:
                     logger.warning("Unknown channel: {}", msg.channel)
 
@@ -663,6 +727,181 @@ class ChannelManager:
                 continue
             except asyncio.CancelledError:
                 break
+            except Exception:
+                # One bad message must never kill the dispatcher: every chat's
+                # replies flow through this loop.
+                logger.exception("Outbound dispatcher failed to route a message")
+                continue
+
+    def _enqueue_send(self, msg: OutboundMessage) -> None:
+        """Hand *msg* to its chat's sender, starting one when the lane is idle."""
+        key = (msg.channel, msg.chat_id)
+        lane = self._send_lanes.get(key)
+        if lane is None:
+            lane = self._send_lanes[key] = deque()
+        lane.append(msg)
+        if len(lane) > _SEND_LANE_MAX_ITEMS:
+            self._trim_send_lane(key, lane)
+        wake = self._delta_hold_wakeups.get(key)
+        if wake is not None:
+            wake.set()
+        task = self._send_lane_tasks.get(key)
+        if task is None or task.done():
+            self._send_lane_tasks[key] = asyncio.create_task(
+                self._drain_send_lane(key, lane),
+                name=f"outbound-{msg.channel}",
+            )
+
+    @staticmethod
+    def _is_droppable_lane_item(msg: OutboundMessage) -> bool:
+        """Progress / tool-hint / reasoning chatter that can be lost safely."""
+        event = outbound_event_from_message(msg)
+        if not isinstance(event, ProgressEvent):
+            return False
+        # File edit cards and reasoning-end close UI state: keep them.
+        return not (event.file_edit_events or event.reasoning_end)
+
+    def _trim_send_lane(self, key: tuple[str, str], lane: deque[OutboundMessage]) -> None:
+        """Drop the oldest droppable items until *lane* fits its cap.
+
+        Final replies, stream deltas/ends and control events are never dropped;
+        if nothing droppable is left the lane stays over the cap (the per-send
+        timeout still guarantees it drains).
+        """
+        excess = len(lane) - _SEND_LANE_MAX_ITEMS
+        if excess <= 0:
+            return
+        kept: list[OutboundMessage] = []
+        dropped = 0
+        for item in lane:
+            if dropped < excess and self._is_droppable_lane_item(item):
+                dropped += 1
+                continue
+            kept.append(item)
+        if dropped:
+            lane.clear()
+            lane.extend(kept)
+            logger.warning(
+                "Outbound lane {}:{} over capacity; dropped {} progress item(s)",
+                key[0], key[1], dropped,
+            )
+
+    async def _drain_send_lane(
+        self,
+        key: tuple[str, str],
+        lane: deque[OutboundMessage],
+    ) -> None:
+        """Send one chat's messages in order, retries included, then exit."""
+        try:
+            while lane:
+                msg = lane.popleft()
+                channel = self.channels.get(msg.channel)
+                if isinstance(outbound_event_from_message(msg), StreamDeltaEvent):
+                    interval = _stream_flush_interval(channel)
+                    if interval > 0:
+                        await self._hold_stream_delta(key, lane, interval)
+                        self._delta_flushed_at[key] = asyncio.get_running_loop().time()
+                    # Deltas pile up here while this chat's client is slow (or
+                    # during the hold above): merge them as the dispatcher does
+                    # on the bus queue.
+                    msg, boundary = self._merge_stream_deltas(
+                        msg,
+                        lambda: lane.popleft() if lane else None,
+                    )
+                    if boundary is not None:
+                        lane.appendleft(boundary)
+                else:
+                    # Anything else (stream end, tool rows, turn end) closes
+                    # the burst: the next stream's first token goes out at once.
+                    self._delta_flushed_at.pop(key, None)
+                if channel is None:
+                    logger.warning("Unknown channel: {}", msg.channel)
+                    continue
+                try:
+                    await self._send_with_retry(channel, msg)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # _send_with_retry logs and swallows send errors; this only
+                    # guards the lane so later messages of the chat still go.
+                    logger.exception("Outbound send to {} failed", msg.channel)
+        finally:
+            # No await between the empty check and here, so a message enqueued
+            # meanwhile always finds either this task running or none.
+            if self._send_lane_tasks.get(key) is asyncio.current_task():
+                del self._send_lane_tasks[key]
+            if not lane and self._send_lanes.get(key) is lane:
+                del self._send_lanes[key]
+
+    async def _hold_stream_delta(
+        self,
+        key: tuple[str, str],
+        lane: deque[OutboundMessage],
+        interval: float,
+    ) -> None:
+        """Hold a stream delta until *interval* passed since the chat's last flush.
+
+        Token-by-token frames cost the loop one JSON dump, one compressed
+        websocket frame and one transcript record each; a short hold lets the
+        following tokens merge into the same frame. The first delta of a burst
+        is never held (first-token latency), and the hold ends early as soon
+        as anything else queues for the chat (stream end, tool row, turn end)
+        or enough text piled up, so ordering and closing events are not
+        delayed behind the window.
+        """
+        last = self._delta_flushed_at.get(key)
+        if last is None:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = last + interval
+        wakeups = self._delta_hold_wakeups
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0 or self._lane_should_flush(lane):
+                return
+            wake = asyncio.Event()
+            wakeups[key] = wake
+            try:
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(remaining):
+                        await wake.wait()
+            finally:
+                if wakeups.get(key) is wake:
+                    del wakeups[key]
+
+    @property
+    def _delta_flushed_at(self) -> dict[tuple[str, str], float]:
+        """Per chat, loop time of the last stream delta flush of the burst."""
+        return self.__dict__.setdefault("_lane_last_delta_at", {})
+
+    @property
+    def _delta_hold_wakeups(self) -> dict[tuple[str, str], asyncio.Event]:
+        """Per chat, the event a held stream delta waits on."""
+        return self.__dict__.setdefault("_lane_wakeups", {})
+
+    @staticmethod
+    def _lane_should_flush(lane: deque[OutboundMessage]) -> bool:
+        """True when *lane* holds a non-delta item or a large pending text."""
+        pending_chars = 0
+        for item in lane:
+            if not isinstance(outbound_event_from_message(item), StreamDeltaEvent):
+                return True
+            pending_chars += len(item.content)
+            if pending_chars >= _STREAM_FLUSH_MAX_CHARS:
+                return True
+        return False
+
+    async def _stop_send_lanes(self) -> None:
+        tasks = list(self._send_lane_tasks.values())
+        self._send_lane_tasks.clear()
+        self._send_lanes.clear()
+        self._delta_flushed_at.clear()
+        self._delta_hold_wakeups.clear()
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
 
     @staticmethod
     def _accepts_keyword(callable_obj: Callable[..., Any], name: str) -> bool:
@@ -734,6 +973,12 @@ class ChannelManager:
                 metadata["_stream_end"] = True
             if cls._accepts_keyword(channel.send_delta, "resuming"):
                 kwargs["resuming"] = event.resuming
+            if event.discarded:
+                if cls._accepts_keyword(channel.send_delta, "discarded"):
+                    kwargs["discarded"] = True
+                else:
+                    metadata = dict(metadata or {})
+                    metadata["_stream_discarded"] = True
         elif not kwargs:
             metadata = dict(metadata or {})
             metadata["_stream_delta"] = True
@@ -781,6 +1026,25 @@ class ChannelManager:
         Returns:
             tuple of (merged_message, list_of_non_matching_messages)
         """
+        def take_next() -> OutboundMessage | None:
+            try:
+                return self.bus.outbound.get_nowait()
+            except asyncio.QueueEmpty:
+                return None
+
+        merged, boundary = self._merge_stream_deltas(first_msg, take_next)
+        return merged, [boundary] if boundary is not None else []
+
+    @staticmethod
+    def _merge_stream_deltas(
+        first_msg: OutboundMessage,
+        take_next: Callable[[], OutboundMessage | None],
+    ) -> tuple[OutboundMessage, OutboundMessage | None]:
+        """Merge the deltas *take_next* yields while they continue *first_msg*'s stream.
+
+        Returns the merged message and the first message that did not belong
+        (the boundary the caller must handle next), or None.
+        """
         first_event = outbound_event_from_message(first_msg)
         first_stream_id = first_event.stream_id if isinstance(first_event, StreamDeltaEvent) else None
         target_key = (first_msg.channel, first_msg.chat_id, first_stream_id)
@@ -790,14 +1054,13 @@ class ChannelManager:
             if isinstance(first_event, StreamDeltaEvent)
             else StreamDeltaEvent(stream_id=first_stream_id)
         )
-        non_matching: list[OutboundMessage] = []
+        boundary: OutboundMessage | None = None
 
         # Only merge consecutive deltas. As soon as we hit any other message,
-        # stop and hand that boundary back to the dispatcher via `pending`.
+        # stop and hand that boundary back to the caller.
         while True:
-            try:
-                next_msg = self.bus.outbound.get_nowait()
-            except asyncio.QueueEmpty:
+            next_msg = take_next()
+            if next_msg is None:
                 break
 
             # Check if this message belongs to the same stream
@@ -823,16 +1086,17 @@ class ChannelManager:
                     final_event = StreamEndEvent(
                         stream_id=next_stream_id,
                         resuming=next_event.resuming,
+                        discarded=next_event.discarded,
                     )
                     # Stream ended - stop coalescing this stream
                     break
             else:
                 # First non-matching message defines the coalescing boundary.
-                non_matching.append(next_msg)
+                boundary = next_msg
                 break
 
         merged = replace_outbound_event(first_msg, final_event, content=combined_content)
-        return merged, non_matching
+        return merged, boundary
 
     async def _send_with_retry(
         self,
@@ -854,7 +1118,10 @@ class ChannelManager:
         while True:
             attempt += 1
             try:
-                await self._send_once(channel, msg)
+                await asyncio.wait_for(
+                    self._send_once(channel, msg),
+                    timeout=_SEND_ATTEMPT_TIMEOUT_S,
+                )
                 return  # Send succeeded
             except asyncio.CancelledError:
                 raise  # Propagate cancellation for graceful shutdown

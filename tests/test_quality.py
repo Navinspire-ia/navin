@@ -802,3 +802,162 @@ class BinaryResolutionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_python_tools_come_from_the_project_venv_even_one_level_down(tmp_path):
+    """A generated app keeps backend/.venv; navin's own interpreter lacks its deps."""
+    import os
+    import stat
+
+    from navin.quality import linters as linters_mod
+
+    spec = {"binary": {"name": "pytest", "python_env": True, "run_as_module": "pytest"}}
+    before = linters_mod._binary_for(spec, tmp_path)
+    venv = tmp_path / "backend" / ".venv"
+    bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+    bindir.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    script = bindir / ("pytest.exe" if os.name == "nt" else "pytest")
+    script.write_text("#!/bin/sh\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    # Created mid-session: the cached resolution must not hide it.
+    found = linters_mod._binary_for(spec, tmp_path)
+    assert found == str(script)
+    assert found != before
+
+
+def test_pep668_refusal_points_to_a_project_venv():
+    from navin.agent.tools.shell import _python_env_hint
+
+    hint = _python_env_hint("error: externally-managed-environment\n\nExit code: 1")
+    assert ".venv" in hint and "--break-system-packages" in hint
+    assert _python_env_hint("Successfully installed fastapi\n\nExit code: 0") == ""
+
+
+def _runner(name):
+    from navin.quality.testing import runner_table
+
+    return runner_table()[name]
+
+
+def test_split_front_and_back_projects_are_found_in_their_own_folder(tmp_path):
+    from navin.quality.testing import _target_for_workdir, _workdir_for
+
+    (tmp_path / "client").mkdir()
+    (tmp_path / "client" / "package.json").write_text('{"devDependencies": {"vitest": "^3"}}')
+    (tmp_path / "backend" / "src").mkdir(parents=True)
+    (tmp_path / "backend" / "Cargo.toml").write_text("[package]\nname='api'\n")
+    (tmp_path / "apps" / "api").mkdir(parents=True)
+    (tmp_path / "apps" / "api" / "go.mod").write_text("module api\n")
+    assert _workdir_for(_runner("vitest"), tmp_path) == tmp_path / "client"
+    assert _workdir_for(_runner("cargo_test"), tmp_path) == tmp_path / "backend"
+    assert _workdir_for(_runner("go_test"), tmp_path) == tmp_path / "apps" / "api"
+    target = "client/src/App.test.tsx"
+    workdir = _workdir_for(_runner("vitest"), tmp_path, target)
+    assert workdir == tmp_path / "client"
+    assert _target_for_workdir(target, workdir, tmp_path) == "src/App.test.tsx"
+
+
+def test_python_backend_target_runs_from_the_backend(tmp_path):
+    from navin.quality.testing import _target_for_workdir, _workdir_for
+
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "tests" / "conftest.py").write_text("")
+    target = "backend/tests/test_api.py::test_ok"
+    workdir = _workdir_for(_runner("pytest"), tmp_path, target)
+    # Not backend/tests: a test folder is never the project.
+    assert workdir == tmp_path / "backend"
+    assert _target_for_workdir(target, workdir, tmp_path) == "tests/test_api.py::test_ok"
+
+
+def test_root_suites_keep_running_from_the_root(tmp_path):
+    from navin.quality.testing import _workdir_for
+
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "conftest.py").write_text("")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    assert _workdir_for(_runner("pytest"), tmp_path, "tests/unit/test_x.py") == tmp_path
+    assert _workdir_for(_runner("pytest"), tmp_path) == tmp_path
+
+
+class WslRoutedToolsTest(unittest.TestCase):
+    """lint / test_run on a \\\\wsl.localhost project, seen from Windows.
+
+    The project's tools are Linux binaries Windows cannot launch, and reading
+    the tree from Windows crosses the 9P bridge: they run in the distribution.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.linux_root = Path(self._tmp.name)
+        self.unc = Path("\\\\wsl.localhost\\Ubuntu" + str(self.linux_root).replace("/", "\\"))
+        from navin.quality import wsl_route
+        from navin.utils import wsl
+
+        self.wsl_route = wsl_route
+        for name, value in (("wsl_executable", "wsl.exe"), ("resolve_distro", "Ubuntu")):
+            patcher = patch.object(wsl, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(wsl_route.sys, "platform", "win32")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run_script(self, spec, *args):
+        """Run the generated resolver for real, wsl.exe itself left out."""
+        argv = self.wsl_route.tool_argv(spec, self.unc, self.unc, list(args))
+        self.assertEqual(argv[:6], ["wsl.exe", "-d", "Ubuntu", "--cd", str(self.linux_root), "--exec"])
+        return subprocess.run(argv[6:], capture_output=True, text=True, cwd=self.linux_root, check=False)
+
+    def test_the_project_venv_tool_wins_and_gets_the_linux_arguments(self):
+        tool = self.linux_root / "backend" / ".venv" / "bin" / "fakelint"
+        tool.parent.mkdir(parents=True)
+        tool.write_text("#!/bin/sh\necho \"ran $0 $*\"\n")
+        tool.chmod(0o755)
+        out = self._run_script({"binary": {"name": "fakelint", "python_env": True}}, "a.py")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), f"ran {tool} a.py")
+
+    def test_a_tool_missing_in_the_distribution_exits_127(self):
+        out = self._run_script({"binary": {"name": "no-such-linter-xyz"}})
+        self.assertEqual(out.returncode, self.wsl_route.MISSING_EXIT)
+
+    def test_paths_are_spelled_for_linux(self):
+        location = self.wsl_route.wsl_root(self.unc)
+        self.assertEqual(self.wsl_route.linux_path(self.unc / "src" / "a.py", location),
+                         f"{self.linux_root}/src/a.py")
+        self.assertEqual(self.wsl_route.linux_path("C:\\Temp\\r.xml", location), "/mnt/c/Temp/r.xml")
+        self.assertIsNone(self.wsl_route.wsl_root(self.linux_root))
+
+    def test_lint_runs_in_the_distribution(self):
+        spec = {"binary": {"name": "ruff", "python_env": True}, "args": ["check", "{file}"]}
+        linux_file = f"{self.linux_root}/a.py"
+        done = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with patch.object(linters_mod.subprocess, "run", return_value=done) as run:
+            result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
+        argv = run.call_args.args[0]
+        self.assertTrue(result.ran)
+        self.assertEqual(argv[:3], ["wsl.exe", "-d", "Ubuntu"])
+        self.assertEqual(argv[-2:], ["check", linux_file])
+        self.assertNotEqual(run.call_args.kwargs["cwd"], str(self.unc))
+
+    def test_missing_linter_in_the_distribution_is_not_run_not_clean(self):
+        spec = {"binary": {"name": "ruff"}, "args": ["{file}"]}
+        done = subprocess.CompletedProcess([], 127, stdout="", stderr="")
+        with patch.object(linters_mod.subprocess, "run", return_value=done):
+            result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
+        self.assertFalse(result.ran)
+        self.assertIn("WSL distribution", result.skipped_reason)
+
+    def test_pytest_runs_in_the_distribution_with_a_linux_report_path(self):
+        spec = dict(_runner("pytest"))
+        done = subprocess.CompletedProcess([], 0, stdout="1 passed in 0.1s\n", stderr="")
+        with patch.object(testing_mod.subprocess, "run", return_value=done) as run, \
+                patch.object(testing_mod, "_detected", return_value=True):
+            testing_mod._run_one("pytest", spec, self.unc, None)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:3], ["wsl.exe", "-d", "Ubuntu"])
+        self.assertIn("bash", argv)
+        report = next(arg for arg in argv if arg.startswith("--junit-xml="))
+        self.assertNotIn("\\", report)

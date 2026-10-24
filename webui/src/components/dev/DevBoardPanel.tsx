@@ -58,6 +58,8 @@ import {
   matchBoardTask,
   type BoardTaskFocusRequest,
 } from "@/lib/workbench-events";
+import { setVisibleInterval } from "@/lib/visible-interval";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 const STATUS_ORDER: BoardTaskStatus[] = [
@@ -152,6 +154,9 @@ export function DevBoardPanel({
   onRunAction?: (text: string) => void;
 }) {
   const { client, token } = useClient();
+  // Background reads take the token at call time, so a rotation does not reload.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const { t } = useTranslation();
   const tx = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }),
@@ -189,10 +194,10 @@ export function DevBoardPanel({
 
   const loadPrSync = useCallback(
     async (silent = false) => {
-      if (!token) return;
+      if (!tokenRef.current) return;
       if (!silent) setCheckingPrSync(true);
       try {
-        const sync = await fetchGithubPrSync(token, boardKey);
+        const sync = await fetchGithubPrSync(tokenRef.current, boardKey);
         setPrSuggestions(
           Array.isArray(sync.suggestions) ? sync.suggestions : [],
         );
@@ -202,15 +207,15 @@ export function DevBoardPanel({
         if (!silent) setCheckingPrSync(false);
       }
     },
-    [token, boardKey],
+    [tokenRef, boardKey],
   );
 
   const load = useCallback(
     async (silent = false) => {
-      if (!token) return;
+      if (!hasToken) return;
       if (!silent) setLoading(true);
       try {
-        const data = await fetchBoard(token, boardKey);
+        const data = await fetchBoard(tokenRef.current, boardKey);
         setPayload(data);
         setError(null);
         void loadPrSync(true);
@@ -220,7 +225,7 @@ export function DevBoardPanel({
         if (!silent) setLoading(false);
       }
     },
-    [token, boardKey, loadPrSync],
+    [hasToken, tokenRef, boardKey, loadPrSync],
   );
 
   useEffect(() => {
@@ -236,10 +241,10 @@ export function DevBoardPanel({
       if (changedProject && currentProject && changedProject !== currentProject) return;
       void load(true);
     });
-    const interval = window.setInterval(() => void load(true), 15_000);
+    const stopPolling = setVisibleInterval(() => void load(true), 15_000);
     return () => {
       unsubscribe();
-      window.clearInterval(interval);
+      stopPolling();
     };
   }, [client, load, payload, projectPath]);
 
@@ -663,14 +668,14 @@ export function DevBoardPanel({
               {tx("dev.board.autonomy.dialogTitle", "Enable board autonomy?")}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-2 text-left">
+              <div className="space-y-2 text-start">
                 <p>
                   {tx(
                     "dev.board.autonomy.dialogIntro",
                     "During a run you start (Run agent, /forge, /cruise, /mission or a board loop), the agent will chain through ready tasks without asking again for each card. Your consent is recorded in .navin/board/settings.json.",
                   )}
                 </p>
-                <ul className="list-disc space-y-0.5 pl-4 text-[12px]">
+                <ul className="list-disc space-y-0.5 ps-4 text-[12px]">
                   <li>
                     {tx(
                       "dev.board.autonomy.canTasks",
@@ -961,7 +966,7 @@ export function DevBoardPanel({
                         }
                       }}
                       className={cn(
-                        "group cursor-grab select-none rounded-md border bg-background p-2 text-left shadow-sm transition-colors hover:border-foreground/40 active:cursor-grabbing",
+                        "group cursor-grab select-none rounded-md border bg-background p-2 text-start shadow-sm transition-colors hover:border-foreground/40 active:cursor-grabbing",
                         selectedId === task.id
                           ? "border-foreground/60"
                           : "border-border/60",
@@ -985,7 +990,7 @@ export function DevBoardPanel({
                           }}
                           title={tx("dev.board.deleteTask", "Delete task")}
                           className={cn(
-                            "-mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-opacity hover:text-destructive focus-visible:opacity-100",
+                            "-me-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-opacity hover:text-destructive focus-visible:opacity-100",
                             confirmDeleteId === task.id
                               ? "opacity-0"
                               : "opacity-0 group-hover:opacity-100",
@@ -1147,7 +1152,7 @@ export function DevBoardPanel({
         </div>
 
         {selected ? (
-          <div className="flex min-h-0 w-[320px] shrink-0 flex-col border-l border-border/60 bg-background">
+          <div className="flex min-h-0 w-[320px] shrink-0 flex-col border-s border-border/60 bg-background">
             <div className="flex items-start gap-2 border-b border-border/60 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <input
@@ -1318,7 +1323,7 @@ export function DevBoardPanel({
                           onClick={() => dep && setSelectedId(dep.id)}
                           disabled={!dep}
                           className={cn(
-                            "min-w-0 flex-1 truncate text-left text-[11.5px]",
+                            "min-w-0 flex-1 truncate text-start text-[11.5px]",
                             satisfied && "text-muted-foreground line-through",
                             !dep && "text-destructive",
                           )}

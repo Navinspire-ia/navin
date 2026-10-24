@@ -205,13 +205,13 @@ class _IssueTarget:
         if self.api is not None and self.remote is not None and self.kind == "unknown":
             return (
                 f"Could not tell what {self.host} runs. Set its type "
-                f"(github / gitlab / forgejo) in Settings > Git."
+                f"(github / gitlab / forgejo) in Settings > Git & GitHub."
             )
         if self.api is not None and self.remote is not None:
             return self.api.token_missing_error(self.remote).message
         return (
             "no forge remote for this project - add a GitHub, GitLab or "
-            "Forgejo remote, or point this panel at a repository in Settings > Git"
+            "Forgejo remote, or point this panel at a repository in Settings > Git & GitHub"
         )
 
     def payload_fields(self) -> dict[str, Any]:
@@ -382,11 +382,15 @@ def open_task_pr(project_path: Path | str, task: dict[str, Any]) -> dict[str, An
 
     code, out, err = _git(root, "push", "-u", "origin", branch)
     if code != 0:
+        from navin.utils.git_credentials import auth_hint
+
+        raw = (err or out or "git push failed").strip()
+        hint = auth_hint(raw)
         return {
             "ok": False,
             "pr_url": None,
             "head_sha": head_sha,
-            "detail": (err or out or "git push failed").strip()[:300],
+            "detail": raw[:300] + (f"\n{hint}" if hint else ""),
         }
 
     # GitLab and Forgejo have no `gh`, and a GitHub user without it should not
@@ -402,7 +406,7 @@ def open_task_pr(project_path: Path | str, task: dict[str, Any]) -> dict[str, An
             "head_sha": head_sha,
             "detail": (
                 "no forge token for this remote and gh CLI not installed - "
-                "add a token in Settings > Git"
+                "add a token in Settings > Git & GitHub"
             ),
         }
 
@@ -584,7 +588,7 @@ def close_task_issue(project_path: Path | str, task: dict[str, Any]) -> dict[str
             "ok": False,
             "detail": (
                 "no forge token for this issue and gh CLI not installed - "
-                "add a token in Settings > Git"
+                "add a token in Settings > Git & GitHub"
             ),
         }
     code, out, err = _gh(root, "issue", "close", url, "--comment", _close_comment(task))

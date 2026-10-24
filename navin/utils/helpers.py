@@ -8,8 +8,10 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 from functools import lru_cache
@@ -28,6 +30,45 @@ def _get_token_encoding() -> Any:
     return tiktoken.get_encoding("cl100k_base")
 
 
+# Token counts by text content. The same strings (system blocks, tool schemas,
+# history messages) are counted again on every turn by the context meter and
+# history trimming; tiktoken on them was ~14% of the gateway loop under load.
+# Keyed by the string itself, so a hit is exact whatever object carries it.
+# LRU bounded by total characters; only consulted once the encoding loaded, so
+# a broken tiktoken still takes the character fallback.
+_TEXT_TOKENS: OrderedDict[str, int] = OrderedDict()
+_TEXT_TOKENS_CHARS = [0]
+_TEXT_TOKENS_MAX_CHARS = 8_000_000
+_TEXT_TOKENS_LOCK = threading.Lock()
+
+
+def _encoded_len(enc: Any, text: str) -> int:
+    """``len(enc.encode(text))``, remembered by content."""
+    with _TEXT_TOKENS_LOCK:
+        count = _TEXT_TOKENS.get(text)
+        if count is not None:
+            _TEXT_TOKENS.move_to_end(text)
+            return count
+    count = len(enc.encode(text))
+    if len(text) > _TEXT_TOKENS_MAX_CHARS // 8:
+        return count
+    with _TEXT_TOKENS_LOCK:
+        if text not in _TEXT_TOKENS:
+            _TEXT_TOKENS[text] = count
+            _TEXT_TOKENS_CHARS[0] += len(text)
+            while _TEXT_TOKENS_CHARS[0] > _TEXT_TOKENS_MAX_CHARS and _TEXT_TOKENS:
+                old, _ = _TEXT_TOKENS.popitem(last=False)
+                _TEXT_TOKENS_CHARS[0] -= len(old)
+    return count
+
+
+def clear_token_count_cache() -> None:
+    """Forget remembered token counts. For tests and benchmarks."""
+    with _TEXT_TOKENS_LOCK:
+        _TEXT_TOKENS.clear()
+        _TEXT_TOKENS_CHARS[0] = 0
+
+
 def estimate_text_tokens(text: str) -> int:
     """Estimate the tokens a plain string contributes to a prompt.
 
@@ -37,9 +78,12 @@ def estimate_text_tokens(text: str) -> int:
     if not text:
         return 0
     try:
-        return len(_get_token_encoding().encode(text))
+        return _encoded_len(_get_token_encoding(), text)
     except Exception:
         return max(1, len(text) // 4)
+
+
+_TOOLS_TOKEN_BY_CONTENT: dict[str, int] = {}
 
 
 def _cache_tools_token_count(
@@ -77,7 +121,14 @@ def _estimate_tools_tokens(
     rendered = json.dumps(tools, ensure_ascii=False)
     if leading_separator:
         rendered = "\n" + rendered
-    token_count = len(enc.encode(rendered))
+    # Same schemas from another registry (one per subagent): reuse the count
+    # by content instead of re-encoding thousands of tokens on the event loop.
+    token_count = _TOOLS_TOKEN_BY_CONTENT.get(rendered)
+    if token_count is None:
+        token_count = len(enc.encode(rendered))
+        if len(_TOOLS_TOKEN_BY_CONTENT) >= 256:
+            _TOOLS_TOKEN_BY_CONTENT.clear()
+        _TOOLS_TOKEN_BY_CONTENT[rendered] = token_count
     counts[leading_separator] = token_count
     _cache_tools_token_count(tools_id, fingerprint, counts)
     return token_count
@@ -126,6 +177,10 @@ def strip_think(text: str) -> str:
     tokens mid-text would silently rewrite any message where a user or the
     assistant discusses the tokens themselves.
     """
+    # Every pattern below needs a "<". Streaming calls this on the whole
+    # buffer for each delta, so tag-free text skips ten regex scans.
+    if "<" not in text:
+        return text.strip()
     # Well-formed blocks first.
     text = re.sub(rf"<(?P<tag>{_THINKING_TAG})>[\s\S]*?</(?P=tag)>", "", text)
     text = re.sub(rf"^\s*<{_THINKING_TAG}>[\s\S]*$", "", text)
@@ -159,6 +214,8 @@ def strip_reasoning_tags(text: object) -> str:
     """Remove wrapper tags from text that is already known to be reasoning."""
     if not isinstance(text, str):
         return ""
+    if "<" not in text:
+        return text.strip()
     text = re.sub(rf"^\s*<{_THINKING_TAG}/>\s*", "", text)
     text = re.sub(rf"\s*<{_THINKING_TAG}/>\s*$", "", text)
     text = re.sub(rf"^\s*<{_THINKING_TAG}>\s*", "", text)
@@ -529,7 +586,7 @@ def _cleanup_tool_result_buckets(root: Path, current_bucket: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _write_text_atomic(path: Path, content: str) -> None:
+def _write_text_atomic(path: Path, content: str, *, sync_directory: bool = True) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -537,6 +594,8 @@ def _write_text_atomic(path: Path, content: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         tmp.replace(path)
+        if not sync_directory:
+            return
         with suppress(OSError, NotImplementedError):
             dfd = os.open(path.parent, os.O_RDONLY)
             try:
@@ -583,10 +642,12 @@ def maybe_persist_tool_result(
         logger.exception("Failed to clean stale tool result buckets in {}", root)
     path = bucket / f"{safe_filename(tool_call_id)}.{suffix}"
     if not path.exists():
+        # A re-readable copy of the output: complete content (file fsync) is
+        # enough, the extra directory sync only slowed every large result.
         if suffix == "json" and isinstance(content, list):
-            _write_text_atomic(path, json.dumps(content, ensure_ascii=False, indent=2))
+            _write_text_atomic(path, json.dumps(content, ensure_ascii=False, indent=2), sync_directory=False)
         else:
-            _write_text_atomic(path, text_payload)
+            _write_text_atomic(path, text_payload, sync_directory=False)
 
     preview = text_payload[:_TOOL_RESULT_PREVIEW_CHARS]
     return _render_tool_result_reference(
@@ -650,6 +711,63 @@ def build_assistant_message(
     return msg
 
 
+# Token counts of long prompt parts, remembered by string identity. The history
+# is re-estimated before every model request, yet its strings are the very same
+# objects step after step (messages get shallow-copied, contents are kept), so
+# only the new ones need encoding: a 500-message estimate drops from ~40 ms to
+# about 1 ms. Bounded by total characters; the strings are kept alive while
+# cached so an id can never be reused for another string.
+_PART_TOKENS: dict[tuple[int, int], tuple[str, int]] = {}
+_PART_TOKENS_CHARS = [0]
+_PART_TOKENS_MAX_CHARS = 16_000_000
+_PART_TOKENS_MIN_CHARS = 256
+_TOOL_CALLS_TEXT: dict[int, tuple[Any, str]] = {}
+_TOOL_CALLS_TEXT_MAX = 4096
+_PART_TOKENS_LOCK = threading.Lock()
+
+
+def _part_tokens(enc: Any, text: str) -> int:
+    key = (id(enc), id(text))
+    with _PART_TOKENS_LOCK:
+        hit = _PART_TOKENS.get(key)
+    if hit is not None and hit[0] is text:
+        return hit[1]
+    count = len(enc.encode(text))
+    with _PART_TOKENS_LOCK:
+        if key not in _PART_TOKENS:
+            _PART_TOKENS[key] = (text, count)
+            _PART_TOKENS_CHARS[0] += len(text)
+            while _PART_TOKENS_CHARS[0] > _PART_TOKENS_MAX_CHARS and _PART_TOKENS:
+                old_text, _ = _PART_TOKENS.pop(next(iter(_PART_TOKENS)))
+                _PART_TOKENS_CHARS[0] -= len(old_text)
+    return count
+
+
+def json_text_by_identity(value: Any) -> str:
+    """``json.dumps(value, ensure_ascii=False)``, kept while *value* is the same object.
+
+    For values that are never mutated once built (tool schemas memoized by
+    ``filter_tool_definitions``, a message's tool_calls). Raises like
+    ``json.dumps`` for unserializable values.
+    """
+    return _tool_calls_text(value)
+
+
+def _tool_calls_text(tool_calls: Any) -> str:
+    """``json.dumps`` of a message's tool_calls, kept while the list is the same object."""
+    key = id(tool_calls)
+    with _PART_TOKENS_LOCK:
+        hit = _TOOL_CALLS_TEXT.get(key)
+    if hit is not None and hit[0] is tool_calls:
+        return hit[1]
+    text = json.dumps(tool_calls, ensure_ascii=False)
+    with _PART_TOKENS_LOCK:
+        if len(_TOOL_CALLS_TEXT) >= _TOOL_CALLS_TEXT_MAX:
+            _TOOL_CALLS_TEXT.pop(next(iter(_TOOL_CALLS_TEXT)))
+        _TOOL_CALLS_TEXT[key] = (tool_calls, text)
+    return text
+
+
 def estimate_prompt_tokens(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -658,40 +776,57 @@ def estimate_prompt_tokens(
 
     Counts all fields that providers send to the LLM: content, tool_calls,
     reasoning_content, tool_call_id, name, plus per-message framing overhead.
+    Long parts are counted one by one and remembered (see ``_PART_TOKENS``);
+    short ones are encoded together, joined by newlines, as before.
     """
     try:
         enc = _get_token_encoding()
         parts: list[str] = []
+        long_tokens = 0
+        long_parts = 0
+
+        def add(text: str) -> None:
+            nonlocal long_tokens, long_parts
+            if len(text) >= _PART_TOKENS_MIN_CHARS:
+                long_tokens += _part_tokens(enc, text)
+                long_parts += 1
+            else:
+                parts.append(text)
+
         for msg in messages:
             content = msg.get("content")
             if isinstance(content, str):
-                parts.append(content)
+                if content:
+                    add(content)
             elif isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
                         txt = part.get("text", "")
                         if txt:
-                            parts.append(txt)
+                            add(txt)
 
             tc = msg.get("tool_calls")
             if tc:
-                parts.append(json.dumps(tc, ensure_ascii=False))
+                add(_tool_calls_text(tc))
 
             rc = msg.get("reasoning_content")
             if isinstance(rc, str) and rc:
-                parts.append(rc)
+                add(rc)
 
             for key in ("name", "tool_call_id"):
                 value = msg.get(key)
                 if isinstance(value, str) and value:
                     parts.append(value)
 
+        has_parts = bool(parts) or long_parts > 0
         tool_tokens = (
-            _estimate_tools_tokens(enc, tools, leading_separator=bool(parts)) if tools else 0
+            _estimate_tools_tokens(enc, tools, leading_separator=has_parts) if tools else 0
         )
 
         per_message_overhead = len(messages) * 4
-        message_tokens = len(enc.encode("\n".join(parts))) if parts else 0
+        # One newline token between long parts and the rest, as the joined
+        # encoding counted them.
+        message_tokens = (_encoded_len(enc, "\n".join(parts)) if parts else 0) + long_tokens + long_parts
         return message_tokens + tool_tokens + per_message_overhead
     except Exception:
         return _estimate_prompt_tokens_fallback(messages, tools)
@@ -738,7 +873,7 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
         if isinstance(value, str) and value:
             parts.append(value)
     if message.get("tool_calls"):
-        parts.append(json.dumps(message["tool_calls"], ensure_ascii=False))
+        parts.append(_tool_calls_text(message["tool_calls"]))
 
     rc = message.get("reasoning_content")
     if isinstance(rc, str) and rc:
@@ -749,7 +884,7 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
         return 4
     try:
         enc = _get_token_encoding()
-        return max(4, len(enc.encode(payload)) + 4)
+        return max(4, _encoded_len(enc, payload) + 4)
     except Exception:
         return max(4, len(payload) // 4 + 4)
 
@@ -829,6 +964,29 @@ def build_status_content(
     return "\n".join(lines)
 
 
+_PROJECT_TEXT_SUFFIXES = frozenset({
+    ".md", ".txt", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".toml", ".yaml",
+    ".yml", ".html", ".css", ".rs", ".go", ".java", ".kt", ".c", ".h", ".cpp", ".cs",
+    ".rb", ".php", ".swift", ".sh", ".ps1", ".sql", ".lock", ".cfg", ".ini", ".xml",
+})
+
+
+def _is_bare_target_folder(workspace: Path) -> bool:
+    """True for a small folder of opaque files only (e.g. ``./rg`` to reverse)."""
+    try:
+        entries = [p for p in Path(workspace).iterdir() if p.name not in {".git", ".DS_Store"}]
+    except OSError:
+        return False
+    if not entries or len(entries) > 5:
+        return False
+    for entry in entries:
+        if not entry.is_file() or entry.name.startswith("."):
+            return False
+        if entry.suffix.lower() in _PROJECT_TEXT_SUFFIXES or entry.name in {"Makefile", "Dockerfile"}:
+            return False
+    return True
+
+
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
     """Sync bundled templates to workspace. Creates missing files without overwriting user files."""
     from importlib.resources import files as pkg_files
@@ -844,6 +1002,11 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         return []
 
     added: list[str] = []
+
+    if _is_bare_target_folder(workspace):
+        # A folder holding only the artifact to analyze (a binary, an APK) is
+        # not a project: no board, memory or continuity pack there.
+        return added
 
     def _write(src, dest: Path):
         content = src.read_text(encoding="utf-8") if src else ""
@@ -901,6 +1064,7 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
                 ".navin/memory/MEMORY.md",
             ],
         )
+        gs.retire_from_projects_container()
         if not gs.init() and gs.is_initialized() and gs.owns_gitignore():
             # Pre-migration stores ignore .navin/ in their .gitignore.
             # owns_gitignore() keeps project repos' own .gitignore untouched.
@@ -909,6 +1073,12 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         logger.exception("Failed to initialize git store for {}", workspace)
 
     return added
+
+
+# Board, brain and rules panels poll and each asked for the scaffold: a template
+# sync and a git walk several times a minute per project. Once a minute is enough.
+_SCAFFOLD_RECHECK_S = 60.0
+_scaffold_checked: dict[str, float] = {}
 
 
 def ensure_project_scaffold(project_path: Path | str, *, silent: bool = True) -> list[str]:
@@ -928,8 +1098,15 @@ def ensure_project_scaffold(project_path: Path | str, *, silent: bool = True) ->
         return []
     if not root.is_dir() or is_navin_internal_path(root):
         return []
+    now = time.monotonic()
+    checked = _scaffold_checked.get(str(root))
+    # A removed .navin is rebuilt at once, whatever the clock says.
+    if checked is not None and now - checked < _SCAFFOLD_RECHECK_S and (root / ".navin").is_dir():
+        return []
     try:
-        return sync_workspace_templates(root, silent=silent)
+        created = sync_workspace_templates(root, silent=silent)
+        _scaffold_checked[str(root)] = now
+        return created
     except Exception:
         logger.exception("Failed to scaffold project {}", root)
         return []

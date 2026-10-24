@@ -287,7 +287,13 @@ class MarketingLiveHarvestTest(unittest.TestCase):
             ]
             self.assertTrue(all(row.get("status") != "produced" for row in others))
 
-            video = produce_assets(store, kinds=["video"], generate=True)
+            # The premium demo-video pipeline is covered by
+            # test_marketing_demo_video; here it reports not ready.
+            with patch(
+                "navin.marketing.produce._demo_video_ready",
+                return_value="demo video pipeline is not ready: motion renderer missing",
+            ):
+                video = produce_assets(store, kinds=["video"], generate=True)
             audio = produce_assets(store, kinds=["audio"], generate=True)
             self.assertEqual(video["produced"], 0)
             self.assertEqual(audio["produced"], 0)

@@ -203,7 +203,7 @@ export function CredentialForm({
                 onChange={(event) => onChange(field.key, event.target.value)}
                 className={cn(
                   "h-9 rounded-[10px] border-border/60 bg-muted/35 text-[13px]",
-                  showSecretToggle && "pr-9",
+                  showSecretToggle && "pe-9",
                 )}
               />
               {showSecretToggle ? (
@@ -215,7 +215,7 @@ export function CredentialForm({
                       : tx("settings.channels.showSecret", "Show secret")
                   }
                   onClick={() => onToggleSecret(field.key)}
-                  className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+                  className="absolute end-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
                 >
                   {visible ? (
                     <EyeOff className="h-3.5 w-3.5" aria-hidden />

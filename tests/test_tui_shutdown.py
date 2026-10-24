@@ -325,3 +325,44 @@ print("alive", [pid for pid in pids if running(pid)])
     assert "Event loop is closed" not in result.stderr
     assert "Exception ignored" not in result.stderr
     assert "alive []" in result.stdout
+
+
+def test_cli_engine_resumes_its_own_interrupted_turn(tmp_path):
+    """A crash or closed terminal must not lose the CLI turn that was running."""
+    runtime = TuiRuntime(SimpleNamespace(workspace_path=tmp_path), on_event=lambda _: None)
+    calls = {}
+
+    def run(**kwargs):
+        calls.update(kwargs)
+        return "loop"
+
+    runtime.agent_loop = SimpleNamespace(run=run)
+    assert runtime._run_agent_loop() == "loop"
+    assert calls == {"recovery_channel": runtime.channel, "recovery_session_key": runtime.session_key}
+    assert calls["recovery_channel"] == "cli"
+
+
+def test_switching_to_an_interrupted_chat_schedules_its_recovery(tmp_path):
+    from navin.bus.events import InboundMessage
+    from navin.session.turn_recovery import RECOVERY_KEY, TurnRecovery
+
+    async def run():
+        runtime = TuiRuntime(SimpleNamespace(workspace_path=tmp_path), on_event=lambda _: None)
+        sessions = SessionManager(tmp_path)
+        recovery = TurnRecovery(sessions)
+        interrupted = sessions.get_or_create("cli:old")
+        recovery.begin(interrupted, InboundMessage(channel="cli", sender_id="u", chat_id="old", content="finish the audit"))
+        sessions.save(interrupted)
+        sessions.get_or_create("cli:done")
+        runtime.agent_loop = SimpleNamespace(turn_recovery=recovery, sessions=sessions)
+        runtime._refresh_status = lambda: None
+
+        await runtime.switch_session("cli:done")
+        assert recovery.due == {}
+        await runtime.switch_session("cli:old")
+        assert "cli:old" in recovery.due
+        resumed = recovery.take_due(active_keys=set())
+        assert len(resumed) == 1 and "finish the audit" in resumed[0].content
+        assert SessionManager(tmp_path).get_or_create("cli:old").metadata[RECOVERY_KEY]["status"] == "running"
+
+    asyncio.run(run())

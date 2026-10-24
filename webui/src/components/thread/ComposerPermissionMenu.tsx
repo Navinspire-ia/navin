@@ -60,9 +60,12 @@ const MODES: Array<{
 export function ComposerPermissionMenu({
   disabled,
   compact = false,
+  iconOnly = false,
 }: {
   disabled?: boolean;
   compact?: boolean;
+  /** Icon alone in the toolbar (the mode's name is the tooltip); the list keeps icon and text. */
+  iconOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { token } = useClient();
@@ -112,15 +115,17 @@ export function ComposerPermissionMenu({
           aria-label={t("thread.composer.permission.aria", { defaultValue: "Permissions" })}
           className={cn(
             "max-w-[11rem] rounded-lg border border-transparent bg-transparent font-medium text-muted-foreground shadow-none transition-colors hover:bg-foreground/[0.05] hover:text-foreground active:scale-[0.96] dark:hover:bg-white/[0.06]",
-            compact ? "h-7 gap-1 px-2 text-[12px]" : "h-8 gap-1 px-2.5 text-[12.5px]",
+            iconOnly
+              ? "h-7 w-7 shrink-0 p-0"
+              : compact ? "h-7 gap-1 px-2 text-[12px]" : "h-8 gap-1 px-2.5 text-[12.5px]",
           )}
         >
           <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          {compact ? null : <span className="truncate">{label}</span>}
-          <ChevronDown className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+          {compact || iconOnly ? null : <span className="truncate">{label}</span>}
+          {iconOnly ? null : <ChevronDown className="h-3 w-3 shrink-0 opacity-70" aria-hidden />}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={6} className="min-w-[13rem] p-1">
+      <DropdownMenuContent align={iconOnly ? "end" : "start"} sideOffset={6} className="min-w-[13rem] p-1">
         {MODES.map((item) => {
           const ItemIcon = item.icon;
           const selected = item.mode === mode;

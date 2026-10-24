@@ -77,7 +77,7 @@ export function PromptNavigator({
             <div className="relative mt-4">
               <Search
                 aria-hidden
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
               />
               <input
                 value={query}
@@ -85,7 +85,7 @@ export function PromptNavigator({
                 aria-label={t("thread.promptNavigator.search")}
                 placeholder={t("thread.promptNavigator.search")}
                 className={cn(
-                  "h-10 w-full rounded-full border border-border bg-background pl-9 pr-3 text-sm",
+                  "h-10 w-full rounded-full border border-border bg-background ps-9 pe-3 text-sm",
                   "outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20",
                 )}
               />
@@ -133,7 +133,7 @@ function PromptNavigatorRow({
     <button
       type="button"
       className={cn(
-        "w-full rounded-xl px-3 py-3 text-left transition",
+        "w-full rounded-xl px-3 py-3 text-start transition",
         "hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
       )}
       aria-label={t("thread.promptNavigator.jumpTo", { label: prompt.label })}

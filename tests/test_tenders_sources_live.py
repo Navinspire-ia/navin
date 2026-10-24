@@ -1,33 +1,20 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Live reachability of every official tender source.
+"""Tender catalog shape and opt-in live reachability checks.
 
-P0 APIs (TED, World Bank) must work when the network is up.
-HTML portals are catalog-only: 403/405 WAF and timeouts abroad are recorded,
-not treated as invented notices. A 404 on a catalog URL we just repaired is a fail.
+Set ``NAVIN_TENDERS_LIVE=1`` to contact official procurement portals. Live
+responses, including HTTP and network failures, are reported without per-host
+timeout or status exceptions.
 """
 
 from __future__ import annotations
 
+import os
 import unittest
 
 from navin.tenders.probe import probe_catalog
 from navin.tenders.sources import catalog
-
-# Portals that often time out, challenge bots, or need a key. Official URLs stay.
-_FLAKY_ABROAD = {
-    "egypt-etenders",
-    "capt-kuwait",
-    "afdb",
-    "iadb",
-    "ungm",
-    "sam-gov",
-    # The Discovery.aw path 404s; the host itself is what the catalog probes.
-    "sap-discovery",
-    # Intermittent 404 from GitHub-hosted runners. The official URL stays.
-    "ireland-etenders",
-}
 
 
 class TendersCatalogShapeTest(unittest.TestCase):
@@ -63,6 +50,10 @@ class TendersCatalogShapeTest(unittest.TestCase):
         self.assertNotIn("cvpp.eviesiejipirkimai.lt", by_id["lithuania-cvpp"]["url"])
 
 
+@unittest.skipUnless(
+    os.environ.get("NAVIN_TENDERS_LIVE") == "1",
+    "set NAVIN_TENDERS_LIVE=1 to access official tender portals",
+)
 class TendersSourcesLiveProbeTest(unittest.TestCase):
     def test_probe_every_catalog_source(self) -> None:
         rows = probe_catalog()
@@ -70,14 +61,6 @@ class TendersSourcesLiveProbeTest(unittest.TestCase):
         by_id = {row["id"]: row for row in rows}
         ted = by_id["ted"]
         wb = by_id["world-bank"]
-        offline = (
-            ted.get("api_ok") is not True
-            and int(ted.get("portal_status") or 0) == 0
-            and int(wb.get("portal_status") or 0) == 0
-        )
-        if offline:
-            self.skipTest("network blocked; empty pipeline is honest")
-
         self.assertTrue(ted.get("api_ok"), ted)
         self.assertTrue(wb.get("api_ok") or wb.get("portal_ok"), wb)
 
@@ -98,7 +81,6 @@ class TendersSourcesLiveProbeTest(unittest.TestCase):
             for row in rows
             if int(row.get("portal_status") or 0) == 404
             and row.get("api_ok") is not True
-            and row["id"] not in _FLAKY_ABROAD
         ]
         self.assertEqual(dead_404, [], dead_404)
 

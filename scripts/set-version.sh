@@ -24,7 +24,11 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]; then
   exit 1
 fi
 
-python3 - "$ROOT" "$VERSION" <<'PY'
+# CI runners (Windows) may only have `python`.
+PYTHON="${PYTHON:-$(command -v python3 || command -v python || true)}"
+[ -n "$PYTHON" ] || { echo "set-version: python introuvable" >&2; exit 1; }
+
+"$PYTHON" - "$ROOT" "$VERSION" <<'PY'
 import json
 import pathlib
 import re
@@ -83,6 +87,32 @@ stamp(
     r'^(__version__\s*=\s*")[^"]+(")',
     rf"\g<1>{version}\g<2>",
 )
+
+# Lockfiles : la version du paquet racine / du crate desktop, comme le commit
+# "stamp product version" les met à jour à la main. Absents : ignorés.
+for lock in ("webui/package-lock.json", "desktop/package-lock.json", "desktop-electron/package-lock.json"):
+    path = root / lock
+    if not path.is_file():
+        continue
+    data = json.loads(path.read_text(encoding="utf-8"))
+    before = json.dumps(data)
+    data["version"] = version
+    if isinstance(data.get("packages", {}).get(""), dict):
+        data["packages"][""]["version"] = version
+    if json.dumps(data) != before:
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        changed.append(lock)
+cargo_lock = root / "desktop/src-tauri/Cargo.lock"
+crate = re.search(r'^name\s*=\s*"([^"]+)"', (root / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8"), re.MULTILINE)
+if cargo_lock.is_file() and crate:
+    text = cargo_lock.read_text(encoding="utf-8")
+    new = re.sub(
+        r'(\[\[package\]\]\nname = "%s"\nversion = ")[^"]+(")' % re.escape(crate.group(1)),
+        rf"\g<1>{version}\g<2>", text, count=1,
+    )
+    if new != text:
+        cargo_lock.write_text(new, encoding="utf-8")
+        changed.append("desktop/src-tauri/Cargo.lock")
 
 # Contrôle : la conf Tauri doit maintenant porter la bonne version.
 conf = json.loads((root / "desktop/src-tauri/tauri.conf.json").read_text())

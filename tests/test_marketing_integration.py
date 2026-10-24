@@ -304,7 +304,7 @@ class MarketingHeartbeatAndLoopIntegrationTest(unittest.TestCase):
         self.assertIn("tauri://localhost/#/marketing", rust)
         self.assertIn("http://127.0.0.1:8766/#/marketing", rust)
         self.assertIn("#/marketing?chat=websocket:1", rust)
-        self.assertIn(".on_navigation({", rust)
+        self.assertIn(".on_navigation(move |url| {", rust)
         self.assertIn("apply_in_app_navigation", rust)
         self.assertIn("in_app_hash", rust)
         opener = (ROOT / "desktop/src-tauri/capabilities/gateway-opener.json").read_text(

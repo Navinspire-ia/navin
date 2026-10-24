@@ -114,7 +114,7 @@ export function forgeSetupHint(
   if (kind === "unknown") {
     return {
       key: "dev.git.forgeUnknownHint",
-      fallback: "Cannot tell what {{host}} runs. Pick its type in Settings > Git.",
+      fallback: "Cannot tell what {{host}} runs. Pick its type in Settings > Git & GitHub.",
       host,
       env: null,
     };
@@ -122,7 +122,7 @@ export function forgeSetupHint(
   if (view?.token_configured) return null;
   return {
     key: "dev.git.forgeTokenMissing",
-    fallback: "No token for {{host}}. Add one in Settings > Git.",
+    fallback: "No token for {{host}}. Add one in Settings > Git & GitHub.",
     host,
     env: forgeEnvVar(kind),
   };

@@ -215,7 +215,7 @@ export function FileLibrary({
                 ) : row.file_id && onPreview ? (
                   <button
                     type="button"
-                    className="mt-1 text-left text-[12px] text-teal-800 dark:text-teal-200"
+                    className="mt-1 text-start text-[12px] text-teal-800 dark:text-teal-200"
                     onClick={() => void openPreview(row.file_id || "")}
                   >
                     {loading === row.file_id

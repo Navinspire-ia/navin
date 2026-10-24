@@ -28,6 +28,7 @@ from navin.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_APPROVAL_DECISION,
     RUNTIME_CONTROL_CHOICE_ANSWER,
+    RUNTIME_CONTROL_CREDENTIAL_ANSWER,
     InboundMessage,
     OutboundMessage,
 )
@@ -38,6 +39,8 @@ from navin.bus.outbound_events import (
     ChoiceClosedEvent,
     ChoiceRequestedEvent,
     ContextCompactedEvent,
+    CredentialClosedEvent,
+    CredentialRequestedEvent,
     FilePreviewOpenRequestedEvent,
     NotificationEvent,
     OutboundEvent,
@@ -48,7 +51,9 @@ from navin.bus.outbound_events import (
     StreamedResponseEvent,
     StreamEndEvent,
     SubagentProgressEvent,
+    TeamMessageEvent,
     TurnEndEvent,
+    WorktreeMergeEvent,
     outbound_event_from_message,
 )
 
@@ -58,6 +63,18 @@ UiCallback = Callable[["UiEvent"], Awaitable[None] | None]
 # ---------------------------------------------------------------------------
 # UI-facing events (engine events, flattened for widgets)
 # ---------------------------------------------------------------------------
+
+
+class _FileLog:
+    """Minimal ``logger.warning`` sink writing to an open file (CLI freeze log)."""
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+
+    def warning(self, fmt: str, *args: Any) -> None:
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with contextlib.suppress(Exception):
+            self._handle.write(f"{stamp} | {fmt.format(*args)}\n")
 
 
 @dataclass(frozen=True)
@@ -78,6 +95,8 @@ class UiStreamDelta(UiEvent):
 @dataclass(frozen=True)
 class UiStreamEnd(UiEvent):
     resuming: bool = False
+    # The segment's partial text was abandoned by a mid-stream retry.
+    discarded: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,6 +205,38 @@ class UiNotification(UiEvent):
 
 
 @dataclass(frozen=True)
+class UiTeamMessage(UiEvent):
+    """One Collaboration Mode exchange, kept in the transcript (team journal)."""
+
+    kind: str
+    sender: dict[str, str]
+    target: dict[str, str] | None
+    content: str
+    status: str | None = None
+
+
+# Terminal face of each teammate avatar (the desktop draws the full bot).
+TEAM_GLYPHS = {
+    "visor": "▣", "round": "◉", "antenna": "Ψ", "square": "■", "cyclops": "◎",
+    "ears": "▲", "dome": "◒", "crest": "♛", "navin": "◆", "user": "●",
+}
+
+
+def team_face(identity: dict[str, str] | None) -> str:
+    """``◉ Salma`` in the teammate's color, as Textual markup."""
+    if not identity:
+        return ""
+    from rich.markup import escape
+
+    color = identity.get("color") or ""
+    glyph = TEAM_GLYPHS.get(identity.get("avatar") or "", "◉")
+    name = escape(identity.get("name") or "?")
+    if len(color) == 7 and color.startswith("#"):
+        return f"[b {color}]{glyph} {name}[/]"
+    return f"[b]{glyph} {name}[/b]"
+
+
+@dataclass(frozen=True)
 class UiRetryWait(UiEvent):
     text: str
 
@@ -203,6 +254,7 @@ class UiSubagent(UiEvent):
     started_ms_ago: int | None = None
     tokens: int | None = None
     task_description: str | None = None
+    steps: list[dict[str, str]] | None = None
 
 
 @dataclass(frozen=True)
@@ -240,6 +292,35 @@ class UiChoiceClosed(UiEvent):
     request_id: str
     option_id: str
     skipped: bool
+
+
+@dataclass(frozen=True)
+class UiCredentialRequested(UiEvent):
+    request_id: str
+    kind: str
+    host: str
+    names: list[str]
+    reason: str
+
+
+@dataclass(frozen=True)
+class UiWorktreeMerge(UiEvent):
+    """A Multitask subagent's changes were merged, or need the user's decision."""
+
+    task_id: str
+    label: str
+    status: str
+    files: list[str]
+    conflicts: list[str]
+    reason: str = ""
+    branch: str = ""
+    resolve_prompt: str = ""
+
+
+@dataclass(frozen=True)
+class UiCredentialClosed(UiEvent):
+    request_id: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -349,6 +430,8 @@ class TuiRuntime:
         self.status.session_key = self.session_key
         self._turn_started_at: float | None = None
         self._streamed_this_turn = False
+        # Set by the TUI while a Live voice call is on (navin/tui/live_voice.py).
+        self.voice_mode = False
         self._closed = False
         self._display_error_reported = False
         self._license_sync: Any = None
@@ -357,6 +440,70 @@ class TuiRuntime:
         self.usage = CliUsageHook()
         self.worked_seconds = 0.0
         self.shutdown_warnings: list[str] = []
+
+    async def list_subagents(self) -> list[dict[str, Any]]:
+        manager = getattr(self.agent_loop, "subagents", None)
+        if manager is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(manager.list_agents, self.session_key, offset=offset, limit=200)
+            rows.extend(page)
+            if len(page) < 200:
+                return rows
+            offset += len(page)
+
+    async def subagent_history(self, task_id: str, after: int = 0) -> dict[str, Any]:
+        manager = getattr(self.agent_loop, "subagents", None)
+        if manager is None:
+            return {"agent": None, "events": [], "next_cursor": after, "has_more": False}
+        return await asyncio.to_thread(manager.agent_history, self.session_key, task_id, after=after, limit=100)
+
+    async def subagent_operation(self, task_id: str, operation: str) -> dict[str, Any]:
+        from navin.agent.subagent import request_subagent_operation
+
+        if self.bus is None:
+            return {"ok": False, "error": "Runtime is not started."}
+        self._ensure_tasks()
+        return await request_subagent_operation(self.bus, self.session_key, operation, task_id)
+
+    async def multitask_spawn(
+        self, prompt: str, *, label: str = "", client_key: str = "", timeout: float = 20.0,
+    ) -> dict[str, Any]:
+        """Run ``prompt`` in a parallel subagent, the webui Multitask path.
+
+        Same runtime control (RUNTIME_CONTROL_MULTITASK_SPAWN) the desktop
+        sends, so the subagent is isolated the same way, its progress arrives
+        as SubagentProgressEvent rows and its result lands in this chat.
+        """
+        from navin.agent.subagent import request_multitask_spawn
+
+        if self.bus is None:
+            return {"ok": False, "error": "Runtime is not started."}
+        self._ensure_tasks()
+        return await request_multitask_spawn(
+            self.bus, self.session_key, prompt,
+            label=label, client_key=client_key, timeout=timeout,
+        )
+
+    async def merge_action(self, task_id: str, action: str) -> dict[str, Any]:
+        """Resolve / keep / discard a Multitask merge card for this chat."""
+        from navin.agent.worktree_merge import apply_action
+
+        return await asyncio.to_thread(apply_action, task_id, action, session_key=self.session_key)
+
+    async def replay_subagents(self) -> None:
+        manager = getattr(self.agent_loop, "subagents", None)
+        if manager is None:
+            return
+        for row in manager.running_snapshot(self.session_key):
+            await self._emit(UiSubagent(
+                row["task_id"], row["label"], row["phase"], row["status_line"], row.get("model"),
+                row.get("iteration", 0), row.get("done", False), row.get("error"),
+                started_ms_ago=row.get("started_ms_ago"), tokens=row.get("tokens"),
+                task_description=row.get("task_description"), steps=row.get("steps"),
+            ))
 
     # -- properties -------------------------------------------------------
 
@@ -390,6 +537,66 @@ class TuiRuntime:
         return [ManagedUsageHook(config)]
 
     async def start(self) -> None:
+        # Sends that arrive while the engine is still being built wait for it.
+        self._start_done = asyncio.Event()
+        try:
+            await self._start()
+        finally:
+            self._start_done.set()
+
+    async def _wait_for_start(self) -> None:
+        done = getattr(self, "_start_done", None)
+        if self.bus is None and done is not None:
+            await done.wait()
+
+    async def _build_engine_off_loop(self, attempts: int = 3) -> None:
+        """Build the engine in a worker thread, retrying an import deadlock.
+
+        The UI thread keeps importing its own modules while the worker builds
+        the engine. Two threads importing the same eager package in opposite
+        orders make Python abort one of them with "deadlock detected by
+        _ModuleLock", or hand it a half-initialized module ("cannot import
+        name X"); the other finishes, so building again then succeeds.
+        """
+        for attempt in range(1, attempts + 1):
+            try:
+                await asyncio.to_thread(self._build_engine)
+                return
+            except ImportError as exc:
+                if not _concurrent_import_race(exc) or attempt == attempts:
+                    raise
+                logger.warning("Engine import deadlock (attempt {}): {}; retrying", attempt, exc)
+                await asyncio.sleep(0.05 * attempt)
+
+    async def _start(self) -> None:
+        self._install_blocking_pool()
+        # Imports, templates, provider snapshot and the tool registry take
+        # about a second of plain Python: build them off the UI loop so the
+        # first frame and typing never wait for the engine.
+        await self._build_engine_off_loop()
+        self._enable_interaction()
+        await asyncio.to_thread(self._refresh_status)
+        self._subscribe_runtime_events()
+        from navin.optional_live import live_modules_available
+
+        try:
+            if not live_modules_available():
+                raise ImportError("live account disabled")
+            from navin.license_sync import start_license_sync
+
+            self._license_sync = start_license_sync(lambda: self.agent_loop)
+        except ImportError:
+            self._license_sync = None
+        self._ensure_tasks()
+        self._start_freeze_watch()
+        # Windows: same background ripgrep and Git installs as the desktop gateway.
+        from navin.utils.path_env import ensure_git, ensure_ripgrep
+
+        ensure_ripgrep()
+        ensure_git()
+
+    def _build_engine(self) -> None:
+        """Worker thread: construct the bus, cron service and agent loop."""
         from navin.agent.hooks import DEFAULT_HOOK_FACTORIES
         from navin.agent.loop import AgentLoop
         from navin.bus.queue import MessageBus
@@ -406,10 +613,6 @@ class TuiRuntime:
 
         config = self.config
         sync_workspace_templates(config.workspace_path)
-        with contextlib.suppress(Exception):
-            from navin.index.warmer import schedule_warm
-
-            schedule_warm(config.workspace_path)
 
         self.bus = MessageBus()
         if is_default_workspace(config.workspace_path):
@@ -435,24 +638,68 @@ class TuiRuntime:
             provider=snapshot.provider,
             provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
         )
-        self._enable_interaction()
-        await asyncio.to_thread(self._refresh_status)
-        self._subscribe_runtime_events()
-        from navin.optional_live import live_modules_available
+        # Warm the code index only now: its daemon thread imports navin.index
+        # while this one still loaded the tools that import it too, and the
+        # two met a half-initialized module ("cannot import name
+        # 'RefreshStats' from 'navin.index.store'").
+        with contextlib.suppress(Exception):
+            from navin.index.warmer import schedule_warm
 
-        try:
-            if not live_modules_available():
-                raise ImportError("live account disabled")
-            from navin.license_sync import start_license_sync
+            schedule_warm(config.workspace_path)
 
-            self._license_sync = start_license_sync(lambda: self.agent_loop)
-        except ImportError:
-            self._license_sync = None
-        self._ensure_tasks()
+    def _install_blocking_pool(self) -> None:
+        """Give ``asyncio.to_thread`` a pool sized for waiting, not computing.
+
+        The CLI runs the agent on the UI loop, so session saves, DNS lookups,
+        prefs writes, board work and verify's lint/test runs (up to 600s each)
+        all share one default executor. Python sizes it ``min(32, cpu + 4)``:
+        ten threads on six cores. Two sessions running verify could hold every
+        thread and queue the rest, including the saves the UI waits on. Reuse
+        the gateway's sizing; threads only start when there is work for them.
+        """
+        if getattr(self, "_blocking_pool", None) is not None:
+            return
+        with contextlib.suppress(Exception):
+            from concurrent.futures import ThreadPoolExecutor
+
+            from navin.webui.blocking_pool import blocking_pool_size
+
+            pool = ThreadPoolExecutor(
+                max_workers=blocking_pool_size(),
+                thread_name_prefix="navin-cli-blocking",
+            )
+            asyncio.get_running_loop().set_default_executor(pool)
+            self._blocking_pool = pool
+
+    def _start_freeze_watch(self) -> None:
+        """Record every CLI freeze with the code that caused it.
+
+        The terminal UI hides navin logs (they would corrupt the screen), so
+        a frozen CLI used to leave no trace. The watch writes the blocking
+        stack to ~/.navin/logs/cli-freeze.log, and faulthandler dumps every
+        thread there if the process dies hard.
+        """
+        with contextlib.suppress(Exception):
+            import faulthandler
+
+            from navin.config.paths import get_logs_dir
+            from navin.webui.stall_watch import LoopLagMonitor
+
+            path = get_logs_dir() / "cli-freeze.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._freeze_file = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+            faulthandler.enable(self._freeze_file, all_threads=True)
+            # No gc.freeze() after a slow full collection: it also froze the
+            # widgets alive at that moment, and once windowed out of the chat
+            # they could never be collected (2.2 M objects and +240 MB after
+            # 30 probe turns). The loaded chat is frozen once, on history
+            # paint, and thawed on session switch.
+            self._loop_lag = LoopLagMonitor(_FileLog(self._freeze_file))
+            self._loop_lag.start()
 
     def _enable_interaction(self) -> None:
         """This runtime has a card renderer, including for restored CLI chats."""
-        for name in ("approvals", "choices"):
+        for name in ("approvals", "choices", "credentials"):
             broker = getattr(self.agent_loop, name, None)
             if broker is not None:
                 broker.enable_channel(self.channel)
@@ -462,7 +709,7 @@ class TuiRuntime:
         if self._closed or self.agent_loop is None:
             return
         for attribute, factory, name in (
-            ("_loop_task", self.agent_loop.run, "navin-tui-agent-loop"),
+            ("_loop_task", self._run_agent_loop, "navin-tui-agent-loop"),
             ("_consumer_task", self._consume_outbound, "navin-tui-outbound"),
         ):
             task = getattr(self, attribute)
@@ -470,6 +717,23 @@ class TuiRuntime:
                 task = asyncio.create_task(factory(), name=name)
                 task.add_done_callback(self._runtime_task_finished)
                 setattr(self, attribute, task)
+
+    def _run_agent_loop(self):
+        # The loop defaults to resuming Desktop (websocket) turns only. The CLI
+        # must resume its own chat: a turn cut by a crash or a closed terminal
+        # restarts here instead of being lost.
+        try:
+            return self.agent_loop.run(recovery_channel=self.channel, recovery_session_key=self.session_key)
+        except TypeError:
+            # Embedders and test doubles whose run() takes no recovery options.
+            return self.agent_loop.run()
+
+    async def _resume_interrupted_turn(self) -> None:
+        recovery = getattr(self.agent_loop, "turn_recovery", None)
+        if recovery is None:
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(recovery.discover, channel=self.channel, session_key=self.session_key)
 
     def _runtime_task_finished(self, task: asyncio.Task) -> None:
         if self._closed:
@@ -490,6 +754,11 @@ class TuiRuntime:
         if self._closed:
             return
         self._closed = True
+        lag = getattr(self, "_loop_lag", None)
+        if lag is not None:
+            self._loop_lag = None
+            with contextlib.suppress(Exception):
+                await lag.stop()
         self.worked_seconds += self.turn_elapsed_s
         self._turn_started_at = None
         if self._license_sync is not None:
@@ -607,13 +876,19 @@ class TuiRuntime:
                 await self._report_display_error()
 
     async def _dispatch(self, msg: OutboundMessage) -> None:
+        observer = getattr(self, "share_observer", None)
+        if observer is not None and msg.channel == self.channel:
+            try:
+                await observer.on_outbound(msg)
+            except Exception:  # noqa: BLE001 - a guest never breaks the host chat
+                logger.exception("TUI live share failed to forward an event")
         event = outbound_event_from_message(msg)
         if isinstance(event, StreamDeltaEvent):
             self._streamed_this_turn = True
             await self._emit(UiStreamDelta(msg.content or ""))
             return
         if isinstance(event, StreamEndEvent):
-            await self._emit(UiStreamEnd(resuming=event.resuming))
+            await self._emit(UiStreamEnd(resuming=event.resuming, discarded=event.discarded))
             return
         if isinstance(event, StreamedResponseEvent):
             await self._emit(
@@ -654,11 +929,26 @@ class TuiRuntime:
         if isinstance(event, NotificationEvent):
             await self._emit(UiNotification(event.title, event.level, event.detail))
             return
+        if isinstance(event, WorktreeMergeEvent):
+            await self._emit(UiWorktreeMerge(
+                event.task_id, event.label, event.status, list(event.files),
+                list(event.conflicts), event.reason, event.branch, event.resolve_prompt,
+            ))
+            return
+        if isinstance(event, TeamMessageEvent):
+            await self._emit(UiTeamMessage(
+                event.kind, dict(event.sender),
+                dict(event.target) if event.target else None,
+                event.content, event.status,
+            ))
+            return
         if isinstance(event, SubagentProgressEvent):
             await self._emit(
                 UiSubagent(
                     event.task_id,
-                    event.label,
+                    # A teammate's row carries its face, like in the desktop.
+                    f"{TEAM_GLYPHS.get(event.member.get('avatar') or '', '◉')} {event.label}"
+                    if event.member else event.label,
                     event.phase,
                     event.status_line,
                     event.model,
@@ -668,6 +958,7 @@ class TuiRuntime:
                     started_ms_ago=event.started_ms_ago,
                     tokens=event.tokens,
                     task_description=event.task_description,
+                    steps=event.steps,
                 )
             )
             return
@@ -703,6 +994,16 @@ class TuiRuntime:
             return
         if isinstance(event, ChoiceClosedEvent):
             await self._emit(UiChoiceClosed(event.request_id, event.option_id, event.skipped))
+            return
+        if isinstance(event, CredentialRequestedEvent):
+            await self._emit(
+                UiCredentialRequested(
+                    event.request_id, event.kind, event.host, list(event.names or []), event.reason
+                )
+            )
+            return
+        if isinstance(event, CredentialClosedEvent):
+            await self._emit(UiCredentialClosed(event.request_id, event.status))
             return
         if isinstance(event, FilePreviewOpenRequestedEvent):
             await self._emit(UiFilePreview(path=str(event.path)))
@@ -765,6 +1066,13 @@ class TuiRuntime:
                 await self._emit(UiFileEdit.from_payload(payload))
         text = (msg.content or "").strip()
         if not text:
+            agent_ui = (msg.metadata or {}).get("_agent_ui")
+            if isinstance(agent_ui, dict) and agent_ui.get("kind") == "task_progress":
+                label = str((agent_ui.get("data") or {}).get("label") or "").strip()
+                if label.startswith("Compacting context"):
+                    # Long model-backed summarization: say so instead of a
+                    # silent "Working…" under a 100% context gauge.
+                    await self._emit(UiProgress(label, tool_hint=True))
             return
         if event.tool_hint:
             if ch is not None and not getattr(ch, "send_tool_hints", True):
@@ -850,7 +1158,9 @@ class TuiRuntime:
                 st.context_used = int(row.get("prompt_tokens") or 0)
                 st.billed_tokens_session = int(row.get("billed_tokens_session") or 0)
                 sent_from_turn = int(row.get("tool_count") or 0)
-                if row.get("context_window"):
+                # The live runtime window wins: a size changed in Settings
+                # must show now, not after the next turn.
+                if row.get("context_window") and not st.context_window:
                     st.context_window = int(row["context_window"])
             else:
                 st.context_used = 0
@@ -894,6 +1204,8 @@ class TuiRuntime:
         presets = dict(getattr(self.config, "model_presets", {}) or {})
         if loop is not None:
             presets.update(getattr(loop, "model_presets", {}) or {})
+        # The agent's presets carry "default" too: it is the row above, once.
+        presets.pop("default", None)
         for name in sorted(presets):
             preset = presets[name]
             rows.append(
@@ -1064,15 +1376,29 @@ class TuiRuntime:
         self.status.turn_active = False
         self._turn_started_at = None
         await asyncio.to_thread(self._refresh_status)
+        # Opening a chat whose turn was interrupted picks that work up again.
+        await self._resume_interrupted_turn()
 
     async def send(self, text: str, *, model_preset: str | None = None, followup: bool = False) -> None:
+        await self._wait_for_start()
         if self.bus is None:
             raise RuntimeError("runtime not started")
         text = text.strip()
         if not text:
             return
+        observer = getattr(self, "share_observer", None)
+        if observer is not None:
+            try:
+                await observer.on_user_text(text)
+            except Exception:  # noqa: BLE001 - a guest never breaks the host chat
+                logger.exception("TUI live share failed to forward a message")
         self._ensure_tasks()
         metadata: dict[str, Any] = {"_wants_stream": True}
+        if self.voice_mode:
+            # Live call: same "expert colleague on a call" brief as the desktop.
+            from navin.agent.voice_mode import VOICE_MODE_METADATA_KEY
+
+            metadata[VOICE_MODE_METADATA_KEY] = True
         sessions = getattr(self.agent_loop, "sessions", None)
         if sessions is not None:
             from navin.agent.adaptive_reasoning import REASONING_EFFORT_METADATA_KEY
@@ -1100,18 +1426,23 @@ class TuiRuntime:
                     loop.sessions.save(session)
         except Exception:  # noqa: BLE001
             pass
+        from navin.tui.images import extract_image_paths
+
+        media = extract_image_paths(text, Path(self.workspace) if getattr(self, "workspace", None) else Path.cwd())
         await self.bus.publish_inbound(
             InboundMessage(
                 channel=self.channel,
                 sender_id="user",
                 chat_id=self.chat_id,
                 content=text,
+                media=media,
                 metadata=metadata,
             )
         )
 
     async def send_command(self, text: str) -> None:
         """Send a slash command that must not be counted as a user turn."""
+        await self._wait_for_start()
         if self.bus is None:
             raise RuntimeError("runtime not started")
         await self.bus.publish_inbound(
@@ -1177,6 +1508,23 @@ class TuiRuntime:
             )
         )
 
+    async def answer_credential(self, request_id: str, *, status: str, login: str = "") -> None:
+        """Release a credential card: a status and a login name, never a value."""
+        await self.bus.publish_inbound(
+            InboundMessage(
+                channel="system",
+                sender_id="tui-credentials",
+                chat_id="runtime",
+                content=RUNTIME_CONTROL_CREDENTIAL_ANSWER,
+                metadata={
+                    INBOUND_META_RUNTIME_CONTROL: RUNTIME_CONTROL_CREDENTIAL_ANSWER,
+                    "request_id": request_id,
+                    "status": status if status in {"saved", "connected", "declined"} else "declined",
+                    "login": (login or "").strip()[:80],
+                },
+            )
+        )
+
     def set_model_preset(self, name: str | None) -> None:
         """Switch the runtime preset for future turns (same as ``/model``)."""
         if self.agent_loop is None:
@@ -1221,3 +1569,11 @@ class TuiRuntime:
     @property
     def workspace(self) -> Path:
         return Path(self.config.workspace_path)
+
+
+def _concurrent_import_race(exc: ImportError) -> bool:
+    """An import that lost a race with another thread, not a missing module."""
+    text = str(exc)
+    return "deadlock detected" in text or (
+        "cannot import name" in text and "navin" in text
+    ) or "partially initialized module" in text

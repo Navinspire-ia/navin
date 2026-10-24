@@ -983,3 +983,100 @@ class IosUsbDiscoveryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeMobileProjectTest(unittest.TestCase):
+    def _kotlin_app(self, root: Path) -> None:
+        _write(root, "settings.gradle.kts", 'include(":app")\n')
+        _write(
+            root,
+            "app/build.gradle.kts",
+            """
+            plugins { id("com.android.application"); kotlin("android") }
+            android {
+                namespace = "com.demo.app"
+                defaultConfig { applicationId = "com.demo.app" }
+                buildFeatures { compose = true }
+            }
+            """,
+        )
+        _write(root, "gradlew", "#!/bin/sh\n")
+
+    def test_detects_kotlin_android_app(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._kotlin_app(root)
+            project = detect_mobile_project(root)
+            self.assertEqual(project.kind, "android-native")
+            self.assertEqual(project.name, "com.demo.app")
+            self.assertIn("kotlin", project.dependencies)
+            self.assertIn("jetpack-compose", project.dependencies)
+
+    def test_gradle_library_is_not_an_app(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "settings.gradle", "include ':lib'\n")
+            _write(root, "app/build.gradle", "plugins { id 'java-library' }\n")
+            self.assertEqual(detect_mobile_project(root).kind, "none")
+
+    def test_android_native_run_plan_uses_gradle_install(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._kotlin_app(root)
+            project = detect_mobile_project(root)
+            report = DoctorReport(
+                project=project,
+                checks=[DoctorCheck(name="java", status="ok", detail="17")],
+                devices=["emulator-5554\tdevice"],
+            )
+            plan = build_run_plan(project, target="android", doctor=report)
+            self.assertFalse(plan.blocked, plan.blocked_reason)
+            self.assertIn("installDebug", plan.packager_command)
+            self.assertIn("ANDROID_SERIAL=emulator-5554", plan.packager_command)
+            self.assertIn("com.demo.app", plan.open_command)
+            self.assertEqual(plan.wait_for, "BUILD SUCCESSFUL")
+
+    def test_android_native_blocks_without_java(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._kotlin_app(root)
+            project = detect_mobile_project(root)
+            report = DoctorReport(
+                project=project,
+                checks=[DoctorCheck(name="java", status="missing", detail="")],
+            )
+            plan = build_run_plan(project, target="android", doctor=report)
+            self.assertTrue(plan.blocked)
+            self.assertIn("java", plan.blocked_reason)
+
+    def test_detects_swift_ios_app_and_builds_with_xcodebuild(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Demo.xcodeproj").mkdir()
+            project = detect_mobile_project(root)
+            self.assertEqual(project.kind, "ios-native")
+            report = DoctorReport(project=project, checks=[])
+            plan = build_run_plan(project, target="ios", doctor=report)
+            self.assertIn("xcodebuild -project 'Demo.xcodeproj'", plan.packager_command)
+            self.assertTrue(build_run_plan(project, target="android").blocked)
+
+    def test_ios_native_doctor_blocks_off_macos(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Demo.xcodeproj").mkdir()
+            project = detect_mobile_project(root)
+            with patch("navin.utils.host.host_platform", return_value="linux"):
+                report = run_doctor(project)
+            self.assertFalse(report.ready)
+
+    def test_flutter_missing_sdk_blocks_run(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "pubspec.yaml", "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n")
+            project = detect_mobile_project(root)
+            report = DoctorReport(
+                project=project,
+                checks=[DoctorCheck(name="flutter", status="missing", detail="")],
+            )
+            self.assertFalse(report.ready)
+            self.assertTrue(build_run_plan(project, target="android", doctor=report).blocked)

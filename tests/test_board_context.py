@@ -173,6 +173,40 @@ class _StoreTest(unittest.TestCase):
             )
 
 
+class SessionIsolationTest(_StoreTest):
+    def test_a_chat_only_sees_the_tasks_it_touched(self) -> None:
+        from unittest.mock import patch
+
+        from navin.board import session_focus
+
+        self._seed([
+            _task("a", title="Fix error modals", status="in_progress"),
+            _task("b", title="Other chat exercices page", status="planned"),
+        ])
+        ids = {
+            t["title"]: t["id"] for t in ProjectBoardStore(self.project).read_tasks()
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "navin.config.paths.get_webui_dir", return_value=Path(tmp)
+        ):
+            with session_focus._guard:
+                session_focus._focus.clear()
+                session_focus._loaded = False
+            try:
+                session_focus.remember("websocket:chat-a", [ids["Fix error modals"]])
+                own = "\n".join(board_digest(self.project, "websocket:chat-a"))
+                self.assertIn("Fix error modals", own)
+                self.assertNotIn("Other chat", own)
+                whole = "\n".join(
+                    board_digest(self.project, "websocket:chat-a", whole_board=True)
+                )
+                self.assertIn("Other chat", whole)
+            finally:
+                with session_focus._guard:
+                    session_focus._focus.clear()
+                    session_focus._loaded = False
+
+
 class ReadFromDiskTest(_StoreTest):
     def test_a_project_with_no_board_yields_nothing(self) -> None:
         self.assertEqual(board_digest(self.project), [])
@@ -193,16 +227,44 @@ class ReadFromDiskTest(_StoreTest):
 
 
 class ProviderTest(_StoreTest):
-    def _resolve(self, workspace: Path | None):
+    def _resolve(self, workspace: Path | None, text: str = "continue le plan"):
         request = RequestContext(
             channel="cli",
             chat_id="direct",
             message_id="m1",
-            session_key="s1",
-            original_user_text="go",
+            session_key="s1-fresh-test",
+            original_user_text=text,
             workspace=workspace,
         )
         return asyncio.run(board_context_provider(request))
+
+    def test_a_new_chat_does_not_see_the_board(self) -> None:
+        self._seed([_task("a", title="Ship the thing")])
+        self.assertIsNone(self._resolve(self.project, text="cree une app 3D"))
+
+    def test_asking_for_history_brings_the_board_back(self) -> None:
+        self._seed([_task("a", title="Ship the thing")])
+        for text in ("on reprend ou on en etait", "show me the history", "continue"):
+            self.assertIsNotNone(self._resolve(self.project, text=text), text)
+
+    def test_resume_brief_is_hidden_from_a_new_chat(self) -> None:
+        from navin.continuity.context import continuity_context_provider
+
+        resume = self.project / ".navin" / "continuity" / "RESUME.md"
+        resume.parent.mkdir(parents=True)
+        resume.write_text("# Resume\n\n## 2026-10-16 - Old mission\n- Translate 8 locales next, then check parity of keys and placeholders for every language\n", encoding="utf-8")
+
+        def resolve(text: str):
+            return asyncio.run(continuity_context_provider(RequestContext(
+                channel="cli", chat_id="d", session_key="s1-fresh-test",
+                original_user_text=text, workspace=self.project,
+            )))
+
+        fresh = resolve("cree une app 3D")
+        self.assertTrue(fresh is None or "Translate 8 locales" not in fresh.content)
+        again = resolve("on reprend la derniere session")
+        assert again is not None
+        self.assertIn("Translate 8 locales", again.content)
 
     def test_no_workspace_means_no_block(self) -> None:
         self.assertIsNone(self._resolve(None))

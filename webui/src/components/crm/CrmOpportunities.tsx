@@ -369,7 +369,7 @@ export function CrmOpportunities({
                             }}
                             onClick={() => onOpen(row.id)}
                             className={cn(
-                              "min-h-12 w-full shrink-0 cursor-grab rounded-lg border border-border/60 bg-background px-2 py-1.5 text-left text-[12px] hover:bg-muted/40 active:cursor-grabbing",
+                              "min-h-12 w-full shrink-0 cursor-grab rounded-lg border border-border/60 bg-background px-2 py-1.5 text-start text-[12px] hover:bg-muted/40 active:cursor-grabbing",
                               openId === row.id && "border-violet-400/70 bg-muted/40",
                             )}
                           >
@@ -421,7 +421,7 @@ export function CrmOpportunities({
                       type="button"
                       onClick={() => onOpen(row.id)}
                       className={cn(
-                        "flex min-h-10 w-full cursor-pointer items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-muted/40",
+                        "flex min-h-10 w-full cursor-pointer items-center justify-between px-3 py-2 text-start text-[13px] hover:bg-muted/40",
                         openId === row.id && "bg-muted/50",
                       )}
                     >

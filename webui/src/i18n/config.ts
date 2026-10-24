@@ -10,9 +10,20 @@ export const LOCALE_CHOICE_KEY = "navin.locale.chosen";
 export const supportedLocales = [
   { code: "en", label: "English", nativeLabel: "English" },
   { code: "fr", label: "French", nativeLabel: "Français" },
+  { code: "ar", label: "Arabic", nativeLabel: "العربية" },
 ] as const;
 
 export type SupportedLocale = (typeof supportedLocales)[number]["code"];
+
+/** Alternative language tags that resolve to a supported locale. */
+const localeAliases: Record<string, SupportedLocale> = {};
+
+/** Locales rendered right to left, like fr/en are rendered left to right. */
+const rtlLocales: readonly SupportedLocale[] = ["ar"];
+
+export function isRtlLocale(locale: SupportedLocale): boolean {
+  return rtlLocales.includes(locale);
+}
 
 export const defaultLocale: SupportedLocale = "en";
 export const fallbackLocale: SupportedLocale = "en";
@@ -32,7 +43,7 @@ export function matchLocale(
   const baseMatch = supportedLocales.find(
     (locale) => locale.code.toLowerCase() === base,
   );
-  return baseMatch?.code ?? null;
+  return baseMatch?.code ?? localeAliases[base] ?? null;
 }
 
 export function normalizeLocale(
@@ -89,6 +100,9 @@ export function persistLocale(locale: SupportedLocale): void {
 export function applyDocumentLocale(locale: SupportedLocale): void {
   if (typeof document === "undefined") return;
   document.documentElement.lang = locale;
+  // Arabic mirrors the whole UI; the attribute is what CSS and the browser
+  // key their bidi behaviour on, so it must move with the language.
+  document.documentElement.dir = isRtlLocale(locale) ? "rtl" : "ltr";
 }
 
 export function localeOption(locale: SupportedLocale) {

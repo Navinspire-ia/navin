@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 from navin.quality.linters import Diagnostic, LinterResult
+from navin.utils.proc import no_window_kwargs
 
 _EM_DASH = "\u2014"  # U+2014
 _EN_DASH = "\u2013"  # U+2013
@@ -170,14 +171,15 @@ def scan_file_for_product_issues(root: Path, rel: str) -> list[Diagnostic]:
             break
 
     if rel.endswith("package.json") or rel.replace("\\", "/").endswith("/package.json"):
-        findings.extend(_framer_motion_diags(rel, text))
-        findings.extend(_three_stack_diags(rel, text))
-        findings.extend(_official_ds_diags(rel, text))
+        committed = package_json_committed(full)
+        findings.extend(_framer_motion_diags(rel, text, committed=committed))
+        findings.extend(_three_stack_diags(rel, text, committed=committed))
+        findings.extend(_official_ds_diags(rel, text, committed=committed))
 
     return findings[:_MAX_FINDINGS]
 
 
-def _framer_motion_diags(rel: str, text: str) -> list[Diagnostic]:
+def _framer_motion_diags(rel: str, text: str, *, committed: bool | None = None) -> list[Diagnostic]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
@@ -200,6 +202,8 @@ def _framer_motion_diags(rel: str, text: str) -> list[Diagnostic]:
     if not is_web_ui:
         return []
     if "framer-motion" in deps or "motion" in deps:
+        return []
+    if _is_existing_ui_project(deps, committed):
         return []
     # Only error when React is clearly a UI dependency.
     if "react" not in deps and "next" not in deps:
@@ -229,8 +233,8 @@ _THREE_STACK = (
 )
 
 
-def _three_stack_diags(rel: str, text: str) -> list[Diagnostic]:
-    """Dev web UIs must ship three + R3F + drei. Navin editor UI is exempt."""
+def _three_stack_diags(rel: str, text: str, *, committed: bool | None = None) -> list[Diagnostic]:
+    """New web UIs must ship three + R3F + drei. Existing apps and the Navin editor UI are exempt."""
     norm = rel.replace("\\", "/")
     if any(norm == prefix.rstrip("/") or norm.startswith(prefix) for prefix in _SKIP_DS_PREFIXES):
         return []
@@ -256,6 +260,8 @@ def _three_stack_diags(rel: str, text: str) -> list[Diagnostic]:
     if not is_web_ui:
         return []
     if "react" not in deps and "next" not in deps:
+        return []
+    if _is_existing_ui_project(deps, committed):
         return []
     missing = [name for name in _THREE_STACK if name not in deps]
     if not missing:
@@ -302,8 +308,90 @@ _SKIP_DS_PREFIXES = (
 )
 
 
-def _official_ds_diags(rel: str, text: str) -> list[Diagnostic]:
-    """New React UIs must lock MUI, Fluent, or Carbon. Existing kits stay put."""
+# Component or styling stacks that show a project already chose its UI layer.
+# Only consulted outside git, where the history cannot tell an existing app
+# from one being created now.
+_ESTABLISHED_UI_NAMES = frozenset(
+    {
+        "tailwindcss",
+        "bootstrap",
+        "react-bootstrap",
+        "reactstrap",
+        "styled-components",
+        "antd",
+        "primereact",
+        "semantic-ui-react",
+        "daisyui",
+        "rsuite",
+        "grommet",
+        "evergreen-ui",
+        "flowbite-react",
+        "react-native-paper",
+        "native-base",
+        "tamagui",
+    }
+)
+_ESTABLISHED_UI_PREFIXES = (
+    "@radix-ui/",
+    "@emotion/",
+    "@headlessui/",
+    "@mantine/",
+    "@chakra-ui/",
+    "@nextui-org/",
+    "@heroui/",
+    "@blueprintjs/",
+    "@adobe/react-spectrum",
+    "@shopify/polaris",
+    "@tremor/",
+    "@ark-ui/",
+    "@gluestack-ui/",
+)
+
+
+def package_json_committed(path: Path) -> bool | None:
+    """Whether this package.json is already in the last commit (None: not in git).
+
+    Committed means an existing app: its screens follow the stack it already
+    has. A file missing from HEAD (new, untracked or only staged) is a project
+    being created now, where the new-UI defaults apply.
+    """
+    import subprocess
+
+    target = Path(str(path))
+    try:
+        inside = subprocess.run(
+            ["git", "-C", str(target.parent), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            **no_window_kwargs(),
+        )
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return None
+        found = subprocess.run(
+            ["git", "-C", str(target.parent), "cat-file", "-e", f"HEAD:./{target.name}"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return found.returncode == 0
+
+
+def _is_existing_ui_project(deps: dict[str, object], committed: bool | None) -> bool:
+    """An app whose UI layer was chosen before this work: keep it, ask nothing."""
+    if committed is not None:
+        return committed
+    return any(
+        name in _ESTABLISHED_UI_NAMES or name.startswith(_ESTABLISHED_UI_PREFIXES) for name in deps
+    )
+
+
+def _official_ds_diags(rel: str, text: str, *, committed: bool | None = None) -> list[Diagnostic]:
+    """New React UIs must lock MUI, Fluent, or Carbon. Existing apps keep their stack."""
     norm = rel.replace("\\", "/")
     if any(norm == prefix.rstrip("/") or norm.startswith(prefix) for prefix in _SKIP_DS_PREFIXES):
         return []
@@ -324,6 +412,8 @@ def _official_ds_diags(rel: str, text: str) -> list[Diagnostic]:
         return []
     if any(name in deps for name in _EXISTING_KIT):
         return []
+    if _is_existing_ui_project(deps, committed):
+        return []
     scripts = payload.get("scripts")
     script_blob = " ".join(str(v) for v in scripts.values()).lower() if isinstance(scripts, dict) else ""
     is_web_ui = any(
@@ -342,7 +432,7 @@ def _official_ds_diags(rel: str, text: str) -> list[Diagnostic]:
             severity="error",
             code="missing-official-ds",
             message=(
-                "Web UI has no official design system. Lock Google (@mui/material), "
+                "New web UI has no official design system. Lock Google (@mui/material), "
                 "Microsoft (@fluentui/react), or IBM (@carbon/react) before delivery. "
                 "Do not default to Tailwind or a homemade kit."
             ),

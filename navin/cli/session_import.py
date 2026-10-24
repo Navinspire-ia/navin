@@ -134,4 +134,59 @@ def create_sessions_app(console: Console) -> typer.Typer:
                 f"[green]Done: {total} session(s) imported into {target}[/green]"
             )
 
+    @sessions_app.command("export")
+    def export_cmd(
+        session: str = typer.Option("cli:direct", "--session", "-s", help="Session key to export"),
+        workspace: Optional[Path] = typer.Option(
+            None, "--workspace", "-w", help="Workspace of the session (default: the current workspace)",
+        ),
+        output: Optional[Path] = typer.Option(None, "--output", "-o", help="Bundle file to write"),
+        no_project: bool = typer.Option(
+            False, "--no-project", help="Conversation and attachments only, without the project files",
+        ),
+    ) -> None:
+        """Pack a session and its project into one .navin-session file to hand over."""
+        from navin.config.loader import load_config
+        from navin.session.bundle import BundleError, export_session_bundle
+
+        source = (workspace or load_config().workspace_path).expanduser().resolve()
+        try:
+            result = export_session_bundle(source, session, output, include_project=not no_project)
+        except BundleError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        console.print(f"[green]Session exported:[/green] {result.path}")
+        console.print(f"  project: {result.project_mode}, {result.files} file(s)")
+        if result.excluded_secrets:
+            console.print(
+                "  left out (secrets, recreate them on the other machine): "
+                + ", ".join(result.excluded_secrets[:10])
+            )
+        if result.skipped_large:
+            console.print(f"  too large, left out: {', '.join(result.skipped_large[:10])}")
+
+    @sessions_app.command("open")
+    def open_cmd(
+        bundle: Path = typer.Argument(..., help="A .navin-session file"),
+        into: Optional[Path] = typer.Option(
+            None, "--into", "-i", help="New folder for the project (default: ./<project name>)",
+        ),
+    ) -> None:
+        """Rebuild a shared session (project + conversation) here and continue it."""
+        from navin.session.bundle import BundleError, import_session_bundle
+
+        try:
+            result = import_session_bundle(bundle, into)
+        except BundleError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        console.print(f"[green]Session ready in[/green] {result.project_dir}")
+        for note in result.notes:
+            console.print(f"  [yellow]{note}[/yellow]")
+        if result.excluded_secrets:
+            console.print(
+                "  not included (secrets): " + ", ".join(result.excluded_secrets[:10])
+            )
+        console.print(f"  continue: navin-cli {result.project_dir} --session {result.session_key}")
+
     return sessions_app

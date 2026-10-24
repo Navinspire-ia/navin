@@ -98,6 +98,36 @@ def module_available(module: str) -> bool:
         return False
 
 
+def _is_store_alias(path: str) -> bool:
+    """The Windows "App execution alias" python.exe that opens the Microsoft Store."""
+    return "windowsapps" in path.lower().replace("/", "\\")
+
+
+def system_python(search_path: str | None = None) -> str | None:
+    """The user's own Python: never navin's interpreter, never the Store alias.
+
+    ``search_path`` is the PATH to look in (defaults to the process PATH).
+    """
+    # Compare folders, not resolved files: a venv's python is a symlink to the
+    # system binary, yet it is a different environment from the user's Python.
+    own_dir = Path(sys.executable).parent
+    for name in ("python3", "python"):
+        found = shutil.which(name, path=search_path)
+        if not found or _is_store_alias(found):
+            continue
+        if Path(found).parent == own_dir or Path(found).name.lower().startswith("navin"):
+            continue
+        try:
+            if Path(found).resolve().name.lower().startswith("navin"):
+                continue
+        except OSError:
+            continue
+        if Path(found).suffix.lower() in (".cmd", ".bat") and "navin" in Path(found).read_text(errors="ignore").lower():
+            continue  # one of navin's own shims
+        return found
+    return None
+
+
 def external_python() -> str | None:
     """An interpreter that can install packages, or None.
 
@@ -108,11 +138,51 @@ def external_python() -> str | None:
     """
     if not packaged():
         return sys.executable
-    for name in ("python3", "python"):
-        found = shutil.which(name)
-        if found and Path(found).resolve() != Path(sys.executable).resolve():
-            return found
+    found = system_python()
+    if found:
+        return found
+    if os.name == "nt":
+        return shutil.which("py")
     return None
+
+
+def navin_python_dir(root: Path) -> Path | None:
+    """A directory holding ``navin-python``: navin's own interpreter by name.
+
+    Always on PATH (at the end), so a skill script that needs the libraries
+    navin bundles (python-docx, openpyxl, reportlab, pandas...) can ask for them
+    explicitly even where ``python`` is the user's or the project's interpreter.
+    """
+    suffix = ".cmd" if os.name == "nt" else ""
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        shim = root / f"navin-python{suffix}"
+        shim.write_text(_shim_body(python_command()), encoding="utf-8")
+        if os.name != "nt":
+            shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except OSError:
+        return None
+    return root
+
+
+def py_launcher_dir(root: Path) -> Path | None:
+    """Windows: ``python``/``python3`` shims onto the ``py -3`` launcher.
+
+    For machines where Python is installed through python.org (the launcher is
+    on PATH) but ``python`` itself is only the Store alias or missing.
+    """
+    if os.name != "nt":
+        return None
+    launcher = shutil.which("py")
+    if not launcher:
+        return None
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        for name in _SHIM_NAMES:
+            (root / f"{name}.cmd").write_text(f'@echo off\r\n"{launcher}" -3 %*\r\n', encoding="utf-8")
+    except OSError:
+        return None
+    return root
 
 
 def _shim_body(command: list[str]) -> str:

@@ -18,7 +18,7 @@ def tick_heartbeat_desks(
     marketing_store: Any = None,
     trading_store: Any = None,
 ) -> str:
-    """Run Tenders follow, Career watch, Leads watch, then Marketing watch.
+    """Run Tenders follow, Career watch, Leads watch, Marketing watch, Trading, then Campaigns replies.
 
     Each desk is isolated: one failure never skips the others.
     """
@@ -32,7 +32,8 @@ def tick_heartbeat_desks(
     except Exception:
         logger.exception("Heartbeat: tenders watch failed")
     try:
-        from navin.career.heartbeat import heartbeat_prompt_note, tick_watch as career_tick
+        from navin.career.heartbeat import heartbeat_prompt_note
+        from navin.career.heartbeat import tick_watch as career_tick
 
         note = heartbeat_prompt_note(career_tick(career_store))
         if note:
@@ -66,4 +67,13 @@ def tick_heartbeat_desks(
             notes.append(note)
     except Exception:
         logger.exception("Heartbeat: trading watch failed")
+    try:
+        from navin.campaigns.heartbeat import heartbeat_prompt_note as campaigns_note
+        from navin.campaigns.heartbeat import tick_watch as campaigns_tick
+
+        note = campaigns_note(campaigns_tick())
+        if note:
+            notes.append(note)
+    except Exception:
+        logger.exception("Heartbeat: campaigns replies check failed")
     return "".join(notes)

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>feature_callout</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .fc-title {
+    position: absolute; left: 8%; right: 8%; top: 6.5%; text-align: center;
+    font-size: calc(var(--u) * 64); text-wrap: balance;
+  }
+  .nm-portrait .fc-title { top: 9%; font-size: calc(var(--u) * 76); }
+  .fc-cam { position: absolute; left: 0; top: 0; width: var(--w); height: var(--h); transform-origin: 0 0; }
+  .fc-window {
+    position: absolute; border-radius: calc(var(--u) * 22); overflow: hidden;
+    background: color-mix(in srgb, var(--c-bg) 70%, #000);
+    border: 1px solid var(--c-line);
+    box-shadow: 0 calc(var(--u) * 50) calc(var(--u) * 120) rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  }
+  .fc-bar { height: calc(var(--u) * 36); display: flex; align-items: center; gap: calc(var(--u) * 9); padding: 0 calc(var(--u) * 16); background: rgba(255, 255, 255, 0.05); border-bottom: 1px solid var(--c-line); }
+  .fc-bar i { width: calc(var(--u) * 12); height: calc(var(--u) * 12); border-radius: 50%; background: rgba(255, 255, 255, 0.22); }
+  .fc-bar i:nth-child(1) { background: #FF5F57; }
+  .fc-bar i:nth-child(2) { background: #FEBC2E; }
+  .fc-bar i:nth-child(3) { background: #28C840; }
+  .fc-media { position: relative; overflow: hidden; }
+  .fc-media > img, .fc-media > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .fc-spot {
+    position: absolute; border-radius: calc(var(--u) * 12);
+    box-shadow: 0 0 0 calc(var(--u) * 4000) rgba(5, 6, 12, 0.58), 0 0 0 calc(var(--u) * 3) var(--c-accent), 0 0 calc(var(--u) * 40) color-mix(in srgb, var(--c-accent) 60%, transparent);
+  }
+  .fc-pulse { position: absolute; border-radius: calc(var(--u) * 14); border: calc(var(--u) * 3) solid var(--c-accent); }
+  .fc-label {
+    position: absolute; left: 0; top: 0; transform-origin: 50% 0;
+    display: inline-flex; align-items: center; gap: calc(var(--u) * 14);
+    padding: calc(var(--u) * 16) calc(var(--u) * 28); border-radius: 999px;
+    background: var(--c-accent); color: var(--c-on-accent);
+    font-family: var(--font-heading); font-weight: 750; font-size: calc(var(--u) * 34); letter-spacing: -0.01em; white-space: nowrap;
+    box-shadow: 0 calc(var(--u) * 18) calc(var(--u) * 50) rgba(0, 0, 0, 0.45);
+  }
+  .fc-label::before { content: ""; width: calc(var(--u) * 12); height: calc(var(--u) * 12); border-radius: 50%; background: currentColor; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop"></div>
+  <h1 class="nm-heading fc-title"></h1>
+  <div class="fc-cam">
+    <div class="fc-window">
+      <div class="fc-bar"><i></i><i></i><i></i></div>
+      <div class="fc-media"><div class="fc-spot"></div><div class="fc-pulse"></div></div>
+    </div>
+  </div>
+  <div class="fc-label"></div>
+  <div class="nm-grain"></div>
+</div>
+<script>
+const NM = window.NavinMotion;
+
+NM.mount({
+  duration: 6,
+  async setup(nm) {
+    const { canvas, duration } = nm;
+    const W = canvas.width;
+    const H = canvas.height;
+    const u = nm.u;
+    const url = nm.prop('media', '') || nm.prop('image', '') || nm.prop('video', '');
+    if (!url) throw new Error('feature_callout needs props.media (image or clip)');
+    const media = await nm.media(url, { start: Number(nm.prop('video_start', 0)), at: 0 });
+    const mediaBox = document.querySelector('.fc-media');
+    mediaBox.insertBefore(media, mediaBox.firstChild);
+    const size = nm.mediaSize(media);
+    const aspect = size.w / size.h;
+
+    const titleEl = document.querySelector('.fc-title');
+    titleEl.textContent = nm.prop('title', '');
+    const hasTitle = !!titleEl.textContent;
+    if (!hasTitle) titleEl.style.display = 'none';
+
+    // Window geometry (screen pixels at zoom 1).
+    const bar = 36 * u;
+    const top = hasTitle ? H * (canvas.portrait ? 0.24 : 0.2) : H * 0.09;
+    const availW = W * (canvas.portrait ? 0.9 : 0.84);
+    const availH = H * 0.91 - top - bar;
+    let mw = availW;
+    let mh = mw / aspect;
+    if (mh > availH) { mh = availH; mw = mh * aspect; }
+    const wx = (W - mw) / 2;
+    const wy = top + (availH - mh) / 2;
+    const win = document.querySelector('.fc-window');
+    Object.assign(win.style, { left: wx + 'px', top: wy + 'px', width: mw + 'px', height: mh + bar + 'px' });
+    Object.assign(mediaBox.style, { width: mw + 'px', height: mh + 'px' });
+
+    // Highlight box inside the media (normalized bbox).
+    let bbox = nm.prop('bbox', [0.35, 0.3, 0.3, 0.3]);
+    if (!Array.isArray(bbox) || bbox.length !== 4) bbox = [0.35, 0.3, 0.3, 0.3];
+    let [bx, by, bw, bh] = bbox.map((v) => nm.clamp(Number(v) || 0, 0, 1));
+    bw = Math.max(0.02, Math.min(bw, 1 - bx));
+    bh = Math.max(0.02, Math.min(bh, 1 - by));
+    const pad = 10 * u;
+    const spotRect = { x: bx * mw - pad, y: by * mh - pad, w: bw * mw + pad * 2, h: bh * mh + pad * 2 };
+    ['.fc-spot', '.fc-pulse'].forEach((sel) => {
+      Object.assign(document.querySelector(sel).style, {
+        left: spotRect.x + 'px', top: spotRect.y + 'px', width: spotRect.w + 'px', height: spotRect.h + 'px',
+      });
+    });
+
+    // Camera: bring the bbox center to the middle, scaled by zoom (bounded so it stays in frame).
+    const cx = wx + (bx + bw / 2) * mw;
+    const cy = wy + bar + (by + bh / 2) * mh;
+    const wantZoom = nm.clamp(Number(nm.prop('zoom', 1.8)) || 1, 1, 3);
+    const zoom = Math.max(1, Math.min(wantZoom, (W * 0.62) / spotRect.w, (H * 0.5) / spotRect.h));
+    const label = document.querySelector('.fc-label');
+    label.textContent = nm.prop('label', '');
+    const hasLabel = !!label.textContent;
+    const targetY = hasLabel ? H * 0.44 : H * 0.5;
+    const cam = { z: 1, x: 0, y: 0 };
+    const zx = W / 2 - cx * zoom;
+    const zy = targetY - cy * zoom;
+
+    // Label under (or above) the zoomed bbox, kept inside the frame.
+    const spotScreen = {
+      x: (wx + spotRect.x) * zoom + zx, y: (wy + bar + spotRect.y) * zoom + zy,
+      w: spotRect.w * zoom, h: spotRect.h * zoom,
+    };
+    let lw = 0;
+    let lh = 0;
+    if (hasLabel) {
+      lw = label.offsetWidth;
+      lh = label.offsetHeight;
+      let lx = spotScreen.x + spotScreen.w / 2 - lw / 2;
+      let ly = spotScreen.y + spotScreen.h + 28 * u;
+      if (ly + lh > H * 0.94) ly = spotScreen.y - lh - 28 * u;
+      lx = nm.clamp(lx, W * 0.05, W * 0.95 - lw);
+      ly = nm.clamp(ly, H * 0.05, H * 0.95 - lh);
+      label.style.left = lx + 'px';
+      label.style.top = ly + 'px';
+    } else {
+      label.style.display = 'none';
+    }
+
+    const camEl = document.querySelector('.fc-cam');
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.nm-backdrop', { scale: 1.1 }, { scale: 1, duration, ease: 'sine.out' }, 0);
+    tl.from(win, { y: 90 * u, rotateX: 16, scale: 0.92, opacity: 0, transformPerspective: 1800 * u, duration: 1.1, ease: 'expo.out' }, 0.05);
+    if (hasTitle) {
+      const words = nm.split(titleEl, 'words');
+      tl.from(words, { yPercent: 115, duration: 0.9, ease: 'expo.out', stagger: 0.06 }, 0.15);
+    }
+    const tZoom = Math.min(1.25, duration * 0.24);
+    const zoomDur = Math.min(1.3, duration * 0.25);
+    tl.to(cam, { z: zoom, x: zx, y: zy, duration: zoomDur, ease: 'power3.inOut' }, tZoom);
+    if (hasTitle && zoom > 1.05) tl.to(titleEl, { opacity: 0, y: -20 * u, duration: 0.45, ease: 'power2.in' }, tZoom);
+    const tSpot = tZoom + zoomDur * 0.7;
+    tl.fromTo('.fc-spot', { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power2.out' }, tSpot);
+    tl.fromTo('.fc-pulse', { opacity: 0.9, scale: 1 }, { opacity: 0, scale: 1.12, duration: 0.9, ease: 'power2.out', repeat: 1 }, tSpot + 0.2);
+    if (hasLabel) {
+      tl.fromTo(label, { opacity: 0, y: 18 * u, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.7, ease: 'expo.out' }, tSpot + 0.25);
+    }
+    const tOut = duration - 1.1;
+    if (nm.prop('zoom_out', true) && tOut > tSpot + 1.6) {
+      if (hasLabel) tl.to(label, { opacity: 0, y: -10 * u, duration: 0.35, ease: 'power2.in' }, tOut);
+      tl.to('.fc-spot', { opacity: 0, duration: 0.4 }, tOut);
+      tl.to(cam, { z: 1, x: 0, y: 0, duration: 1.0, ease: 'power3.inOut' }, tOut + 0.1);
+    }
+    tl.set({}, {}, duration);
+    gsap.set('.fc-spot, .fc-pulse', { opacity: 0 });
+
+    return {
+      timeline: tl,
+      render() {
+        camEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
+      },
+    };
+  },
+});
+</script>
+</body>
+</html>

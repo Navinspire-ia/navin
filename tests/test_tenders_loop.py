@@ -11,9 +11,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-
 from threading import Event, Thread
+from unittest.mock import patch
 
 from navin.tenders.errors import TenderError
 from navin.tenders.heartbeat import heartbeat_prompt_note, tick_watch

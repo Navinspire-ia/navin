@@ -42,8 +42,9 @@ const BOARD_COPY: OfferFactCopy = {
   experiences: { senior: "Senior (6-10 ans)" },
 };
 
-function job(partial: Partial<CareerOpportunity> & { id: string }): CareerOpportunity {
+function job(partial: Partial<CareerOpportunity>): CareerOpportunity {
   return {
+    id: "job-1",
     source: "web",
     title: "Data Engineer",
     stage: "discovered",

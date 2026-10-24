@@ -1066,7 +1066,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
                   setWikilink(null);
                 }}
                 className={cn(
-                  "block w-full rounded-lg px-2.5 py-2 text-left outline-none",
+                  "block w-full rounded-lg px-2.5 py-2 text-start outline-none",
                   index === wikilink.selected ? "bg-muted" : "hover:bg-muted/60",
                 )}
               >
@@ -1113,7 +1113,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
                       runSlashCommand(item);
                     }}
                     className={cn(
-                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-start text-[13px] transition-colors",
                       active ? "bg-muted text-foreground" : "text-foreground/85",
                     )}
                   >

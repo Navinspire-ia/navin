@@ -226,7 +226,7 @@ Use this file for project-specific preferences, recurring workflow conventions, 
 
 This project carries a `.navin/` continuity pack shared by every module (Code, Documents, Marketing, SEO, ...):
 
-- Before starting substantial work, check `.navin/continuity/RESUME.md` and the board (`board` tool) to see where the project stands.
+- Before starting substantial work, check `.navin/continuity/RESUME.md` and the board (`board` tool) to see where the project stands. It is background: a new conversation starts its own task, and earlier work is resumed only when the user asks.
 - Hard rules live in `memory/MEMORY.md` under `## Constraints` - never violate them without an explicit user request.
 - After a significant work session, update `.navin/continuity/RESUME.md` (state, risks, next action) and append durable choices to `.navin/continuity/DECISIONS.md`.
 

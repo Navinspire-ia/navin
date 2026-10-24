@@ -319,6 +319,42 @@ class OwnedSkillPromptTest(unittest.TestCase):
             self.assertNotIn("### Skill: fullstack-dev", prompt)
             self.assertIn("fullstack-dev", prompt)
 
+    def test_slim_ignores_skills_a_workflow_brief_names_in_prose(self):
+        from navin.agent.context import ContextBuilder
+        from navin.agent.skills import clear_skills_index_cache
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "project"
+            empty_builtins = Path(tmp) / "no-builtins"
+            workspace.mkdir()
+            empty_builtins.mkdir()
+            skill = workspace / ".navin" / "skills" / "first-playbook"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: first-playbook\ndescription: first\n---\nDo first.\n",
+                encoding="utf-8",
+            )
+            clear_skills_index_cache()
+            builder = ContextBuilder(workspace=workspace)
+            builder.skills = builder.skills.__class__(
+                workspace,
+                builtin_skills_dir=empty_builtins,
+            )
+            brief = "Skills for this mission (on demand): first-playbook, then read it."
+            prompt = builder.build_system_prompt(
+                include_memory_recent_history=False,
+                slim_skill_preload=True,
+                current_message=f"where is the picker? {brief}",
+            )
+            self.assertNotIn("Do first.", prompt)
+            self.assertNotIn("### Skill: first-playbook", prompt)
+            full = builder.build_system_prompt(
+                include_memory_recent_history=False,
+                slim_skill_preload=False,
+                current_message=f"where is the picker? {brief}",
+            )
+            self.assertIn("Do first.", full)
+
 
 class WorkspaceSkillImportTest(unittest.TestCase):
     def test_discovers_and_imports_dot_folder_skill_trees(self):

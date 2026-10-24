@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -604,7 +605,9 @@ def start_update_download() -> dict[str, Any]:
 
 
 def _download_update() -> dict[str, Any]:
-    info = check_for_update()
+    # Fresh manifest, never the cached check (kept up to 6 h): a file published
+    # again under the same version would otherwise fail on the old signed size.
+    info = check_for_update(force=True)
     if not info.get("available"):
         raise UpdateError("No update is available", status=409)
     if not info.get("supported"):
@@ -662,6 +665,29 @@ def _download_update() -> dict[str, Any]:
         raise
 
 
+# Between the old window closing and the new one opening, the desktop shell
+# must know an update is under way (desktop/src-tauri/src/main.rs): opened by
+# hand meanwhile, it waits and says so instead of starting an engine whose
+# files are being swapped. The helper removes ``in-progress`` (pid inside)
+# before it opens the new version, and leaves ``just-updated`` so the new one
+# says it is finishing the update while its first start takes longer.
+def _updates_dir() -> Path:
+    return Path.home() / ".navin" / "updates"
+
+
+def _in_progress_marker() -> Path:
+    return _updates_dir() / "in-progress"
+
+
+def _just_updated_marker() -> Path:
+    return _updates_dir() / "just-updated"
+
+_CLEAR_MARKER = 'rm -f "${NAVIN_UPDATE_MARKER:-/nonexistent}"; '
+_MARK_DONE = (
+    _CLEAR_MARKER
+    + '[ -n "${NAVIN_UPDATE_DONE:-}" ] && printf done > "$NAVIN_UPDATE_DONE"; '
+)
+
 # Nothing may touch the application's files while it is still running: a
 # process cannot replace the image it executes from. The gateway stops itself a
 # moment after answering the request that started this, so it is waited on; the
@@ -689,6 +715,7 @@ _UPDATE_HANDOFF = (
 # columns: a volume name with spaces, extra tabs, or a localized "Volumes"
 # line used to leave $mount empty and the install died with no UI.
 _MACOS_INSTALL_SCRIPT = (
+    "trap '" + _CLEAR_MARKER.strip() + "' EXIT; "
     'target="$4"; abort() { '
     'if [ -z "${NAVIN_UPDATE_READY:-}" ] || [ -f "$NAVIN_UPDATE_PROCEED" ]; then '
     'open -a "$target"; fi; exit 1; }; '
@@ -704,9 +731,15 @@ _MACOS_INSTALL_SCRIPT = (
     'rm -rf "$4.new" || { unmount; abort; }; '
     'ditto "$src" "$4.new" || { unmount; rm -rf "$4.new"; abort; }; '
     'unmount; xattr -dr com.apple.quarantine "$4.new" >/dev/null 2>&1; '
+    # Run the new engine once while the old window still shows progress: macOS
+    # checks its many binaries now, not during the first start after the swap.
+    'w="$4.new/Contents/Resources/navin-dist/navin"; if [ -x "$w" ]; then '
+    '"$w" --version >/dev/null 2>&1 & p=$!; i=0; '
+    'while kill -0 "$p" 2>/dev/null && [ "$i" -lt 90 ]; do sleep 1; i=$((i+1)); done; '
+    'kill "$p" 2>/dev/null; fi; '
     + _UPDATE_HANDOFF + _WAIT_FOR_APP +
     'rm -rf "$5" && mv "$4" "$5" || { rm -rf "$4.new"; abort; }; '
-    'if mv "$4.new" "$4"; then '
+    'if mv "$4.new" "$4"; then ' + _MARK_DONE +
     'if open -a "$4"; then rm -rf "$5"; '
     'else rm -rf "$4"; mv "$5" "$4"; open -a "$4"; exit 1; fi; '
     'else mv "$5" "$4"; open -a "$4"; exit 1; fi'
@@ -716,12 +749,14 @@ _MACOS_INSTALL_SCRIPT = (
 # binary. The running app holds the old inode open, so the file can be swapped
 # under it. $3 the downloaded file, $4 the one in place, $5 the backup.
 _FILE_SWAP_INSTALL_SCRIPT = (
+    "trap '" + _CLEAR_MARKER.strip() + "' EXIT; "
     # Staged next to the target so the rename is atomic and never crosses a
     # filesystem, then swapped, so a failure mid-copy leaves the old one intact.
     'cp -f "$3" "$4.new" && chmod +x "$4.new" || { rm -f "$4.new"; exit 1; }; '
     + _UPDATE_HANDOFF + _WAIT_FOR_APP + 'mv -f "$4" "$5" '
     '&& mv -f "$4.new" "$4" || { rm -f "$4.new"; '
-    '[ -f "$4" ] || mv -f "$5" "$4"; "$4" & exit 1; }; '
+    '[ -f "$4" ] || mv -f "$5" "$4"; ' + _CLEAR_MARKER + '"$4" & exit 1; }; '
+    + _MARK_DONE +
     '"$4" >/dev/null 2>&1 & newpid=$!; sleep 20; '
     # An app that dies in its first twenty seconds is a broken update, and the
     # user is left with nothing. Put the version that worked back.
@@ -741,9 +776,20 @@ def _updater_environment() -> dict[str, str]:
     return env
 
 
-def _start_desktop_updater(command: list[str], *, timeout: float = 180) -> None:
-    """Do not close Navin until the detached helper confirms it is ready."""
-    root = Path.home() / ".navin" / "updates" / f"handoff-{uuid.uuid4().hex}"
+def _start_desktop_updater(
+    command: list[str],
+    *,
+    timeout: float = 180,
+    progress: Any = None,
+    markers: bool = False,
+) -> None:
+    """Do not close Navin until the detached helper confirms it is ready.
+
+    ``progress`` returns how far the preparation is (0-100), shown while the
+    window is still open. ``markers``: the helper is one of the POSIX scripts
+    that clear the in-progress marker (see _in_progress_marker).
+    """
+    root = _updates_dir() / f"handoff-{uuid.uuid4().hex}"
     root.mkdir(parents=True)
     ready, proceed = root / "ready", root / "proceed"
     log = root / "updater.log"
@@ -752,24 +798,63 @@ def _start_desktop_updater(command: list[str], *, timeout: float = 180) -> None:
         "NAVIN_UPDATE_READY": _os_path(ready),
         "NAVIN_UPDATE_PROCEED": _os_path(proceed),
     }
+    if markers:
+        _just_updated_marker().unlink(missing_ok=True)
+        env["NAVIN_UPDATE_MARKER"] = _os_path(_in_progress_marker())
+        env["NAVIN_UPDATE_DONE"] = _os_path(_just_updated_marker())
+    _set_state(state="installing", phase="preparing", progress=0)
     with log.open("ab") as output:
         process = subprocess.Popen(
             command, cwd=_os_path(root), env=env,
             stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
             close_fds=True, **_updater_spawn_kwargs(),
         )
+    if markers:
+        with contextlib.suppress(OSError):
+            _in_progress_marker().write_text(f"{process.pid}\n", encoding="utf-8")
     deadline = time.monotonic() + timeout
-    while True:
-        exited = process.poll()
-        if exited is not None:
-            raise UpdateError(f"The update helper exited before installation (code {exited}). Details: {log}")
-        if ready.is_file():
-            proceed.write_text("proceed", encoding="utf-8")
-            return
-        if time.monotonic() >= deadline:
-            process.terminate()
-            raise UpdateError(f"The update helper did not become ready. Navin remains open. Details: {log}")
-        time.sleep(0.05)
+    next_progress = 0.0
+    try:
+        while True:
+            exited = process.poll()
+            if exited is not None:
+                raise UpdateError(f"The update helper exited before installation (code {exited}). Details: {log}")
+            if ready.is_file():
+                _set_state(phase="restarting", progress=100)
+                proceed.write_text("proceed", encoding="utf-8")
+                return
+            if time.monotonic() >= deadline:
+                process.terminate()
+                raise UpdateError(f"The update helper did not become ready. Navin remains open. Details: {log}")
+            if progress is not None and time.monotonic() >= next_progress:
+                next_progress = time.monotonic() + 0.8
+                with contextlib.suppress(Exception):
+                    _set_state(progress=max(1, min(95, int(progress()))))
+            time.sleep(0.05)
+    except BaseException:
+        if markers:
+            _in_progress_marker().unlink(missing_ok=True)
+        raise
+
+
+def _tree_bytes(path: Path) -> int:
+    """Size of a file or a whole bundle, links not followed."""
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(root, name)).st_size
+    return total
+
+
+def _copy_progress(source_size: int, staged: Path) -> Any:
+    """How much of the new version is already copied next to the current one."""
+    def measure() -> float:
+        return 100.0 * _tree_bytes(staged) / source_size if source_size > 0 and staged.exists() else 0.0
+
+    return measure
 
 
 def _install_posix_app(
@@ -788,6 +873,10 @@ def _install_posix_app(
             status=409,
         )
     backup = target.with_name(f"{target.name}.old")
+    # The new copy is about the size of the one in place (a bundle) or of the download (a file).
+    expected = 0
+    with contextlib.suppress(OSError):
+        expected = _tree_bytes(target) if target.is_dir() else artifact.stat().st_size
     _start_desktop_updater(
         [
             "/bin/sh",
@@ -800,6 +889,8 @@ def _install_posix_app(
             _os_path(target),
             _os_path(backup),
         ],
+        progress=_copy_progress(expected, target.with_name(f"{target.name}.new")),
+        markers=True,
     )
 
 
@@ -1244,7 +1335,7 @@ def _install_update() -> dict[str, Any]:
     executable = Path(sys.executable).resolve()
     pid = os.getpid()
     desktop_pid = _desktop_pid()
-    _set_state(state="installing", progress=100)
+    _set_state(state="installing", phase="preparing", progress=0)
 
     if kind.startswith("windows"):
         helper = _stage_windows_helper(str(info.get("latestVersion") or ""))

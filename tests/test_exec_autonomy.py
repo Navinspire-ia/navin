@@ -332,5 +332,40 @@ class RestrictHostPathTest(_ExecTest):
         self.assertIn("path outside working dir", str(verdict))
 
 
+
+class CompoundCommandPolicyTest(_ExecTest):
+    """An allow rule covers the simple commands it matches, never a chained tail."""
+
+    def test_an_allowed_prefix_does_not_skip_the_deny_rules(self) -> None:
+        tool = self.tool(allow_patterns=[r"git\s+status.*"], deny_patterns=[r"\brm\s+-rf\b"])
+        for command in (
+            "git status && rm -rf src",
+            "git status; rm -rf src",
+            "git status | rm -rf src",
+            "git status\nrm -rf src",
+            "git status $(rm -rf src)",
+            "git status `rm -rf src`",
+        ):
+            self.assertIn("blocked by deny pattern filter", self.run_exec(tool, command), command)
+
+    def test_every_segment_must_be_allowed_in_allowlist_mode(self) -> None:
+        tool = self.tool(allow_patterns=[r"echo\s+.*"])
+        self.assertIn("not in allowlist", self.run_exec(tool, "echo hi && touch x"))
+        self.assertFalse((self.root / "x").exists())
+        self.assertNotIn("blocked", self.run_exec(tool, "echo 'a && b; c'"))
+
+    def test_deny_rules_reach_substitutions_subshells_and_assignments(self) -> None:
+        tool = self.tool(deny_patterns=[r"(?:^|[;&|]\s*)wget\b"])
+        for command in ("echo $(wget y)", "echo `wget y`", "echo ok\nwget y", "(wget y)", "x=1 wget y"):
+            self.assertIn("blocked by deny pattern filter", self.run_exec(tool, command), command)
+        self.assertNotIn("blocked", self.run_exec(tool, "echo 'wget is a tool'"))
+
+    def test_a_fully_allowed_exemption_still_works(self) -> None:
+        (self.root / "build").mkdir()
+        tool = self.tool(allow_patterns=[r"rm -rf build"], deny_patterns=[r"\brm\s+-rf\b"])
+        self.assertNotIn("blocked", self.run_exec(tool, "rm -rf build"))
+        self.assertFalse((self.root / "build").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

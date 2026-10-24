@@ -20,6 +20,22 @@ It takes the artifacts a turn produced and muxes them into a single MP4:
   of a fixed volume cut, so speech stays intelligible without killing the track;
 - the output is cut to the length of the visuals, never the looped music.
 
+Premium options (all off by default, all on with ``quality="premium"``):
+
+- ``fill="blur"``/``"color"`` replaces the black letterbox bars with a
+  blurred copy of the frame or a brand color (:mod:`navin.montage.grade`);
+- ``ken_burns`` gives stills a slow eased zoom rendered at high internal
+  resolution, so it does not jitter;
+- ``grade`` applies a light ``eq``/``unsharp`` look and an optional ``.cube``
+  LUT before captions are burned (captions are never graded);
+- ``encode`` picks a delivery preset: ``social``, ``master``,
+  ``master_prores`` or ``web`` (``default`` is the historical encode);
+- ``audio_mix`` turns on the mastered mix of :mod:`navin.montage.audio`
+  (voice clean-up, smoothed duck, music fades, SFX, two-pass loudnorm);
+- ``voice_cues`` places one narration file per scene;
+- ASS captions from :mod:`navin.montage.captions` are burned with libass,
+  ``fonts_dir`` pointing at the brand fonts.
+
 The command construction is a pure function so the filter graph can be tested
 without ffmpeg present, which is the part that actually breaks.
 """
@@ -30,11 +46,46 @@ import asyncio
 import os
 import re
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
+from navin.montage.audio import (
+    AudioMixError,
+    AudioMixOptions,
+    SfxCue,
+    VoiceCue,
+    build_mix_graph,
+    loudnorm_measure_filter,
+    mix_audio,
+    resolve_loudness_target,
+    snap_to_beats,  # noqa: F401 - public API: callers snap cuts via assemble
+)
+from navin.montage.captions import build_captions
 from navin.montage.ffmpeg_runner import run_process, useful_stderr
+from navin.montage.grade import (
+    ENCODE_DEFAULT,
+    ENCODE_PRESETS,
+    ENCODE_SOCIAL,
+    FILL_BLUR,
+    FILL_COLOR,
+    FILL_MODES,
+    FILL_PAD,
+    GradeError,
+    GradeOptions,
+    encode_args,
+    fill_chains,
+    fill_filter,
+    filter_path,
+    grade_filter,
+    ken_burns_filter,
+    preset_wants_mov,
+)
+
+QUALITY_STANDARD = "standard"
+QUALITY_PREMIUM = "premium"
+QUALITIES = frozenset({QUALITY_STANDARD, QUALITY_PREMIUM})
 
 KIND_IMAGE = "image"
 KIND_VIDEO = "video"
@@ -139,14 +190,107 @@ class AssembleSpec:
     transition_duration: float = DEFAULT_TRANSITION_DURATION
     extra_metadata: dict[str, str] = field(default_factory=dict)
 
+    # Premium knobs are real fields only on PremiumAssembleSpec: the
+    # historical spec keeps its exact field set, because saved timelines are
+    # built from ``asdict(spec)`` and reject unknown keys. Here they read as
+    # their "off" defaults so every builder can use them uniformly.
+    @property
+    def fill(self) -> str:
+        return FILL_PAD
+
+    @property
+    def fill_color(self) -> str | None:
+        return None
+
+    @property
+    def ken_burns(self) -> bool:
+        return False
+
+    @property
+    def grade(self) -> GradeOptions | None:
+        return None
+
+    @property
+    def encode(self) -> str:
+        return ENCODE_DEFAULT
+
+    @property
+    def fonts_dir(self) -> str | None:
+        return None
+
+    @property
+    def voice_cues(self) -> tuple[VoiceCue, ...]:
+        return ()
+
+    @property
+    def audio_mix(self) -> AudioMixOptions | None:
+        return None
+
+    @property
+    def premixed_audio(self) -> str | None:
+        return None
+
     @property
     def has_audio(self) -> bool:
-        return bool(self.music or self.voice)
+        return bool(
+            self.music
+            or self.voice
+            or self.voice_cues
+            or self.premixed_audio
+            or (self.audio_mix is not None and self.audio_mix.sfx)
+        )
+
+    @property
+    def uses_mastered_mix(self) -> bool:
+        """The audio goes through :mod:`navin.montage.audio` rather than the
+        historical two-input mix."""
+        return self.premixed_audio is None and (
+            self.audio_mix is not None or bool(self.voice_cues)
+        )
 
     @property
     def has_transitions(self) -> bool:
         """Crossfades only exist between clips, so one visual means none."""
         return self.transition not in ("", "none") and len(self.visuals) > 1
+
+
+@dataclass(frozen=True, slots=True)
+class PremiumAssembleSpec(AssembleSpec):
+    """An :class:`AssembleSpec` carrying the premium look/audio options.
+
+    :func:`spec_from_paths` only returns this class when at least one option
+    differs from the historical render.
+    """
+
+    #: ``pad`` (black bars, historical), ``blur`` or ``color``.
+    fill: str = FILL_PAD
+    fill_color: str | None = None
+    ken_burns: bool = False
+    grade: GradeOptions | None = None
+    encode: str = ENCODE_DEFAULT
+    #: Brand font folder handed to libass when burning captions.
+    fonts_dir: str | None = None
+    #: One narration file per scene, placed on the timeline.
+    voice_cues: tuple[VoiceCue, ...] = ()
+    #: Mastered mix options; ``None`` keeps the historical mix.
+    audio_mix: AudioMixOptions | None = None
+    #: A finished audio track (from :func:`navin.montage.audio.mix_audio`)
+    #: that replaces music/voice mixing entirely.
+    premixed_audio: str | None = None
+
+
+#: Values of the premium fields that reproduce the historical render.
+_PREMIUM_DEFAULTS: dict[str, Any] = {
+    "fill": FILL_PAD,
+    "fill_color": None,
+    "ken_burns": False,
+    "grade": None,
+    "encode": ENCODE_DEFAULT,
+    "fonts_dir": None,
+    "voice_cues": (),
+    "audio_mix": None,
+    "premixed_audio": None,
+}
 
 
 def validate_spec(spec: AssembleSpec) -> None:
@@ -180,6 +324,27 @@ def validate_spec(spec: AssembleSpec) -> None:
             raise AssembleError("transition_duration must be between 0 and 5 seconds")
     if not -60 <= spec.music_gain_db <= 12:
         raise AssembleError("music_gain_db must be between -60 and +12 dB")
+    if spec.fill not in FILL_MODES:
+        raise AssembleError(f"unknown fill {spec.fill!r}; use pad, blur or color")
+    if spec.encode not in ENCODE_PRESETS:
+        raise AssembleError(
+            f"unknown encode preset {spec.encode!r}; use one of: "
+            + ", ".join(sorted(ENCODE_PRESETS))
+        )
+    if preset_wants_mov(spec.encode) and Path(spec.output).suffix.lower() != ".mov":
+        raise AssembleError("the ProRes master needs a .mov output path")
+    try:
+        if spec.fill == FILL_COLOR:
+            fill_filter(spec.width, spec.height, mode=FILL_COLOR, color=spec.fill_color)
+        if spec.grade is not None:
+            spec.grade.validate()
+        if spec.audio_mix is not None:
+            spec.audio_mix.validate()
+    except (GradeError, AudioMixError) as exc:
+        raise AssembleError(str(exc)) from exc
+    for cue in spec.voice_cues:
+        if cue.at < 0:
+            raise AssembleError(f"narration cannot start before zero: {cue.path}")
     collision = output_input_collision(spec)
     if collision is not None:
         raise AssembleError(
@@ -198,9 +363,15 @@ def output_input_collision(spec: AssembleSpec) -> str | None:
     target = _comparable_path(spec.output)
     if target is None:
         return None
-    inputs = [clip.path for clip in spec.visuals] + [
-        path for path in (spec.music, spec.voice, spec.subtitles) if path
-    ]
+    inputs = (
+        [clip.path for clip in spec.visuals]
+        + [
+            path
+            for path in (spec.music, spec.voice, spec.subtitles, spec.premixed_audio)
+            if path
+        ]
+        + [cue.path for cue in spec.voice_cues]
+    )
     for path in inputs:
         if _comparable_path(path) == target:
             return path
@@ -226,6 +397,10 @@ def _input_args(spec: AssembleSpec, bounded: bool = False) -> tuple[list[str], d
     indices: dict[str, int] = {}
     for position, clip in enumerate(spec.visuals):
         if clip.kind == KIND_IMAGE:
+            if spec.ken_burns:
+                # zoompan emits one frame per input frame (d=1), so the looped
+                # still must already run at the output rate.
+                args += ["-framerate", str(spec.fps)]
             args += ["-loop", "1", "-t", _seconds(clip.duration)]
         else:
             # Input-side seeking: with a re-encode it is frame accurate, and it
@@ -248,6 +423,14 @@ def _input_args(spec: AssembleSpec, bounded: bool = False) -> tuple[list[str], d
     if spec.voice:
         args += ["-i", spec.voice]
         indices["voice"] = index
+        index += 1
+    if spec.premixed_audio:
+        args += ["-i", spec.premixed_audio]
+        indices["premix"] = index
+        index += 1
+    for position, cue in enumerate(spec.voice_cues):
+        args += ["-i", cue.path]
+        indices[f"voice:{position}"] = index
         index += 1
     return args, indices
 
@@ -273,16 +456,36 @@ def build_video_filters(
     settb = ",settb=AVTB" if transitions else ""
     chains: list[str] = []
     labels: list[str] = []
-    for position, _clip in enumerate(spec.visuals):
+    for position, clip in enumerate(spec.visuals):
         source = indices[f"visual:{position}"]
         label = f"v{position}"
         labels.append(f"[{label}]")
+        if spec.fill == FILL_BLUR:
+            chains += fill_chains(
+                f"[{source}:v]", f"f{position}", spec.width, spec.height, mode=FILL_BLUR
+            )
+            head = f"[f{position}]"
+        else:
+            # pad keeps the historical chain byte for byte.
+            head = (
+                f"[{source}:v]"
+                + fill_filter(spec.width, spec.height, mode=spec.fill, color=spec.fill_color)
+                + ","
+            )
+        motion = ""
+        if spec.ken_burns and clip.kind == KIND_IMAGE:
+            motion = (
+                ken_burns_filter(
+                    spec.width,
+                    spec.height,
+                    spec.fps,
+                    float(clip.duration or DEFAULT_IMAGE_DURATION),
+                    zoom_in=position % 2 == 0,
+                )
+                + ","
+            )
         chains.append(
-            f"[{source}:v]"
-            f"scale={spec.width}:{spec.height}:force_original_aspect_ratio=decrease,"
-            f"pad={spec.width}:{spec.height}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,fps={spec.fps},format=yuv420p{settb}"
-            f"[{label}]"
+            f"{head}{motion}setsar=1,fps={spec.fps},format=yuv420p{settb}[{label}]"
         )
     if len(labels) == 1:
         chains.append(f"{labels[0]}null[vcat]")
@@ -290,11 +493,17 @@ def build_video_filters(
         chains += _xfade_chains(spec, labels, clip_durations)
     else:
         chains.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[vcat]")
+    # Grade first, captions last: burned text must keep the brand colors.
+    post: list[str] = []
+    look = grade_filter(spec.grade)
+    if look:
+        post.append(look)
     if spec.subtitles:
-        escaped = str(spec.subtitles).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-        chains.append(f"[vcat]subtitles='{escaped}'[vout]")
-    else:
-        chains.append("[vcat]null[vout]")
+        burn = f"subtitles='{filter_path(spec.subtitles)}'"
+        if spec.fonts_dir:
+            burn += f":fontsdir='{filter_path(spec.fonts_dir)}'"
+        post.append(burn)
+    chains.append(f"[vcat]{','.join(post) or 'null'}[vout]")
     return chains
 
 
@@ -337,19 +546,30 @@ def _xfade_chains(
 
 
 def build_audio_filters(
-    spec: AssembleSpec, indices: dict[str, int], bounded: bool = False
+    spec: AssembleSpec,
+    indices: dict[str, int],
+    bounded: bool = False,
+    total_duration: float | None = None,
 ) -> list[str]:
     """Mix the bed and the narration, ducking the bed under speech.
 
     ``apad`` makes a track span the whole edit instead of cutting to silence
     mid-video, but it also makes the stream endless. It is therefore only used
     when ``bounded`` says a ``-t`` cap will end the output.
+
+    A premixed track is only resampled. The mastered mix (``audio_mix`` or
+    ``voice_cues``) is built in-graph with a single dynamic ``loudnorm``
+    pass; :func:`run_assemble` replaces it with a two-pass premix first.
     """
     if not spec.has_audio:
         return []
+    pad = ",apad" if bounded else ""
+    if spec.premixed_audio:
+        return [f"[{indices['premix']}:a]aresample=48000{pad}[aout]"]
+    if spec.uses_mastered_mix:
+        return _mastered_audio_filters(spec, indices, total_duration if bounded else None)
     music_index = indices.get("music")
     voice_index = indices.get("voice")
-    pad = ",apad" if bounded else ""
 
     if music_index is not None and voice_index is None:
         return [f"[{music_index}:a]volume={spec.music_gain_db}dB,aresample=async=1[aout]"]
@@ -367,15 +587,56 @@ def build_audio_filters(
     ]
 
 
+def mix_options_for(spec: AssembleSpec) -> AudioMixOptions:
+    """The mastered-mix options of *spec*, with the bed level from the spec."""
+    base = spec.audio_mix or AudioMixOptions(loudness_target=None)
+    return replace(base, music_gain_db=spec.music_gain_db)
+
+
+def voice_cues_for(spec: AssembleSpec) -> list[VoiceCue]:
+    """Every narration placement: the single ``voice`` at 0, then the cues."""
+    cues = [VoiceCue(spec.voice, 0.0)] if spec.voice else []
+    return cues + list(spec.voice_cues)
+
+
+def _mastered_audio_filters(
+    spec: AssembleSpec, indices: dict[str, int], duration: float | None
+) -> list[str]:
+    options = mix_options_for(spec)
+    voice_inputs: list[tuple[int, float]] = []
+    if spec.voice:
+        voice_inputs.append((indices["voice"], 0.0))
+    for position, cue in enumerate(spec.voice_cues):
+        voice_inputs.append((indices[f"voice:{position}"], cue.at))
+    try:
+        chains = build_mix_graph(
+            voice_inputs=voice_inputs,
+            music_input=indices.get("music"),
+            duration=duration,
+            options=options,
+        )
+    except AudioMixError as exc:
+        raise AssembleError(str(exc)) from exc
+    if options.loudness_target is not None:
+        chains.append(
+            f"[mix]{loudnorm_measure_filter(options.loudness_target, options.true_peak, options.lra)}"
+            ",aresample=48000[aout]"
+        )
+    else:
+        chains.append("[mix]anull[aout]")
+    return chains
+
+
 def build_filter_complex(
     spec: AssembleSpec,
     indices: dict[str, int],
     bounded: bool = False,
     clip_durations: list[float | None] | None = None,
+    total_duration: float | None = None,
 ) -> str:
     return ";".join(
         build_video_filters(spec, indices, clip_durations)
-        + build_audio_filters(spec, indices, bounded)
+        + build_audio_filters(spec, indices, bounded, total_duration)
     )
 
 
@@ -459,27 +720,15 @@ def build_ffmpeg_args(
     args += inputs
     args += [
         "-filter_complex",
-        build_filter_complex(spec, indices, bounded, clip_durations),
+        build_filter_complex(spec, indices, bounded, clip_durations, total_duration),
     ]
     args += ["-map", "[vout]"]
     if spec.has_audio:
-        args += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
+        args += ["-map", "[aout]"]
     else:
         args += ["-an"]
-    args += [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(spec.fps),
-        "-movflags",
-        "+faststart",
-    ]
+    # The default preset is the historical aac 192k + x264 medium crf 20.
+    args += encode_args(spec.encode, spec.fps, has_audio=spec.has_audio)
     # Something must bound the output. A measured -t is the reliable bound, and it
     # is what lets the bed loop. Without a measurement every input is left finite
     # so -shortest has a real end of stream to latch onto; -shortest on its own
@@ -561,8 +810,26 @@ def spec_from_paths(
     transition: str | None = None,
     transition_duration: float | None = None,
     music_gain_db: float | None = None,
+    quality: str | None = None,
+    fill: str | None = None,
+    fill_color: str | None = None,
+    ken_burns: bool | None = None,
+    grade: GradeOptions | Mapping[str, Any] | bool | None = None,
+    lut: str | None = None,
+    encode: str | None = None,
+    loudness: float | str | None = "auto",
+    sfx: Iterable[Any] | None = None,
+    voice_cues: Iterable[Any] | None = None,
+    fonts_dir: str | None = None,
+    brand: Mapping[str, Any] | None = None,
 ) -> AssembleSpec:
-    """Build a spec from plain paths, applying a still duration where needed."""
+    """Build a spec from plain paths, applying a still duration where needed.
+
+    Every option after ``music_gain_db`` is a premium knob; left unset they
+    keep the historical render. ``quality="premium"`` turns them all on
+    (blur fill, Ken Burns, light grade, social encode, mastered mix at
+    -14 LUFS); any explicit knob still wins over the preset.
+    """
     if durations and len(durations) not in (0, len(visuals)):
         raise AssembleError(f"durations has {len(durations)} entries for {len(visuals)} visuals")
     if trims and len(trims) not in (0, len(visuals)):
@@ -578,7 +845,24 @@ def spec_from_paths(
     style = (transition or "none").strip().lower() or "none"
     if style == "crossfade":  # the name people actually type for xfade's "fade"
         style = "fade"
-    return AssembleSpec(
+    extras = premium_options(
+        quality=quality,
+        fill=fill,
+        fill_color=fill_color,
+        ken_burns=ken_burns,
+        grade=grade,
+        lut=lut,
+        encode=encode,
+        loudness=loudness,
+        sfx=sfx,
+        voice_cues=voice_cues,
+        fonts_dir=fonts_dir,
+        brand=brand,
+    )
+    premium = any(extras.get(key, value) != value for key, value in _PREMIUM_DEFAULTS.items())
+    spec_cls = PremiumAssembleSpec if premium else AssembleSpec
+    return spec_cls(
+        **(extras if premium else {}),
         visuals=clips,
         output=output,
         music=music or None,
@@ -597,6 +881,131 @@ def spec_from_paths(
             float(music_gain_db) if music_gain_db is not None else DEFAULT_MUSIC_GAIN_DB
         ),
     )
+
+
+def resolve_grade(
+    grade: GradeOptions | Mapping[str, Any] | bool | None, lut: str | None = None
+) -> GradeOptions | None:
+    """``True`` for the default light grade, a dict of :class:`GradeOptions`
+    fields, an instance, or ``None``/``False``; *lut* adds a ``.cube`` file."""
+    if isinstance(grade, GradeOptions):
+        resolved: GradeOptions | None = grade
+    elif isinstance(grade, Mapping):
+        allowed = set(GradeOptions.__dataclass_fields__)
+        unknown = sorted(set(grade) - allowed)
+        if unknown:
+            raise AssembleError("unknown grade option(s): " + ", ".join(unknown))
+        resolved = GradeOptions(**dict(grade))
+    elif grade:
+        resolved = GradeOptions()
+    else:
+        resolved = None
+    if lut:
+        resolved = replace(resolved or GradeOptions(), lut_path=str(lut))
+    return resolved
+
+
+def _voice_cue_list(voice_cues: Iterable[Any] | None) -> tuple[VoiceCue, ...]:
+    out: list[VoiceCue] = []
+    for item in voice_cues or ():
+        if isinstance(item, VoiceCue):
+            out.append(item)
+        elif isinstance(item, Mapping):
+            path = item.get("path")
+            if not path:
+                raise AssembleError("each narration segment needs a path")
+            out.append(VoiceCue(str(path), float(item.get("at", item.get("start", 0.0)) or 0.0)))
+        elif isinstance(item, (tuple, list)) and len(item) == 2:
+            out.append(VoiceCue(str(item[0]), float(item[1])))
+        else:
+            raise AssembleError("narration segments must be {path, at} objects or (path, at) pairs")
+    return tuple(out)
+
+
+def _sfx_list(sfx: Iterable[Any] | None) -> tuple[SfxCue, ...]:
+    out: list[SfxCue] = []
+    for item in sfx or ():
+        if isinstance(item, SfxCue):
+            out.append(item)
+        elif isinstance(item, Mapping):
+            out.append(
+                SfxCue(
+                    str(item.get("kind") or item.get("type") or ""),
+                    float(item.get("at", item.get("time", 0.0)) or 0.0),
+                    float(item.get("gain_db", -6.0)),
+                )
+            )
+        elif isinstance(item, (tuple, list)) and len(item) >= 2:
+            out.append(SfxCue(str(item[0]), float(item[1]), *(float(v) for v in item[2:3])))
+        else:
+            raise AssembleError("sfx cues must be {kind, at} objects or (kind, at) pairs")
+    return tuple(out)
+
+
+def premium_options(
+    *,
+    quality: str | None = None,
+    fill: str | None = None,
+    fill_color: str | None = None,
+    ken_burns: bool | None = None,
+    grade: GradeOptions | Mapping[str, Any] | bool | None = None,
+    lut: str | None = None,
+    encode: str | None = None,
+    loudness: float | str | None = "auto",
+    sfx: Iterable[Any] | None = None,
+    voice_cues: Iterable[Any] | None = None,
+    fonts_dir: str | None = None,
+    brand: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve the premium knobs into :class:`AssembleSpec` fields.
+
+    ``quality="premium"`` supplies the defaults (blur fill, Ken Burns, light
+    grade, social encode, mastered mix at -14 LUFS, or -16 with the web
+    encode); explicit arguments override it. ``loudness="auto"`` means
+    "follow the quality", ``None`` disables normalization. A brand kit
+    supplies the fill color for ``fill="color"``.
+    """
+    level = (quality or QUALITY_STANDARD).strip().lower() or QUALITY_STANDARD
+    if level not in QUALITIES:
+        raise AssembleError(f"unknown quality {quality!r}; use standard or premium")
+    premium = level == QUALITY_PREMIUM
+    chosen_fill = (fill or (FILL_BLUR if premium else FILL_PAD)).strip().lower()
+    color = fill_color
+    if color is None and isinstance(brand, Mapping):
+        colors = brand.get("colors") if isinstance(brand.get("colors"), Mapping) else {}
+        color = colors.get("background") or colors.get("primary")
+    chosen_encode = (encode or (ENCODE_SOCIAL if premium else ENCODE_DEFAULT)).strip().lower()
+    resolved_grade = resolve_grade(grade if grade is not None else premium, lut)
+    if isinstance(loudness, str) and loudness.strip().lower() == "auto":
+        target = (
+            (-16.0 if chosen_encode == "web" else -14.0) if premium else None
+        )
+        explicit_loudness = premium
+    else:
+        try:
+            target = resolve_loudness_target(loudness)
+        except AudioMixError as exc:
+            raise AssembleError(str(exc)) from exc
+        explicit_loudness = True
+    cues = _voice_cue_list(voice_cues)
+    effects = _sfx_list(sfx)
+    audio_mix: AudioMixOptions | None = None
+    if explicit_loudness and (target is not None or premium) or effects or cues:
+        audio_mix = AudioMixOptions(
+            loudness_target=target,
+            voice_chain=premium or target is not None,
+            sfx=effects,
+        )
+    return {
+        "fill": chosen_fill,
+        "fill_color": color if chosen_fill == FILL_COLOR else None,
+        "ken_burns": bool(premium if ken_burns is None else ken_burns),
+        "grade": resolved_grade,
+        "encode": chosen_encode,
+        "audio_mix": audio_mix,
+        "voice_cues": cues,
+        "fonts_dir": fonts_dir or None,
+    }
 
 
 def find_ffprobe(ffmpeg: str | None = None) -> str | None:
@@ -852,6 +1261,39 @@ async def run_assemble(
         return {"ok": False, "error": f"cannot create the output folder: {exc}"}
     if cancel is not None and cancel.is_set():
         return {"ok": False, "cancelled": True, "error": "render cancelled"}
+    premix: Path | None = None
+    mix_report: dict[str, Any] | None = None
+    if spec.uses_mastered_mix and spec.has_audio and total:
+        # Two-pass loudnorm needs the finished mix to measure, so the audio is
+        # mastered into a hidden WAV first and the video pass only muxes it.
+        premix = output.with_name(f".{output.stem}.mix-{secrets.token_hex(4)}.wav")
+        try:
+            mix_report = await mix_audio(
+                premix,
+                voice=[(cue.path, cue.at) for cue in voice_cues_for(spec)],
+                music=spec.music,
+                duration=total,
+                options=mix_options_for(spec),
+                ffmpeg=binary,
+                timeout_s=timeout_s,
+            )
+            mastered = replace(
+                spec,
+                output=str(staging),
+                premixed_audio=str(premix),
+                music=None,
+                voice=None,
+                voice_cues=(),
+                audio_mix=None,
+            )
+            args = build_ffmpeg_args(mastered, binary, total, clip_durations, progress=live)
+        except (AudioMixError, AssembleError) as exc:
+            _discard_partial_output(premix)
+            return {"ok": False, "error": f"audio mix failed: {exc}"}
+    if cancel is not None and cancel.is_set():
+        if premix is not None:
+            _discard_partial_output(premix)
+        return {"ok": False, "cancelled": True, "error": "render cancelled"}
     on_line: Callable[[str], None] | None = None
     if live:
         parser = ProgressParser(total)
@@ -861,9 +1303,13 @@ async def run_assemble(
             if report is not None and on_progress is not None:
                 on_progress(report)
 
-    process_result = await run_process(
-        args, timeout_s=timeout_s, on_stdout_line=on_line, cancel=cancel
-    )
+    try:
+        process_result = await run_process(
+            args, timeout_s=timeout_s, on_stdout_line=on_line, cancel=cancel
+        )
+    finally:
+        if premix is not None:
+            _discard_partial_output(premix)
     if process_result.cancelled:
         _discard_partial_output(staging)
         return {
@@ -898,7 +1344,7 @@ async def run_assemble(
             "error": f"render finished but the file could not be moved into place: {exc}",
             "command": process_result.command,
         }
-    return {
+    result: dict[str, object] = {
         "ok": True,
         "output": str(output),
         "size_bytes": output.stat().st_size if output.is_file() else 0,
@@ -908,10 +1354,26 @@ async def run_assemble(
         "height": spec.height,
         "fps": spec.fps,
         "has_music": bool(spec.music),
-        "has_voice": bool(spec.voice),
+        "has_voice": bool(spec.voice or spec.voice_cues),
         "has_subtitles": bool(spec.subtitles),
         "transition": spec.transition if spec.has_transitions else None,
     }
+    if spec.encode != ENCODE_DEFAULT:
+        result["encode"] = spec.encode
+    if spec.fill != FILL_PAD:
+        result["fill"] = spec.fill
+    if spec.ken_burns:
+        result["ken_burns"] = True
+    if spec.grade is not None:
+        result["grade"] = True
+    if mix_report is not None:
+        result["audio"] = {
+            "target_lufs": mix_report.get("target_lufs"),
+            "measured": mix_report.get("measured"),
+            "voice_segments": mix_report.get("voice_segments"),
+            "sfx": mix_report.get("sfx"),
+        }
+    return result
 
 
 def staging_output_path(output: Path) -> Path:
@@ -936,3 +1398,153 @@ def _discard_partial_output(staging: Path) -> None:
 def _last_ffmpeg_error(stderr: str, max_lines: int = 6) -> str:
     """ffmpeg puts the real cause at the end; the banner above it is noise."""
     return useful_stderr(stderr, max_lines=max_lines) or "ffmpeg failed"
+
+
+async def assemble(
+    visuals: list[str],
+    output: str,
+    *,
+    durations: list[float] | None = None,
+    trims: list[tuple[float | None, float | None]] | None = None,
+    music: str | None = None,
+    voice: str | None = None,
+    subtitles: str | None = None,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
+    transition: str | None = None,
+    transition_duration: float | None = None,
+    music_gain_db: float | None = None,
+    quality: str | None = None,
+    fill: str | None = None,
+    fill_color: str | None = None,
+    ken_burns: bool | None = None,
+    grade: GradeOptions | Mapping[str, Any] | bool | None = None,
+    lut: str | None = None,
+    encode: str | None = None,
+    loudness: float | str | None = "auto",
+    sfx: Iterable[Any] | None = None,
+    voice_segments: Iterable[Any] | None = None,
+    captions: Any = None,
+    caption_mode: str = "highlight",
+    caption_uppercase: bool = False,
+    brand: Mapping[str, Any] | None = None,
+    ffmpeg: str | None = None,
+    timeout_s: float = 900.0,
+    on_progress: ProgressCallback | None = None,
+    cancel: asyncio.Event | None = None,
+) -> dict[str, object]:
+    """One call from generated parts to a finished deliverable.
+
+    The first block of arguments is the historical :func:`spec_from_paths`
+    surface. The premium block (see :func:`premium_options`) adds fill, Ken
+    Burns, grade, LUT, encode preset, loudness target and SFX cues, and
+    ``quality="premium"`` turns them all on.
+
+    ``voice_segments`` places one narration file per scene: dicts with
+    ``path`` and ``at``/``start`` (seconds), optionally ``text``, ``words``
+    and ``words_relative`` as returned by ``generate_speech(segments=...)``.
+
+    ``captions`` burns word-by-word captions: ``True`` builds them from
+    ``voice_segments`` (word timings when present, syllable estimate
+    otherwise), a list of caption segments is passed to
+    :func:`navin.montage.captions.build_captions`, and a ``CaptionResult``
+    (or a path to an ``.ass`` file) is burned as is. Brand fonts and colors
+    come from *brand* (the shared brand kit contract).
+    """
+    from navin.montage.captions import CaptionError, CaptionResult
+
+    cues = list(voice_segments or ())
+    caption_info: dict[str, Any] | None = None
+    fonts_dir: str | None = None
+    try:
+        if captions is not None and captions is not False:
+            if isinstance(captions, CaptionResult):
+                subtitles, fonts_dir = captions.path, captions.fonts_dir
+                caption_info = captions.to_dict()
+            elif isinstance(captions, (str, Path)):
+                subtitles = str(captions)
+            else:
+                source = _caption_source(captions, cues)
+                target = Path(output).expanduser()
+                built = build_captions(
+                    source,
+                    target.with_name(f"{target.stem}.captions.ass"),
+                    width=width,
+                    height=height,
+                    brand=brand,
+                    mode=caption_mode,
+                    uppercase=caption_uppercase,
+                )
+                subtitles, fonts_dir = built.path, built.fonts_dir
+                caption_info = built.to_dict()
+        spec = spec_from_paths(
+            visuals=visuals,
+            output=output,
+            durations=durations,
+            trims=trims,
+            music=music,
+            voice=voice,
+            subtitles=subtitles,
+            width=width,
+            height=height,
+            fps=fps,
+            transition=transition,
+            transition_duration=transition_duration,
+            music_gain_db=music_gain_db,
+            quality=quality,
+            fill=fill,
+            fill_color=fill_color,
+            ken_burns=ken_burns,
+            grade=grade,
+            lut=lut,
+            encode=encode,
+            loudness=loudness,
+            sfx=sfx,
+            voice_cues=[
+                {"path": item["path"], "at": item.get("at", item.get("start", 0.0))}
+                if isinstance(item, Mapping)
+                else item
+                for item in cues
+            ],
+            fonts_dir=fonts_dir,
+            brand=brand,
+        )
+    except (AssembleError, CaptionError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+    result = await run_assemble(
+        spec, ffmpeg=ffmpeg, timeout_s=timeout_s, on_progress=on_progress, cancel=cancel
+    )
+    if caption_info is not None:
+        result["captions"] = caption_info
+    return result
+
+
+def _caption_source(captions: Any, cues: list[Any]) -> list[Any]:
+    """Caption segments for ``assemble(captions=...)``."""
+    if captions is True:
+        segments: list[Any] = []
+        for item in cues:
+            if not isinstance(item, Mapping) or not item.get("text"):
+                continue
+            start = float(item.get("at", item.get("start", 0.0)) or 0.0)
+            segment = {
+                "text": item["text"],
+                "start": start,
+                "words": item.get("words") or [],
+                "words_relative": bool(item.get("words_relative", True)),
+            }
+            if item.get("end") is not None:
+                segment["end"] = float(item["end"])
+            else:
+                segment["duration_s"] = item.get("duration_s") or item.get("duration")
+            segments.append(segment)
+        if not segments:
+            raise AssembleError(
+                "captions=True needs voice_segments with their text and duration_s"
+            )
+        return segments
+    if isinstance(captions, (list, tuple)):
+        return list(captions)
+    raise AssembleError("captions must be True, a list of segments, a CaptionResult or a path")
+

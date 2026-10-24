@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -82,7 +83,11 @@ class FileEditActivityHook(AgentHook):
         key = self._tool_call_key(tool_call)
         trackers = self._trackers_by_call.get(key, [])
         if trackers:
-            events = [build_file_edit_end_event(tracker) for tracker in trackers]
+            # Reading the file back and diffing it is ~0.1-0.2 s on a large
+            # file: off the loop, which also streams the model and the UI.
+            events = await asyncio.to_thread(
+                lambda: [build_file_edit_end_event(tracker) for tracker in trackers]
+            )
             context.file_edit_events[tool_call.id] = events
             await self._emit(events)
             self._trackers_by_call.pop(key, None)

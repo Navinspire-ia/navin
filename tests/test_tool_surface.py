@@ -28,6 +28,15 @@ class ToolSurfaceTest(unittest.TestCase):
         self.assertIn("scrape", denied)
         self.assertIn("montage", denied)
         self.assertIn("mobile", denied)
+        # An audit fans out one subagent per module.
+        self.assertNotIn("spawn", denied)
+
+    def test_reverse_keeps_analysis_tools_and_drops_media(self) -> None:
+        denied = denied_tools_for_composer_mode("reverse")
+        for name in ("generate_image", "generate_video", "montage", "scrape"):
+            self.assertIn(name, denied, name)
+        for name in ("exec", "read_file", "grep", "browser", "write_file"):
+            self.assertNotIn(name, denied, name)
 
     def test_plan_denies_every_mutation_channel(self) -> None:
         """Plan is design-only: edits, shell, file management and scheduling
@@ -77,7 +86,8 @@ class ToolSurfaceTest(unittest.TestCase):
     def test_plan_safe_write_tools_are_the_planning_surfaces(self) -> None:
         self.assertEqual(
             PLAN_SAFE_WRITE_TOOLS,
-            frozenset({"board", "ask_user", "set_composer_mode", "open_file_preview"}),
+            # collab: a teammate assigned from Plan runs read-only.
+            frozenset({"board", "ask_user", "set_composer_mode", "open_file_preview", "collab"}),
         )
 
     def test_filtered_definitions_accept_a_live_callable(self) -> None:
@@ -120,6 +130,7 @@ class ToolSurfaceTest(unittest.TestCase):
             {"type": "function", "function": {"name": "tenders"}},
             {"name": "mcp_debug_foo"},
             {"name": "generate_image"},
+            {"name": "team"},
         ]
         kept = filter_tool_definitions(
             defs, allowed=CODE_BUILD_ALLOWED_TOOLS
@@ -131,7 +142,7 @@ class ToolSurfaceTest(unittest.TestCase):
                 names.append(fn.get("name"))
             else:
                 names.append(item.get("name"))
-        self.assertEqual(names, ["read_file", "generate_image"])
+        self.assertEqual(names, ["read_file", "generate_image", "team"])
 
     def test_mcp_is_not_on_the_code_build_allowlist(self) -> None:
         self.assertFalse(tool_name_is_allowed("mcp_github_list", CODE_BUILD_ALLOWED_TOOLS))

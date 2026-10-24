@@ -11,10 +11,11 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
@@ -188,6 +189,17 @@ def office_render_payload(
         raise WebUIFilePreviewError(
             413, f"file is too large to render (max {MAX_OFFICE_RENDER_BYTES // (1024 * 1024)} MiB)"
         )
+    return render_office_pdf(resolved, stat), "application/pdf", f"{resolved.stem}.pdf"
+
+
+def render_office_pdf(resolved: Path, stat: os.stat_result | None = None) -> bytes:
+    """PDF bytes of an Office file through LibreOffice, cached by path, size and mtime.
+
+    Raises ``WebUIFilePreviewError`` (503 without LibreOffice, 500 when the
+    conversion fails). Callers check the extension and the size first.
+    """
+    if stat is None:
+        stat = resolved.stat()
     available, hint = office_render_availability()
     if not available:
         raise WebUIFilePreviewError(503, hint)
@@ -201,7 +213,7 @@ def office_render_payload(
     cached = cache_dir / f"{digest}.pdf"
     if cached.is_file():
         try:
-            return cached.read_bytes(), "application/pdf", f"{resolved.stem}.pdf"
+            return cached.read_bytes()
         except OSError:
             pass
 
@@ -221,7 +233,7 @@ def office_render_payload(
     except Exception as e:  # conversion failed: the file is the reason, say so
         raise WebUIFilePreviewError(500, f"LibreOffice could not render this file: {e}") from e
     _trim_office_render_cache(cache_dir)
-    return body, "application/pdf", f"{resolved.stem}.pdf"
+    return body
 
 
 def _spreadsheet_cell_text(value: Any) -> str:
@@ -532,6 +544,29 @@ def file_body_from_headers(headers: Any) -> str:
     try:
         return base64.b64decode("".join(chunks), validate=True).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as e:
+        raise WebUIFilePreviewError(400, "invalid file content encoding") from e
+
+
+def binary_body_from_headers(headers: Any) -> bytes:
+    """Reassemble raw bytes sent as chunked base64 request headers (no text decode)."""
+
+    chunks: list[str] = []
+    for index in range(_MAX_FILE_BODY_CHUNKS):
+        name = f"{_FILE_BODY_HEADER_PREFIX}{index}"
+        try:
+            raw = headers.get(name)
+        except (AttributeError, TypeError):
+            raw = None
+        if raw is None and hasattr(headers, "get"):
+            raw = headers.get(name.title()) or headers.get(name.upper())
+        if raw is None:
+            break
+        chunks.append(str(raw))
+    if not chunks:
+        raise WebUIFilePreviewError(400, "missing file content")
+    try:
+        return base64.b64decode("".join(chunks), validate=True)
+    except ValueError as e:
         raise WebUIFilePreviewError(400, "invalid file content encoding") from e
 
 
@@ -1107,9 +1142,21 @@ def _walk_unique_basename(
     matches: list[Path] = []
     dirs_seen = 0
     complete = True
+    # A WSL project seen from Windows: ``find`` inside the distribution reads
+    # ext4 directly. The walk below would read the same tree through the 9P
+    # bridge, and the desktop log of 2026-10-21 shows file-preview requests
+    # waiting 29 s at the median (307 s at worst) inside this very walk.
+    wsl_found = _wsl_find_basename(root_resolved, wanted)
+    if wsl_found is not None:
+        found, complete = wsl_found
+        if complete or found is not None:
+            _BASENAME_WALK_CACHE[cache_key] = (now, str(found) if found else None)
+        return found, complete
     for dirpath, dirnames, filenames in os.walk(root_resolved, followlinks=False):
         dirs_seen += 1
-        if dirs_seen > _MAX_BASENAME_WALK_DIRS:
+        # Bounded in time as well as in size: on a network or 9P mount the
+        # 4000 directories alone can take minutes.
+        if dirs_seen > _MAX_BASENAME_WALK_DIRS or time.monotonic() - now > _BASENAME_WALK_BUDGET_S:
             complete = False
             break
         dirnames[:] = [
@@ -1138,6 +1185,73 @@ def _walk_unique_basename(
     if complete or found is not None:
         _BASENAME_WALK_CACHE[cache_key] = (now, str(found) if found else None)
     return found, complete
+
+
+_BASENAME_WALK_BUDGET_S = 3.0
+_WSL_FIND_TIMEOUT_S = 15.0
+
+
+def _find_name_pattern(name: str) -> str:
+    """``name`` as a literal ``find -iname`` pattern."""
+    return "".join("\\" + ch if ch in "\\*?[" else ch for ch in name)
+
+
+def _wsl_find_basename(
+    root_resolved: Path, wanted: str, *, platform: str | None = None,
+) -> tuple[Path | None, bool] | None:
+    """``_walk_unique_basename`` run by ``find`` inside the WSL distribution.
+
+    None when the root is not a WSL path seen from Windows, or when ``find``
+    gave no usable answer, so the caller walks instead. Same rules as the
+    walk: skipped and hidden directories are pruned, the newest match wins,
+    ties go to the shallowest path.
+    """
+    if (platform or sys.platform) != "win32":
+        return None
+    location = wsl.parse_unc(str(root_resolved))
+    if location is None or not wsl.wsl_executable():
+        return None
+    distro = wsl.resolve_distro(location.distro) or location.distro
+    prune: list[str] = []
+    for name in sorted(_SKIP_BASENAME_DIRS):
+        prune.extend(["-name", name, "-o"])
+    argv = [
+        *wsl.command_prefix(distro), "find", str(location.path), "-mindepth", "1",
+        "(", "-type", "d", "(", *prune, "-name", ".*", ")", ")", "-prune",
+        "-o", "-type", "f", "-iname", _find_name_pattern(wanted),
+        "-printf", "%T@\\t%d\\t%p\\0",
+    ]
+    try:
+        from navin.utils.proc import no_window_kwargs
+
+        proc = subprocess.run(  # noqa: S603
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_WSL_FIND_TIMEOUT_S, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rows: list[tuple[float, int, str]] = []
+    for chunk in proc.stdout.split("\0"):
+        mtime, _, rest = chunk.partition("\t")
+        depth, _, linux_path = rest.partition("\t")
+        if not linux_path:
+            continue
+        try:
+            rows.append((float(mtime), int(depth), linux_path))
+        except ValueError:
+            continue
+    # Exit 1 is also what wsl.exe returns when it cannot run find at all, so
+    # it only counts when it came with matches (an unreadable subfolder).
+    if proc.returncode != 0 and not rows:
+        return None
+    if not rows:
+        return None, True
+    _mtime, _depth, best = max(rows, key=lambda row: (row[0], -row[1], row[2]))
+    try:
+        found = root_resolved / PurePosixPath(best).relative_to(location.path)
+    except ValueError:
+        return None
+    return found, proc.returncode == 0
 
 
 def _newest_path(paths: list[Path]) -> Path | None:

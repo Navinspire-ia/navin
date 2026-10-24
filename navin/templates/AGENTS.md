@@ -15,8 +15,9 @@ This project carries a `.navin/` continuity pack shared by every module (Code, D
 ## Product quality (always)
 
 - No Unicode em dash (U+2014) or en dash (U+2013) in code, UI copy, i18n, docs, or comments. Use `-` or rephrase.
-- Web UI work must lock one official design system (Google MUI, Microsoft Fluent, or IBM Carbon; ask if missing), load skills `ui-ux-pro-max` and `make-interfaces-feel-better`, install/use `framer-motion` plus `three` + `@react-three/fiber` + `@react-three/drei` on every kit (designed 3D layer, not wallpaper), and ship working controls (no stub buttons / blank dashboards). Never default to Tailwind / shadcn / a homemade kit.
+- A new web app or a front-end redesign the user asked for locks one official design system (Google MUI, Microsoft Fluent, or IBM Carbon; ask if missing) and installs/uses `framer-motion` plus `three` + `@react-three/fiber` + `@react-three/drei` on every kit (designed 3D layer, not wallpaper); never default it to Tailwind / shadcn / a homemade kit. An existing app keeps the UI stack it already has: new screens follow it, with no design-system question. All web UI work loads skills `ui-ux-pro-max` and `make-interfaces-feel-better` and ships working controls (no stub buttons / blank dashboards).
 - Architecture, diagrams, PPT visuals, tender/RFP technical answers, and Markdown plans/explanations use skill `archify` by default (HTML + SVG, not a Mermaid dump).
+- Always build before delivering: run the build of every unit you changed after the last edit, and never deliver on a red build.
 - Do not mark an app done until Preview shows a working happy path and `verify` is clean.
 
 ## Scheduled Reminders

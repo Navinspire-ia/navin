@@ -238,6 +238,11 @@ class _Workspace(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
+        # Cleanups run last-in first-out: this one runs just before the folder
+        # goes. Live advice outcomes and trajectories are written by a background
+        # thread; left running, it writes into the folder being removed
+        # ("Directory not empty" on a loaded CI runner).
+        self.addCleanup(self._drain_writer)
         self.addCleanup(clear_settings_cache)
         self.addCleanup(reset_recorder)
         self.addCleanup(live_tracker().reset)
@@ -258,6 +263,9 @@ class _Workspace(unittest.TestCase):
         reset_recorder()
         live_tracker().reset()
         ck.clear_checkpoint_cache()
+
+    def _drain_writer(self) -> None:
+        self.assertTrue(flush(10.0), "every queued world-model line is on disk before cleanup")
 
     def enable(self, **fields: Any) -> None:
         update_settings(self.workspace, {"enabled": True, "min_rows": 10, **fields})

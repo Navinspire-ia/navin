@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -126,7 +127,7 @@ interface EvolveWorkbenchProps {
 function epochLabel(raw: string): string {
   const value = raw.startsWith("epoch:") ? Number(raw.slice(6)) : Number(raw);
   if (!Number.isFinite(value) || value <= 0) return raw;
-  return new Date(value * 1000).toLocaleString();
+  return new Date(value * 1000).toLocaleString(intlLocale());
 }
 
 /** Measurements read better rounded: the noise is wider than the digits. */
@@ -697,9 +698,9 @@ export function EvolveWorkbench({
             }}
           >
             {busyAction === "daemon" ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+              <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
             ) : (
-              <Activity className="mr-1 h-3 w-3" aria-hidden />
+              <Activity className="me-1 h-3 w-3" aria-hidden />
             )}
             {tx("evolve.launch.startDaemon", "Start the daemon")}
           </Button>
@@ -797,7 +798,7 @@ export function EvolveWorkbench({
                     onClick={() => void load()}
                   >
                     <RefreshCw
-                      className={cn("mr-1 h-3 w-3", loading && "animate-spin")}
+                      className={cn("me-1 h-3 w-3", loading && "animate-spin")}
                       aria-hidden
                     />
                     {tx("evolve.error.retry", "Retry")}
@@ -855,7 +856,7 @@ export function EvolveWorkbench({
                   aria-controls={`evolve-panel-${option.id}`}
                   onClick={() => setKind(option.id)}
                   className={cn(
-                    "flex-1 rounded-lg px-3 py-2 text-left transition-colors",
+                    "flex-1 rounded-lg px-3 py-2 text-start transition-colors",
                     kind === option.id
                       ? "bg-foreground text-background"
                       : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
@@ -924,9 +925,9 @@ export function EvolveWorkbench({
                             }}
                           >
                             {busyAction === "daemon" ? (
-                              <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                              <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                             ) : (
-                              <Activity className="mr-1 h-3 w-3" aria-hidden />
+                              <Activity className="me-1 h-3 w-3" aria-hidden />
                             )}
                             {tx("evolve.launch.startDaemon", "Start the daemon")}
                           </Button>
@@ -1099,9 +1100,9 @@ export function EvolveWorkbench({
                     onClick={() => void onLaunch()}
                   >
                     {busyAction === "launch" ? (
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                      <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
                     ) : (
-                      <Play className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      <Play className="me-1.5 h-3.5 w-3.5" aria-hidden />
                     )}
                     {tx("evolve.launch.go", "Launch")}
                   </Button>
@@ -1202,7 +1203,7 @@ export function EvolveWorkbench({
                         transition={spring}
                         className={cn(
                           "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm",
-                          overview.autorun?.enabled ? "left-[22px]" : "left-0.5",
+                          overview.autorun?.enabled ? "start-[22px]" : "start-0.5",
                         )}
                       />
                     </button>
@@ -1371,7 +1372,7 @@ export function EvolveWorkbench({
                             <span className="font-mono text-[11px] text-muted-foreground">
                               {finding.id}
                             </span>
-                            <span className="ml-auto text-[11px] text-muted-foreground">
+                            <span className="ms-auto text-[11px] text-muted-foreground">
                               {tx("evolve.findings.confidence", "{{level}} confidence", {
                                 level: finding.confidence,
                               })}
@@ -1611,7 +1612,7 @@ export function EvolveWorkbench({
                                       tx("evolve.promotions.branch", "branch ready")
                                     : tx("evolve.promotions.blocked", "blocked")}
                             </span>
-                            <span className="ml-auto text-[11px] text-muted-foreground">
+                            <span className="ms-auto text-[11px] text-muted-foreground">
                               {epochLabel(record.created_at)}
                             </span>
                           </div>
@@ -1625,9 +1626,9 @@ export function EvolveWorkbench({
                               onClick={() => void onVerify(record)}
                             >
                               {busyAction === `verify:${record.id}` ? (
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                                <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                               ) : (
-                                <BadgeCheck className="mr-1 h-3 w-3" aria-hidden />
+                                <BadgeCheck className="me-1 h-3 w-3" aria-hidden />
                               )}
                               {tx("evolve.promotions.verify", "Verify certificate")}
                             </Button>
@@ -1673,9 +1674,9 @@ export function EvolveWorkbench({
                                 }}
                               >
                                 {busyAction === `merge:${record.id}` ? (
-                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                                  <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                                 ) : (
-                                  <GitMerge className="mr-1 h-3 w-3" aria-hidden />
+                                  <GitMerge className="me-1 h-3 w-3" aria-hidden />
                                 )}
                                 {confirmAction === `merge:${record.id}`
                                   ? tx("evolve.promotions.confirm", "Confirm?")
@@ -1702,9 +1703,9 @@ export function EvolveWorkbench({
                                 }}
                               >
                                 {busyAction === `pr:${record.id}` ? (
-                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                                  <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                                 ) : (
-                                  <GitPullRequest className="mr-1 h-3 w-3" aria-hidden />
+                                  <GitPullRequest className="me-1 h-3 w-3" aria-hidden />
                                 )}
                                 {record.pull_request
                                   ? tx("evolve.promotions.prAgain", "Push again")
@@ -1747,9 +1748,9 @@ export function EvolveWorkbench({
                                 }}
                               >
                                 {busyAction === `rollback:${record.id}` ? (
-                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                                  <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                                 ) : (
-                                  <Undo2 className="mr-1 h-3 w-3" aria-hidden />
+                                  <Undo2 className="rtl:-scale-x-100 me-1 h-3 w-3" aria-hidden />
                                 )}
                                 {confirmAction === `rollback:${record.id}`
                                   ? tx("evolve.promotions.confirm", "Confirm?")
@@ -1798,7 +1799,7 @@ export function EvolveWorkbench({
               {tx("evolve.docs.title", "Evolve Engine documentation")}
             </DialogTitle>
           </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1 text-sm">
+          <div className="min-h-0 flex-1 overflow-y-auto pe-1 text-sm">
             {docsMarkdown === null ? (
               <div className="flex justify-center p-8">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />

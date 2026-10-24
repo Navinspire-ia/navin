@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from navin.agent.tools.ads import AdsToolConfig
     from navin.agent.tools.browser import BrowserToolConfig
     from navin.agent.tools.cli_apps import CliAppsToolConfig
+    from navin.agent.tools.cloud_sandbox import ExecutionConfig
     from navin.agent.tools.code_index import SemanticSearchConfig
     from navin.agent.tools.computer import ComputerToolConfig
     from navin.agent.tools.database import DatabaseToolConfig
@@ -102,6 +103,19 @@ class VoiceConfig(Base):
     # prompt. Empty = fast non-reasoning model for the active provider, then the
     # default model (navin.audio.voice_prompt).
     prompt_model: str | None = ""
+    # Live engine: "realtime" = one voice-to-voice model (Nova Sonic, GPT
+    # Realtime, Gemini Live... through the Navin gateway or an OpenAI key) that
+    # hands the work to the agent; "pipeline" = STT -> chat -> TTS; "auto" =
+    # realtime when a model is available, pipeline otherwise or on failure.
+    live_engine: Literal["auto", "realtime", "pipeline"] = "auto"
+    # "navin" = the plan's gateway (model from the managed catalog, kept in
+    # sync); "openai" = the user's OpenAI key. Empty = navin when subscribed.
+    live_realtime_provider: str | None = ""
+    live_realtime_model: str | None = ""
+    live_realtime_voice: str | None = ""
+    # The plan's Live model (managed catalog), kept even while another provider
+    # is chosen: the model list always offers it to come back to.
+    live_navin_model: str | None = ""
 
 
 class RecurrenceConfig(Base):
@@ -252,16 +266,29 @@ class InlineFallbackConfig(Base):
 FallbackCandidate = str | InlineFallbackConfig
 
 
+# Generic limits for a model whose family is unknown. A preset left at these
+# values takes its model's real limits (navin/providers/model_limits.py).
+# Thinking effort a model runs at unless the user chose another. Low keeps a
+# reasoning model answering quickly; raise it per model or in Settings for
+# work that needs depth. Providers that refuse the parameter are retried
+# without it, so non-reasoning models are unaffected.
+DEFAULT_REASONING_EFFORT = "low"
+# Marker of the one-shot "saved high goes back to low" migration (loader.py).
+LOW_EFFORT_MIGRATION = "reasoning-effort-low-2026-10"
+DEFAULT_MAX_TOKENS = 32_000
+DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+
+
 class ModelPresetConfig(Base):
     """A named set of model + generation parameters for quick switching."""
 
     label: str | None = None
     model: str
     provider: str = "auto"
-    max_tokens: int = 8192
-    context_window_tokens: int = 200_000
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     temperature: float = 0.1
-    reasoning_effort: str | None = None
+    reasoning_effort: str | None = DEFAULT_REASONING_EFFORT
     """When False, the preset stays in Settings but is hidden from the chat picker."""
     enabled: bool = True
     # text = chat ; image/video/audio/music/stt = outils média (Settings).
@@ -274,6 +301,11 @@ class ModelPresetConfig(Base):
     billing_rate: float | None = None
     estimated_generation_cost: float | None = None
     default_profile: str | None = None
+    # Limits the gateway catalog declares for this model (litellm_models, served by
+    # the site API). They replace the built-in family table, never a value set on
+    # the preset itself.
+    catalog_context_window_tokens: int | None = None
+    catalog_max_output_tokens: int | None = None
     # Set when the operator edits a catalog / imported row in Settings.
     # Catalog sync must not put the old slug back.
     user_edited: bool = Field(
@@ -282,11 +314,37 @@ class ModelPresetConfig(Base):
         serialization_alias="userEdited",
     )
 
+    @property
+    def effective_max_tokens(self) -> int:
+        """max_tokens, or the model's own output ceiling when left at the default."""
+        if self.max_tokens == DEFAULT_MAX_TOKENS:
+            if self.catalog_max_output_tokens:
+                return self.catalog_max_output_tokens
+            from navin.providers.model_limits import known_model_limits
+
+            limits = known_model_limits(self.model)
+            if limits:
+                return limits.max_output_tokens
+        return self.max_tokens
+
+    @property
+    def effective_context_window_tokens(self) -> int:
+        """context_window_tokens, or the catalog's / the model's real window when left at the default."""
+        if self.context_window_tokens == DEFAULT_CONTEXT_WINDOW_TOKENS:
+            if self.catalog_context_window_tokens:
+                return self.catalog_context_window_tokens
+            from navin.providers.model_limits import known_model_limits
+
+            limits = known_model_limits(self.model)
+            if limits:
+                return limits.context_window_tokens
+        return self.context_window_tokens
+
     def to_generation_settings(self) -> Any:
         from navin.providers.base import GenerationSettings
         return GenerationSettings(
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=self.effective_max_tokens,
             reasoning_effort=self.reasoning_effort,
         )
 
@@ -342,12 +400,12 @@ class ToolResultClearing(Base):
         serialization_alias="clearAtLeast",
     )  # Free at least this many tokens once clearing starts (0 = stop at the target); raising it trades context for fewer prompt-cache breaks
     soft_clear_ratio: float = Field(
-        default=0.22,
+        default=0.0,
         ge=0.0,
         le=1.0,
         validation_alias=AliasChoices("softClearRatio"),
         serialization_alias="softClearRatio",
-    )  # Start blanking stale tool results once prompt exceeds this share of the input budget (0 = only on hard overflow)
+    )  # Start blanking stale tool results once prompt exceeds this share of the input budget, but not before 80 000 tokens on a budget larger than that. 0 (default) = only when the budget is exceeded
     stale_after_user_turns: int = Field(
         default=1,
         ge=0,
@@ -379,9 +437,21 @@ class AgentDefaults(Base):
     provider: str = (
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
     )
-    max_tokens: int = 8192
-    context_window_tokens: int = 200_000
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     context_block_limit: int | None = None
+
+    @property
+    def effective_context_window_tokens(self) -> int:
+        """context_window_tokens, or the default model's real window when left at the default."""
+        if self.context_window_tokens == DEFAULT_CONTEXT_WINDOW_TOKENS:
+            from navin.providers.model_limits import known_model_limits
+
+            limits = known_model_limits(self.model)
+            if limits:
+                return limits.context_window_tokens
+        return self.context_window_tokens
+
     temperature: float = 0.1
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
@@ -397,7 +467,9 @@ class AgentDefaults(Base):
     #
     # Subagents are asyncio tasks in this one process: the wall at this width
     # is the model provider's rate limit and the blocking pool, not the host.
-    max_concurrent_subagents: int = Field(default=200, ge=1, le=200)
+    # The hard ceiling (1000) is above the default so a host that the resource
+    # governor judges able to run more agents is not clamped at 200.
+    max_concurrent_subagents: int = Field(default=200, ge=1, le=1000)
     # Soft by default: a failed tool call goes back to the model as an error
     # result so the run can self-correct (bounded by the identical-failure
     # escalation in the runner). Security boundaries (SSRF, workspace) keep
@@ -412,7 +484,7 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("toolHintMaxLength"),
         serialization_alias="toolHintMaxLength",
     )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
-    reasoning_effort: str | None = None  # low / medium / high / adaptive / none - LLM thinking effort; None preserves the provider default
+    reasoning_effort: str | None = DEFAULT_REASONING_EFFORT  # low / medium / high / adaptive / none - LLM thinking effort. Default low; an explicit null means Auto (no extended thinking in agent mode)
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     bot_name: str = "navin"  # Display name shown in CLI prompts (e.g. "{name} is thinking...")
     bot_icon: str = ""  # Short icon (emoji or text) shown next to the bot name in CLI; "" to omit
@@ -441,6 +513,11 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("toolResultClearing"),
         serialization_alias="toolResultClearing",
     )
+    followup_reasoning_effort: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("followupReasoningEffort"),
+        serialization_alias="followupReasoningEffort",
+    )  # Effort for the steps that only follow tool results (e.g. low). The configured effort still applies to the first step and after a failed verify. None = the configured effort applies to every step
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
 
@@ -543,6 +620,8 @@ class BedrockProviderConfig(ProviderConfig):
 
     region: str | None = None  # AWS region, falls back to AWS_REGION/AWS_DEFAULT_REGION/profile
     profile: str | None = None  # Optional AWS shared config profile
+    # Role in the central inference account (test-02) assumed before calling Bedrock.
+    role_arn: str | None = None
 
 
 class ProvidersConfig(Base):
@@ -773,6 +852,10 @@ class ForgeConfig(Base):
     # Only needed when the hostname gives nothing away and the probe cannot
     # reach the server: "git.example.com" -> "forgejo" | "gitlab" | "github".
     hosts: dict[str, str] = Field(default_factory=dict)
+    # OAuth app client id for the GitHub device sign-in in Settings > Git &
+    # GitHub (public, not a secret). Empty: NAVIN_GITHUB_OAUTH_CLIENT_ID, or
+    # the device flow is not offered.
+    github_oauth_client_id: str = ""
 
     @field_validator("tokens", mode="before")
     @classmethod
@@ -880,6 +963,10 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("navin.agent.tools.web", "WebToolsConfig"))
     exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("navin.agent.tools.shell", "ExecToolConfig"))
+    # Where exec / the browser run: local (default) or the AWS cloud sandbox.
+    execution: ExecutionConfig = Field(
+        default_factory=lambda: _lazy_default("navin.agent.tools.cloud_sandbox", "ExecutionConfig"),
+    )
     file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("navin.agent.tools.filesystem", "FileToolsConfig"))
     cli_apps: CliAppsToolConfig = Field(default_factory=lambda: _lazy_default("navin.agent.tools.cli_apps", "CliAppsToolConfig"))
     my: MyToolConfig = Field(default_factory=lambda: _lazy_default("navin.agent.tools.self", "MyToolConfig"))
@@ -1009,6 +1096,121 @@ class ModelCatalogConfig(Base):
     url: str = ""  # Empty means the default public catalog (or NAVIN_MODEL_CATALOG_URL)
 
 
+class CollabMemberConfig(Base):
+    """One teammate of Collaboration Mode (see navin.collab.team)."""
+
+    id: str
+    name: str
+    role: Literal[
+        "architect", "developer", "tester", "security", "reviewer", "reverse",
+        "seo", "marketing", "sales", "ads", "campaigns", "designer", "devops", "infra", "custom",
+    ] = "custom"
+    title: str = ""
+    specialty: str = ""
+    email: str = ""
+    avatar: str = "round"
+    color: str = "#6b7280"
+    # A model preset name ("default" = the main model), like task routing.
+    model_preset: str = "default"
+    reasoning_effort: str | None = None
+    sandbox: Literal["workspace", "worktree", "readonly"] = "workspace"
+    prompt: str = ""
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+def _default_collab_members() -> list[CollabMemberConfig]:
+    from navin.collab.team import default_team
+
+    return [CollabMemberConfig(**member) for member in default_team()]
+
+
+# Bump when the default tool sets grow: saved teams get the new tools on load
+# (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing).
+COLLAB_TOOLS_VERSION = 3
+
+
+class CollabTeamConfig(Base):
+    """A named group of teammates a session can work with (Dev, Growth...)."""
+
+    id: str
+    name: str
+    members: list[str] = Field(default_factory=list)  # teammate ids
+
+
+def _default_collab_teams() -> list[CollabTeamConfig]:
+    from navin.collab.team import default_teams
+
+    return [CollabTeamConfig(**team) for team in default_teams()]
+
+
+class CollabConfig(Base):
+    """Collaboration Mode: a named team of agents working a session together.
+
+    Transversal: it applies in Agent, Plan, Build, Review/Security and Reverse.
+    The orchestrator (the main turn) assigns work to teammates by name.
+    """
+
+    enabled: bool = False
+    pattern: Literal[
+        "dev_tester", "dual_planning", "adversarial_review",
+        "parallel_solutions", "pipeline", "debate",
+    ] = "dev_tester"
+    max_rounds: int = Field(default=5, ge=1, le=20)
+    auto_feedback: bool = True
+    human_approval_critical: bool = True
+    # Per teammate run, prompt + completion tokens; 0 = no cap.
+    budget_tokens: int = Field(default=0, ge=0)
+    members: list[CollabMemberConfig] = Field(default_factory=_default_collab_members)
+    teams: list[CollabTeamConfig] = Field(default_factory=_default_collab_teams)
+    # Team a session starts with; each chat may pick another or none.
+    default_team: str = "dev"
+    # The human the team reports to by email (via Settings > Channels > Email).
+    manager_name: str = ""
+    manager_email: str = ""
+    # More people the team may email ({name, email}); the manager is always one.
+    email_contacts: list[dict[str, str]] = Field(default_factory=list)
+    # Off: only the manager and the contacts above. On: any address (rate-limited).
+    email_allow_any: bool = False
+    # Version of the default tool sets; older saved teams are upgraded on load.
+    # Not 2 by default on purpose: a default value is not written to config.json,
+    # and a missing version would upgrade (re-add removed tools) on every load.
+    tools_version: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_tools(cls, data: Any) -> Any:
+        """Teams saved before v2 had narrow per-role tools and read-only defaults.
+
+        Teammates starved of tools failed their jobs, so every saved teammate gets
+        its role's full default toolbox added (nothing the user added is removed),
+        and the old read-only default becomes the shared project.
+        """
+        version = (data.get("tools_version") or data.get("toolsVersion") or 0) if isinstance(data, dict) else 0
+        if not isinstance(data, dict) or version >= COLLAB_TOOLS_VERSION:
+            return data
+        members = data.get("members")
+        if not isinstance(members, list):
+            # Fresh team: the defaults are already the full toolboxes.
+            return {**data, "tools_version": COLLAB_TOOLS_VERSION}
+        from navin.collab.team import ROLE_TOOLS
+
+        upgraded = []
+        for member in members:
+            if isinstance(member, dict):
+                role = member.get("role") or "custom"
+                tools = [str(t) for t in member.get("tools") or []]
+                for tool in ROLE_TOOLS.get(role, ROLE_TOOLS["custom"]):
+                    if tool not in tools:
+                        tools.append(tool)
+                member = {**member, "tools": tools}
+                if version < 2 and member.get("sandbox") == "readonly" and role in {"architect", "security", "reviewer"}:
+                    member["sandbox"] = "workspace"
+            upgraded.append(member)
+        return {**data, "members": upgraded, "tools_version": COLLAB_TOOLS_VERSION}
+
+
 class LicenseConfig(Base):
     """Navin subscription linkage (navin.live).
 
@@ -1035,6 +1237,8 @@ class LicenseConfig(Base):
     )
     device: str = ""  # Fingerprint sent at activation; identifies this machine
     plan: str = ""  # Last plan reported by the site (free, flash, plus, pro, ultra, team)
+    # Paid plan that expired when this device signed in on Free (the app offers to renew it).
+    lapsed_plan: str = Field(default="", validation_alias=AliasChoices("lapsedPlan", "lapsed_plan"))
     # Caps from the last successful validate (0 = unset, use local defaults).
     steps_per_task: int = Field(
         default=0,
@@ -1070,6 +1274,20 @@ class LicenseConfig(Base):
         ge=0,
         validation_alias=AliasChoices("usageBudgetMicroUsd", "usage_budget_micro_usd"),
         serialization_alias="usageBudgetMicroUsd",
+    )
+    # Admin bonus on top of the plan (microdollars, 0 when none) and when it ends
+    # (ISO, "" when it has no end date). The plan's own share is never kept: it
+    # would show the margin between the price and the AI budget.
+    usage_extra_budget_micro_usd: int = Field(
+        default=0,
+        ge=0,
+        validation_alias=AliasChoices("usageExtraBudgetMicroUsd", "usage_extra_budget_micro_usd"),
+        serialization_alias="usageExtraBudgetMicroUsd",
+    )
+    usage_extra_until: str = Field(
+        default="",
+        validation_alias=AliasChoices("usageExtraUntil", "usage_extra_until"),
+        serialization_alias="usageExtraUntil",
     )
     usage_spent_micro_usd: int = Field(
         default=0,
@@ -1110,6 +1328,14 @@ class LicenseConfig(Base):
         default="",
         validation_alias=AliasChoices("managedProvider", "managed_provider"),
         serialization_alias="managedProvider",
+    )
+    # Base the site delivered with the managed key (the Navin LiteLLM proxy in
+    # PROVIDER_MODE=navin_litellm); "" = OpenRouter. Remembered so a later
+    # switch back moves the navin slot without touching a base the user set.
+    managed_api_base: str = Field(
+        default="",
+        validation_alias=AliasChoices("managedApiBase", "managed_api_base"),
+        serialization_alias="managedApiBase",
     )
     # Profile of the connected navin.live account, persisted so the editor can
     # show who is signed in even while offline.
@@ -1193,6 +1419,14 @@ class Config(BaseSettings):
     _loaded_path: str | None = PrivateAttr(default=None)
     _loaded_values: dict[str, Any] | None = PrivateAttr(default=None)
 
+    # One-shot settings migrations already applied to this file (see
+    # loader._migrate_config), so a value chosen afterwards is never reset again.
+    applied_migrations: list[str] = Field(
+        default_factory=lambda: [LOW_EFFORT_MIGRATION],
+        validation_alias=AliasChoices("appliedMigrations", "applied_migrations"),
+        serialization_alias="appliedMigrations",
+    )
+
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
@@ -1219,12 +1453,20 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("modelRoutes", "model_routes"),
         serialization_alias="modelRoutes",
     )
+    # Off: no task routing anywhere, every chat stays on its model (the routes
+    # above are kept for when it is turned back on).
+    model_routing_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("modelRoutingEnabled", "model_routing_enabled"),
+        serialization_alias="modelRoutingEnabled",
+    )
     model_catalog: ModelCatalogConfig = Field(
         default_factory=ModelCatalogConfig,
         validation_alias=AliasChoices("modelCatalog", "model_catalog"),
         serialization_alias="modelCatalog",
     )
     license: LicenseConfig = Field(default_factory=LicenseConfig)
+    collab: CollabConfig = Field(default_factory=CollabConfig)
 
     def __init__(self, **values: Any) -> None:
         if not type(self).__pydantic_complete__:
@@ -1519,7 +1761,7 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
 
-    model_config = ConfigDict(env_prefix="NAVIN_", env_nested_delimiter="__")
+    model_config = ConfigDict(env_prefix="NAVIN_", env_nested_delimiter="__", extra="ignore")
 
 
 def _resolve_tool_config_refs() -> None:
@@ -1535,6 +1777,7 @@ def _resolve_tool_config_refs() -> None:
     from navin.agent.tools.ads import AdsToolConfig
     from navin.agent.tools.browser import BrowserToolConfig
     from navin.agent.tools.cli_apps import CliAppsToolConfig
+    from navin.agent.tools.cloud_sandbox import ExecutionConfig
     from navin.agent.tools.code_index import SemanticSearchConfig
     from navin.agent.tools.computer import ComputerToolConfig
     from navin.agent.tools.database import DatabaseToolConfig
@@ -1555,6 +1798,7 @@ def _resolve_tool_config_refs() -> None:
     mod = sys.modules[__name__]
     mod.ComputerToolConfig = ComputerToolConfig  # type: ignore[attr-defined]
     mod.ExecToolConfig = ExecToolConfig  # type: ignore[attr-defined]
+    mod.ExecutionConfig = ExecutionConfig  # type: ignore[attr-defined]
     mod.FileToolsConfig = FileToolsConfig  # type: ignore[attr-defined]
     mod.CliAppsToolConfig = CliAppsToolConfig  # type: ignore[attr-defined]
     mod.WebToolsConfig = WebToolsConfig  # type: ignore[attr-defined]

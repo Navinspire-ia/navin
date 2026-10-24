@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { formatTenderMoney } from "@/components/studio/tenders/money";
 import type { TenderNotice, TenderSource } from "@/lib/tenders-api";
 import { firstNonEmpty, stripHtml } from "@/lib/plain-text";
@@ -145,7 +146,7 @@ export function formatNoticeDate(value: string, locale = "fr-FR"): string {
   if (!match) return text.slice(0, 32);
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
   if (Number.isNaN(date.getTime())) return text.slice(0, 32);
-  return date.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleDateString(intlLocale(locale), { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function tenderSourceName(row: TenderNotice, names?: Record<string, string>): string {

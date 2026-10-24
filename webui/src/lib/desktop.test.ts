@@ -14,6 +14,7 @@ import {
   isNavinShellUrl,
   isTauriAppHost,
   isTauriCustomScheme,
+  openNavinWindow,
   resolveGatewayWsUrl,
   resolveRuntimeProfile,
   tauriInvoke,
@@ -34,6 +35,23 @@ function page(
     host: port ? `${hostname}:${port}` : hostname,
   };
 }
+
+describe("openNavinWindow", () => {
+  it("asks the desktop shell for a second window on the chat", async () => {
+    const invoke = vi.fn(async () => "chat-1");
+    const url = "http://127.0.0.1:8766/#/chat/websocket%3Aabc";
+    await expect(openNavinWindow(url, invoke)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith("open_window", { url });
+  });
+
+  it("reports false outside the shell or when the shell refuses", async () => {
+    await expect(openNavinWindow("http://127.0.0.1:8766/", null)).resolves.toBe(false);
+    const refuse = vi.fn(async () => {
+      throw new Error("only this Navin can open in a new window");
+    });
+    await expect(openNavinWindow("http://127.0.0.1:5176/", refuse)).resolves.toBe(false);
+  });
+});
 
 describe("resolveGatewayWsUrl", () => {
   it("derives from the page origin in a plain browser", () => {

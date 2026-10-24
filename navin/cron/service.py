@@ -46,6 +46,20 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _restart_next_run(job: "CronJob", now_ms: int) -> int | None:
+    """Next run after a restart, keeping a persisted slot that is still ahead.
+
+    Recomputing from "now" alone pushes interval jobs back a full interval on
+    every restart, so a gateway restarting more often than the interval would
+    never run the job.
+    """
+    computed = _compute_next_run(job.schedule, now_ms)
+    persisted = job.state.next_run_at_ms
+    if computed is not None and persisted and persisted > now_ms:
+        return min(persisted, computed)
+    return computed
+
+
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     """Compute next run time in ms."""
     if schedule.kind == "at":
@@ -70,6 +84,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
             next_dt = cron.get_next(datetime)
             return int(next_dt.timestamp() * 1000)
         except Exception:
+            logger.warning("Cron: cannot compute next run for '{}'", schedule.expr)
             return None
 
     return None
@@ -160,6 +175,8 @@ class CronService:
     max_consecutive_failures = 5
     backoff_base_ms = 60_000  # 1 minute
     backoff_cap_ms = 21_600_000  # 6 hours
+    # A hung turn must not hold the tick (and every later job) forever.
+    job_timeout_s: float | None = 7200.0
     _timezone_name: str | None = None
 
     def __init__(
@@ -171,6 +188,7 @@ class CronService:
         backoff_base_ms: int | None = None,
         backoff_cap_ms: int | None = None,
         timezone_name: str | None = None,
+        job_timeout_s: float | None = 7200.0,
     ):
         self.store_path = store_path
         self._action_path = store_path.parent / "action.jsonl"
@@ -181,6 +199,7 @@ class CronService:
         self._timer_task: asyncio.Task | None = None
         self._running = False
         self._timer_active = False
+        self.job_timeout_s = job_timeout_s if job_timeout_s and job_timeout_s > 0 else None
         self.max_sleep_ms = max_sleep_ms
         if max_consecutive_failures is not None:
             self.max_consecutive_failures = max(0, max_consecutive_failures)
@@ -631,7 +650,7 @@ class CronService:
             if self._enforce_agent_binding(job):
                 continue
             if job.enabled:
-                job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
+                job.state.next_run_at_ms = _restart_next_run(job, now)
 
     def _get_next_wake_ms(self) -> int | None:
         """Get the earliest next run time across all jobs."""
@@ -643,7 +662,12 @@ class CronService:
 
     def _arm_timer(self) -> None:
         """Schedule the next timer tick."""
-        if self._timer_task:
+        if self._timer_active:
+            # The tick task is running jobs right now. Cancelling it would
+            # abort the job mid-turn and skip its bookkeeping, so the job would
+            # fire again at once. The running tick re-arms when it finishes.
+            return
+        if self._timer_task and self._timer_task is not asyncio.current_task():
             self._timer_task.cancel()
 
         if not self._running:
@@ -664,30 +688,38 @@ class CronService:
         self._timer_task = asyncio.create_task(tick())
 
     async def _on_timer(self) -> None:
-        """Handle timer tick - run due jobs."""
-        self._load_store()
-        # If a hot reload found a corrupt store on disk, ``self._store`` may
-        # still hold the previous, known-good in-memory snapshot.  Keep using
-        # it rather than crashing the timer or wiping live jobs.
-        if not self._store:
-            self._arm_timer()
-            return
+        """Handle timer tick - run due jobs.
 
-        self._timer_active = True
+        Store load/save run in a worker thread: disk I/O on a slow mount
+        (WSL /mnt/c) must never freeze the gateway event loop.
+        """
         try:
-            now = _now_ms()
-            due_jobs = [
-                j for j in self._store.jobs
-                if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
-            ]
+            await asyncio.to_thread(self._load_store)
+            # If a hot reload found a corrupt store on disk, ``self._store`` may
+            # still hold the previous, known-good in-memory snapshot.  Keep using
+            # it rather than crashing the timer or wiping live jobs.
+            if not self._store:
+                return
 
-            for job in due_jobs:
-                await self._execute_job(job)
+            self._timer_active = True
+            try:
+                now = _now_ms()
+                due_jobs = [
+                    j for j in self._store.jobs
+                    if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+                ]
 
-            self._save_store()
+                for job in due_jobs:
+                    await self._execute_job(job)
+
+                await asyncio.to_thread(self._save_store)
+            finally:
+                self._timer_active = False
+        except Exception:
+            # One disk or lock error must not stop the scheduler for good.
+            logger.exception("Cron: timer tick failed; rescheduling")
         finally:
-            self._timer_active = False
-        self._arm_timer()
+            self._arm_timer()
 
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
@@ -705,7 +737,15 @@ class CronService:
 
         try:
             if self.on_job:
-                await self.on_job(job)
+                if self.job_timeout_s is not None:
+                    try:
+                        await asyncio.wait_for(self.on_job(job), timeout=self.job_timeout_s)
+                    except asyncio.TimeoutError as exc:
+                        raise RuntimeError(
+                            f"job timed out after {int(self.job_timeout_s)}s"
+                        ) from exc
+                else:
+                    await self.on_job(job)
 
             job.state.last_status = "ok"
             job.state.last_error = None
@@ -912,8 +952,19 @@ class CronService:
         """Register an internal system job (idempotent on restart)."""
         store = self._require_store()
         now = _now_ms()
-        job.state = CronJobState(next_run_at_ms=_compute_next_run(job.schedule, now))
-        job.created_at_ms = now
+        previous = next((j for j in store.jobs if j.id == job.id), None)
+        if previous is not None:
+            # Keep spend counters and run history so a restart cannot reset
+            # the daily budget. A restart is a natural recovery point, so an
+            # auto-pause from earlier failures gets one fresh attempt.
+            job.state = previous.state
+            job.state.paused_reason = None
+            job.state.consecutive_failures = 0
+            job.created_at_ms = previous.created_at_ms or now
+        else:
+            job.state = CronJobState()
+            job.created_at_ms = now
+        job.state.next_run_at_ms = _restart_next_run(job, now) if job.enabled else None
         job.updated_at_ms = now
         store.jobs = [j for j in store.jobs if j.id != job.id]
         store.jobs.append(job)

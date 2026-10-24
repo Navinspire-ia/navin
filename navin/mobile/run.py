@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -88,7 +89,13 @@ def build_run_plan(
             project=project,
             packager_command="",
             wait_for="",
-            blocked_reason="No Expo / React Native / Flutter project detected.",
+            blocked_reason="No Expo / React Native / Flutter / native Android / native iOS project detected.",
+        )
+
+    if project.kind in {"android-native", "ios-native"}:
+        return _native_run_plan(
+            project, target=target, emulator=emulator, doctor=doctor,
+            start_emulator=start_emulator, device_id=device_id,
         )
 
     if project.kind == "flutter":
@@ -235,6 +242,93 @@ def build_run_plan(
         wait_for=wait_for,
         emulator_command=emulator_command,
         open_command=open_command if open_command != packager else "",
+        notes=notes,
+    )
+
+
+def _native_run_plan(
+    project: MobileProject,
+    *,
+    target: MobileTarget,
+    emulator: str | None,
+    doctor: DoctorReport | None,
+    start_emulator: bool,
+    device_id: str | None,
+) -> RunPlan:
+    """Gradle (Kotlin/Java) or xcodebuild (Swift) build-install-launch plan."""
+    def blocked(reason: str) -> RunPlan:
+        return RunPlan(project=project, packager_command="", wait_for="", blocked_reason=reason)
+
+    if doctor is not None and not doctor.ready:
+        missing = [c.name for c in doctor.checks if c.status == "missing"]
+        return blocked(
+            "Environment not ready: missing " + ", ".join(missing or ["toolchain"])
+            + ". Run mobile(action=doctor) and fix the [no] items."
+        )
+
+    if project.kind == "ios-native":
+        if target != "ios":
+            return blocked("Native iOS project: use target=ios (needs macOS + Xcode).")
+        flag = "-workspace" if project.entry.endswith(".xcworkspace") else "-project"
+        scheme = project.name
+        dest = (
+            f"id={device_id.strip()}"
+            if device_id and device_id.strip()
+            else "generic/platform=iOS Simulator"
+        )
+        cmd = (
+            f"xcodebuild {flag} '{project.entry}' -scheme '{scheme}' "
+            f"-destination '{dest}' -derivedDataPath build/ios build"
+        )
+        return RunPlan(
+            project=project,
+            packager_command=cmd,
+            wait_for="BUILD SUCCEEDED",
+            notes=[
+                f"Scheme assumed `{scheme}`; list them with `xcodebuild -list`.",
+                "Install on a booted Simulator: `xcrun simctl install booted "
+                "build/ios/Build/Products/Debug-iphonesimulator/<App>.app`.",
+                "A physical iPhone needs a DEVELOPMENT_TEAM set in Signing & Capabilities.",
+            ],
+        )
+
+    if target != "android":
+        return blocked("Native Android project: use target=android.")
+    gradlew = "gradlew.bat" if os.name == "nt" else "./gradlew"
+    if not (project.root / gradlew.lstrip("./")).is_file():
+        gradlew = "gradle"
+    serial = (device_id or "").strip() or _first_adb_serial(doctor)
+    notes: list[str] = []
+    emulator_command = ""
+    if not serial and start_emulator and doctor is not None:
+        from navin.mobile.bootstrap import acceleration_available
+
+        accel_ok, accel_detail = acceleration_available()
+        if not accel_ok:
+            return blocked(
+                "Local emulator blocked: host lacks hardware acceleration. " + accel_detail
+            )
+        avd_name = (emulator or (doctor.avds[0] if doctor.avds else "")).strip()
+        if avd_name:
+            emulator_command = f"emulator -avd {avd_name}"
+            notes.append(f"Start AVD `{avd_name}`; installDebug waits for it.")
+        else:
+            notes.append("No device/AVD: plug a phone with USB debugging or create an AVD.")
+    env = f"ANDROID_SERIAL={serial} " if serial and os.name != "nt" else ""
+    cmd = f"{env}{gradlew} --console=plain installDebug"
+    open_command = ""
+    if project.name and "." in project.name:
+        open_command = (
+            f"adb shell monkey -p {project.name} -c android.intent.category.LAUNCHER 1"
+        )
+    notes.append("Unit tests: `" + gradlew + " test`; lint: `" + gradlew + " lint`; release: `"
+                 + gradlew + " bundleRelease` (needs a signing config).")
+    return RunPlan(
+        project=project,
+        packager_command=cmd,
+        wait_for="BUILD SUCCESSFUL",
+        emulator_command=emulator_command,
+        open_command=open_command,
         notes=notes,
     )
 

@@ -17,7 +17,14 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from navin.agent.memory import Consolidator, MemoryStore
+from navin.agent.memory import (
+    CARRIED_USER_MESSAGES_HEADING,
+    Consolidator,
+    MemoryStore,
+    carried_user_message,
+    compose_carried_brief,
+    split_carried_brief,
+)
 from navin.providers.base import GenerationSettings, LLMResponse
 from navin.session.manager import SessionManager
 from navin.utils.llm_runtime import LLMRuntime
@@ -114,29 +121,114 @@ class HandoffBriefTest(_HandoffTest):
         )
         self.assertEqual(self.provider.prompts, [])
 
-    def test_nothing_worth_carrying_is_reported_as_nothing(self) -> None:
+    def test_nothing_worth_carrying_keeps_only_the_user_messages(self) -> None:
         class Empty(_FakeProvider):
             async def chat_with_retry(self, *, messages, **_kwargs):
                 return LLMResponse(content="(nothing)")
 
         self.provider = Empty()
+        brief = _run(
+            self.consolidator.handoff_brief(self._conversation(1), runtime=self._runtime())
+        )
+        self.assertEqual(brief, f"{CARRIED_USER_MESSAGES_HEADING}\n- step 0: please continue")
+        only_tools = [{"role": "assistant", "content": "ran ls"}]
         self.assertIsNone(
-            _run(
-                self.consolidator.handoff_brief(
-                    self._conversation(1), runtime=self._runtime()
-                )
-            )
+            _run(self.consolidator.handoff_brief(only_tools, runtime=self._runtime()))
         )
 
     def test_a_provider_failure_does_not_raise(self) -> None:
         """A lost brief costs quality; an exception here would cost the turn."""
         self.provider = _FakeProvider(fail_handoff=True)
-        self.assertIsNone(
-            _run(
-                self.consolidator.handoff_brief(
-                    self._conversation(1), runtime=self._runtime()
-                )
-            )
+        brief = _run(
+            self.consolidator.handoff_brief(self._conversation(1), runtime=self._runtime())
+        )
+        self.assertNotIn(_HANDOFF_MARK, brief or "")
+        self.assertIn("step 0: please continue", brief or "")
+
+
+class SecondCompactionTest(_HandoffTest):
+    """Each compaction used to rewrite the brief from its own chunk only."""
+
+    def test_the_previous_note_is_given_to_the_model_and_survives_a_failure(self) -> None:
+        previous = compose_carried_brief("Goal: port the plugins", ["porte les plugins"])
+        _run(self.consolidator.handoff_brief(
+            self._conversation(1), runtime=self._runtime(), previous=previous,
+        ))
+        self.provider = _FakeProvider(fail_handoff=True)
+        failed = _run(self.consolidator.handoff_brief(
+            self._conversation(1), runtime=self._runtime(), previous=previous,
+        ))
+        self.assertTrue(failed.startswith("Goal: port the plugins"))
+        self.assertIn("- porte les plugins\n- step 0: please continue", failed)
+
+    def test_the_model_sees_the_previous_note(self) -> None:
+        seen: list[str] = []
+
+        class Spy(_FakeProvider):
+            async def chat_with_retry(self, *, messages, **kwargs):
+                seen.append(messages[1]["content"])
+                return await super().chat_with_retry(messages=messages, **kwargs)
+
+        self.provider = Spy()
+        _run(self.consolidator.handoff_brief(
+            self._conversation(1), runtime=self._runtime(),
+            previous=compose_carried_brief("Goal: port the plugins", []),
+        ))
+        self.assertIn("Previous handover note", seen[0])
+        self.assertIn("Goal: port the plugins", seen[0])
+
+    def test_two_compactions_keep_the_first_user_message(self) -> None:
+        session = self.sessions.get_or_create("twice")
+        session.messages = [{"role": "user", "content": "le but: porter les plugins"}]
+        session.messages += self._conversation(40)
+        self.sessions.save(session)
+        runtime = self._runtime(window=600)
+        _run(self.consolidator.maybe_consolidate_by_tokens(session, runtime=runtime))
+        session.messages += self._conversation(40)
+        self.sessions.save(session)
+        _run(self.consolidator.maybe_consolidate_by_tokens(session, runtime=runtime))
+        carried = self.sessions.get_or_create("twice").metadata["_last_summary"]["text"]
+        body, users = split_carried_brief(carried)
+        self.assertIn(_HANDOFF_MARK, body)
+        self.assertEqual(users[0], "le but: porter les plugins")
+        self.assertLessEqual(len(users), 10)
+
+    def test_edited_files_and_last_request_survive_two_failed_handoffs(self) -> None:
+        """The edited files came only from the model's note: a failed handoff lost them."""
+        import json as _json
+
+        chunk = [
+            {"role": "user", "content": "corrige le build"},
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "c1", "type": "function",
+                "function": {"name": "edit_file", "arguments": _json.dumps({"path": "src/a.py"})},
+            }]},
+            {"role": "user", "content": "non, utilise npm run build"},
+        ]
+        self.provider = _FakeProvider(fail_handoff=True)
+        first = _run(self.consolidator.handoff_brief(chunk, runtime=self._runtime()))
+        later = [{"role": "assistant", "content": "", "tool_calls": [{
+            "id": "c2", "type": "function",
+            "function": {"name": "write_file", "arguments": {"files": [{"path": "b.md"}]}},
+        }]}]
+        second = _run(self.consolidator.handoff_brief(later, runtime=self._runtime(), previous=first))
+        body, users = split_carried_brief(second)
+        self.assertIn("- src/a.py\n- b.md", body)
+        self.assertEqual(users[-1], "non, utilise npm run build")
+
+    def test_runtime_reminders_are_not_carried_as_user_words(self) -> None:
+        from navin.agent.scope_anchor import exploration_budget_message
+        from navin.utils.runtime import build_ignored_nudge_reminder_message
+
+        nudges = [exploration_budget_message(8), build_ignored_nudge_reminder_message(1)]
+        for nudge in nudges:
+            self.assertEqual(carried_user_message(nudge), "")
+        self.assertEqual(
+            carried_user_message({"role": "user", "content": "dis ok\n\n[Runtime Context - x]\ny"}),
+            "dis ok",
+        )
+        self.assertEqual(
+            carried_user_message({"role": "user", "content": "x", "injected_event": "exec_finished"}), ""
         )
 
 
@@ -177,6 +269,87 @@ class ConsolidationCarriesTheTaskTest(_HandoffTest):
         self.assertIn(_ARCHIVE_MARK, self._consolidate())
 
 
+class UrgentOnlyConsolidationTest(_HandoffTest):
+    """The turn's BUILD consolidates only what the prompt cannot fit without."""
+
+    def _session(self):
+        session = self.sessions.get_or_create("s-urgent")
+        session.messages = self._conversation(40)
+        self.sessions.save(session)
+        return session
+
+    def test_an_overflowing_prompt_is_still_consolidated_inline(self) -> None:
+        session = self._session()
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600), urgent_only=True
+            )
+        )
+        self.assertTrue(self.provider.prompts)
+        self.assertGreater(self.sessions.get_or_create("s-urgent").last_consolidated, 0)
+
+    def test_the_turn_does_not_wait_behind_a_background_consolidation(self) -> None:
+        """Waiting here held the first token for every archive round."""
+        session = self._session()
+        self.consolidator._token_consolidating.add(session.key)
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600), urgent_only=True
+            )
+        )
+        self.assertEqual(self.provider.prompts, [])
+
+    def test_the_running_marker_is_cleared_afterwards(self) -> None:
+        session = self._session()
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600)
+            )
+        )
+        self.assertEqual(self.consolidator._token_consolidating, set())
+
+    def test_the_start_notice_fires_once_when_compacting(self) -> None:
+        session = self._session()
+        calls: list[int] = []
+
+        async def notice() -> None:
+            calls.append(1)
+
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600), urgent_only=True, on_start=notice
+            )
+        )
+        self.assertEqual(calls, [1])
+
+    def test_no_start_notice_when_nothing_needs_compacting(self) -> None:
+        session = self.sessions.get_or_create("s-small")
+        calls: list[int] = []
+
+        async def notice() -> None:
+            calls.append(1)
+
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600), urgent_only=True, on_start=notice
+            )
+        )
+        self.assertEqual(calls, [])
+
+    def test_a_failing_start_notice_does_not_stop_compaction(self) -> None:
+        session = self._session()
+
+        async def notice() -> None:
+            raise RuntimeError("ui gone")
+
+        _run(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session, runtime=self._runtime(window=600), urgent_only=True, on_start=notice
+            )
+        )
+        self.assertGreater(self.sessions.get_or_create("s-urgent").last_consolidated, 0)
+
+
 class ResumeLabelTest(unittest.TestCase):
     """The carried notes must be framed as settled work, not as background.
 
@@ -204,6 +377,46 @@ class ResumeLabelTest(unittest.TestCase):
 
     def test_nothing_is_injected_without_a_summary(self) -> None:
         self.assertNotIn("do not redo", self._prompt(None).lower())
+
+
+class RecentHistoryStaleStateTest(unittest.TestCase):
+    """Old task state in history.jsonl must not steer every later turn."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        from navin.agent.context import ContextBuilder
+
+        self.builder = ContextBuilder(Path(self._tmp.name))
+
+    def test_only_the_newest_entries_keep_their_ephemeral_lines(self) -> None:
+        memory = self.builder.memory
+        memory.append_history(
+            "- [durable] Repo builds with make build\n"
+            "- [ephemeral] Active task: port the skills\n"
+            "  - 3 of 7 written\n"
+            "- [permanent] Replies in French",
+            session_key="s",
+        )
+        memory.append_history("- [ephemeral] Board task t-1 is open", session_key="s")
+        memory.append_history("- [durable] Tests take 20 min", session_key="s")
+        memory.append_history("- [ephemeral] Current step: hooks runtime", session_key="s")
+        prompt = self.builder.build_system_prompt(session_key="s")
+        for kept in ("make build", "Replies in French", "Tests take 20 min", "Current step: hooks runtime"):
+            self.assertIn(kept, prompt)
+        for dropped in ("port the skills", "3 of 7 written", "Board task t-1"):
+            self.assertNotIn(dropped, prompt)
+
+    def test_an_entry_made_only_of_stale_state_leaves_no_empty_bullet(self) -> None:
+        from navin.agent.context import ContextBuilder
+
+        self.assertEqual(
+            ContextBuilder._history_entry_for_prompt("- [ephemeral] Active task: x", recent=False), ""
+        )
+        self.assertEqual(
+            ContextBuilder._history_entry_for_prompt("plain archive text", recent=False),
+            "plain archive text",
+        )
 
 
 class ResumeMirrorTest(_HandoffTest):
@@ -317,7 +530,7 @@ class LazyEstimateTest(_HandoffTest):
         self._consolidate(session)
         with mock.patch.object(
             self.consolidator,
-            "estimate_session_prompt_tokens",
+            "estimate_session_prompt_tokens_async",
             side_effect=AssertionError("full estimate should have been skipped"),
         ):
             self._consolidate(session)
@@ -334,8 +547,8 @@ class LazyEstimateTest(_HandoffTest):
         )
         with mock.patch.object(
             self.consolidator,
-            "estimate_session_prompt_tokens",
-            wraps=self.consolidator.estimate_session_prompt_tokens,
+            "estimate_session_prompt_tokens_async",
+            wraps=self.consolidator.estimate_session_prompt_tokens_async,
         ) as spy:
             self._consolidate(session)
         self.assertGreater(spy.call_count, 0)
@@ -353,11 +566,126 @@ class LazyEstimateTest(_HandoffTest):
         )
         with mock.patch.object(
             self.consolidator,
-            "estimate_session_prompt_tokens",
-            wraps=self.consolidator.estimate_session_prompt_tokens,
+            "estimate_session_prompt_tokens_async",
+            wraps=self.consolidator.estimate_session_prompt_tokens_async,
         ) as spy:
             _run(self.consolidator.maybe_consolidate_by_tokens(session, runtime=other))
         self.assertGreater(spy.call_count, 0)
+
+    def test_async_estimate_matches_the_sync_one(self) -> None:
+        session = self._session(turns=6)
+        runtime = self._runtime(window=self._WINDOW)
+        sync = self.consolidator.estimate_session_prompt_tokens(session, runtime=runtime)
+        threaded = _run(
+            self.consolidator.estimate_session_prompt_tokens_async(session, runtime=runtime)
+        )
+        self.assertEqual(sync, threaded)
+        self.assertGreater(sync[0], 0)
+
+    def test_async_estimate_prefers_the_provider_peak_like_the_sync_one(self) -> None:
+        from navin.session.context_usage_meta import LAST_CONTEXT_USAGE_KEY
+
+        session = self._session(turns=2)
+        session.metadata[LAST_CONTEXT_USAGE_KEY] = {"peak_prompt_tokens": 150_000}
+        runtime = self._runtime(window=self._WINDOW)
+        sync = self.consolidator.estimate_session_prompt_tokens(session, runtime=runtime)
+        threaded = _run(
+            self.consolidator.estimate_session_prompt_tokens_async(session, runtime=runtime)
+        )
+        self.assertEqual(sync, threaded)
+        self.assertEqual(sync[0], 150_000)
+        self.assertTrue(sync[1].endswith("+last_peak"))
+
+
+class ManualCompactTest(_HandoffTest):
+    """``/compact [focus]`` summarizes now and steers the note with the focus."""
+
+    def _loop(self):
+        from types import SimpleNamespace
+
+        runtime = self._runtime()
+        return SimpleNamespace(
+            _active_tasks={}, sessions=self.sessions, consolidator=self.consolidator,
+            llm_runtime=lambda: runtime,
+        )
+
+    def _dispatch(self, loop, raw: str):
+        from types import SimpleNamespace
+
+        from navin.command.builtin import build_help_text, register_builtin_commands
+        from navin.command.router import CommandContext, CommandRouter
+
+        self.assertIn("/compact [focus]", build_help_text())
+        router = CommandRouter()
+        register_builtin_commands(router)
+        msg = SimpleNamespace(channel="cli", chat_id="c", metadata={}, content=raw)
+        ctx = CommandContext(msg=msg, session=None, key="cli:c", raw=raw, loop=loop)
+        return _run(router.dispatch(ctx))
+
+    def test_compact_with_focus_keeps_the_latest_turns(self) -> None:
+        session = self.sessions.get_or_create("cli:c")
+        session.messages = self._conversation(6)
+        self.sessions.save(session)
+        out = self._dispatch(self._loop(), "/compact the API wiring")
+        self.assertIn("older messages summarized", out.content)
+        self.assertIn("Summary focus: the API wiring", out.content)
+        kept = self.sessions.get_or_create("cli:c").messages
+        self.assertLess(len(kept), 12)
+        self.assertEqual(kept[-1]["content"], "edited file_5.py and ran the tests")
+        handoff = [p for p in self.provider.prompts if "handover note" in p]
+        self.assertTrue(handoff and "focus on: the API wiring" in handoff[-1])
+
+    def test_short_conversation_and_running_turn_are_refused(self) -> None:
+        session = self.sessions.get_or_create("cli:c")
+        session.messages = self._conversation(1)
+        self.sessions.save(session)
+        self.assertIn("still short", self._dispatch(self._loop(), "/compact").content)
+        self.assertEqual(self.provider.prompts, [])
+
+        class _Busy:
+            def done(self) -> bool:
+                return False
+
+        loop = self._loop()
+        loop._active_tasks = {"cli:c": [_Busy()]}
+        self.assertIn("still running", self._dispatch(loop, "/compact").content)
+
+
+class CheckpointSummarizeTest(ManualCompactTest):
+    """``/checkpoint summarize <name> [upto|from] [focus]``."""
+
+    def _setup(self):
+        from navin.agent.checkpoints import CheckpointStore
+
+        loop = self._loop()
+        loop.checkpoints = CheckpointStore(Path(self._tmp.name) / "ws")
+        session = self.sessions.get_or_create("cli:c")
+        session.messages = self._conversation(3)
+        self.sessions.save(session)
+        name = loop.checkpoints.save(session)["name"]
+        session.messages = [*session.messages, *self._conversation(2)]
+        self.sessions.save(session)
+        return loop, name
+
+    def test_upto_replaces_the_messages_before_the_checkpoint(self) -> None:
+        loop, name = self._setup()
+        before = len(self.sessions.get_or_create("cli:c").messages)
+        out = self._dispatch(loop, f"/checkpoint summarize {name} upto the parser")
+        self.assertIn("Summarized 6 messages up to", out.content)
+        kept = self.sessions.get_or_create("cli:c").messages
+        self.assertEqual(len(kept), before - 6 + 1)
+        self.assertTrue(kept[0]["content"].startswith("[Summary of 6 earlier messages"))
+        self.assertTrue(any("focus on: the parser" in p for p in self.provider.prompts))
+
+    def test_from_keeps_the_conversation_up_to_the_checkpoint(self) -> None:
+        loop, name = self._setup()
+        out = self._dispatch(loop, f"/checkpoint summarize {name} from")
+        self.assertIn("after", out.content)
+        kept = self.sessions.get_or_create("cli:c").messages
+        self.assertEqual(len(kept), 7)
+        self.assertIn("after checkpoint", kept[-1]["content"])
+        usage = self._dispatch(loop, "/checkpoint summarize")
+        self.assertIn("Usage", usage.content)
 
 
 if __name__ == "__main__":

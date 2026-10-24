@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from navin.audio.models import NAVIN_STT_MODEL
+from navin.optional_live import live_modules_available
 
 
 class TranscriptionProviderAdapter(Protocol):
@@ -69,6 +70,12 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         adapter="navin.providers.transcription:OpenAITranscriptionProvider",
     ),
     TranscriptionProviderSpec(
+        name="gemini",
+        default_model="gemini-flash-latest",
+        adapter="navin.providers.transcription:GeminiTranscriptionProvider",
+        aliases=("google",),
+    ),
+    TranscriptionProviderSpec(
         name="assemblyai",
         default_model="universal-3-pro,universal-2",
         adapter="navin.providers.transcription:AssemblyAITranscriptionProvider",
@@ -95,9 +102,30 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         adapter="navin.providers.transcription:LmStudioTranscriptionProvider",
         aliases=("lm-studio", "lmstudio"),
     ),
+    TranscriptionProviderSpec(
+        name="omniroute",
+        default_model="openai/whisper-1",
+        adapter="navin.providers.transcription:OmniRouteTranscriptionProvider",
+    ),
+    TranscriptionProviderSpec(
+        name="qwen",
+        default_model="qwen3-asr-flash",
+        adapter="navin.providers.qwen_media:QwenTranscriptionProvider",
+        aliases=("dashscope", "alibaba"),
+    ),
+    TranscriptionProviderSpec(
+        name="xai",
+        default_model="grok-voice-transcribe-2.0",
+        adapter="navin.providers.transcription:XaiTranscriptionProvider",
+        aliases=("grok",),
+    ),
+    TranscriptionProviderSpec(
+        name="bedrock",
+        default_model="mistral.voxtral-small-24b-2507",
+        adapter="navin.providers.transcription:BedrockTranscriptionProvider",
+        aliases=("aws",),
+    ),
 )
-
-from navin.optional_live import live_modules_available
 
 if not live_modules_available():
     TRANSCRIPTION_PROVIDERS = tuple(

@@ -266,7 +266,7 @@ function DubLanguageField({
         data-testid={testId}
       />
       {open && matches.length > 0 ? (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1 shadow-lg">
+        <div className="absolute start-0 end-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border/60 bg-popover p-1 shadow-lg">
           {matches.map((lang) => (
             <button
               key={lang.code}
@@ -277,7 +277,7 @@ function DubLanguageField({
                 onChange(lang.prompt);
                 setOpen(false);
               }}
-              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:bg-muted"
+              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-start text-[12.5px] transition-colors hover:bg-muted"
             >
               <span className="font-medium">{lang.label}</span>
               <span className="text-[11px] text-muted-foreground">{lang.prompt}</span>
@@ -774,7 +774,7 @@ export function MediaTemplateLibrary({
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
-      <aside className="flex w-[200px] shrink-0 flex-col gap-1 border-r border-border/50 px-3 py-4">
+      <aside className="flex w-[200px] shrink-0 flex-col gap-1 border-e border-border/50 px-3 py-4">
         <div
           className={cn(
             "mb-2 flex items-center gap-2 rounded-xl px-2.5 py-2",
@@ -791,7 +791,7 @@ export function MediaTemplateLibrary({
             type="button"
             onClick={() => setPane("dub")}
             className={cn(
-              "mb-2 flex items-center justify-between rounded-full px-3 py-2 text-left text-[13px] transition-colors",
+              "mb-2 flex items-center justify-between rounded-full px-3 py-2 text-start text-[13px] transition-colors",
               pane === "dub"
                 ? identity.accentSoft
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -819,7 +819,7 @@ export function MediaTemplateLibrary({
               setFamily(id);
             }}
             className={cn(
-              "flex items-center justify-between rounded-full px-3 py-2 text-left text-[13px] transition-colors",
+              "flex items-center justify-between rounded-full px-3 py-2 text-start text-[13px] transition-colors",
               pane === "library" && family === id
                 ? identity.accentSoft
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -929,7 +929,7 @@ export function MediaTemplateLibrary({
                   onClick={mode.toggle}
                   aria-pressed={mode.checked}
                   className={cn(
-                    "flex items-start gap-2.5 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                    "flex items-start gap-2.5 rounded-2xl border px-3.5 py-3 text-start transition-all",
                     mode.checked
                       ? cn("shadow-sm", identity.accentBorder, identity.accentSoft)
                       : "border-border/55 hover:border-foreground/30",
@@ -1019,7 +1019,7 @@ export function MediaTemplateLibrary({
                       onClick={() => setDubClone(option.key)}
                       aria-pressed={dubClone === option.key}
                       className={cn(
-                        "flex items-start gap-2.5 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                        "flex items-start gap-2.5 rounded-2xl border px-3.5 py-3 text-start transition-all",
                         dubClone === option.key
                           ? cn("shadow-sm", identity.accentBorder, identity.accentSoft)
                           : "border-border/55 hover:border-foreground/30",
@@ -1124,7 +1124,7 @@ export function MediaTemplateLibrary({
                 {tx("studio.mediaLibrary.gettingStarted.title", "Getting started")}
               </button>
               {workflowsOpen ? (
-                <div className="absolute left-0 top-full z-20 mt-2 w-[340px] rounded-2xl border border-border/60 bg-background p-2 shadow-lg">
+                <div className="absolute start-0 top-full z-20 mt-2 w-[340px] rounded-2xl border border-border/60 bg-background p-2 shadow-lg">
                   <p className="px-2 pb-1.5 pt-1 text-[11px] text-muted-foreground">
                     {tx(
                       "studio.mediaLibrary.gettingStarted.subtitle",
@@ -1147,7 +1147,7 @@ export function MediaTemplateLibrary({
                             ),
                           );
                         }}
-                        className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-muted/60"
+                        className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-start hover:bg-muted/60"
                         data-testid={`media-workflow-${workflow.id}`}
                       >
                         <img
@@ -1187,14 +1187,14 @@ export function MediaTemplateLibrary({
             </div>
           ) : null}
           <label className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={tx("studio.mediaLibrary.search", "Search")}
-              className="h-9 w-full rounded-full border border-border/50 bg-muted/30 pl-9 pr-9 text-[13px] outline-none focus:border-foreground/30"
+              className="h-9 w-full rounded-full border border-border/50 bg-muted/30 ps-9 pe-9 text-[13px] outline-none focus:border-foreground/30"
             />
-            <ImageIcon className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <ImageIcon className="pointer-events-none absolute end-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           </label>
           <div className="relative">
             <button
@@ -1211,11 +1211,11 @@ export function MediaTemplateLibrary({
             >
               <SlidersHorizontal className="h-4 w-4" />
               {filtersActive ? (
-                <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-foreground" />
+                <span className="absolute end-1 top-1 h-1.5 w-1.5 rounded-full bg-foreground" />
               ) : null}
             </button>
             {filtersOpen ? (
-              <div className="absolute right-0 top-full z-20 mt-2 w-56 rounded-2xl border border-border/60 bg-background p-3 shadow-lg">
+              <div className="absolute end-0 top-full z-20 mt-2 w-56 rounded-2xl border border-border/60 bg-background p-3 shadow-lg">
                 <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
                   {tx("studio.mediaLibrary.filterFormat", "Format")}
                 </p>
@@ -1339,7 +1339,7 @@ export function MediaTemplateLibrary({
                       setHoveredId((current) => (current === item.id ? null : current))
                     }
                     className={cn(
-                      "mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl border text-left",
+                      "mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl border text-start",
                       isPicked
                         ? identity.accentBorder
                         : "border-transparent hover:border-border",
@@ -1372,21 +1372,21 @@ export function MediaTemplateLibrary({
                       )}
                       {item.kind === "video" ? (
                         studio === "montage" ? (
-                          <Clapperboard className="absolute left-2 top-2 h-4 w-4 text-white drop-shadow" />
+                          <Clapperboard className="absolute start-2 top-2 h-4 w-4 text-white drop-shadow" />
                         ) : (
-                          <Video className="absolute left-2 top-2 h-4 w-4 text-white drop-shadow" />
+                          <Video className="absolute start-2 top-2 h-4 w-4 text-white drop-shadow" />
                         )
                       ) : null}
                       {item.premium ? (
-                        <ShoppingBag className="absolute bottom-2 left-2 h-4 w-4 text-white drop-shadow" />
+                        <ShoppingBag className="absolute bottom-2 start-2 h-4 w-4 text-white drop-shadow" />
                       ) : null}
-                      <span className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white">
+                      <span className="absolute end-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white">
                         {item.format}
                       </span>
                       {isPicked ? (
                         <span
                           className={cn(
-                            "absolute bottom-2 right-2 flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold",
+                            "absolute bottom-2 end-2 flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-semibold",
                             identity.accentSolid,
                           )}
                         >
@@ -1413,7 +1413,7 @@ export function MediaTemplateLibrary({
       {/* The reference tray is pointless in the dub pane: the video attaches
           straight to the chat, no template references are involved. */}
       {pane === "dub" ? null : (
-      <aside className="flex w-[200px] shrink-0 flex-col gap-1.5 border-l border-border/50 px-3 py-3">
+      <aside className="flex w-[200px] shrink-0 flex-col gap-1.5 border-s border-border/50 px-3 py-3">
         <div className="flex items-center justify-between px-1">
           <p className="text-[11px] text-muted-foreground">
             {tx("studio.mediaLibrary.trayTitle", "References")}
@@ -1434,12 +1434,12 @@ export function MediaTemplateLibrary({
                 className="aspect-square w-full object-cover"
               />
               {item.kind === "video" ? (
-                <Video className="absolute left-1 top-1 h-3 w-3 text-white drop-shadow" />
+                <Video className="absolute start-1 top-1 h-3 w-3 text-white drop-shadow" />
               ) : null}
               <button
                 type="button"
                 onClick={() => toggleItem(item)}
-                className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                className="absolute end-1 top-1 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
                 aria-label={tx("studio.mediaLibrary.trayRemove", "Remove reference")}
               >
                 <X className="h-3 w-3" />
@@ -1514,7 +1514,7 @@ export function MediaTemplateLibrary({
                   />
                   <span className="min-w-0 truncate text-[11px]">{entry.name}</span>
                   <Check
-                    className={cn("ml-auto h-3 w-3 shrink-0", identity.accentText)}
+                    className={cn("ms-auto h-3 w-3 shrink-0", identity.accentText)}
                     strokeWidth={2.5}
                   />
                 </div>
@@ -1671,7 +1671,7 @@ function SideAction({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-8 items-center gap-2 rounded-full border border-border/60 px-3 text-left text-[12px] hover:bg-muted/50"
+      className="flex h-8 items-center gap-2 rounded-full border border-border/60 px-3 text-start text-[12px] hover:bg-muted/50"
     >
       <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.75} />
       {label}

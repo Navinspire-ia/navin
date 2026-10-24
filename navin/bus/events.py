@@ -34,6 +34,10 @@ RUNTIME_CONTROL_APPROVALS_QUERY = "approvals_query"
 # suspended tool.
 RUNTIME_CONTROL_CHOICE_ANSWER = "choice_answer"
 RUNTIME_CONTROL_CHOICES_QUERY = "choices_query"
+# Same round trip for a credential card (status + login name only; the
+# secret values go from the card to the vault, never through this route).
+RUNTIME_CONTROL_CREDENTIAL_ANSWER = "credential_answer"
+RUNTIME_CONTROL_CREDENTIALS_QUERY = "credentials_query"
 # Same idea for background subagents: their cards live in browser memory only,
 # so without a replay a refresh hides work that is still running.
 RUNTIME_CONTROL_SUBAGENTS_QUERY = "subagents_query"

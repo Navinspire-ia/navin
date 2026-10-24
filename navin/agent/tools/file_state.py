@@ -22,6 +22,10 @@ class ReadState:
 
 
 _HASH_MAX_BYTES = 512 * 1024
+# Searches and search hits remembered per session (oldest dropped first).
+_SEARCH_MEMORY = 256
+# Line numbers kept per file from the searches that matched it.
+_HIT_LINES_PER_FILE = 20
 
 
 def _hash_content(content: bytes) -> str | None:
@@ -47,10 +51,41 @@ class FileStates:
     not leak across sessions sharing this process.
     """
 
-    __slots__ = ("_state",)
+    __slots__ = ("_state", "_searches", "_search_hits")
 
     def __init__(self) -> None:
         self._state: dict[str, ReadState] = {}
+        # search key -> digest of the result it returned last time.
+        self._searches: dict[str, str] = {}
+        # normalized file path -> line numbers a search matched in it.
+        self._search_hits: dict[str, list[int]] = {}
+
+    def repeats_search(self, key: str, result: str) -> bool:
+        """Record a search result; True when the same search already returned it.
+
+        Compares the result itself, not a write counter: a file changed by a
+        shell command between the two calls yields a new result and no note.
+        """
+        digest = hashlib.sha256(result.encode("utf-8", "replace")).hexdigest()
+        repeated = self._searches.pop(key, None) == digest
+        self._searches[key] = digest
+        while len(self._searches) > _SEARCH_MEMORY:
+            self._searches.pop(next(iter(self._searches)))
+        return repeated
+
+    def record_search_hits(self, path: str | Path, lines: list[int]) -> None:
+        """Remember where a search matched in a file, for the read that follows."""
+        if not lines:
+            return
+        key = os.path.normpath(str(path))
+        self._search_hits.pop(key, None)
+        self._search_hits[key] = sorted(set(lines))[:_HIT_LINES_PER_FILE]
+        while len(self._search_hits) > _SEARCH_MEMORY:
+            self._search_hits.pop(next(iter(self._search_hits)))
+
+    def take_search_hits(self, path: str | Path) -> list[int]:
+        """Lines a search matched in this file, forgotten once handed out."""
+        return self._search_hits.pop(os.path.normpath(str(path)), [])
 
     def record_read(
         self, path: str | Path, offset: int = 1, limit: int | None = None,
@@ -112,6 +147,55 @@ class FileStates:
             return "Warning: file has been modified since last read. Re-read to verify content before editing."
         return None
 
+    def changed_since_read(self, path: str | Path) -> bool:
+        """True when this agent read or wrote the file and it differs on disk now.
+
+        False for a file this agent never saw: there is no older view to
+        protect, and the unread warning of :meth:`check_read` covers it.
+        """
+        p = str(Path(path).resolve())
+        entry = self._state.get(p)
+        if entry is None:
+            return False
+        try:
+            current_mtime = os.path.getmtime(p)
+        except OSError:
+            return False
+        if entry.content_hash:
+            if _hash_file(p) == entry.content_hash:
+                entry.mtime = current_mtime
+                return False
+            return True
+        return current_mtime != entry.mtime
+
+    def check_full_read(self, path: str | Path) -> str | None:
+        """Like check_read, and also flag a read that only covered part of the file.
+
+        A whole-file overwrite has no anchor text to fail against, so a view of
+        lines 1-50 of a 5000-line file is not enough to replace it safely.
+        """
+        warning = self.check_read(path)
+        if warning:
+            return warning
+        entry = self._state.get(str(Path(path).resolve()))
+        if entry is None or not entry.can_dedup:
+            return None
+        start = max(1, entry.offset or 1)
+        if start <= 1 and entry.limit is None:
+            return None
+        try:
+            with open(path, "rb") as handle:
+                total = sum(1 for _ in handle)
+        except OSError:
+            return None
+        end = total if entry.limit is None else min(total, start + entry.limit - 1)
+        if start <= 1 and end >= total:
+            return None
+        return (
+            f"Warning: file was only partially read (lines {start}-{end} of {total}). "
+            "Read it fully before overwriting it."
+        )
+
     def is_unchanged(self, path: str | Path, offset: int = 1, limit: int | None = None) -> bool:
         """Return True if file was previously read with same params and content is unchanged."""
         p = str(Path(path).resolve())
@@ -146,6 +230,8 @@ class FileStates:
     def clear(self) -> None:
         """Clear all tracked state (useful for testing)."""
         self._state.clear()
+        self._searches.clear()
+        self._search_hits.clear()
 
 
 class FileStateStore:

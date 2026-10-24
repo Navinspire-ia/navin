@@ -65,7 +65,7 @@ export function DossierPreview({ title, body }: { title: string; body?: string }
           if (block.kind === "table") {
             return (
               <div key={`t-${index}`} className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-[12px] tabular-nums">
+                <table className="w-full border-collapse text-start text-[12px] tabular-nums">
                   <thead>
                     <tr className="bg-[#1B365D] text-white">
                       {block.rows[0].map((cell, cellIndex) => (
@@ -93,7 +93,7 @@ export function DossierPreview({ title, body }: { title: string; body?: string }
           if (block.kind === "list") {
             const List = block.ordered ? "ol" : "ul";
             return (
-              <List key={`l-${index}`} className={block.ordered ? "list-decimal pl-5" : "list-disc pl-5"}>
+              <List key={`l-${index}`} className={block.ordered ? "list-decimal ps-5" : "list-disc ps-5"}>
                 {block.items.map((item, itemIndex) => (
                   <li key={itemIndex}>{item}</li>
                 ))}
@@ -170,7 +170,7 @@ export function CvPreview({
       {strengths?.length ? (
         <section className="mt-4">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{labels.strengths}</p>
-          <ul className="mt-1 list-disc pl-5 text-[13px]">
+          <ul className="mt-1 list-disc ps-5 text-[13px]">
             {strengths.map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -185,10 +185,10 @@ export function CvPreview({
               <div key={`${row.title}-${index}`}>
                 <p className="text-[13px] font-semibold">
                   {[row.title, row.company].filter(Boolean).join("  ·  ")}
-                  {row.period ? <span className="ml-2 font-normal text-muted-foreground">{row.period}</span> : null}
+                  {row.period ? <span className="ms-2 font-normal text-muted-foreground">{row.period}</span> : null}
                 </p>
                 {row.bullets?.length ? (
-                  <ul className="mt-1 list-disc pl-5 text-[13px]">
+                  <ul className="mt-1 list-disc ps-5 text-[13px]">
                     {row.bullets.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -202,7 +202,7 @@ export function CvPreview({
       {highlights?.length ? (
         <section className="mt-4">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{labels.highlights}</p>
-          <ul className="mt-1 list-disc pl-5 text-[13px] leading-relaxed">
+          <ul className="mt-1 list-disc ps-5 text-[13px] leading-relaxed">
             {highlights.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
           </ul>
         </section>

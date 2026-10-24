@@ -24,6 +24,7 @@ import { BrandVisuals, CreativeCard, MediaThumb } from "@/components/studio/mark
 import { MarketingKpiGrid, buildMarketingKpis } from "@/components/studio/marketing/MarketingKpis";
 import { ConnectorsPane, ContentQueue, Pill } from "@/components/studio/marketing/MarketingPublish";
 import { MarketingScene } from "@/components/studio/marketing/MarketingScene";
+import { SiteLoginsPanel } from "@/components/settings/SiteLoginsPanel";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
 import { useThemeValue } from "@/hooks/useTheme";
@@ -597,7 +598,7 @@ export function MarketingWorkspace({
   return (
     <Customizer settings={{ theme: fluentTheme }}>
       <div
-        className={cn("flex h-full min-h-0 flex-col bg-background", chatOpen ? "pr-0" : "")}
+        className={cn("flex h-full min-h-0 flex-col bg-background", chatOpen ? "pe-0" : "")}
         style={{ paddingTop: NOTIFICATION_GUTTER ? 0 : undefined, WebkitFontSmoothing: "antialiased" }}
       >
         <header className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
@@ -707,7 +708,7 @@ export function MarketingWorkspace({
             <MessageBar messageBarType={MessageBarType.error} onDismiss={() => setError("")} className="mb-4">
               {error}
               <DefaultButton
-                className="ml-3"
+                className="ms-3"
                 text={tx("retry", "Try again")}
                 onClick={() => {
                   setReady(false);
@@ -1294,6 +1295,23 @@ export function MarketingWorkspace({
 
                 {pane === "settings" && desk ? (
                   <ConnectorsPane desk={desk} busy={busy} locale={i18n.language} tx={tx} run={run} onNotice={setNotice} />
+                ) : null}
+
+                {pane === "settings" ? (
+                  <Card title={tx("siteLoginsTitle", "Product login for demos")}>
+                    <p className="mb-3 text-pretty text-sm text-muted-foreground">
+                      {tx(
+                        "siteLoginsHint",
+                        "Save the product's login here so the desk can sign in, capture screenshots and record demo videos. The password stays in the vault.",
+                      )}
+                    </p>
+                    <SiteLoginsPanel
+                      compact
+                      token={token}
+                      site={desk?.product?.site || desk?.brand?.site || undefined}
+                      onSaved={(site) => setNotice(tx("siteLoginSaved", "Login saved for {{site}}.", { site }))}
+                    />
+                  </Card>
                 ) : null}
 
                 {pane === "social" ? (

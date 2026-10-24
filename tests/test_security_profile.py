@@ -10,10 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from navin.config.schema import Config
-from navin.config.security_profile import (
-    apply_security_profile,
-    ensure_webui_assisted_profile,
-)
+from navin.config.security_profile import apply_security_profile
 
 
 class FactoryDefaultTest(unittest.TestCase):
@@ -68,41 +65,14 @@ class AssistedProfileTest(unittest.TestCase):
         self.assertTrue(tools.approvals.enabled)
 
 
-class WebUIEnsureTest(unittest.TestCase):
-    def test_webui_switches_autonomous_to_assisted(self) -> None:
-        config = Config()
-        with patch.object(sys, "platform", "linux"):
-            changed = ensure_webui_assisted_profile(config)
-        self.assertTrue(changed)
-        self.assertEqual(config.tools.security_profile, "assisted")
-        self.assertTrue(config.tools.approvals.enabled)
-        self.assertTrue(config.tools.exec.builtin_deny_rules)
+class FullAccessDefaultTest(unittest.TestCase):
+    def test_a_fresh_config_never_asks(self) -> None:
+        """Full access is the default everywhere, the WebUI included: the
+        composer's permission menu opens on "Full access" until the user picks
+        another mode."""
+        from navin.webui.exec_policy_api import read_approval_mode
 
-    def test_webui_ensure_is_idempotent_once_assisted(self) -> None:
-        config = Config()
-        ensure_webui_assisted_profile(config)
-        self.assertFalse(ensure_webui_assisted_profile(config))
-
-    def test_explicit_non_autonomous_profile_is_left_alone(self) -> None:
-        config = Config()
-        config.tools.security_profile = "strict"
-        self.assertFalse(ensure_webui_assisted_profile(config))
-        self.assertEqual(config.tools.security_profile, "strict")
-        self.assertFalse(config.tools.approvals.enabled)
-
-    def test_explicit_autonomous_opts_out_of_webui_soft_switch(self) -> None:
-        config = Config()
-        config.tools.security_profile = "autonomous"
-        self.assertFalse(ensure_webui_assisted_profile(config))
-        self.assertEqual(config.tools.security_profile, "autonomous")
-        self.assertFalse(config.tools.approvals.enabled)
-
-    def test_unset_profile_still_gets_approvals_if_other_knobs_are_on(self) -> None:
-        config = Config()
-        config.tools.restrict_to_workspace = True
-        self.assertTrue(ensure_webui_assisted_profile(config))
-        self.assertEqual(config.tools.security_profile, "assisted")
-        self.assertTrue(config.tools.approvals.enabled)
+        self.assertEqual(read_approval_mode(Config()), "autonomous")
 
 
 if __name__ == "__main__":

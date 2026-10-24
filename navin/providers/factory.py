@@ -223,6 +223,7 @@ def _make_provider_core(
             default_model=model,
             region=getattr(p, "region", None) if p else None,
             profile=getattr(p, "profile", None) if p else None,
+            role_arn=getattr(p, "role_arn", None) if p else None,
             extra_body=p.extra_body if p else None,
         )
     else:
@@ -290,11 +291,6 @@ def _bundled_free_slugs() -> list[str]:
     return _catalog_slugs(free=True)
 
 
-def _bundled_managed_slugs() -> list[str]:
-    """Paid catalog slugs used when a Navin subscription model saturates."""
-    return _catalog_slugs(free=False)
-
-
 def _is_chat_preset(preset: ModelPresetConfig) -> bool:
     if (getattr(preset, "modality", "text") or "text") != "text":
         return False
@@ -317,6 +313,9 @@ def _auto_free_fallback_presets(
     """
     active = ((model or primary.model) or "").strip()
     if not active.endswith(":free"):
+        return []
+    if _is_navin(primary.provider):
+        # ":free" slugs are OpenRouter's; the subscription never routes there.
         return []
 
     from navin.providers.managed_catalog import FREE_VISION_MODEL
@@ -343,7 +342,7 @@ def _auto_free_fallback_presets(
                 model=slug,
                 provider=provider,
                 max_tokens=primary.max_tokens,
-                context_window_tokens=primary.context_window_tokens,
+                context_window_tokens=primary.effective_context_window_tokens,
                 temperature=primary.temperature,
             )
         )
@@ -446,35 +445,23 @@ def _auto_preset_fallback_presets(
             model=slug,
             provider=preset.provider or primary.provider,
             max_tokens=primary.max_tokens,
-            context_window_tokens=primary.context_window_tokens,
+            context_window_tokens=primary.effective_context_window_tokens,
             temperature=primary.temperature,
         )
+        if slug.endswith(":free") and _is_navin(candidate.provider):
+            # OpenRouter free pool: not served by the Navin gateway.
+            continue
         (free if slug.endswith(":free") else paid).append(candidate)
         if len(paid) >= _MAX_AUTO_PRESET_FALLBACKS:
             break
 
-    chain = (paid + free)[:_MAX_AUTO_PRESET_FALLBACKS]
-    if chain or (primary.provider or "").strip().lower() != "navin":
-        return chain
+    # No bundled-catalog top-up for the subscription: those slugs are
+    # OpenRouter's, and it fails over only across its own synced catalog.
+    return (paid + free)[:_MAX_AUTO_PRESET_FALLBACKS]
 
-    # A subscription with an empty catalog still has the bundled managed
-    # models on the same key.
-    for slug in _bundled_managed_slugs():
-        if slug in seen:
-            continue
-        seen.add(slug)
-        chain.append(
-            ModelPresetConfig(
-                model=slug,
-                provider=primary.provider,
-                max_tokens=primary.max_tokens,
-                context_window_tokens=primary.context_window_tokens,
-                temperature=primary.temperature,
-            )
-        )
-        if len(chain) >= _MAX_AUTO_PRESET_FALLBACKS:
-            break
-    return chain
+
+def _is_navin(provider: str | None) -> bool:
+    return (provider or "").strip().lower() == "navin"
 
 
 def _configured_fallback_presets(
@@ -607,6 +594,25 @@ def provider_signature(
     )
 
 
+def snapshot_context_window(
+    config: Config,
+    *,
+    preset_name: str | None = None,
+    preset: ModelPresetConfig | None = None,
+) -> int:
+    """Effective context window of a preset, as the runtime will use it.
+
+    The primary's window, capped by explicitly configured fallbacks only (auto
+    fallbacks inherit the primary's window, so they never shrink it).
+    """
+    resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
+    fallback_windows = [
+        fallback.effective_context_window_tokens
+        for fallback in _resolve_fallback_presets(config, resolved)
+    ]
+    return min([resolved.effective_context_window_tokens, *fallback_windows])
+
+
 def build_provider_snapshot(
     config: Config,
     *,
@@ -614,14 +620,10 @@ def build_provider_snapshot(
     preset: ModelPresetConfig | None = None,
 ) -> ProviderSnapshot:
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
-    fallback_windows = [
-        fallback.context_window_tokens
-        for fallback in _resolve_fallback_presets(config, resolved)
-    ]
     return ProviderSnapshot(
         provider=make_provider(config, preset=resolved),
         model=resolved.model,
-        context_window_tokens=min([resolved.context_window_tokens, *fallback_windows]),
+        context_window_tokens=snapshot_context_window(config, preset=resolved),
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
     )
@@ -671,10 +673,14 @@ def load_provider_snapshot_allowing_unconfigured(
     *,
     preset_name: str | None = None,
 ) -> ProviderSnapshot:
-    """Reload config for runtime refresh; tolerate incomplete provider setup."""
-    from navin.config.loader import load_config, resolve_config_env_vars
+    """Reload config for runtime refresh; tolerate incomplete provider setup.
+
+    Runs before every turn, so it reads the shared cached config (re-parsed
+    only when the file changes); nothing below mutates it.
+    """
+    from navin.config.loader import load_config_cached, resolve_config_env_vars
 
     return build_provider_snapshot_allowing_unconfigured(
-        resolve_config_env_vars(load_config(config_path)),
+        resolve_config_env_vars(load_config_cached(config_path)),
         preset_name=preset_name,
     )

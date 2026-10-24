@@ -280,6 +280,17 @@ def apply_usage_summary(config: Any, usage: Mapping[str, Any] | None) -> bool:
     if budget is not None and getattr(lic, "usage_budget_micro_usd", 0) != budget:
         lic.usage_budget_micro_usd = budget
         changed = True
+    if budget is not None:
+        # A site that predates the bonus sends neither field: no bonus.
+        extra = min(_int("extraBudgetMicroUsd", "extra_budget_micro_usd") or 0, budget)
+        until_raw = usage.get("extraBudgetUntil", usage.get("extra_budget_until"))
+        until = until_raw.strip() if extra > 0 and isinstance(until_raw, str) else ""
+        if getattr(lic, "usage_extra_budget_micro_usd", 0) != extra:
+            lic.usage_extra_budget_micro_usd = extra
+            changed = True
+        if getattr(lic, "usage_extra_until", "") != until:
+            lic.usage_extra_until = until
+            changed = True
     if spent is not None and getattr(lic, "usage_spent_micro_usd", 0) != spent:
         lic.usage_spent_micro_usd = spent
         changed = True

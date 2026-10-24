@@ -94,7 +94,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
 
   const rowClass = (active: boolean) =>
     cn(
-      "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-left text-[12px] leading-4",
+      "flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1 text-start text-[14px] leading-5",
       "transition-[border-color,background-color]",
       active
         ? "border-primary/50 bg-primary/10"
@@ -108,7 +108,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
       data-choice-prompt-scroll
       className={cn(
         "mb-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-border/70 bg-card/95",
-        "px-1.5 py-1.5 text-[12px]",
+        "px-2 py-2 text-[14px]",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 px-1">
@@ -116,7 +116,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
           className="h-3.5 w-3.5 shrink-0 text-primary"
           aria-hidden
         />
-        <p className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="shrink-0 text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
           {t("thread.choice.title", "Questions")}
         </p>
         <p
@@ -128,11 +128,11 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
         </p>
         <div className="flex shrink-0 items-center gap-1">
           {request.allowSkip ? (
-            <Button size="sm" variant="ghost" className="h-7 px-2" disabled={busy} onClick={skip}>
+            <Button size="sm" variant="ghost" className="h-8 px-2.5 text-[14px]" disabled={busy} onClick={skip}>
               {t("thread.choice.skip", "Skip Esc")}
             </Button>
           ) : null}
-          <Button size="sm" className="h-7 px-2.5" disabled={busy || !canContinue} onClick={continueChoice}>
+          <Button size="sm" className="h-8 px-3 text-[14px]" disabled={busy || !canContinue} onClick={continueChoice}>
             {t("thread.choice.continue", "Continue")}
           </Button>
         </div>
@@ -155,7 +155,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
               whileTap={reduceMotion ? undefined : { scale: 0.96 }}
               transition={spring}
             >
-              <span className="w-3.5 shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+              <span className="w-4 shrink-0 text-[13px] font-semibold tabular-nums text-muted-foreground">
                 {letter}
               </span>
               <span className="min-w-0 flex-1 truncate">
@@ -168,7 +168,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
                 ) : null}
               </span>
               {option.recommended ? (
-                <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                <span className="shrink-0 text-[12px] font-semibold uppercase tracking-wide text-primary">
                   {t("thread.choice.recommended", "Recommended")}
                 </span>
               ) : null}
@@ -187,9 +187,9 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
             disabled={busy}
             title={optionTitle(t("thread.choice.other", "Other"), otherDetail)}
             onClick={selectOther}
-            className="flex min-w-0 shrink-0 items-center gap-1.5 text-left"
+            className="flex min-w-0 shrink-0 items-center gap-1.5 text-start"
           >
-            <span className="w-3.5 shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+            <span className="w-4 shrink-0 text-[13px] font-semibold tabular-nums text-muted-foreground">
               {otherLetter}
             </span>
             <span className="font-medium text-foreground">
@@ -218,7 +218,7 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
             }}
             placeholder={t("thread.choice.otherPlaceholder", "Your answer")}
             aria-label={t("thread.choice.other", "Other")}
-            className="h-5 min-w-0 flex-1 bg-transparent text-[12px] leading-5 text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-6 min-w-0 flex-1 bg-transparent text-[14px] leading-6 text-foreground outline-none placeholder:text-muted-foreground"
           />
         </motion.div>
       </div>

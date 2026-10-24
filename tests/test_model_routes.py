@@ -77,6 +77,10 @@ class ComposerModeRoleTests(unittest.TestCase):
         self.assertEqual(
             COMPOSER_MODE_ROUTE_ROLES["debug"], WORKFLOW_ROUTE_ROLES["/debug"]
         )
+        self.assertEqual(
+            COMPOSER_MODE_ROUTE_ROLES["reverse"], WORKFLOW_ROUTE_ROLES["/reverse"]
+        )
+        self.assertEqual(composer_mode_role(" Reverse "), "deep")
 
 
 class ResolveRouteTests(unittest.TestCase):

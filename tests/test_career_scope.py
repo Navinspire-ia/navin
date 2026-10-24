@@ -179,12 +179,17 @@ def test_delete_candidate_never_deletes_files_outside_document_folder(company, l
     ({"remote": "", "description": "Python SQL"}, "work_mode_unknown"),
     ({"remote": "remote", "description": "Hybrid: 2 days on site"}, "work_mode"),
     ({"remote": "remote", "description": "No remote allowed"}, "work_mode"),
-    ({"posted_at": day(31)}, "date"), ({"posted_at": day(-1)}, "date"),
+    ({"posted_at": day(31)}, "date"), ({"posted_at": day(-2)}, "date"),
     ({"posted_at": "", "created_at": datetime.now(timezone.utc).timestamp()}, "date_unknown"),
     ({"posted_at": "2026-02-30"}, "date_unknown"), ({"title": "Sales executive"}, "role"),
 ])
 def test_mandatory_constraints_reject_non_matching_offers(company, changes, reason):
     assert offer_rejection(mission(**changes), _state(company)["criteria"]) == reason
+
+
+def test_offer_dated_today_in_a_zone_ahead_of_utc_is_accepted(company):
+    # 00:30 in Paris is still yesterday in UTC: the site's "today" is UTC+1 day.
+    assert not offer_rejection(mission(posted_at=day(-1)), _state(company)["criteria"])
 
 
 @pytest.mark.parametrize("country", ["FR", "BE", "CH", "LU"])

@@ -222,7 +222,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         supports_prompt_caching=True,
         gateway_reasoning_style="reasoning_effort",
     ),
-    # Navin managed gateway (subscription): same OpenRouter wire protocol,
+    # Navin managed gateway (subscription): OpenAI-compatible LiteLLM proxy,
     # dedicated slot so BYOK OpenRouter keys never collide with the plan key.
     ProviderSpec(
         name="navin",
@@ -231,8 +231,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="Navin",
         backend="openai_compat",
         is_gateway=True,
-        detect_by_base_keyword="openrouter",
-        default_api_base="https://openrouter.ai/api/v1",
+        # The Navin gateway (LiteLLM). Never OpenRouter: that is BYOK only.
+        detect_by_base_keyword="llm.navin.live",
+        default_api_base="https://llm.navin.live/v1",
         supports_prompt_caching=True,
         gateway_reasoning_style="reasoning_effort",
     ),

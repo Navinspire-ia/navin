@@ -160,7 +160,7 @@ export function CrmDashboardView({
                       <li key={opp.id || index}>
                         <button
                           type="button"
-                          className="min-h-10 cursor-pointer text-left hover:underline"
+                          className="min-h-10 cursor-pointer text-start hover:underline"
                           onClick={() => onOpenDeal(opp.id)}
                         >
                           {opportunityName(opp) || displayText(opp.id)} - {displayText(item.reason)}

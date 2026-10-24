@@ -21,20 +21,36 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from navin.agent.code_validation import CodeValidationState, edit_paths, workspace_code_snapshot
+from navin.agent.code_validation import (
+    CodeValidationState,
+    edit_paths,
+    exec_cannot_edit,
+    exec_runs_only_tests,
+    moves_worktree,
+    workspace_code_snapshot,
+)
 from navin.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
 )
 from navin.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from navin.agent.integration_check import (
+    build_frontend_gap_nudge,
+    build_integration_nudge,
+    frontend_gap,
+    unwired_frontend_files,
+)
 from navin.agent.prompt_profile import log_request_profile
-from navin.agent.reasoning_router import route_reasoning_effort
+from navin.agent.reasoning_router import fit_effort_to_output, route_reasoning_effort
 from navin.agent.run_policy import TurnPolicy, bind_turn_policy, reset_turn_policy
 from navin.agent.scope_anchor import (
     calls_touch_targets,
+    exploration_budget_message,
+    is_action_call,
     is_orientation_batch,
     scope_drift_message,
 )
+from navin.agent.token_budget import room_for_output
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.registry import ToolRegistry, is_tool_error_result, tool_error_hint
 from navin.agent.turn_timing import (
@@ -60,25 +76,38 @@ from navin.utils.helpers import (
 from navin.utils.llm_runtime import LLMRuntime
 from navin.utils.prompt_templates import render_template
 from navin.utils.runtime import (
-    EMPTY_FINAL_RESPONSE_MESSAGE,
+    IGNORED_NUDGES_BEFORE_FINAL,
     NO_PROGRESS_STOP_FALLBACK,
     build_budget_exhausted_finalization_message,
     build_delivery_continue_message,
     build_finalization_retry_message,
     build_goal_continue_message,
+    build_ignored_nudge_reminder_message,
+    build_ignored_nudges_finalization_message,
     build_length_recovery_message,
+    build_no_action_continue_message,
     build_no_progress_continue_message,
     build_no_progress_finalization_message,
+    build_remaining_work_continue_message,
+    build_strict_finalization_retry_message,
     build_verify_before_done_message,
     build_verify_failed_message,
+    build_wrap_up_message,
     is_blank_text,
+    lists_remaining_work,
+    record_identical_action,
     repeated_external_lookup_error,
+    repeated_identical_action_error,
     repeated_readonly_tool_error,
+    repeated_rerun_check_error,
     repeated_tool_failure_hint,
     repeated_tool_failure_is_hard_stop,
     repeated_workspace_violation_error,
+    request_used_tools,
     reset_readonly_spin_counts,
     reset_tool_failure_count,
+    session_empty_final_response_message,
+    session_tool_failure_stop_message,
 )
 
 _VERIFY_TOOL_NAMES = frozenset({"verify", "lint", "test_run"})
@@ -86,22 +115,67 @@ _VERIFY_TOOL_NAMES = frozenset({"verify", "lint", "test_run"})
 _EDIT_TOOL_NAMES = frozenset(
     {"apply_patch", "edit_file", "write_file", "manage_files"}
 )
+# Tools that can change files the runner does not see as edits: the workspace
+# is snapshotted around them (two full listings), except for a command that
+# clearly only reads (ls, cat, git status...) or a read-only project action.
+_WORKSPACE_EDITING_TOOLS = frozenset({"exec", "write_stdin", "run_cli_app", "spawn", "manage_files", "lsp", "project"})
+_READ_ONLY_PROJECT_ACTIONS = frozenset({"detect", "status", "logs"})
+# Project actions that check the code: their outputs (build dirs, caches,
+# reports) are not edits, and a file another session changes meanwhile is not
+# this agent's work.
+_CHECK_PROJECT_ACTIONS = frozenset({"build", "test", "e2e", "lint", "typecheck"})
+
+
+def _runs_only_checks(call: Any) -> bool:
+    arguments = call.arguments if isinstance(call.arguments, dict) else {}
+    return call.name == "project" and arguments.get("action") in _CHECK_PROJECT_ACTIONS
+
+
+def _may_edit_workspace(call: Any) -> bool:
+    if call.name not in _WORKSPACE_EDITING_TOOLS:
+        return False
+    arguments = call.arguments if isinstance(call.arguments, dict) else {}
+    if call.name == "exec":
+        return not exec_cannot_edit(arguments)
+    if call.name == "project":
+        return arguments.get("action") not in _READ_ONLY_PROJECT_ACTIONS
+    return True
 PROGRESS_TOOL_NAMES = _EDIT_TOOL_NAMES | {
     "exec",
     "test_run",
     "verify",
     "lint",
     "start_app",
+    "project",
     "open_preview",
     "write_stdin",
 }
 _PROGRESS_TOOL_NAMES = PROGRESS_TOOL_NAMES
+# Pushes per turn for an answer that still lists work. Each one needs a new
+# edit since the last, so the cap only bounds a very long multi-task request.
+# Each answer that still lists work is sent back while the turn keeps acting;
+# the progress check stops it sooner when a reminder changed nothing.
+_MAX_REMAINING_WORK_NUDGES = 12
+# A subagent may own only the screen while the lead or a teammate owns the
+# router: it can hand the wiring back instead of editing files it was not given.
+_SUBAGENT_WIRING_NOTE = (
+    "\nAs a subagent: when the router or menu is outside the files you were given, "
+    "do not edit it; list each screen in your report as left for the lead to wire, "
+    "with the file that should register it."
+)
+# A plan of many steps is worked one reminder per step at most; the progress
+# check stops it sooner when a reminder changed nothing.
+_MAX_PLAN_NUDGES = 30
+
 # Blocked duplicate calls and explicit no-op results count as a stall.
 # Successful reads of different files are progress, including long audits.
 _REPEATED_CALL_BLOCKS = frozenset({
     "repeated identical tool call blocked",
     "repeated identical read blocked",
+    "repeated identical action blocked",
     "repeated external lookup blocked",
+    # Same check, nothing changed since: its earlier result still stands.
+    "unchanged check not re-run",
     # Policy refusals: a model trying one workaround after another around a
     # mode or opt-in gate made no progress either, and was never stopped.
     "blocked by plan mode",
@@ -111,18 +185,124 @@ _REPEATED_CALL_BLOCKS = frozenset({
     "blocked by code module denylist",
     "blocked by module MCP denylist",
     "browser not requested",
-    "server churn not requested",
     "browser tests not requested",
 })
 _NO_PROGRESS_NUDGE = 5
+_REPEAT_NUDGE_KEY = "action:nudge"
 _NO_PROGRESS_STOP = 8
 # Look-around batches (list/find/grep/read) touching none of the targets the
 # user named before the turn is told, once, where the request pointed. Two
 # batches is a repo listing plus a README, i.e. exactly the drift.
 _SCOPE_DRIFT_NUDGE = 2
+# Consecutive look-around batches that search, whatever the request
+# named: a turn that only searches for this long is told once to act or answer
+# instead of spending its remaining steps (each one a full model round trip).
+# Four is enough to locate the code behind a request with the index tools.
+_EXPLORATION_NUDGE = 4
+# Audit and review turns: reading a lot IS the work, so the bar is wider.
+_EXPLORATION_NUDGE_AUDIT = 8
+_AUDIT_MODES = frozenset({"review", "security", "reverse"})
+_AUDIT_REQUEST = re.compile(
+    r"\b(audit\w*|review\w*|revue\w*|relecture\w*|inspect\w*)\b", re.IGNORECASE,
+)
+_ROOT_PATHS = frozenset({"", ".", "./", "/"})
+
+
+def _call_args(call: Any) -> dict[str, Any]:
+    args = getattr(call, "arguments", None)
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _look_call_key(call: Any) -> str:
+    args = _call_args(call)
+    try:
+        blob = json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        blob = repr(args)
+    return f"{getattr(call, 'name', '')}:{blob}"
+
+
+def _is_wide_look_call(call: Any) -> bool:
+    """A call that tours the repository instead of reading one precise thing."""
+    name = str(getattr(call, "name", "") or "")
+    args = _call_args(call)
+    path = str(args.get("path") or "").strip()
+    if name == "list_dir":
+        return bool(args.get("recursive")) or path in _ROOT_PATHS
+    if name == "find_files":
+        return path in _ROOT_PATHS and not (args.get("query") or args.get("glob"))
+    if name in {"metagraph", "code_index"}:
+        return str(args.get("action") or "") in {"overview", "hubs", "cluster"}
+    if name == "exec":
+        # Shell reads cannot be told apart cheaply: they keep counting.
+        return True
+    return False
+
+
+def counts_as_exploration(calls: Any, seen: set[str]) -> bool:
+    """True when a look-around batch tours the repo rather than reads precisely.
+
+    Distinct targeted lookups (a read_file, a code_index definition, a scoped
+    grep) never count; a repo-wide listing or a call repeated from earlier in
+    the run does. ``seen`` is updated with this batch's calls.
+    """
+    calls = list(calls)
+    if not is_orientation_batch(calls):
+        return False
+    wandering = False
+    for call in calls:
+        key = _look_call_key(call)
+        if key in seen or _is_wide_look_call(call):
+            wandering = True
+        seen.add(key)
+    return wandering
+
+
+def is_audit_run(spec: Any) -> bool:
+    """An explicit audit/review turn, where many reads are the expected work."""
+    if str(getattr(spec, "composer_mode", "") or "") in _AUDIT_MODES:
+        return True
+    for message in getattr(spec, "initial_messages", None) or ():
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            )
+        if isinstance(content, str) and _AUDIT_REQUEST.search(content):
+            return True
+    return False
+
+
+def exploration_threshold(spec: Any) -> int:
+    return _EXPLORATION_NUDGE_AUDIT if is_audit_run(spec) else _EXPLORATION_NUDGE
+# Look-only steps (reads or searches) after the latest edit came back green.
+# The work is done and proven: re-reading it "to double-check" costs a full
+# round trip each and the user waits for nothing.
+_WRAP_UP_NUDGE = 3
 # Only repeated final answers without new validation or repair are capped.
 # Actual edit/check cycles can continue until the accepted task is complete.
 _MAX_VERIFY_FAIL_NUDGES = 2
+# Continuations a user Stop hook may force in one turn before the answer stands.
+_MAX_STOP_HOOK_ROUNDS = 3
+
+
+def _stop_hook_round_cap(spec: Any) -> int:
+    """Stop-hook rounds allowed this turn: more while a /ralph-loop runs here."""
+    if getattr(spec, "user_hook_scope", None) == "subagent":
+        return _MAX_STOP_HOOK_ROUNDS
+    try:
+        from navin.agent.ralph_loop import round_cap
+
+        return round_cap(spec.workspace, spec.session_key, _MAX_STOP_HOOK_ROUNDS)
+    except Exception:  # noqa: BLE001 - never break a turn over the loop
+        return _MAX_STOP_HOOK_ROUNDS
 _MAX_TOTAL_VALIDATION_NUDGES = 8
 # Browser-driven test runs (Playwright, Cypress, Puppeteer, tests/browser,
 # e2e) per accepted request, installs of their browsers included. A CLI session
@@ -146,21 +326,6 @@ _SCRAPE_REQUEST_MARKERS = re.compile(
     r"|dataset|appels? d'?offres?|tenders?|portail|portal|connecte[- ]toi|log ?in|sign ?in",
     re.IGNORECASE,
 )
-# Production builds, killing a server and starting another one are opt-in. A
-# CSS tweak in a Next app ran `npm run build` under the live `next dev` (which
-# rewrote `.next` beneath it), killed the server on :3011, then started dev,
-# start, and a second server on :3012. The dev server reloads edits by itself.
-_SERVER_REQUEST_MARKERS = re.compile(
-    r"\bbuild|compil|d[ée]plo|deploy|\bprod\b|production|release|red[ée]marr|restart|relanc"
-    r"|reboot|\bkill|arr[êe]te? le serveur|stop the server|lance le serveur|start the server"
-    r"|d[ée]marre le serveur|npm run|\bport\b",
-    re.IGNORECASE,
-)
-_PACKAGE_RUNNERS = frozenset({"npm", "pnpm", "yarn", "bun"})
-_SERVER_SCRIPTS = frozenset({"build", "dev", "start", "serve", "preview"})
-_FRAMEWORK_CLIS = frozenset({"next", "vite", "nuxt", "astro", "remix", "svelte-kit", "ng"})
-_FRAMEWORK_VERBS = frozenset({"build", "dev", "start", "serve", "preview"})
-_KILLERS = frozenset({"kill", "pkill", "killall"})
 _BROWSER_TEST_MARKERS = re.compile(
     r"\b(?:playwright|cypress|puppeteer|webdriverio|selenium)\b"
     r"|(?:^|[\s/'\"])tests?/(?:browser|e2e)/|\be2e\b",
@@ -449,8 +614,12 @@ _MAX_INVALID_TOOL_ITERATIONS = 3
 # than a wave is not lossy (the surplus waits in the queue), but it spends one
 # of the _MAX_INJECTION_CYCLES per fraction of a wave, so a fan-out wider than
 # this starves the cycles left for genuine follow-up work.
-_MAX_INJECTIONS_PER_TURN = 200
+_MAX_INJECTIONS_PER_TURN = 1000
 _MAX_INJECTION_CYCLES = 5
+_MAX_GOAL_CONTINUES_PER_RUN = 2
+# Hard ceiling, in slices of max_iterations, for runs that never hand back.
+_MAX_UNBOUNDED_SLICES = 40
+_MIN_UNBOUNDED_STEPS = 1000
 
 
 def _call_read_only(tool: Any, params: Any) -> bool:
@@ -517,7 +686,11 @@ def _browser_page_open(session_key: str | None) -> bool:
 
 
 def interrupted_work_recap(messages: list[dict[str, Any]], start: int) -> str:
-    """What the turn did before it stopped, from its own tool calls."""
+    """What the turn did before it stopped, from its own tool calls.
+
+    Never asks the user to type "continue" or resend: retryable errors are
+    resumed automatically by turn recovery.
+    """
     edited: list[str] = []
     commands = failures = 0
     for message in messages[start:]:
@@ -549,7 +722,7 @@ def interrupted_work_recap(messages: list[dict[str, Any]], start: int) -> str:
     if commands:
         failed = f", {failures} tool call(s) failed" if failures else ""
         lines.append(f"- Commands run: {commands}{failed}")
-    lines.append("- Changes are saved. Send \"continue\" to pick up from here.")
+    lines.append("- Changes are saved; nothing done so far is lost.")
     return "\n".join(lines)
 
 
@@ -573,43 +746,6 @@ def _exec_cwd(workspace: Path | None, working_dir: Any) -> Path | None:
             return candidate
         return workspace / candidate if workspace is not None else None
     return workspace
-
-
-def is_server_churn_command(command: str) -> str:
-    """What a shell command would do to the app's servers: ``build`` (a
-    production build), ``kill`` (stopping a process) or ``serve`` (starting a
-    dev/prod server), or ``""``. Reading (``cat package.json``, ``grep build``,
-    ``curl localhost:3000``) and checks (``tsc``, ``eslint``) are not churn."""
-    for segment in re.split(r"&&|\|\||[;|\n]", command):
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            tokens = segment.split()
-        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
-            tokens.pop(0)
-        while tokens and tokens[0] in {"npx", "pnpx", "bunx", "exec", "nohup", "setsid", "sudo"}:
-            tokens.pop(0)
-        if not tokens:
-            continue
-        program = tokens[0].rsplit("/", 1)[-1].lower()
-        rest = [token.lower() for token in tokens[1:] if not token.startswith("-")]
-        if program in _KILLERS or (program == "fuser" and "-k" in tokens):
-            return "kill"
-        if program == "xargs" and rest and rest[0] in _KILLERS:
-            return "kill"
-        if program in _PACKAGE_RUNNERS:
-            script = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else rest[0] if rest else ""
-            if script == "build" or script.startswith("build:"):
-                return "build"
-            if script in _SERVER_SCRIPTS or script.startswith(("dev:", "start:")):
-                return "serve"
-        if program in _FRAMEWORK_CLIS:
-            verb = rest[0] if rest else ("dev" if program == "vite" else "")
-            if verb == "build":
-                return "build"
-            if verb in _FRAMEWORK_VERBS:
-                return "serve"
-    return ""
 
 
 def is_browser_test_command(command: str, cwd: Path | None = None) -> bool:
@@ -656,7 +792,6 @@ class AgentLoopGuard:
     browser_test_runs: int = 0
     browser_tests_requested: bool | None = None
     browser_scraping: bool | None = None
-    server_churn_requested: bool | None = None
 
     external_lookups: dict[str, int] = field(default_factory=dict)
     workspace_violations: dict[str, int] = field(default_factory=dict)
@@ -684,6 +819,8 @@ class AgentRunSpec:
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
     workspace: Path | None = None
+    # "subagent" makes user hooks fire SubagentStop instead of Stop.
+    user_hook_scope: str = "main"
     session_key: str | None = None
     context_block_limit: int | None = None
     tool_result_clearing: ToolResultClearing = field(default_factory=ToolResultClearing)
@@ -703,6 +840,9 @@ class AgentRunSpec:
     # never the end of the turn.
     tool_timeout_s: float | None = None
     goal_active_predicate: Callable[[], bool] | None = None
+    # "Keep going" nudges injected for an active goal in this run. Capped: a
+    # model that wants to stop (missing key, real blocker) was pushed back in.
+    goal_continue_count: int = 0
     goal_continue_message: GoalContinueMessage | None = None
     # When True, a first final answer with zero successful tool calls is nudged
     # once so delivery workflows (/studio, /campaign, …) cannot end on a plan.
@@ -713,6 +853,13 @@ class AgentRunSpec:
     # turn whose first look-around batches touch none of them is reminded
     # once where to look (see navin.agent.scope_anchor).
     scope_targets: tuple[str, ...] = ()
+    # Words of the request naming a screen, button or dashboard. A build turn
+    # that then changes backend files only is sent back once for the frontend
+    # side (see navin.agent.integration_check.frontend_gap).
+    ui_terms: tuple[str, ...] = ()
+    # Separate asks listed in the request; the final answer is checked once
+    # for the ones it never mentions.
+    explicit_asks: tuple[str, ...] = ()
     # Blank final responses re-asked before giving up on the turn.
     max_empty_retries: int = _MAX_EMPTY_RETRIES
     # finish_reason=length continuations before the output is cut short.
@@ -735,13 +882,17 @@ class AgentRunSpec:
     # updates it (and the flags above) mid-turn, so the documented plan→agent
     # simple-task handoff takes effect immediately instead of next turn.
     composer_mode: str | None = None
-    # Kept for metadata/prompt compatibility. No longer hard-blocks tools:
-    # Agent modes may use write_file / edit_file / apply_patch freely.
-    apply_patch_only: bool = False
     # Verify-red retries so far this turn. Each one raises the routed
     # reasoning effort a step (see navin.agent.reasoning_router): the cheap
     # attempt just failed, so its retry should not think at the same depth.
     effort_escalations: int = 0
+    # Prompt size the provider reported for the previous step of this run.
+    last_prompt_tokens: int = 0
+    # A greeting or a request too vague to act on: nothing to think through,
+    # whatever effort the user set for real work.
+    conversational_turn: bool = False
+    # Effort for steps that follow tool results (None = configured effort throughout).
+    followup_reasoning_effort: str | None = None
     # Tool names refused for this turn (e.g. scrape in Code module).
     denied_tools: frozenset[str] = field(default_factory=frozenset)
     # Module-level denials (product decisions). Kept apart from denied_tools so
@@ -754,6 +905,9 @@ class AgentRunSpec:
     # unambiguous media ask ("genere une image de ..."). Ignored once any tool
     # has run, and when the build does not ship that tool.
     forced_tool: str | None = None
+    # Send core schemas plus the ones this conversation loaded; the rest is
+    # listed in tool_search (agent.tool_deferral). Main turns only.
+    defer_tools: bool = False
     finalize_on_max_iterations: bool = True
     # Standalone CLI calls and subagents have no dispatcher to resume a slice.
     # Keep their runner alive, with checkpoints and context compaction, until
@@ -765,7 +919,6 @@ class AgentRunSpec:
     browser_test_runs: int = 0
     browser_tests_requested: bool | None = None
     browser_scraping: bool | None = None
-    server_churn_requested: bool | None = None
     # CLI, desktop and their delegated work enable this regardless of module.
     # Source edits require tests; config/style edits require appropriate checks.
     validate_code_changes: bool = False
@@ -800,11 +953,20 @@ class AgentRunner:
         """Schemas the model actually sees (allowlist + denylist + compact)."""
         from navin.agent.tool_surface import filter_tool_definitions
 
-        return filter_tool_definitions(
+        definitions = filter_tool_definitions(
             spec.tools.get_definitions(),
             spec.denied_tools | (spec.loop_guard.file_argument_fallback if spec.loop_guard else frozenset()),
             allowed=spec.allowed_tools,
             compact=True,
+        )
+        if not spec.defer_tools:
+            return definitions
+        from navin.agent.tool_deferral import visible_tool_definitions
+
+        return visible_tool_definitions(
+            definitions,
+            spec.session_key,
+            always=(spec.forced_tool,) if spec.forced_tool else (),
         )
 
     @staticmethod
@@ -879,7 +1041,16 @@ class AgentRunner:
             real_injection = bool(injections)
         if not injections and allow_goal_continue and assistant_message is not None:
             predicate = spec.goal_active_predicate
-            if predicate is not None and predicate():
+            from navin.session.turn_continuation import ends_with_user_question
+
+            if (
+                predicate is not None
+                and spec.goal_continue_count < _MAX_GOAL_CONTINUES_PER_RUN
+                # The model handed control back with a question: deliver it.
+                and not ends_with_user_question(str(assistant_message.get("content") or ""))
+                and predicate()
+            ):
+                spec.goal_continue_count += 1
                 injections = [self._build_goal_continue_message(spec)]
         if not injections:
             return False, injection_cycles
@@ -908,6 +1079,41 @@ class AgentRunner:
         else:
             logger.info("Injected sustained-goal continuation {}", phase)
         return True, injection_cycles
+
+    @staticmethod
+    def _watched_iterations(
+        spec: AgentRunSpec, current_messages: Callable[[], list[dict[str, Any]]],
+    ):
+        """Unbounded iterations for runs with no dispatcher, minus the spinning.
+
+        Subagents and one-shot CLI calls keep going past ``max_iterations``
+        because nothing would resume them. Every ``max_iterations`` steps the
+        work is accounted like a continuation slice; when two slices in a row
+        change nothing the iterations end, and the normal max-iterations
+        finalization writes where things stand. A hard ceiling backs it up.
+        """
+        from navin.session.turn_continuation import record_slice
+
+        size = max(1, int(spec.max_iterations or 1))
+        ceiling = max(size * _MAX_UNBOUNDED_SLICES, _MIN_UNBOUNDED_STEPS)
+        state: dict[str, Any] = {}
+        slice_start = len(current_messages())
+        for iteration in count():
+            if iteration >= ceiling:
+                logger.warning("Run stopped at the {}-step ceiling", ceiling)
+                return
+            if iteration and iteration % size == 0:
+                messages = current_messages()
+                report, stalled = record_slice(state, messages, slice_start)
+                slice_start = len(messages)
+                if stalled:
+                    logger.warning(
+                        "Run stopped: {} steps in a row changed nothing ({})",
+                        state.get("_continuation_stalled_calls"),
+                        "; ".join(report.failures[-2:]) or "no failure, no change",
+                    )
+                    return
+            yield iteration
 
     def _build_goal_continue_message(self, spec: AgentRunSpec) -> dict[str, str]:
         custom = spec.goal_continue_message
@@ -1093,6 +1299,8 @@ class AgentRunner:
         loop_guard = spec.loop_guard or AgentLoopGuard()
         spec.loop_guard = loop_guard
         validation = loop_guard.validation
+        if validation.root is None and spec.workspace:
+            validation.root = Path(spec.workspace)
         external_lookup_counts = loop_guard.external_lookups
         workspace_violation_counts = loop_guard.workspace_violations
         # Soft-error retry budget: identical failing calls escalate after a few tries.
@@ -1102,6 +1310,9 @@ class AgentRunner:
         readonly_call_counts = loop_guard.readonly_calls
         empty_content_retries = 0
         length_recovery_count = 0
+        # Text of the replies cut by finish_reason=length since the last tool
+        # batch: the final answer is all of it, not only the last piece.
+        length_parts: list[str] = []
         had_injections = False
         injection_cycles = 0
         compacted_tool_call_ids: set[str] = set()
@@ -1136,14 +1347,69 @@ class AgentRunner:
         )
 
         delivery_nudge_count = 0
+        stop_hook_rounds = 0
+        # The text answer the delivery nudge was sent after, and where the
+        # nudge sits: a blank reply to the nudge keeps that answer.
+        delivery_nudged_text: str | None = None
+        delivery_nudged_streamed = False
+        delivery_nudge_index = -1
+        # Did the final answer reach a streaming channel as deltas? A
+        # streaming channel drops the final message (it was "streamed"), so an
+        # answer produced by a non-streamed finalization call must be pushed
+        # through the stream or the user never sees it.
+        final_streamed = False
         no_progress_streak = loop_guard.no_progress_streak
         no_progress_nudge_count = loop_guard.no_progress_nudge_count
         # Scope anchor: look-around batches that never touch a named target.
         scope_drift_streak = 0
         scope_anchored = not spec.scope_targets
         scope_nudge_count = 0
+        look_around_streak = 0
+        look_around_nudged = False
+        look_around_seen: set[str] = set()
+        exploration_nudge_at = exploration_threshold(spec)
+        wrap_up_streak = 0
+        wrap_up_nudged_revision = -1
+        # The reminder (no progress, exploration, scope) still waiting to be
+        # acted on, and how many steps in a row ignored it since.
+        pending_nudge: str | None = None
+        ignored_nudges = 0
+        # Did the turn edit, run or delegate anything yet? A build turn that
+        # only read and then ends on text ("next message I start writing") is
+        # sent back once into the work; so is one that stops on a list of
+        # what remains.
+        acted = False
+        no_action_nudged = False
+        remaining_work_nudges = 0
+        # One "keep going" nudge per turn at most among wrap-up, delivery and
+        # no-action: stacked, they once turned a finished answer into an
+        # invented file and a full re-test. The remaining-work push keeps its
+        # own rule: only again after real progress, never for the user's steps.
+        soft_nudges = 0
+        # A request of several tasks ends one task at a time: each answer that
+        # still lists work gets a new push, but only after new work (an edit, a
+        # command, a delegation), so a model that is stuck or waiting on the
+        # user is not pushed in a loop.
+        remaining_work_mark: tuple[int, int] | None = None
+        action_steps = 0
+        # Open board steps of the conversation's plan: each reminder needs
+        # progress since the previous one (an edit or a step that moved).
+        plan_nudges = 0
+        plan_mark: tuple[Any, ...] | None = None
+        plan_repeats = 0
+        coverage_nudged = False
+        # A screen written but imported by nothing passes every test and build,
+        # so it is checked once at the final answer (git dates are wall clock).
+        integration_nudged = False
+        shortcut_nudged = False
+        frontend_gap_nudged = False
+        turn_started_wall = time.time()
         timing = TurnTiming(session_key=spec.session_key, model=spec.runtime.model)
-        iterations = count() if spec.continue_on_max_iterations else range(spec.max_iterations)
+        iterations = (
+            self._watched_iterations(spec, lambda: messages)
+            if spec.continue_on_max_iterations
+            else range(spec.max_iterations)
+        )
         for iteration in iterations:
             try:
                 # Keep the persisted conversation untouched. Context governance
@@ -1195,9 +1461,13 @@ class AgentRunner:
                     empty_retry=empty_content_retries > 0,
                 )
             timing.end_iteration()
+            timing.add_first_token(context.first_token_s)
+            # True once a non-streamed finalization call replaced this answer.
+            finalized = False
             context.response = response
             context.tool_calls = list(response.tool_calls)
 
+            raw_content = response.content if isinstance(response.content, str) else ""
             reasoning_text, cleaned_content = extract_reasoning(
                 response.reasoning_content,
                 response.thinking_blocks,
@@ -1212,6 +1482,8 @@ class AgentRunner:
                 context.usage["model"] = spec.runtime.model
             self._accumulate_usage(usage, raw_usage)
             prompt_n = int(raw_usage.get("prompt_tokens") or 0)
+            if prompt_n > 0:
+                spec.last_prompt_tokens = prompt_n
             if prompt_n > peak_prompt_tokens:
                 peak_prompt_tokens = prompt_n
                 peak_request_messages = list(messages_for_model)
@@ -1313,17 +1585,31 @@ class AgentRunner:
                             "responses was executed."
                         )
                 completed_tool_results: list[dict[str, Any]] = []
-                for tool_call, result, tool_event in zip(response.tool_calls, results, new_events):
+
+                def normalized_results() -> list[Any]:
+                    return [
+                        self.context_governor.normalize_tool_result(
+                            governance_config, tool_call.id, tool_call.name, result,
+                        )
+                        for tool_call, result in zip(response.tool_calls, results)
+                    ]
+
+                # An oversized result is written to disk (then referenced):
+                # do that in a worker thread, not on the event loop.
+                limit = governance_config.max_tool_result_chars
+                if any(
+                    isinstance(result, list) or (isinstance(result, str) and len(result) > limit)
+                    for result in results
+                ):
+                    contents = await asyncio.to_thread(normalized_results)
+                else:
+                    contents = normalized_results()
+                for tool_call, content, tool_event in zip(response.tool_calls, contents, new_events):
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": tool_call.name,
-                        "content": self.context_governor.normalize_tool_result(
-                            governance_config,
-                            tool_call.id,
-                            tool_call.name,
-                            result,
-                        ),
+                        "content": content,
                     }
                     if edits := context.file_edit_events.get(tool_call.id):
                         tool_message["_file_edits"] = edits
@@ -1332,7 +1618,14 @@ class AgentRunner:
                     completed_tool_results.append(tool_message)
                 if fatal_error is not None:
                     error = f"Error: {type(fatal_error).__name__}: {fatal_error}"
-                    final_content = error
+                    # The technical detail goes to the logs (and ``error``);
+                    # the user reads one plain sentence in their language.
+                    logger.warning(
+                        "Turn stopped on a failing tool for {}: {}",
+                        spec.session_key or "default",
+                        error,
+                    )
+                    final_content = session_tool_failure_stop_message(spec.session_key)
                     stop_reason = "tool_error"
                     self._append_final_message(messages, final_content)
                     context.final_content = final_content
@@ -1366,6 +1659,7 @@ class AgentRunner:
                 )
                 empty_content_retries = 0
                 length_recovery_count = 0
+                length_parts.clear()
                 if new_events and all(
                     event.get("progress") == "none"
                     or (
@@ -1404,6 +1698,63 @@ class AgentRunner:
                     context.stop_reason = stop_reason
                     await hook.after_iteration(context)
                     break
+                if pending_nudge is not None:
+                    if pending_nudge == "repeat":
+                        ignored = any(
+                            repeated_identical_action_error(
+                                call.name, call.arguments, loop_guard.readonly_calls
+                            )
+                            for call in response.tool_calls
+                        )
+                    elif pending_nudge == "no_progress":
+                        ignored = no_progress_streak > 0
+                    elif pending_nudge == "scope":
+                        # The targets are read from the user's prose and can be
+                        # wrong; missing one never costs the turn its tools.
+                        # Real drift is what the exploration check counts.
+                        ignored = False
+                    elif pending_nudge == "wrap_up":
+                        ignored = is_orientation_batch(response.tool_calls)
+                    else:
+                        # Targeted, distinct lookups after the reminder are
+                        # progress, not ignoring it.
+                        ignored = counts_as_exploration(
+                            response.tool_calls, set(look_around_seen)
+                        )
+                    if not ignored:
+                        pending_nudge = None
+                        ignored_nudges = 0
+                    else:
+                        ignored_nudges += 1
+                        if ignored_nudges >= IGNORED_NUDGES_BEFORE_FINAL:
+                            logger.warning(
+                                "Reminder ignored {} times in a row ({}) for {}; "
+                                "asking for the final answer without tools",
+                                ignored_nudges, pending_nudge, spec.session_key or "default",
+                            )
+                            if hook.wants_streaming():
+                                await hook.on_stream_end(context, resuming=False)
+                            if validation.pending:
+                                final_content = validation.completion_message(reason="no_progress")
+                                error = final_content
+                                stop_reason = "validation_failed"
+                            else:
+                                final_content = await self._try_finalize_after_max_iterations(
+                                    spec, hook, messages, usage,
+                                    finalization_message=build_ignored_nudges_finalization_message(
+                                        ignored_nudges
+                                    ),
+                                )
+                                stop_reason = "no_progress"
+                            if is_blank_text(final_content):
+                                final_content = NO_PROGRESS_STOP_FALLBACK
+                            self._append_final_message(messages, final_content)
+                            context.final_content = final_content
+                            context.error = error
+                            context.stop_reason = stop_reason
+                            await hook.after_iteration(context)
+                            break
+                        messages.append(build_ignored_nudge_reminder_message(ignored_nudges))
                 if (
                     no_progress_streak == _NO_PROGRESS_NUDGE
                     and no_progress_nudge_count < 1
@@ -1411,6 +1762,50 @@ class AgentRunner:
                     no_progress_nudge_count += 1
                     loop_guard.no_progress_nudge_count = no_progress_nudge_count
                     messages.append(build_no_progress_continue_message())
+                    pending_nudge = "no_progress"
+                if loop_guard.readonly_calls.pop(_REPEAT_NUDGE_KEY, 0) and pending_nudge is None:
+                    pending_nudge = "repeat"
+                if any(is_action_call(call) for call in response.tool_calls):
+                    acted = True
+                    action_steps += 1
+                if is_orientation_batch(response.tool_calls):
+                    # Distinct targeted lookups neither count nor reset: only
+                    # repo-wide listings and repeated lookups do.
+                    if counts_as_exploration(response.tool_calls, look_around_seen):
+                        look_around_streak += 1
+                    if look_around_streak >= exploration_nudge_at and not look_around_nudged:
+                        look_around_nudged = True
+                        logger.info(
+                            "Exploration check: {} search batches in a row for {}",
+                            look_around_streak, spec.session_key or "default",
+                        )
+                        messages.append(exploration_budget_message(look_around_streak))
+                        pending_nudge = "look_around"
+                else:
+                    look_around_streak = 0
+                # Validated work followed by nothing but reading: wrap up.
+                if (
+                    validation.revision
+                    and not validation.pending
+                    and is_orientation_batch(response.tool_calls)
+                ):
+                    wrap_up_streak += 1
+                    if (
+                        wrap_up_streak >= _WRAP_UP_NUDGE
+                        and wrap_up_nudged_revision != validation.revision
+                        and pending_nudge is None
+                        and soft_nudges < 1
+                    ):
+                        soft_nudges += 1
+                        wrap_up_nudged_revision = validation.revision
+                        logger.info(
+                            "Wrap-up check: {} look-only steps after green checks for {}",
+                            wrap_up_streak, spec.session_key or "default",
+                        )
+                        messages.append(build_wrap_up_message(wrap_up_streak))
+                        pending_nudge = "wrap_up"
+                else:
+                    wrap_up_streak = 0
                 if not scope_anchored:
                     if calls_touch_targets(response.tool_calls, spec.scope_targets):
                         scope_anchored = True
@@ -1427,6 +1822,7 @@ class AgentRunner:
                             spec.session_key or "default",
                         )
                         messages.append(scope_drift_message(spec.scope_targets))
+                        pending_nudge = "scope"
                 # Checkpoint 1: drain injections after tools, before next LLM call.
                 # Non-blocking: the model has its next step to run; waiting for
                 # still-running subagents here parked the whole turn for up to
@@ -1453,11 +1849,13 @@ class AgentRunner:
                 empty_content_retries += 1
                 if empty_content_retries < spec.max_empty_retries:
                     logger.warning(
-                        "Empty response on turn {} for {} ({}/{}); retrying",
+                        "Empty response on turn {} for {} ({}/{}, finish_reason={}, effort={}); retrying with less thinking",
                         iteration,
                         spec.session_key or "default",
                         empty_content_retries,
                         spec.max_empty_retries,
+                        response.finish_reason,
+                        context.requested_reasoning_effort,
                     )
                     if hook.wants_streaming():
                         await hook.on_stream_end(context, resuming=False)
@@ -1473,6 +1871,7 @@ class AgentRunner:
                     await hook.on_stream_end(context, resuming=False)
                 retry_messages = self._finalization_retry_messages(messages_for_model)
                 response = await self._request_finalization_retry(spec, messages_for_model)
+                finalized = True
                 retry_usage = self._usage_or_estimate(spec, retry_messages, response)
                 self._accumulate_usage(usage, retry_usage)
                 retry_n = int(retry_usage.get("prompt_tokens") or 0)
@@ -1484,6 +1883,10 @@ class AgentRunner:
                 context.usage = dict(raw_usage)
                 context.tool_calls = list(response.tool_calls)
                 clean = hook.finalize_content(context, response.content)
+                if is_blank_text(clean):
+                    response, clean = await self._strict_finalization_retry(
+                        spec, hook, context, messages_for_model, response, clean,
+                    )
 
             if response.finish_reason == "length" and not is_blank_text(clean):
                 length_recovery_count += 1
@@ -1503,6 +1906,9 @@ class AgentRunner:
                         thinking_blocks=response.thinking_blocks,
                     ))
                     messages.append(build_length_recovery_message())
+                    # The cut often falls on a space that cleaning strips
+                    # from the seam: keep it so the joined text reads right.
+                    length_parts.append(clean + (" " if raw_content[-1:].isspace() else ""))
                     await hook.after_iteration(context)
                     continue
 
@@ -1520,11 +1926,16 @@ class AgentRunner:
             if (
                 spec.requires_tool_delivery
                 and not tools_used
+                # A continuation of a request that already ran tools has
+                # delivered: nudging it made the agent invent a file nobody asked for.
+                and not request_used_tools(messages)
                 and delivery_nudge_count < 1
+                and soft_nudges < 1
                 and response.finish_reason != "error"
                 and assistant_message is not None
             ):
                 delivery_nudge_count += 1
+                soft_nudges += 1
                 logger.info(
                     "Delivery workflow produced no tools on turn {}; nudging once for {}",
                     iteration,
@@ -1534,15 +1945,50 @@ class AgentRunner:
                     await hook.on_stream_end(context, resuming=True)
                 messages.append(assistant_message)
                 messages.append(build_delivery_continue_message())
+                delivery_nudged_text = clean
+                delivery_nudged_streamed = context.streamed_content
+                delivery_nudge_index = len(messages) - 1
                 await hook.after_iteration(context)
                 continue
+
+            # User Stop / SubagentStop hooks (hooks.json) may refuse the final
+            # answer with a reason; the reason becomes the next instruction.
+            if (
+                assistant_message is not None
+                and response.finish_reason != "error"
+                and stop_hook_rounds < _stop_hook_round_cap(spec)
+            ):
+                from navin.agent.user_hooks import stop_hook_reason
+
+                stop_reason_text = await stop_hook_reason(
+                    spec.workspace, spec.session_key, clean,
+                    stop_hook_active=stop_hook_rounds > 0,
+                    subagent=spec.user_hook_scope == "subagent",
+                    notify=hook.emit_user_notice,
+                    transcript=messages,
+                )
+                if stop_reason_text:
+                    stop_hook_rounds += 1
+                    logger.info("Stop hook asked to continue for {}", spec.session_key or "default")
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=True)
+                    messages.append(assistant_message)
+                    messages.append({"role": "user", "content": f"[Stop hook] {stop_reason_text}"})
+                    await hook.after_iteration(context)
+                    continue
 
             # Validation belongs to the accepted request, not to its last
             # slice. A final narration cannot turn a missing/red check green.
             if spec.workspace and spec.validate_code_changes and validation.workspace_snapshot is not None:
-                validation.observe_workspace(
-                    await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
-                )
+                snapshot = await asyncio.to_thread(workspace_code_snapshot, spec.workspace)
+                if validation.commands_may_edit:
+                    validation.observe_workspace(snapshot, root=spec.workspace)
+                else:
+                    # Only file tools and checks ran: their edits are already
+                    # counted, so other changes belong to a parallel session or
+                    # the user. Validating them sent a front-end audit to run
+                    # the back end's tests.
+                    validation.rebaseline(snapshot, root=spec.workspace)
             if (
                 (spec.requires_verify_before_done or spec.validate_code_changes)
                 and validation.pending
@@ -1585,6 +2031,201 @@ class AgentRunner:
                     nudge = build_verify_before_done_message()
                     nudge["content"] += "\n\n" + validation.missing()
                     messages.append(nudge)
+                await hook.after_iteration(context)
+                continue
+
+            # Build turns (/forge, ...): the user accepted the task. Ending on
+            # text after reads only, or on a list of the steps still to do,
+            # is the turn giving up halfway. One reminder each, never a loop.
+            build_turn = (
+                spec.requires_verify_before_done
+                and response.finish_reason != "error"
+                and assistant_message is not None
+                and not spec.read_only_tools
+                and not spec.plan_read_only
+            )
+            # Back done, front forgotten: checked on every turn that writes
+            # code (CLI, desktop and subagents), not only on workflow commands.
+            # Still one reminder each, so a turn never loops on it.
+            integration_turn = (
+                (spec.requires_verify_before_done or spec.validate_code_changes)
+                and response.finish_reason != "error"
+                and assistant_message is not None
+                and not spec.read_only_tools
+                and not spec.plan_read_only
+            )
+            continue_prompt: dict[str, str] | None = None
+            unwired: list[str] = []
+            if (
+                integration_turn
+                and acted
+                and not integration_nudged
+                and not validation.pending
+                and validation.paths
+                and spec.workspace
+            ):
+                unwired = await asyncio.to_thread(
+                    unwired_frontend_files, spec.workspace, sorted(validation.paths),
+                    since=turn_started_wall,
+                )
+            backend_only: list[str] = []
+            if (
+                integration_turn
+                and acted
+                and not unwired
+                and not frontend_gap_nudged
+                and spec.ui_terms
+                and not validation.pending
+                and validation.paths
+                and spec.workspace
+            ):
+                backend_only = await asyncio.to_thread(
+                    frontend_gap, spec.workspace, sorted(validation.paths),
+                )
+            if build_turn and not acted and tools_used and not no_action_nudged and soft_nudges < 1 and (
+                spec.requires_tool_delivery or lists_remaining_work(clean)
+            ):
+                no_action_nudged = True
+                soft_nudges += 1
+                continue_prompt = build_no_action_continue_message()
+            elif unwired:
+                integration_nudged = True
+                logger.info(
+                    "Build turn ended with {} unwired screen(s) on turn {}; continuing once for {}",
+                    len(unwired), iteration, spec.session_key or "default",
+                )
+                continue_prompt = {
+                    **build_remaining_work_continue_message(),
+                    "content": build_integration_nudge(unwired) + (
+                        _SUBAGENT_WIRING_NOTE if spec.user_hook_scope == "subagent" else ""
+                    ),
+                }
+            elif backend_only:
+                frontend_gap_nudged = True
+                logger.info(
+                    "Build turn for a user-facing request changed backend files only on turn {};"
+                    " continuing once for {}",
+                    iteration, spec.session_key or "default",
+                )
+                continue_prompt = {
+                    **build_remaining_work_continue_message(),
+                    "content": build_frontend_gap_nudge(spec.ui_terms, backend_only),
+                }
+            elif (
+                build_turn
+                and acted
+                and remaining_work_nudges < _MAX_REMAINING_WORK_NUDGES
+                and (validation.revision, action_steps) != remaining_work_mark
+                and not validation.pending
+                and lists_remaining_work(clean)
+            ):
+                remaining_work_nudges += 1
+                remaining_work_mark = (validation.revision, action_steps)
+                logger.info(
+                    "Build turn answer still lists work on turn {} (reminder {}); continuing for {}",
+                    iteration, remaining_work_nudges, spec.session_key or "default",
+                )
+                continue_prompt = build_remaining_work_continue_message()
+            if (
+                continue_prompt is None
+                and build_turn
+                and acted
+                and not shortcut_nudged
+                and not validation.pending
+                and validation.paths
+                and spec.workspace
+                and spec.user_hook_scope != "subagent"
+            ):
+                from navin.agent.shortcut_check import build_shortcut_nudge, shortcut_findings
+
+                shortcuts = await asyncio.to_thread(
+                    shortcut_findings, spec.workspace, sorted(validation.paths),
+                    since=turn_started_wall,
+                )
+                if shortcuts:
+                    shortcut_nudged = True
+                    logger.info(
+                        "Build turn added {} shortcut(s) on turn {}; continuing once for {}",
+                        len(shortcuts), iteration, spec.session_key or "default",
+                    )
+                    continue_prompt = {
+                        **build_remaining_work_continue_message(),
+                        "content": build_shortcut_nudge(shortcuts),
+                    }
+            if (
+                continue_prompt is None
+                and build_turn
+                and plan_nudges < _MAX_PLAN_NUDGES
+                and not validation.pending
+                and spec.workspace
+                and spec.session_key
+                and spec.user_hook_scope != "subagent"
+            ):
+                from navin.board.auto_advance import (
+                    asks_user,
+                    build_open_plan_message,
+                    open_plan_steps,
+                    reports_failure,
+                )
+
+                if not asks_user(clean) and not reports_failure(clean):
+                    steps = await asyncio.to_thread(
+                        open_plan_steps, spec.workspace, spec.session_key,
+                    )
+                    mark = (
+                        validation.revision,
+                        tuple((step["id"], step["status"]) for step in steps),
+                    )
+                    # Same open steps after a reminder: the model answered with
+                    # text only. Push once more, firmer, then let it through.
+                    repeat = bool(steps) and mark == plan_mark and plan_repeats < 1
+                    if steps and (mark != plan_mark or repeat):
+                        plan_nudges += 1
+                        plan_repeats = plan_repeats + 1 if repeat else 0
+                        plan_mark = mark
+                        logger.info(
+                            "Build turn ended with {} open plan step(s) on turn {} for {}",
+                            len(steps), iteration, spec.session_key,
+                        )
+                        continue_prompt = {
+                            **build_remaining_work_continue_message(),
+                            "content": build_open_plan_message(steps, repeat=repeat),
+                        }
+            if (
+                continue_prompt is None
+                and build_turn
+                and acted
+                and clean
+                and not coverage_nudged
+                and len(spec.explicit_asks) >= 2
+                and not validation.pending
+                and spec.user_hook_scope != "subagent"
+            ):
+                from navin.agent.request_checklist import build_coverage_nudge, missing_asks
+                from navin.board.auto_advance import asks_user, reports_failure
+
+                missing = missing_asks(spec.explicit_asks, clean)
+                if missing and not asks_user(clean) and not reports_failure(clean):
+                    coverage_nudged = True
+                    logger.info(
+                        "Build turn answer drops {} of {} listed ask(s) on turn {}; continuing once for {}",
+                        len(missing), len(spec.explicit_asks), iteration,
+                        spec.session_key or "default",
+                    )
+                    continue_prompt = {
+                        **build_remaining_work_continue_message(),
+                        "content": build_coverage_nudge(missing),
+                    }
+            if continue_prompt is not None:
+                logger.info(
+                    "Build turn ended {} on turn {}; continuing once for {}",
+                    "before any edit" if not acted else "with work left",
+                    iteration, spec.session_key or "default",
+                )
+                if hook.wants_streaming():
+                    await hook.on_stream_end(context, resuming=True)
+                messages.append(assistant_message)
+                messages.append(continue_prompt)
                 await hook.after_iteration(context)
                 continue
 
@@ -1646,8 +2287,42 @@ class AgentRunner:
                     had_injections = True
                     continue
                 break
+            if (
+                is_blank_text(clean)
+                and delivery_nudged_text
+                and len(messages) == delivery_nudge_index + 1
+            ):
+                # The nudge asked for tools after a text answer and got only
+                # blanks back, with nothing done in between: that answer
+                # stands. Ending on "couldn't produce a final answer" here
+                # threw away a reply the model had already written.
+                logger.info(
+                    "Blank reply to the delivery nudge on turn {} for {}; keeping the previous answer",
+                    iteration,
+                    spec.session_key or "default",
+                )
+                messages.pop()
+                await self._emit_checkpoint(
+                    spec,
+                    {
+                        "phase": "final_response",
+                        "iteration": iteration,
+                        "model": spec.runtime.model,
+                        "assistant_message": messages[-1],
+                        "completed_tool_results": [],
+                        "pending_tool_calls": [],
+                    },
+                )
+                final_content = delivery_nudged_text
+                final_streamed = delivery_nudged_streamed
+                context.final_content = final_content
+                context.stop_reason = stop_reason
+                await hook.after_iteration(context)
+                break
             if is_blank_text(clean):
-                final_content = EMPTY_FINAL_RESPONSE_MESSAGE
+                final_content = session_empty_final_response_message(
+                    spec.session_key
+                ) + interrupted_work_recap(messages, run_start)
                 stop_reason = "empty_final_response"
                 error = final_content
                 self._append_final_message(messages, final_content)
@@ -1681,7 +2356,14 @@ class AgentRunner:
                     "pending_tool_calls": [],
                 },
             )
-            final_content = clean
+            # A reply continued after an output-limit cut is delivered whole:
+            # non-streaming channels only receive final_content.
+            if length_parts:
+                seam = " " if raw_content[:1].isspace() and not length_parts[-1].endswith(" ") else ""
+                final_content = "".join(length_parts) + seam + clean
+            else:
+                final_content = clean
+            final_streamed = context.streamed_content and not finalized
             context.final_content = final_content
             context.stop_reason = stop_reason
             await hook.after_iteration(context)
@@ -1717,6 +2399,25 @@ class AgentRunner:
             if final_content:
                 self._append_final_message(messages, final_content)
 
+        if (
+            final_content
+            and not final_streamed
+            and stop_reason in ("completed", "no_progress")
+            and hook.wants_streaming()
+        ):
+            # The loop marks the final message as already streamed for
+            # streaming channels, which then drop it: deliver it as one
+            # last stream segment instead.
+            tail = AgentHookContext(
+                iteration=spec.max_iterations,
+                messages=messages,
+                session_key=spec.session_key,
+                model=spec.runtime.model,
+                final_content=final_content,
+                stop_reason=stop_reason,
+            )
+            await hook.on_stream(tail, final_content)
+            await hook.on_stream_end(tail, resuming=False)
         if peak_prompt_tokens > 0:
             usage["peak_prompt_tokens"] = peak_prompt_tokens
         timing.log()
@@ -1777,14 +2478,23 @@ class AgentRunner:
         }
         generation = spec.runtime.generation
         kwargs["temperature"] = generation.temperature
-        kwargs["max_tokens"] = generation.max_tokens
-        kwargs["reasoning_effort"] = route_reasoning_effort(
+        kwargs["max_tokens"] = room_for_output(
+            generation.max_tokens, spec.runtime.context_window_tokens, spec.last_prompt_tokens,
+        )
+        effort = route_reasoning_effort(
             generation.reasoning_effort,
             composer_mode=spec.composer_mode,
             escalations=spec.effort_escalations,
+            conversational=spec.conversational_turn,
+            followup_effort=spec.followup_reasoning_effort,
             tool_followup=tool_followup,
             empty_retry=empty_retry,
         )
+        # Only a budget the full window squeezed caps thinking: a configured
+        # small max_tokens is the provider's to stretch for thinking.
+        if kwargs["max_tokens"] != generation.max_tokens:
+            effort = fit_effort_to_output(effort, kwargs["max_tokens"])
+        kwargs["reasoning_effort"] = effort
         if spec.forced_tool and tools:
             from navin.agent.media_intent import forced_tool_choice
 
@@ -1840,21 +2550,43 @@ class AgentRunner:
         )
         deferred_text: list[str] = []
 
+        request_started = time.perf_counter()
+
+        def _first_token() -> None:
+            if context.first_token_s is None:
+                context.first_token_s = time.perf_counter() - request_started
+
+        # Something visible must move while the model works: a status line
+        # at once, then the call being written as its arguments stream in
+        # (a five-file write_file is 10-20s of silence otherwise).
+        drafting = _ToolDraftStatus(hook)
+        await drafting.waiting(spec.runtime.model)
+
+        async def _tool_delta(delta: dict[str, Any]) -> None:
+            _first_token()
+            await drafting.feed(delta)
+
         if wants_streaming:
             thinking_buf = ""
+            # Whether the open stream segment already showed answer text.
+            segment_state = {"has_text": False}
 
             async def _stream(delta: str) -> None:
+                if delta:
+                    _first_token()
                 if defer_unverified_text:
                     deferred_text.append(delta)
                     return
                 if delta:
                     context.streamed_content = True
+                    segment_state["has_text"] = True
                 await hook.on_stream(context, delta)
 
             async def _thinking(delta: str) -> None:
                 nonlocal thinking_buf
                 if not delta:
                     return
+                _first_token()
                 prev_clean = strip_reasoning_tags(thinking_buf)
                 thinking_buf += delta
                 new_clean = strip_reasoning_tags(thinking_buf)
@@ -1865,13 +2597,21 @@ class AgentRunner:
 
             async def _stream_recover() -> None:
                 deferred_text.clear()
-                await hook.on_stream_end(context, resuming=True)
+                # The retry streams the answer from the start, so the partial
+                # text already on screen is withdrawn instead of left above it.
+                context.stream_discarded = segment_state["has_text"]
+                segment_state["has_text"] = False
+                try:
+                    await hook.on_stream_end(context, resuming=True)
+                finally:
+                    context.stream_discarded = False
 
             coro = spec.runtime.provider.chat_stream_with_retry(
                 **kwargs,
                 on_content_delta=_stream,
                 on_thinking_delta=_thinking,
                 on_stream_recover=_stream_recover,
+                on_tool_call_delta=_tool_delta,
             )
         elif wants_progress_streaming:
             stream_buf = ""
@@ -1882,6 +2622,7 @@ class AgentRunner:
                 nonlocal stream_buf
                 if not delta:
                     return
+                _first_token()
                 prev_clean = strip_think(stream_buf)
                 stream_buf += delta
                 new_clean = strip_think(stream_buf)
@@ -1904,6 +2645,7 @@ class AgentRunner:
             coro = spec.runtime.provider.chat_stream_with_retry(
                 **kwargs,
                 on_content_delta=_stream_progress,
+                on_tool_call_delta=_tool_delta,
             )
         else:
             coro = spec.runtime.provider.chat_with_retry(**kwargs)
@@ -2046,6 +2788,34 @@ class AgentRunner:
     ):
         retry_messages = self._finalization_retry_messages(messages)
         return await self._request_no_tools(spec, retry_messages)
+
+    async def _strict_finalization_retry(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        context: AgentHookContext,
+        messages: list[dict[str, Any]],
+        response: LLMResponse,
+        clean: str,
+    ) -> tuple[LLMResponse, str]:
+        """One explicit last attempt before telling the user the reply was empty."""
+        logger.warning(
+            "Finalization reply was blank for {}; trying the strict prompt",
+            spec.session_key or "default",
+        )
+        try:
+            retry = await self._request_no_tools(
+                spec, [*messages, build_strict_finalization_retry_message()],
+            )
+        except Exception:
+            logger.exception("Strict finalization retry failed for {}", spec.session_key or "default")
+            return response, clean
+        retry_clean = hook.finalize_content(context, retry.content)
+        if is_blank_text(retry_clean):
+            return response, clean
+        context.response = retry
+        context.tool_calls = []
+        return retry, retry_clean
 
     @staticmethod
     def _finalization_retry_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2287,6 +3057,10 @@ class AgentRunner:
         tool_results: list[tuple[Any, dict[str, str], BaseException | None]] = []
         validation = spec.loop_guard.validation if spec.loop_guard is not None else None
         validating = validation is not None and (spec.requires_verify_before_done or spec.validate_code_changes)
+        # A subagent hands its parent the list of files it changed, docs and
+        # command-made files included, even on a turn that validates nothing:
+        # without it the parent took the work for lost and redid it.
+        listing_changes = validation is not None and spec.user_hook_scope == "subagent"
 
         async def run_and_report(tool_call: ToolCallRequest) -> tuple[Any, dict[str, str], BaseException | None]:
             outcome = await self._run_tool(
@@ -2304,17 +3078,48 @@ class AgentRunner:
             return outcome
 
         for batch in batches:
+            tree_moved = any(
+                moves_worktree(call.name, call.arguments if isinstance(call.arguments, dict) else {})
+                for call in batch
+            )
             watch_workspace = bool(
                 validating and spec.validate_code_changes and spec.workspace
-                and any(call.name in {"exec", "write_stdin", "run_cli_app", "spawn", "manage_files", "lsp"} for call in batch)
+                and (tree_moved or any(_may_edit_workspace(call) for call in batch))
             )
+            # Files a pure test run rewrites (a generated module, a fixture)
+            # are its side effects: counting them as edits made the run's own
+            # green result stale and asked for the same tests again, forever.
+            tests_only = not tree_moved and all(
+                (call.name == "exec" and exec_runs_only_tests(call.arguments, _is_test_command))
+                or _runs_only_checks(call)
+                for call in batch
+            )
+            if watch_workspace and not tests_only:
+                validation.commands_may_edit = True
             if watch_workspace:
                 validation.observe_workspace(
                     await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
                 )
+            tree_before = None
+            if (
+                listing_changes and not watch_workspace and spec.workspace
+                and not tree_moved and not tests_only
+                and any(_may_edit_workspace(call) for call in batch)
+            ):
+                tree_before = await asyncio.to_thread(workspace_code_snapshot, spec.workspace)
             execution_revision = validation.revision if validating else None
             if spec.concurrent_tools and len(batch) > 1:
-                batch_results = await asyncio.gather(*(run_and_report(tool_call) for tool_call in batch))
+                pending_tools = [asyncio.create_task(run_and_report(tool_call)) for tool_call in batch]
+                try:
+                    batch_results = await asyncio.gather(*pending_tools)
+                except BaseException:
+                    # A fail-closed hook (for example, a durable journal write)
+                    # must not leave sibling operations executing unobserved.
+                    for pending_tool in pending_tools:
+                        if not pending_tool.done():
+                            pending_tool.cancel()
+                    await asyncio.gather(*pending_tools, return_exceptions=True)
+                    raise
                 tool_results.extend(batch_results)
             else:
                 batch_results = []
@@ -2324,13 +3129,29 @@ class AgentRunner:
                     batch_results.append(result)
 
             if watch_workspace:
-                validation.observe_workspace(
-                    await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
+                after = await asyncio.to_thread(workspace_code_snapshot, spec.workspace)
+                if tree_moved or tests_only:
+                    # Checked-out commits are not the agent's edits.
+                    validation.rebaseline(after, root=spec.workspace)
+                else:
+                    validation.observe_workspace(after, root=spec.workspace)
+            if tree_before is not None:
+                validation.note_tree_changes(
+                    tree_before, await asyncio.to_thread(workspace_code_snapshot, spec.workspace),
                 )
-            if validating:
+            if validating or listing_changes:
                 for call, (result, event, _) in zip(batch, batch_results):
                     _, params, _ = spec.tools.prepare_call(call.name, call.arguments)
                     if not isinstance(params, dict):
+                        continue
+                    if listing_changes:
+                        validation.note_tool_writes(
+                            call.name, params, status=event.get("status", "error"),
+                        )
+                    if not validating:
+                        continue
+                    if event.get("detail") == "unchanged check not re-run":
+                        # Not a run: the earlier identical result stays recorded.
                         continue
                     validation.observe(
                         call.name, params, result, status=event.get("status", "error"),
@@ -2340,7 +3161,10 @@ class AgentRunner:
                         execution_revision=execution_revision,
                     )
                     if spec.workspace and event.get("status") == "ok" and call.name in _EDIT_TOOL_NAMES:
-                        validation.sync_known_edits(spec.workspace, edit_paths(params))
+                        # Stats and, on a WSL root, a wsl.exe round trip: off the loop.
+                        await asyncio.to_thread(
+                            validation.sync_known_edits, spec.workspace, edit_paths(params),
+                        )
 
         results: list[Any] = []
         events: list[dict[str, str]] = []
@@ -2460,41 +3284,16 @@ class AgentRunner:
                     blocked = (
                         "Error: the browser is off for this request - the user did not ask "
                         "for it and this is not scraping. Use web_search, web_fetch or "
-                        "scrape to read the web, and the project's checks for code."
+                        "scrape to read the web, and the project's checks for code. If a "
+                        "board step asks for this browser check, do not retry: close the "
+                        "step with the checks that did run and the note 'browser check not "
+                        "requested by the user', then move on."
                     )
                     return blocked, {
                         "name": tool_call.name,
                         "status": "error",
                         "detail": "browser not requested",
                     }, None
-        churn = (
-            is_server_churn_command(str(params.get("command") or params.get("cmd") or ""))
-            if tool_call.name == "exec" and isinstance(params, dict) else ""
-        )
-        if churn:
-            budget = spec.loop_guard if spec.loop_guard is not None else spec
-            if budget.server_churn_requested is None:
-                budget.server_churn_requested = _request_asks_for_browser(
-                    spec.initial_messages, _SERVER_REQUEST_MARKERS,
-                )
-            if not budget.server_churn_requested:
-                what = {
-                    "build": "a production build",
-                    "kill": "stopping a process",
-                    "serve": "starting a server",
-                }[churn]
-                blocked = (
-                    f"Error: {what} is off for this request - the user did not ask for a "
-                    "build, a deploy or a server restart. A running dev server reloads "
-                    "edits by itself, and a build under it corrupts its cache. Check the "
-                    "change with `verify action=check` (type check, lint), use `start_app` "
-                    "only if no server runs yet, then finish and report."
-                )
-                return blocked, {
-                    "name": tool_call.name,
-                    "status": "error",
-                    "detail": "server churn not requested",
-                }, None
         if isinstance(params, dict) and (
             (
                 tool_call.name == "exec"
@@ -2514,7 +3313,9 @@ class AgentRunner:
                     "Error: browser tests are off for this request - the user did not ask "
                     "for a browser check. Do not run, install, write or copy browser "
                     "scripts. Validate with the type check, build, lint or unit tests, "
-                    "then finish and report."
+                    "then finish and report. A board step that asks for an end-to-end "
+                    "or preview check is closed with that evidence and the note 'browser "
+                    "check not requested by the user' - never retried."
                 )
                 return blocked, {
                     "name": tool_call.name,
@@ -2549,7 +3350,10 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return lookup_error + hint, event, RuntimeError(lookup_error)
             return lookup_error + hint, event, None
-        spin_error = repeated_readonly_tool_error(
+        # A call rejected before execution (invalid JSON / parameters) never
+        # read anything: counting it as a read turned broken arguments into
+        # "this read already ran" and hid the invalid-arguments guard.
+        spin_error = None if prep_error else repeated_readonly_tool_error(
             tool_call.name,
             tool_call.arguments,
             readonly_call_counts,
@@ -2563,6 +3367,32 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return spin_error + hint, event, RuntimeError(spin_error)
             return spin_error + hint, event, None
+        rerun_error = None if prep_error else repeated_rerun_check_error(
+            tool_call.name,
+            tool_call.arguments,
+            readonly_call_counts,
+        )
+        if rerun_error:
+            # Not a failure: the earlier identical run already holds the answer.
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": "unchanged check not re-run",
+            }
+            return rerun_error + hint, event, None
+        repeat_error = None if prep_error else repeated_identical_action_error(
+            tool_call.name,
+            tool_call.arguments,
+            readonly_call_counts,
+        )
+        if repeat_error:
+            # A reminder, not a wall: the call still runs (a wait can show the
+            # same text twice), the model is told once to act or answer, and
+            # the turn must answer without tools if it keeps repeating.
+            readonly_call_counts[_REPEAT_NUDGE_KEY] = 1
+            repeat_hint = "\n\n[" + repeat_error.removeprefix("Error: ") + "]"
+        else:
+            repeat_hint = ""
         if prep_error:
             event = {
                 "name": tool_call.name,
@@ -2719,6 +3549,22 @@ class AgentRunner:
                 "detail": detail,
             }
             return blocked + hint, event, None
+        if spec.defer_tools and tool is not None:
+            # Called without loading it first: send its schema from now on.
+            from navin.agent.tool_deferral import mark_loaded
+
+            mark_loaded(spec.session_key, (tool_call.name,))
+        from navin.agent.user_hooks import post_tool_use_feedback, pre_tool_use_block
+
+        hook_block = await pre_tool_use_block(
+            spec.workspace, spec.session_key, tool_call.name, params, notify=hook.emit_user_notice,
+        )
+        if hook_block is not None:
+            return (
+                f"Error: a PreToolUse hook blocked '{tool_call.name}': {hook_block}",
+                {"name": tool_call.name, "status": "error", "detail": "blocked by user hook"},
+                None,
+            )
         await hook.before_execute_tool(context, tool_call, tool, params)
         tool_wall_s = self._tool_wall_timeout_s(spec, tool)
         try:
@@ -2812,10 +3658,20 @@ class AgentRunner:
             return result + hint + (escalation or ""), event, None
 
         await hook.after_execute_tool(context, tool_call, tool, params, result)
+        hook_feedback = await post_tool_use_feedback(
+            spec.workspace, spec.session_key, tool_call.name, params, result,
+            notify=hook.emit_user_notice,
+        )
+        if hook_feedback and isinstance(result, str):
+            result = f"{result}\n\n{hook_feedback}"
 
         reset_tool_failure_count(tool_call.name, tool_call.arguments, tool_failure_counts)
         if tool_call.name in _EDIT_TOOL_NAMES:
             reset_readonly_spin_counts(readonly_call_counts)
+        else:
+            record_identical_action(
+                tool_call.name, tool_call.arguments, readonly_call_counts, result
+            )
 
         if tool_call.name == "set_composer_mode":
             self._apply_composer_mode_switch(spec, params)
@@ -2831,6 +3687,8 @@ class AgentRunner:
             event["progress"] = "none"
         if tool_call.name == "exec":
             event.update(_exec_event_fields(params, result))
+        if repeat_hint and isinstance(result, str):
+            result = result + repeat_hint
         return result, event, None
 
     @staticmethod
@@ -2864,7 +3722,7 @@ class AgentRunner:
         spec.composer_mode = mode
         spec.plan_read_only = mode == "plan"
         spec.read_only_tools = mode == "ask"
-        if mode in {"review", "security", "debug"}:
+        if mode in {"review", "security", "debug", "reverse"}:
             # The /forge brief sends code reviews, audits and debugging here
             # "with the matching tools". Its build allowlist has neither
             # security_scan nor debug_repair, so every one was refused and the
@@ -3017,3 +3875,62 @@ class AgentRunner:
         if current:
             batches.append(current)
         return batches
+
+
+_PATH_ARG_RE = re.compile(r'"(?:path|file_path)"\s*:\s*"([^"]{1,200})"')
+_COMMAND_ARG_RE = re.compile(r'"(?:command|cmd)"\s*:\s*"((?:[^"\\]|\\.){1,80})')
+
+
+class _ToolDraftStatus:
+    """Turn streamed tool-call arguments into a live "what is being written" line."""
+
+    _MIN_INTERVAL_S = 0.3
+
+    def __init__(self, hook: Any) -> None:
+        self._hook = hook
+        self._calls: dict[int, dict[str, Any]] = {}
+        self._last_emit = 0.0
+        self._last_label = ""
+
+    async def waiting(self, model: str | None) -> None:
+        name = (model or "the model").rsplit("/", 1)[-1]
+        await self._emit(f"{name} is working…", force=True)
+
+    async def feed(self, delta: dict[str, Any]) -> None:
+        index = int(delta.get("index") or 0)
+        call = self._calls.setdefault(index, {"name": "", "args": ""})
+        if delta.get("name"):
+            call["name"] = str(delta["name"])
+        call["args"] += str(delta.get("arguments_delta") or "")
+        await self._emit(self._label(call))
+
+    @staticmethod
+    def _label(call: dict[str, Any]) -> str:
+        name, args = call["name"] or "a tool", call["args"]
+        size = f"{len(args) / 1000:.1f}k chars" if len(args) >= 1000 else f"{len(args)} chars"
+        if name in ("write_file", "apply_patch", "edit_file", "notebook_edit"):
+            paths = _PATH_ARG_RE.findall(args)
+            verb = "Writing" if name == "write_file" else "Editing"
+            if paths:
+                more = f" (+{len(paths) - 1} files)" if len(paths) > 1 else ""
+                return f"{verb} {paths[-1]}{more}… {size}"
+            return f"{verb}… {size}"
+        if name == "exec":
+            match = _COMMAND_ARG_RE.search(args)
+            if match:
+                return f"Preparing command: {match.group(1)}…"
+        return f"Preparing {name}…"
+
+    async def _emit(self, label: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not label or label == self._last_label:
+            return
+        if not force and now - self._last_emit < self._MIN_INTERVAL_S:
+            return
+        self._last_emit, self._last_label = now, label
+        emit = getattr(self._hook, "emit_live_status", None)
+        if emit is not None:
+            try:
+                await emit(label)
+            except Exception:
+                logger.debug("live status emit failed", exc_info=True)

@@ -13,8 +13,6 @@ WSL ``clip.exe`` treats UTF-8 stdin as the OEM code page (accents become
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import base64
 import os
 import shutil
@@ -22,6 +20,8 @@ import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
+
+from navin.utils.proc import no_window_kwargs
 
 # Windows Terminal warns (and often drops OSC 52) above 5 KiB.
 OSC52_MAX_BYTES = 4000
@@ -118,6 +118,7 @@ def _win_temp_dir() -> str:
     try:
         result = subprocess.run(
             [powershell, "-NoProfile", "-NonInteractive", "-Command", "Write-Output $env:TEMP"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
             check=False,
@@ -137,6 +138,7 @@ def _win_to_wsl(win_path: str) -> str:
         try:
             result = subprocess.run(
                 [wslpath, "-u", win_path],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=3,
@@ -175,6 +177,7 @@ def _write_windows_clipboard_file(text: str) -> bool:
     try:
         result = subprocess.run(
             [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=20,
             check=False,
@@ -228,6 +231,7 @@ def _write_windows_clipboard(text: str) -> bool:
                 "-Command",
                 command,
             ],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
             check=False,
@@ -255,6 +259,7 @@ def _read_windows_clipboard() -> str:
                 "-Command",
                 command,
             ],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=20,
             check=False,
@@ -276,6 +281,7 @@ def read_clipboard() -> str:
         try:
             result = subprocess.run(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

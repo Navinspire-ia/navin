@@ -8,12 +8,16 @@ import json
 import os
 import re
 import shutil
+import threading
+import weakref
+from collections import OrderedDict
+from collections.abc import Iterator
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from loguru import logger
 
@@ -147,6 +151,9 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
+    # Fingerprint of the state last loaded from or handed to disk; set per
+    # instance by SessionManager (ClassVar keeps it out of the dataclass fields).
+    _clean_fingerprint: ClassVar[tuple[Any, ...] | None] = None
 
     def __post_init__(self) -> None:
         # An out-of-range offset (corrupt metadata) would hide all history; reset it.
@@ -432,19 +439,222 @@ class Session:
         )
 
 
+
+DEFAULT_MAX_CACHED_SESSIONS = 256
+
+
+def _session_fingerprint(session: Session) -> tuple[Any, ...] | None:
+    """Cheap identity of a session's state, compared to detect unsaved edits.
+
+    Returns ``None`` when the state cannot be fingerprinted, which callers
+    treat as dirty (never evicted).
+    """
+    try:
+        meta = json.dumps(session.metadata, sort_keys=True, default=str)
+        last = session.messages[-1] if session.messages else None
+        last_text = json.dumps(last, sort_keys=True, default=str) if last is not None else ""
+    except Exception:
+        return None
+    return (
+        id(session.messages),
+        len(session.messages),
+        id(last),
+        hash(last_text),
+        session.updated_at,
+        session.last_consolidated,
+        hash(meta),
+    )
+
+
+def _mark_clean(session: Session) -> None:
+    session._clean_fingerprint = _session_fingerprint(session)
+
+
+def _is_dirty(session: Session) -> bool:
+    saved = session._clean_fingerprint
+    return saved is None or saved != _session_fingerprint(session)
+
+
+class _SessionCache:
+    """Bounded session cache that never holds two copies of one session.
+
+    The ``max_strong`` most recently used sessions are kept alive by strong
+    references. Every session handed out is also tracked weakly, so a session
+    that fell out of the LRU but is still referenced (an agent turn holding it
+    across awaits) is found again as the very same object instead of being
+    reloaded as a second copy whose save would clobber the first. A session is
+    only released from the LRU when it looks clean (state equals what was last
+    loaded or saved) and has no save in flight; otherwise it stays pinned.
+
+    Mapping-style helpers (``get``, ``in``, ``items``...) see every live
+    session, strong or weak.
+    """
+
+    def __init__(self, manager: "SessionManager", max_strong: int) -> None:
+        self._manager = manager
+        self.max_strong = max_strong
+        self._strong: OrderedDict[str, Session] = OrderedDict()
+        self._weak: weakref.WeakValueDictionary[str, Session] = weakref.WeakValueDictionary()
+
+    def get(self, key: str, default: Session | None = None) -> Session | None:
+        session = self._strong.get(key)
+        if session is None:
+            session = self._weak.get(key)
+        return session if session is not None else default
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self.get(key) is not None
+
+    def __getitem__(self, key: str) -> Session:
+        session = self.get(key)
+        if session is None:
+            raise KeyError(key)
+        return session
+
+    def __setitem__(self, key: str, session: Session) -> None:
+        self.put(key, session)
+
+    def put(self, key: str, session: Session) -> None:
+        """Store *session* as the live object for *key* and mark it recently used."""
+        self._weak[key] = session
+        self._strong[key] = session
+        self._strong.move_to_end(key)
+        self._shrink()
+
+    def touch(self, key: str, session: Session) -> None:
+        """Re-pin a live session (it may have been released from the LRU)."""
+        if self._strong.get(key) is session:
+            self._strong.move_to_end(key)
+            return
+        self.put(key, session)
+
+    def pop(self, key: str, default: Session | None = None) -> Session | None:
+        session = self.get(key)
+        self._strong.pop(key, None)
+        self._weak.pop(key, None)
+        return session if session is not None else default
+
+    def _shrink(self) -> None:
+        # A released session can still be edited by whoever holds it; pin it
+        # again as soon as it differs from disk so dropping the last reference
+        # does not lose the edit.
+        for key, session in list(self._weak.items()):
+            if key in self._strong:
+                continue
+            if self._manager._save_in_flight(key) or _is_dirty(session):
+                self._strong[key] = session
+                self._strong.move_to_end(key, last=False)
+        excess = len(self._strong) - self.max_strong
+        if excess <= 0:
+            return
+        for key in list(self._strong):
+            if excess <= 0:
+                break
+            session = self._strong[key]
+            if self._manager._save_in_flight(key) or _is_dirty(session):
+                continue  # unsaved state: keep it pinned
+            # Still in the weak map: whoever holds it keeps getting this object.
+            del self._strong[key]
+            excess -= 1
+
+    def keys(self) -> list[str]:
+        return [key for key, _ in self.items()]
+
+    def values(self) -> list[Session]:
+        return [session for _, session in self.items()]
+
+    def items(self) -> list[tuple[str, Session]]:
+        seen: dict[str, Session] = dict(self._strong)
+        for key, session in list(self._weak.items()):
+            seen.setdefault(key, session)
+        return list(seen.items())
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.keys())
+
+    def __len__(self) -> int:
+        return len(self.items())
+
+    @property
+    def strong_count(self) -> int:
+        return len(self._strong)
+
+
+def sessions_dir_for(workspace: Path) -> Path:
+    """Where a workspace keeps its conversations: inside ``.navin/``, so they
+    never land in the user's project tree (or its git commits)."""
+    return Path(workspace) / ".navin" / "sessions"
+
+
+# Conversation files Navin wrote at ``<workspace>/sessions`` before they moved
+# under ``.navin/``. Only these are moved: a project's own ``sessions/``
+# folder (app code, fixtures) is never touched.
+_SESSION_FILE_RE = re.compile(r"^(?:[A-Za-z0-9_-]+\.jsonl|\.webui_session_index\.json)$")
+
+
+def _migrate_root_sessions(workspace: Path) -> Path:
+    """Move legacy ``<workspace>/sessions`` conversations into ``.navin/sessions``.
+
+    Idempotent and never overwrites: a file already present at the new place
+    is kept and the old copy stays put. The old folder is removed only when
+    the move left it empty.
+    """
+    target = sessions_dir_for(workspace)
+    legacy = workspace / "sessions"
+    try:
+        if not legacy.is_dir() or legacy.is_symlink():
+            return target
+        entries = list(legacy.iterdir())
+        if not entries or not all(p.is_file() and _SESSION_FILE_RE.match(p.name) for p in entries):
+            return target
+        target.mkdir(parents=True, exist_ok=True)
+        for path in entries:
+            dest = target / path.name
+            if not dest.exists():
+                shutil.move(str(path), str(dest))
+        with suppress(OSError):
+            legacy.rmdir()
+        logger.info("Moved conversations from {} to {}", legacy, target)
+    except OSError as exc:
+        logger.warning("Could not move legacy sessions from {}: {}", legacy, exc)
+    return target
+
+
 class SessionManager:
     """
     Manages conversation sessions.
 
-    Sessions are stored as JSONL files in the sessions directory.
+    Sessions are stored as JSONL files in ``<workspace>/.navin/sessions``.
     """
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, *, max_cached_sessions: int = DEFAULT_MAX_CACHED_SESSIONS):
         self.workspace = workspace
-        self.sessions_dir = ensure_dir(self.workspace / "sessions")
+        self.sessions_dir = ensure_dir(_migrate_root_sessions(Path(workspace)))
         self.legacy_sessions_dir = get_legacy_sessions_dir()
-        self._cache: dict[str, Session] = {}
+        # Bounded: only the most recently used sessions are pinned; others stay
+        # reachable (same object) while anything still references them.
+        self._cache = _SessionCache(self, max(1, int(max_cached_sessions)))
         self._pending_fsync: set[Path] = set()
+        # Writes of one session are ordered: every save takes the next number
+        # when it is asked for, and a write never replaces a newer one, even
+        # when a background checkpoint write finishes after a later save.
+        self._save_locks: dict[str, threading.Lock] = {}
+        self._save_requested: dict[str, int] = {}
+        self._save_written: dict[str, int] = {}
+
+    @property
+    def max_cached_sessions(self) -> int:
+        """How many recently used sessions are kept in memory unconditionally."""
+        return self._cache.max_strong
+
+    @max_cached_sessions.setter
+    def max_cached_sessions(self, value: int) -> None:
+        self._cache.max_strong = max(1, int(value))
+        self._cache._shrink()
+
+    def _save_in_flight(self, key: str) -> bool:
+        """True while a requested save of *key* has not reached the disk yet."""
+        return self._save_requested.get(key, 0) > self._save_written.get(key, 0)
 
     @staticmethod
     def safe_key(key: str) -> str:
@@ -508,14 +718,17 @@ class SessionManager:
         Returns:
             The session.
         """
-        if key in self._cache:
-            return self._cache[key]
+        cached = self._cache.get(key)
+        if cached is not None:
+            self._cache.touch(key, cached)
+            return cached
 
         session = self._load(key)
         if session is None:
             session = Session(key=key)
 
-        self._cache[key] = session
+        _mark_clean(session)
+        self._cache.put(key, session)
         return session
 
     def peek(self, key: str) -> Session | None:
@@ -527,11 +740,13 @@ class SessionManager:
         """
         cached = self._cache.get(key)
         if cached is not None:
+            self._cache.touch(key, cached)
             return cached
         session = self._load(key)
         if session is None:
             return None
-        self._cache[key] = session
+        _mark_clean(session)
+        self._cache.put(key, session)
         return session
 
     def _load(self, key: str) -> Session | None:
@@ -700,27 +915,121 @@ class SessionManager:
         the most recent writes.
         """
         path = self._get_session_path(session.key)
-        tmp_path = path.with_suffix(".jsonl.tmp")
 
         if not session.messages and not session.metadata and not path.exists():
             # Nothing to persist: no message, no metadata, no file yet. Writing
             # here would create a phantom "New chat" that only exists because
             # some read path touched the key.
-            self._cache[session.key] = session
+            _mark_clean(session)
+            self._cache.touch(session.key, session)
             return
 
+        snapshot = self._save_snapshot(session, copy=False)
+        self._write_snapshot(snapshot, fsync=fsync)
+        self._cache.touch(session.key, session)
+
+    def save_in_background(self, session: Session) -> Any:
+        """Write the session from a worker thread; returns the asyncio task.
+
+        For mid-turn checkpoints: rewriting a long transcript (20-40 ms of JSON
+        for 500 messages) must not stall the event loop and every other chat
+        on it. The state is copied now; a later save always wins on disk.
+        """
+        import asyncio
+
+        if not session.messages and not session.metadata and not self._get_session_path(session.key).exists():
+            return None
+        snapshot = self._save_snapshot(session, copy=True)
+        self._cache.touch(session.key, session)
+        task = asyncio.get_running_loop().create_task(
+            asyncio.to_thread(self._write_snapshot_logged, snapshot)
+        )
+        return task
+
+    async def save_async(self, session: Session, *, fsync: bool = False) -> None:
+        """Save from async code without blocking the event loop.
+
+        The state is copied now (taking its place in the write order, like
+        ``save``) and the JSON is written in a worker thread, so one long
+        transcript does not stall every other session on the loop. Unlike a
+        background checkpoint this waits for the write: when the thread fails
+        (for example a message dict changed while it was serialised) the
+        session is saved again synchronously, so the data is never dropped.
+        A cancelled caller does not cancel the write: the thread finishes it.
+        """
+        import asyncio
+
+        path = self._get_session_path(session.key)
+        if not session.messages and not session.metadata and not path.exists():
+            _mark_clean(session)
+            self._cache.touch(session.key, session)
+            return
+        snapshot = self._save_snapshot(session, copy=True)
+        self._cache.touch(session.key, session)
+        try:
+            await asyncio.to_thread(self._write_snapshot, snapshot, fsync=fsync)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "threaded save of session {} failed; saving on the loop",
+                snapshot["key"],
+                exc_info=True,
+            )
+            self.save(session, fsync=fsync)
+
+    def _save_snapshot(self, session: Session, *, copy: bool) -> dict[str, Any]:
+        key = session.key
+        number = self._save_requested.get(key, 0) + 1
+        self._save_requested[key] = number
+        # The snapshot is what reaches the disk; until it does, the pending
+        # save number keeps the session pinned in the cache.
+        _mark_clean(session)
+        return {
+            "number": number,
+            "key": key,
+            "path": self._get_session_path(key),
+            "metadata_line": {
+                "_type": "metadata",
+                "key": key,
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat(),
+                "metadata": dict(session.metadata) if copy else session.metadata,
+                "last_consolidated": session.last_consolidated,
+            },
+            "messages": list(session.messages) if copy else session.messages,
+        }
+
+    def _write_snapshot_logged(self, snapshot: dict[str, Any]) -> None:
+        try:
+            self._write_snapshot(snapshot, fsync=False)
+        except Exception:
+            # A checkpoint only serves crash recovery and the end of the turn
+            # saves again: losing one is harmless, crashing the turn is not.
+            logger.warning("background save of session {} failed", snapshot["key"], exc_info=True)
+
+    def _write_snapshot(self, snapshot: dict[str, Any], *, fsync: bool) -> None:
+        key = snapshot["key"]
+        lock = self._save_locks.setdefault(key, threading.Lock())
+        with lock:
+            if snapshot["number"] <= self._save_written.get(key, 0):
+                return  # a newer save already reached the disk
+            self._write_file(snapshot["path"], snapshot["metadata_line"], snapshot["messages"], fsync=fsync)
+            self._save_written[key] = snapshot["number"]
+
+    def _write_file(
+        self,
+        path: Path,
+        metadata_line: dict[str, Any],
+        messages: list[dict[str, Any]],
+        *,
+        fsync: bool,
+    ) -> None:
+        tmp_path = path.with_suffix(".jsonl.tmp")
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
-                metadata_line = {
-                    "_type": "metadata",
-                    "key": session.key,
-                    "created_at": session.created_at.isoformat(),
-                    "updated_at": session.updated_at.isoformat(),
-                    "metadata": session.metadata,
-                    "last_consolidated": session.last_consolidated
-                }
                 f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
-                for msg in session.messages:
+                for msg in messages:
                     f.write(json.dumps(msg, ensure_ascii=False) + "\n")
                 if fsync:
                     f.flush()
@@ -742,8 +1051,6 @@ class SessionManager:
         except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
-
-        self._cache[session.key] = session
 
         if fsync:
             self._pending_fsync.discard(path)

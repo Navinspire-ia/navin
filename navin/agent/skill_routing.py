@@ -34,6 +34,9 @@ _TENDER_WRITE = (
     "rfp-writer", "proposal-writer", "compliance-mapper", "professional-writer",
     "docx-generator", "archify", "critic-reviewer",
 )
+# Storyboard first, scripted capture, polish, motion scenes, premium assemble,
+# video QA loop: the same playbooks whichever desk asks for the film.
+_DEMO_VIDEO = ("motion-design", "product-visuals", "critic-reviewer")
 _CAREER_PREPARE = (
     "cv-builder", "cv-tailoring", "ats-analyzer", "cover-letter-writer",
     "professional-writer", "docx-generator", "proofreader", "critic-reviewer",
@@ -72,6 +75,7 @@ _ACTION_SKILLS: dict[str, dict[str, tuple[str, ...]]] = {
         "calendar": ("content-generation",),
         "image": ("image-generation", "product-visuals"),
         "video": ("video-generation", "product-visuals"),
+        "demo-video": _DEMO_VIDEO,
         "assemble": ("critic-reviewer",),
         "localize": ("translation-localization",),
         "report": ("archify", "studio-html-report", "critic-reviewer"),
@@ -94,6 +98,7 @@ _ACTION_SKILLS: dict[str, dict[str, tuple[str, ...]]] = {
         "publish": ("social-media-manager", "campaign-manager"),
         "measure": ("marketing-analytics", "kpi-reporter"),
         "launch": ("go-to-market-planner", "copywriting-agent", "professional-writer"),
+        "demo-video": ("montage-studio", *_DEMO_VIDEO),
         "report": ("archify", "studio-html-report", "critic-reviewer"),
     },
     "meeting": {
@@ -129,6 +134,9 @@ _ACTION_ALIASES: dict[str, dict[str, str]] = {
         "render": "assemble", "package": "assemble", "edit": "assemble",
         "transcribe": "localize", "translate": "localize", "voicetrack": "localize",
         "dub": "localize", "lipsync": "localize", "subtitles": "localize",
+        "demo": "demo-video", "promo": "demo-video", "motion": "demo-video",
+        "storyboard": "demo-video", "motion-render": "demo-video", "motion-templates": "demo-video",
+        "footage-polish": "demo-video", "video-qa": "demo-video",
     },
     "marketing": {
         "product": "understand", "brand": "positioning", "position": "positioning",
@@ -137,6 +145,8 @@ _ACTION_ALIASES: dict[str, dict[str, str]] = {
         "post": "publish", "metrics": "measure", "analytics": "measure", "sync-metrics": "measure",
         "improve": "variants", "optimize": "variants",
         "vision": "visual-qa", "qa": "visual-qa",
+        "demo": "demo-video", "promo": "demo-video", "motion": "demo-video",
+        "storyboard": "demo-video", "video-qa": "demo-video",
     },
     "meeting": {
         "minutes": "report", "summary": "report", "summarize": "report", "synthesis": "report",
@@ -161,7 +171,17 @@ def normalize_skill_action(module: str, action: object) -> str:
     return _ACTION_ALIASES.get(module, {}).get(raw, raw)
 
 
+# Code-side playbooks routed from the user's intent alone: no desk module
+# owns them, so they never ride on product_module.
+CODE_SKILL_MODULE = "code"
+_CODE_ROUTES: dict[str, tuple[str, ...]] = {
+    "pr-autopilot": ("pr-autopilot",),
+}
+
+
 def action_skill_names(module: str, action: str) -> tuple[str, ...]:
+    if module == CODE_SKILL_MODULE:
+        return _CODE_ROUTES.get(str(action or ""), ())
     module = normalize_skill_module(module) or ""
     action = normalize_skill_action(module, action)
     return tuple(dict.fromkeys((*_BASE_SKILLS.get(module, ()), *_ACTION_SKILLS.get(module, {}).get(action, ()))))
@@ -241,7 +261,9 @@ def build_action_skill_context(
     from navin.command.modules import disabled_skills_for_module
 
     request = current_request_context()
-    normalized = normalize_skill_module(module) or ""
+    normalized = (
+        CODE_SKILL_MODULE if module == CODE_SKILL_MODULE else normalize_skill_module(module) or ""
+    )
     metadata = request.metadata if request and isinstance(request.metadata, dict) else {}
     disabled = _names(disabled_skills) | _names(metadata.get("disabled_skills"))
     disabled.update(_names(metadata.get("extra_disabled_skills")))
@@ -304,6 +326,28 @@ def build_action_skill_context(
     )
 
 
+# "keep PR 42 merge-ready", "autopilot sur la PR 42", "babysit MR !7",
+# "/autopilot 42". Matched on the accent-folded, casefolded text.
+_PR_WORD = r"(pr|prs|mr|mrs|pull.?request\w*|merge.?request\w*)"
+_PR_AUTOPILOT_INTENT = (
+    r"^\s*/autopilot\b"
+    rf"|\bauto.?pilot\w*\b[^.!?\n]{{0,40}}\b{_PR_WORD}\b"
+    rf"|\b{_PR_WORD}\b[^.!?\n]{{0,40}}\bauto.?pilot\w*"
+    rf"|\b{_PR_WORD}\b[^.!?\n]{{0,60}}\bmerge.?ready\b"
+    rf"|\bmerge.?ready\b[^.!?\n]{{0,40}}\b{_PR_WORD}\b"
+    rf"|\b{_PR_WORD}\b[^.!?\n]{{0,60}}\bpret\w*\s+(a|pour)\s+(etre\s+)?merg\w*"
+    rf"|\bbabysit\w*\b[^.!?\n]{{0,30}}\b{_PR_WORD}\b"
+)
+
+_VIDEO_WORD = r"(video\w*|clip\w*|film\w*|reel\w*)"
+_DEMO_WORD =r"(demo\w*|promo\w*|teaser\w*|trailer\w*|explainer\w*|motion)"
+_DEMO_VIDEO_INTENT = (
+    rf"\b{_DEMO_WORD}\b[^.!?\n]{{0,40}}\b{_VIDEO_WORD}\b"
+    rf"|\b{_VIDEO_WORD}\b[^.!?\n]{{0,40}}\b{_DEMO_WORD}\b"
+    r"|\b(launch|product)\s+(video|film)\b|\bvideo\w*\s+(de\s+)?(produit|lancement)\b"
+    r"|\bmotion.?design\w*|\bstoryboard\w*"
+)
+
 _ACTION_INTENT: dict[str, tuple[tuple[str, str], ...]] = {
     "tenders": (
         ("revise", r"\b(revis\w*|corrig\w*|review|remark\w*)\b"),
@@ -324,12 +368,14 @@ _ACTION_INTENT: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "montage": (
         ("localize", r"\b(dub\w*|doubl\w*|tradui\w*|translat\w*|sous.titr\w*|subtitle\w*|transcri\w*)\b"),
+        ("demo-video", _DEMO_VIDEO_INTENT),
         ("assemble", r"\b(timeline|assembl\w*|montage|cut|trim|render|export\w*)\b"),
         ("image", r"\b(image\w*|still\w*)\b"),
         ("video", r"\b(video\w*|clip\w*)\b"),
         ("analyze", r"\b(analys\w*|analyz\w*)\b"),
     ),
     "marketing": (
+        ("demo-video", _DEMO_VIDEO_INTENT),
         ("email", r"\b(email|mail|newsletter)\b"),
         ("blog", r"\b(blog|article)\b"),
         ("measure", r"\b(metric\w*|analytics|kpi|mesur\w*)\b"),
@@ -375,6 +421,14 @@ def skill_route_for_turn(
         command = slash[1].lower()
         module = normalize_skill_module("marketing" if command == "campaign" else command)
         text = slash[2]
+    if module is None and not slash:
+        pr_text = "".join(
+            char for char in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(char)
+        )
+        if re.search(_PR_AUTOPILOT_INTENT, pr_text):
+            # Keeping a PR merge-ready is Code work from any chat: the
+            # pr-autopilot loop (conflicts, threads, CI) applies.
+            return CODE_SKILL_MODULE, "pr-autopilot"
     if module is None:
         present = _names(skill_names)
         for candidate, primary in (
@@ -385,6 +439,11 @@ def skill_route_for_turn(
             if primary in present:
                 module = candidate
                 break
+    folded = "".join(char for char in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(char))
+    if module is None and re.search(_DEMO_VIDEO_INTENT, folded):
+        # "Make a demo video of my app" from any chat is Montage work: the
+        # premium demo-video recipe and the motion-design playbook apply.
+        module = "montage"
     if module is None:
         return None
     # Session metadata may describe an earlier action. A new inbound request
@@ -397,8 +456,41 @@ def skill_route_for_turn(
     )
     if action:
         return module, normalize_skill_action(module, action)
-    folded = "".join(char for char in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(char))
     for candidate, pattern in _ACTION_INTENT.get(module, ()):
         if re.search(pattern, folded):
             return module, candidate
     return module, "status"
+
+
+# Plain chat requests that map to one engineering playbook, outside the desks.
+# Matched on accent-folded, casefolded text ("crée" -> "cree").
+_FORGE_WORD = r"(github|gitlab|forgejo|codeberg|gitea)"
+_REPO_WORD = r"(repo|repos|repository|repositories|depot|depots)"
+_PR_WORD = r"(prs?|pull.?requests?|merge.?requests?|mrs?)"
+_INTENT_SKILLS: tuple[tuple[str, str], ...] = (
+    (
+        "new-repo",
+        r"^\s*/publish\b"
+        rf"|\b(push\w*|publish\w*|upload\w*|put|pousse\w*|publi\w*|envoi\w*|envoy\w*|mettre|mets|met)\b"
+        rf"[^.!?\n]{{0,60}}\b(on|to|sur|vers|dans)\s+{_FORGE_WORD}\b"
+        rf"|\b(create|make|init\w*|set.?up|cree\w*|creer|ouvr\w*|fai\w*)\s+"
+        rf"(?:(?:a|an|the|my|this|un|une|le|mon|new|nouveau|nouvel|private|public|prive|git|"
+        rf"{_FORGE_WORD})\s+){{0,3}}{_REPO_WORD}\b",
+    ),
+    (
+        "split-to-prs",
+        rf"\b(split\w*|break\w*|divid\w*|chop\w*|slice\w*|decoup\w*|separ\w*|divis\w*|scind\w*)\b"
+        rf"[^.!?\n]{{0,50}}\b{_PR_WORD}\b",
+    ),
+)
+
+
+def intent_skill_names(text: str) -> tuple[str, ...]:
+    """Playbooks a plain request clearly asks for ("push this project to GitHub")."""
+    folded = "".join(
+        char for char in unicodedata.normalize("NFKD", (text or "").casefold())
+        if not unicodedata.combining(char)
+    )
+    if not folded.strip():
+        return ()
+    return tuple(name for name, pattern in _INTENT_SKILLS if re.search(pattern, folded))

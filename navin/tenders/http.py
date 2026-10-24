@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-_UA = "NavinTenders/1.0 (+https://navin.ai)"
+_UA = "NavinTenders/1.0 (+https://navin.live)"
 _TIMEOUT = 22
 
 

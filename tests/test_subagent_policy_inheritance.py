@@ -215,7 +215,7 @@ class SubagentSpecCarriesPolicyTest(unittest.IsolatedAsyncioTestCase):
         )
         await self.manager._run_subagent(
             "t1",
-            "do the delegated task",
+            "add the stats dashboard",
             "lab",
             {"channel": "cli", "chat_id": "direct", "session_key": "cli:direct"},
             status,
@@ -230,12 +230,66 @@ class SubagentSpecCarriesPolicyTest(unittest.IsolatedAsyncioTestCase):
         spec = specs[0]
         self.assertTrue(spec.requires_verify_before_done)
         self.assertTrue(spec.validate_code_changes)
+        # The task's screen words reach the child so a backend-only answer is
+        # sent back for the frontend there too.
+        self.assertIn("dashboard", spec.ui_terms)
         self.assertIn("exec", spec.locked_denied_tools)
         self.assertIn("montage", spec.locked_denied_tools)
         # Runtime denial, not only the lock: the tool schema and the runner
         # gate both consult denied_tools.
         self.assertIn("exec", spec.denied_tools)
         self.assertEqual(frozenset({"read_file", "apply_patch"}), spec.allowed_tools)
+
+    async def test_plan_agent_runs_read_only_and_asks_through_the_parent(self) -> None:
+        from navin.agent.approval import (
+            ApprovalDecision,
+            bind_approval_gate,
+            current_approval_gate,
+            reset_approval_gate,
+        )
+        from navin.agent.subagent import SubagentStatus
+
+        agents = Path(self.tmp.name) / ".navin" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "planner.md").write_text(
+            "---\nname: planner\ndescription: d\npermissionMode: plan\n---\nPlan only.\n",
+            encoding="utf-8",
+        )
+        specs: list[AgentRunSpec] = []
+        gates: list[Any] = []
+
+        async def _capture_run(spec: AgentRunSpec) -> AgentRunResult:
+            specs.append(spec)
+            gates.append(current_approval_gate())
+            return AgentRunResult(final_content="done", messages=[])
+
+        class _Parent:
+            async def ask(self, request):
+                return ApprovalDecision(allowed=True, reason="user said yes")
+
+        self.manager.runner.run = _capture_run  # type: ignore[method-assign]
+        for agent, read_only in (("planner", True), (None, False)):
+            status = SubagentStatus(
+                task_id="t2", label="lab", task_description="task", started_at=0.0,
+            )
+            await self.manager._run_subagent(
+                "t2", "plan it", "lab",
+                {"channel": "cli", "chat_id": "direct", "session_key": "cli:direct"},
+                status, _runtime(_OneToolProvider()), agent_name=agent,
+                approval_gate=_Parent(),
+            )
+            spec = specs[-1]
+            self.assertIs(spec.read_only_tools, read_only)
+            self.assertEqual("set_composer_mode" in (spec.denied_tools or ()), read_only)
+        token = bind_approval_gate(gates[-1])
+        try:
+            from navin.agent.approval import ApprovalRequest, request_approval
+
+            decision = await request_approval(ApprovalRequest(tool="exec", action="x", reason="r"))
+        finally:
+            reset_approval_gate(token)
+        self.assertTrue(decision.allowed)
+        self.assertEqual("user said yes", decision.reason)
 
 
 if __name__ == "__main__":

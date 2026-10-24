@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from navin.trading.loop import desk_snapshot
 from navin.trading.mandate import (
     agent_risk_for,
     book_currency,
@@ -17,7 +18,6 @@ from navin.trading.mandate import (
     parse_mandate_from_brief,
     resolve_mandate,
 )
-from navin.trading.loop import desk_snapshot
 from navin.trading.notify import alert_cycle
 from navin.trading.store import TradingStore
 from navin.trading.strategy import infer_skill, parse_strategy

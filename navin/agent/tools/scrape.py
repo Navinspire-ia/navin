@@ -58,7 +58,7 @@ from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allo
 from navin.utils.native import native
 
 _DEFAULT_UA = (
-    "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.ai) AppleWebKit/537.36"
+    "Mozilla/5.0 (compatible; NavinScrape/0.1; +https://navin.live) AppleWebKit/537.36"
 )
 _HARD_MAX_PAGES = 500
 _HARD_MAX_BYTES = 5 * 1024 * 1024
@@ -1223,6 +1223,8 @@ class ScrapeTool(Tool):
     """Fetch, crawl, clean and export web pages at scale (Rust-accelerated)."""
 
     config_key = "scrape"
+    # "teammate": loaded for a Collaboration Mode teammate that lists it.
+    _scopes = {"core", "teammate"}
 
     @classmethod
     def config_cls(cls):

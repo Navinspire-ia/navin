@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import unittest
-from types import SimpleNamespace
 
 from navin.gateway.watchdog import ensure_gateway_health
 from navin.process_runtime import ProcessResult, ProcessStartOptions, ProcessStatus

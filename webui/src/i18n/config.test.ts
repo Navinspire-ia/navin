@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   detectSystemLocale,
+  isRtlLocale,
   LOCALE_CHOICE_KEY,
   LOCALE_STORAGE_KEY,
   matchLocale,
@@ -52,20 +53,36 @@ describe("matchLocale", () => {
     expect(matchLocale("FR")).toBe("fr");
   });
 
+  it("speaks every registered locale, regional tag or not", () => {
+    expect(matchLocale("ar-EG")).toBe("ar");
+    expect(matchLocale("ar")).toBe("ar");
+    expect(matchLocale("en-GB")).toBe("en");
+  });
+
   it("answers null for a language we do not speak", () => {
+    expect(matchLocale("es-ES")).toBeNull();
     expect(matchLocale("de-DE")).toBeNull();
+    expect(matchLocale("zh")).toBeNull();
     expect(matchLocale("  ")).toBeNull();
+  });
+});
+
+describe("isRtlLocale", () => {
+  it("mirrors arabic only", () => {
+    expect(isRtlLocale("ar")).toBe(true);
+    expect(isRtlLocale("fr")).toBe(false);
+    expect(isRtlLocale("en")).toBe(false);
   });
 });
 
 describe("detectSystemLocale", () => {
   it("takes the first system language we can speak", () => {
-    givenBrowser({ languages: ["de-DE", "fr-FR", "en-US"] });
+    givenBrowser({ languages: ["es-ES", "fr-FR", "en-US"] });
     expect(detectSystemLocale()).toBe("fr");
   });
 
   it("answers null when the machine speaks none of ours", () => {
-    givenBrowser({ languages: ["de-DE", "ja"] });
+    givenBrowser({ languages: ["es-ES", "zh"] });
     expect(detectSystemLocale()).toBeNull();
   });
 });
@@ -103,7 +120,7 @@ describe("resolveInitialLocale", () => {
   });
 
   it("falls back to english when nothing is stored or detectable", () => {
-    givenBrowser({ languages: ["de-DE"] });
+    givenBrowser({ languages: ["es-ES"] });
     expect(resolveInitialLocale()).toBe("en");
   });
 });

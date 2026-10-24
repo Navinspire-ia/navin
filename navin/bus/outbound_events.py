@@ -11,7 +11,7 @@ message's explicit ``event`` field rather than in reserved metadata flags.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from navin.bus.events import OutboundMessage
@@ -49,6 +49,9 @@ class StreamEndEvent(OutboundEvent):
     content: str = ""
     stream_id: str | None = None
     resuming: bool = False
+    # The segment's text was abandoned by a mid-stream retry: consumers must
+    # remove (not finalize) what they rendered for ``stream_id``.
+    discarded: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,7 +217,8 @@ class EditorOpenRequestedEvent(OutboundEvent):
 class ComposerModeRequestedEvent(OutboundEvent):
     """The agent asks the WebUI to switch the composer turn mode.
 
-    Modes: ``ask`` | ``plan`` | ``agent`` | ``review`` | ``security`` | ``debug`` | ``montage``.
+    Modes: ``ask`` | ``plan`` | ``agent`` | ``review`` | ``security`` | ``debug`` |
+    ``reverse`` | ``montage``.
     The client updates the mode menu + shell accent color (same as a manual
     pick) and persists the choice.
     """
@@ -258,6 +262,54 @@ class SubagentProgressEvent(OutboundEvent):
     started_ms_ago: int | None = None
     # Tokens processed so far (prompt + completion, all iterations).
     tokens: int | None = None
+    # Recent steps, newest last: [{kind, name, verb, target, status}], where
+    # status is "ok" | "error" | "running". Drawn in the expanded card.
+    steps: list[dict[str, str]] | None = None
+    # Stable reason for an error phase: timeout | stalled | cancelled | limit | other.
+    error_kind: str | None = None
+    # Collaboration Mode teammate running this subagent: {id, name, title,
+    # role, avatar, color, email}. None for a plain subagent.
+    member: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class TeamMessageEvent(OutboundEvent):
+    """One exchange in a Collaboration Mode team, shown live in the chat.
+
+    ``kind`` is assign | message | result | user | note. ``sender`` and
+    ``target`` are teammate identities ({id, name, title, avatar, color});
+    the orchestrator is id "lead" and the user id "user".
+    """
+
+    entry_id: str
+    kind: str
+    sender: dict[str, str]
+    target: dict[str, str] | None = None
+    content: str = ""
+    task_id: str | None = None
+    status: str | None = None
+    ts: float = 0.0
+
+
+@dataclass(frozen=True)
+class WorktreeMergeEvent(OutboundEvent):
+    """What became of a Multitask subagent's isolated changes.
+
+    ``status`` is merged | conflict | blocked | unknown (needs attention) or
+    resolving | kept | discarded (the user acted on the card). ``files`` is
+    the paths the subagent changed, ``conflicts`` the ones that stopped the
+    automatic merge. ``resolve_prompt`` is the message sent to the agent when
+    the user picks Resolve.
+    """
+
+    task_id: str
+    label: str
+    status: str
+    files: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    reason: str = ""
+    branch: str = ""
+    resolve_prompt: str = ""
 
 
 @dataclass(frozen=True)
@@ -340,6 +392,41 @@ class ChoiceClosedEvent(OutboundEvent):
     request_id: str
     option_id: str = ""
     skipped: bool = False
+    question: str = ""
+    label: str = ""
+    custom_text: str = ""
+    timed_out: bool = False
+    stopped: bool = False
+    #: Milliseconds the card stayed open, waiting on the user.
+    waited_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class CredentialRequestedEvent(OutboundEvent):
+    """A tool paused until the user saves a login or connects a git account.
+
+    Carries what is needed, never a value: ``kind`` (site_login | git_host),
+    the host, the secret names wanted (site_login) and the agent's reason.
+    """
+
+    request_id: str
+    kind: str
+    host: str
+    names: list[str]
+    reason: str = ""
+    expires_at_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class CredentialClosedEvent(OutboundEvent):
+    """A credential card is over. ``refs`` and ``login`` only, no secret."""
+
+    request_id: str
+    kind: str = ""
+    host: str = ""
+    status: str = ""
+    refs: list[str] | None = None
+    login: str = ""
 
 
 @dataclass(frozen=True)
@@ -353,6 +440,10 @@ class ApprovalClosedEvent(OutboundEvent):
     request_id: str
     allowed: bool
     reason: str = ""
+    #: Milliseconds the card stayed open, waiting on the user.
+    waited_ms: int | None = None
+    #: What was asked ("delete 12 files"), to restate the decision in the chat.
+    action: str = ""
 
 
 @dataclass(frozen=True)
@@ -471,6 +562,7 @@ def _legacy_event_from_metadata(msg: OutboundMessage) -> OutboundEvent | None:
             content=msg.content,
             stream_id=_metadata_str(meta, "_stream_id"),
             resuming=bool(meta.get("_resuming")),
+            discarded=bool(meta.get("_stream_discarded")),
         )
     if meta.get("_stream_delta"):
         return StreamDeltaEvent(

@@ -198,7 +198,8 @@ def test_live_output_of_same_size_repaints_without_reflowing_the_transcript(tmp_
             row = ToolCall("run", "exec", {"command": "pytest checks.py"})
             await app.transcript.mount(row)
             row.apply(phase="output", output="\n".join(f"old_{i:03}" for i in range(80)))
-            row.toggle()
+            # A running command opens on its first output.
+            assert row._open
             # Output is coalesced on a 100 ms timer. Let the initial frame
             # and its scrollbar layout settle before measuring a replacement.
             await pilot.pause(0.15)
@@ -221,7 +222,8 @@ def test_hidden_live_output_keeps_latest_data_and_repaints_when_navigation_close
             row = ToolCall("run", "exec", {"command": "pytest checks.py"})
             await app.transcript.mount(row)
             row.apply(phase="output", output="\n".join(f"old_{i:03}" for i in range(80)))
-            row.toggle()
+            # A running command opens on its first output.
+            assert row._open
             await pilot.pause()
             body = row.query_one(".tool-body", Static)
             await app.push_screen(PickerScreen("Sessions", [PickItem("a", "A")]))
@@ -421,7 +423,8 @@ def test_resize_defers_hidden_log_formatting_until_it_scrolls_into_view(tmp_path
             row = ToolCall("run", "exec", {"command": "pytest checks.py"})
             await app.transcript.mount(row)
             row.apply(phase="output", output="\n".join(f"old_{i:03}" for i in range(80)))
-            row.toggle()
+            # A running command opens on its first output.
+            assert row._open
             await pilot.pause()
             await app.transcript.mount(Static("Later content\n" * 60))
             app.transcript.follow()

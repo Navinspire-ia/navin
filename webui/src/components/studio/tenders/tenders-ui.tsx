@@ -69,7 +69,7 @@ export const FILL_BUTTON_STYLES: IButtonStyles = {
 export const HERO_ACTIONS_CLASS =
   "grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3";
 export const DASH_TILE_CLASS =
-  "flex min-h-20 w-full min-w-0 cursor-pointer flex-col justify-center rounded-2xl px-4 py-3 text-left shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[transform,background-color] duration-150 hover:bg-muted/30 active:scale-[0.96] dark:outline-white/10";
+  "flex min-h-20 w-full min-w-0 cursor-pointer flex-col justify-center rounded-2xl px-4 py-3 text-start shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 transition-[transform,background-color] duration-150 hover:bg-muted/30 active:scale-[0.96] dark:outline-white/10";
 export const DASH_TILE_GRID_CLASS = "grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4";
 
 /**

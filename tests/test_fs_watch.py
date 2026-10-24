@@ -167,6 +167,49 @@ class WatcherServiceTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await service.stop()
 
+    async def test_idle_root_backs_off_and_a_change_resets_it(self) -> None:
+        service = WorkspaceWatcherService(
+            self._notify, interval_s=1.0, max_interval_s=8.0
+        )
+        service.watch("chat-1", str(self.root))
+        entry = next(iter(service._watches.values()))
+        await service.poll_once()
+        delays = [entry.delay_s]
+        for _ in range(4):
+            await service.poll_once()
+            delays.append(entry.delay_s)
+        # Doubles while quiet, capped at the ceiling.
+        self.assertEqual([2.0, 4.0, 8.0, 8.0, 8.0], delays)
+
+        _touch(self.root / "new.py")
+        self.assertEqual([str(self.root)], await service.poll_once())
+        self.assertEqual(1.0, entry.delay_s)
+
+    async def test_background_loop_skips_roots_inside_their_backoff(self) -> None:
+        service = WorkspaceWatcherService(
+            self._notify, interval_s=5.0, max_interval_s=30.0
+        )
+        service.watch("chat-1", str(self.root))
+        await service.poll_once(only_due=True)  # baseline, schedules next scan
+        _touch(self.root / "new.py")
+        # Not due yet: the due-only pass does not walk the tree.
+        self.assertEqual([], await service.poll_once(only_due=True))
+        # A direct poll still scans and sees it.
+        self.assertEqual([str(self.root)], await service.poll_once())
+
+    async def test_new_subscriber_clears_accumulated_backoff(self) -> None:
+        service = WorkspaceWatcherService(
+            self._notify, interval_s=1.0, max_interval_s=8.0
+        )
+        service.watch("chat-1", str(self.root))
+        entry = next(iter(service._watches.values()))
+        for _ in range(3):
+            await service.poll_once()
+        self.assertGreater(entry.delay_s, 1.0)
+        service.watch("chat-2", str(self.root))
+        self.assertEqual(1.0, entry.delay_s)
+        self.assertEqual(0.0, entry.next_due)
+
     async def test_notify_errors_do_not_kill_the_poll(self) -> None:
         async def boom(root: str, chat_ids: list[str]) -> None:
             raise RuntimeError("transport down")

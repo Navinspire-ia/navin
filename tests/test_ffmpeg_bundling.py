@@ -11,9 +11,11 @@ out-of-sync notices copy is a distribution defect, not a cosmetic one.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import re
 import sys
 import tarfile
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -205,6 +207,68 @@ class TestChecksumEnforcement:
     def test_unknown_target_is_an_error(self):
         with pytest.raises(ffmpeg_vendor.VendorError, match="no ffmpeg source"):
             ffmpeg_vendor.ensure_ffmpeg("solaris-sparc", manifest={"targets": {}})
+
+
+class TestDownloadRetry:
+    """A provider unreachable for a moment must not fail a release job."""
+
+    def _setup(self, monkeypatch, tmp_path: Path, failures: list[Exception]):
+        calls: list[str] = []
+        pauses: list[float] = []
+
+        def fake_download(url: str, dest: Path) -> str:
+            calls.append(url)
+            if failures:
+                raise failures.pop(0)
+            with zipfile.ZipFile(dest, "w") as bundle:
+                bundle.writestr("ffmpeg", b"mpeg")
+                bundle.writestr("ffprobe", b"probe")
+            return hashlib.sha256(dest.read_bytes()).hexdigest()
+
+        monkeypatch.setattr(ffmpeg_vendor, "_download", fake_download)
+        monkeypatch.setattr(ffmpeg_vendor.time, "sleep", pauses.append)
+        monkeypatch.setattr(ffmpeg_vendor, "VENDOR_ROOT", tmp_path / "vendor")
+        manifest = {
+            "targets": {"linux-x64": {"url": "https://x/a.zip", "archive": "zip", "sha256": ""}}
+        }
+        return calls, pauses, manifest
+
+    def test_connect_timeouts_are_retried_until_the_download_works(
+        self, tmp_path: Path, monkeypatch
+    ):
+        timeout = urllib.error.URLError(TimeoutError(110, "Connection timed out"))
+        calls, pauses, manifest = self._setup(monkeypatch, tmp_path, [timeout, timeout])
+        staged = ffmpeg_vendor.ensure_ffmpeg("linux-x64", manifest=manifest, update_manifest=True)
+        assert staged.read_bytes() == b"mpeg"
+        assert len(calls) == 3
+        assert pauses == list(ffmpeg_vendor.RETRY_BACKOFF_S[:2])
+
+    def test_server_errors_and_truncated_bodies_are_retried(self, tmp_path: Path, monkeypatch):
+        failures: list[Exception] = [
+            urllib.error.HTTPError("https://x/a.zip", 503, "Unavailable", None, None),
+            http.client.IncompleteRead(b"partial"),
+        ]
+        calls, _, manifest = self._setup(monkeypatch, tmp_path, failures)
+        ffmpeg_vendor.ensure_ffmpeg("linux-x64", manifest=manifest, update_manifest=True)
+        assert len(calls) == 3
+
+    def test_a_missing_file_is_not_retried(self, tmp_path: Path, monkeypatch):
+        missing = urllib.error.HTTPError("https://x/a.zip", 404, "Not Found", None, None)
+        calls, pauses, manifest = self._setup(monkeypatch, tmp_path, [missing])
+        with pytest.raises(urllib.error.HTTPError):
+            ffmpeg_vendor.ensure_ffmpeg("linux-x64", manifest=manifest, update_manifest=True)
+        assert len(calls) == 1
+        assert pauses == []
+
+    def test_the_build_fails_once_every_attempt_is_spent(self, tmp_path: Path, monkeypatch):
+        attempts = ffmpeg_vendor.DOWNLOAD_ATTEMPTS
+        failures: list[Exception] = [ConnectionResetError(104, "reset")] * attempts
+        calls, pauses, manifest = self._setup(monkeypatch, tmp_path, list(failures))
+        with pytest.raises(ConnectionResetError):
+            ffmpeg_vendor.ensure_ffmpeg("linux-x64", manifest=manifest, update_manifest=True)
+        assert len(calls) == attempts
+        assert len(pauses) == attempts - 1
+        assert not ffmpeg_vendor.vendor_path("linux-x64").exists()
 
 
 class TestFfprobeStaging:

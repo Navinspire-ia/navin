@@ -18,7 +18,10 @@ _RESERVED_IDS = frozenset({OTHER_OPTION_ID})
 class AskUserTool(Tool):
     """Stop the turn and show a choice card with a recommended option."""
 
-    _scopes = {"core"}
+    # Subagents ask through the same modal as the main agent: a question left
+    # in a subagent's final text was never shown as a question and the run
+    # ended with nothing done.
+    _scopes = {"core", "subagent"}
 
     @property
     def read_only(self) -> bool:

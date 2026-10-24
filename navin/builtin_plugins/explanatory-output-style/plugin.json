@@ -1,0 +1,27 @@
+{
+  "name": "explanatory-output-style",
+  "version": "1.0.0",
+  "description": "The agent explains as it codes: short Insight blocks about implementation choices and codebase patterns, injected into the system prompt every turn.",
+  "category": "learning",
+  "commands": [
+    "output-style"
+  ],
+  "agents": [],
+  "skills": [
+    "output-styles"
+  ],
+  "steps": [
+    {
+      "step": "switch the explanatory style on for this project",
+      "use": "/output-style"
+    },
+    {
+      "step": "list the styles and see the active one",
+      "use": "/output-style"
+    },
+    {
+      "step": "learn how styles work and write a custom one",
+      "use": "skill:output-styles"
+    }
+  ]
+}

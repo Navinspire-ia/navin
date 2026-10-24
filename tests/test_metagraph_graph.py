@@ -35,6 +35,26 @@ class _Tree(unittest.TestCase):
 
 
 class GraphViewsTest(_Tree):
+    def test_bridged_root_skips_a_stat_per_unindexed_file(self) -> None:
+        """On a WSL share seen from Windows, docs and assets cost no stat."""
+        from navin.index import service as index_service
+        from navin.webui.metagraph import _collect_snapshot
+
+        self.write("pkg/a.py", "y = 2\n")
+        self.write("notes.md", "# a note long enough to have a size\n")
+        index_service._instances.pop(str(self.root), None)
+        self.addCleanup(index_service._instances.pop, str(self.root), None)
+        with mock.patch("navin.index.service.is_bridged_root", return_value=True):
+            snapshot = _collect_snapshot(self.root, max_nodes=50)
+        sizes = {row["id"]: row["size"] for row in snapshot["files"]}
+        self.assertEqual(sizes["notes.md"], 0)
+        self.assertGreater(sizes["pkg/a.py"], 0)
+
+        index_service._instances.pop(str(self.root), None)
+        snapshot = _collect_snapshot(self.root, max_nodes=50)
+        sizes = {row["id"]: row["size"] for row in snapshot["files"]}
+        self.assertGreater(sizes["notes.md"], 0)
+
     def test_files_view_has_generation(self) -> None:
         self.write("pkg/a.py", "import pkg.b\n")
         self.write("pkg/b.py", "y = 2\n")

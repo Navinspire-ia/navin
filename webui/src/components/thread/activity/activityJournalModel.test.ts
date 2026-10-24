@@ -11,6 +11,7 @@ import {
   journalTaskIdFromArgs,
   journalTaskLink,
   journalToneForTool,
+  parseAskUserAnswer,
   summarizeJournal,
   type ActivityJournalStatus,
   type JournalStep,
@@ -24,7 +25,11 @@ const shell = (command: string, status: ActivityJournalStatus = "done", key = co
   command,
   status,
 });
-const tool = (name: string, args: string, status: ActivityJournalStatus = "done"): JournalStep => ({
+const tool = (
+  name: string,
+  args: string,
+  status: ActivityJournalStatus = "done",
+): Extract<JournalStep, { kind: "tool" }> => ({
   kind: "tool",
   name,
   args,
@@ -115,13 +120,14 @@ describe("buildJournalTimeline", () => {
     expect(entries[1].facts).toEqual([{ label: "action", value: "status" }]);
   });
 
-  it("marks the tail as running while streaming and settles it once done", () => {
+  it("marks the tail as running while streaming and as stopped once the turn ends without it", () => {
     const steps = [shell("npm test", "running")];
     const live = buildJournalTimeline(steps, { streaming: true });
     expect(live[0].status).toBe("running");
     expect(currentJournalEntry(live)?.id).toBe(live[0].id);
+    // Still running when the turn is over: it was stopped, never a green check.
     const settled = buildJournalTimeline(steps, { streaming: false });
-    expect(settled[0].status).toBe("done");
+    expect(settled[0].status).toBe("interrupted");
     expect(settled[0].live).toBe(false);
   });
 });
@@ -203,5 +209,117 @@ describe("board task links", () => {
       null,
     ]);
     expect(entries[1].taskId).toBe("t-42");
+  });
+});
+
+describe("shell rows for one call", () => {
+  const heredoc = [
+    "cat > /tmp/navin-check.py <<'EOF'",
+    "import json",
+    "print(json.dumps({'ok': True, 'value': 'x' * 120}))",
+    "EOF",
+    "python3 /tmp/navin-check.py",
+  ].join("\n");
+
+  it("merges a long heredoc from running to done into one row", () => {
+    const entries = buildJournalTimeline([
+      { kind: "shell", key: "call:1", command: heredoc, status: "running" },
+      { kind: "shell", key: 'exec({"command":"..."})', command: heredoc, status: "done", output: "{\"ok\": true}" },
+    ], { streaming: true });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("done");
+    expect(entries[0].output).toContain("ok");
+    expect(entries[0].count).toBeUndefined();
+    expect(entries[0].command).toBe("cat > /tmp/navin-check.py <<'EOF'");
+    expect(entries[0].fullCommand).toBe(heredoc);
+    expect(entries[0].commandExtraLines).toBe(4);
+  });
+
+  it("merges the same call key without counting it twice", () => {
+    const entries = buildJournalTimeline([
+      { kind: "shell", key: "call:2", command: "npm test", status: "done" },
+      { kind: "shell", key: "call:2", command: "npm test", status: "done", output: "passed" },
+    ], { streaming: false });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].count).toBeUndefined();
+    expect(entries[0].output).toBe("passed");
+  });
+
+  it("keeps an error status on a command that failed for good", () => {
+    const entries = buildJournalTimeline([shell("false", "error", "s1")], { streaming: false });
+    expect(entries[0].status).toBe("error");
+  });
+});
+
+describe("currentJournalEntry", () => {
+  it("only surfaces a running step, never the last finished one", () => {
+    const entries = buildJournalTimeline([shell("ls"), read("a.ts")], { streaming: true });
+    expect(currentJournalEntry(entries)).toBeUndefined();
+  });
+});
+
+describe("reasoning rows", () => {
+  it("keeps thinking in time order and folds back-to-back segments", () => {
+    const entries = buildJournalTimeline([
+      { kind: "reasoning", key: "r1", text: "Let me check:\n1. a\n2. b", status: "done" },
+      { kind: "reasoning", key: "r2", text: "Then the tests.", status: "done" },
+      shell("npm test"),
+      { kind: "reasoning", key: "r3", text: "Now the fix.", status: "running" },
+    ], { streaming: true });
+    expect(entries.map((entry) => entry.kind)).toEqual(["reasoning", "shell", "reasoning"]);
+    expect(entries[0].text).toBe("Let me check:\n1. a\n2. b\n\nThen the tests.");
+    expect(entries[2].status).toBe("running");
+    expect(currentJournalEntry(entries)).toBeUndefined();
+    expect(summarizeJournal(entries).commands).toBe(1);
+    expect(summarizeJournal(entries).tools).toBe(0);
+  });
+});
+
+describe("ask_user rows", () => {
+  it("reads the clean answer out of the tool result", () => {
+    expect(parseAskUserAnswer('The user chose "b" (Ship it now).')).toEqual({ kind: "chose", text: "Ship it now" });
+    expect(parseAskUserAnswer('The user chose "b" (Ship it now): smaller diff.')).toEqual({ kind: "chose", text: "Ship it now" });
+    expect(parseAskUserAnswer(
+      "The user did not pick a listed option. They wrote this instead:\nUse Postgres\nFollow that instruction. Do not substitute one of the listed options.",
+    )).toEqual({ kind: "custom", text: "Use Postgres" });
+    expect(parseAskUserAnswer(
+      "The user skipped. Continue with the recommended option and say so. Recommended: a - Keep SQLite.",
+    )).toEqual({ kind: "skipped", text: "Keep SQLite" });
+    expect(parseAskUserAnswer("")).toBeUndefined();
+  });
+
+  it("shows the question as the target and keeps the answer, even after an error", () => {
+    const entries = buildJournalTimeline([
+      {
+        kind: "tool",
+        name: "ask_user",
+        args: '{"question":"Which database?","options":[{"id":"a","label":"SQLite"}]}',
+        status: "done",
+        output: 'The user chose "a" (SQLite).',
+      },
+      { ...tool("ask_user", '{"question":"Deploy now?"}'), status: "error" as const },
+    ], { streaming: false });
+    expect(entries).toHaveLength(2);
+    expect(entries[0].defaultValue).toBe("Asked");
+    expect(entries[0].target).toBe("Which database?");
+    expect(entries[0].answer).toEqual({ kind: "chose", text: "SQLite" });
+    expect(entries[1].target).toBe("Deploy now?");
+  });
+});
+
+describe("spawn rows", () => {
+  it("names the agent and keeps the first line of its task", () => {
+    const [entry] = buildJournalTimeline([
+      tool("spawn", JSON.stringify({ label: "Pitch deck", task: "Build a pitch deck\nwith 10 slides" })),
+    ], { streaming: false });
+    expect(entry.defaultValue).toBe("Agent");
+    expect(entry.target).toBe("Pitch deck");
+    expect(entry.detail).toBe("Build a pitch deck");
+
+    const [bare] = buildJournalTimeline([
+      tool("spawn", JSON.stringify({ task: "Audit the auth flow\nthen report" })),
+    ], { streaming: false });
+    expect(bare.target).toBe("Audit the auth flow");
+    expect(bare.detail).toBeUndefined();
   });
 });

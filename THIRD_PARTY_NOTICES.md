@@ -37,6 +37,52 @@ johnvansickle.com, www.osxexperts.net, evermeet.cx, github.com and www.gyan.dev.
 
 ## UI and assets
 
+### TalkingHead
+
+- Source: https://github.com/met4citizen/TalkingHead
+- Use: the talking 3D avatar of Live calls
+- License: MIT
+
+```text
+MIT License
+
+Copyright (c) 2023-2024 Mika Suominen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Live avatar (female.glb)
+
+- Source: `avatars/mpfb.glb` of https://github.com/met4citizen/TalkingHead,
+  made with Blender and MPFB (MakeHuman)
+- Modifications: textures resized to 1024 px and converted to WebP
+- License: CC0 1.0 (public domain dedication)
+
+### Live avatar (male.glb)
+
+- Made by Navinspire IA with Blender and MPFB (MakeHuman) from CC0 assets:
+  MakeHuman system assets, asset packs hair01, shirts01, pants01, skins01,
+  shoes01, and the Visemes 02 / Faceunits 01 packs (Mika Suominen, CC0);
+  rigged with TalkingHead's MPFB rig (MIT, see TalkingHead above)
+- Recipe: `scripts/live-avatar/` of the Navin web UI sources
+- License: CC0 1.0 (public domain dedication)
+
 ### Tabler Icons
 
 - Source: https://github.com/tabler/tabler-icons
@@ -203,6 +249,50 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
+
+### three.js (Montage motion engine)
+
+- Source: https://github.com/mrdoob/three.js (0.185.1)
+- Use: 3D scenes rendered into marketing videos (navin/montage/motion/assets)
+- License: MIT
+
+```text
+The MIT License
+
+Copyright © 2010-2026 three.js authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### GSAP (Montage motion engine)
+
+- Source: https://gsap.com (3.15.0, unmodified gsap.min.js)
+- Use: animation timelines of the marketing video templates
+- License: Standard "No Charge" GSAP License, https://gsap.com/standard-license
+  (full text shipped in navin/montage/motion/assets/LICENSE-gsap.txt)
+
+### Inter (Montage motion engine)
+
+- Source: https://github.com/rsms/inter
+- Use: default typeface of the marketing video templates
+- License: SIL Open Font License 1.1
+  (full text shipped in navin/montage/motion/assets/fonts/LICENSE-inter-OFL.txt)
 
 ## Upstream-derived components
 

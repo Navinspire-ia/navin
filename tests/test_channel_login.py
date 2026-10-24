@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import unittest
 
-from navin.webui.channel_login import ChannelLoginError, login_snapshot, qr_png_data_url, start_channel_login
+from navin.webui.channel_login import (
+    ChannelLoginError,
+    login_snapshot,
+    qr_png_data_url,
+    start_channel_login,
+)
 
 
 class ChannelLoginTest(unittest.TestCase):
@@ -56,7 +61,10 @@ class ChannelLoginTest(unittest.TestCase):
     def test_protobuf_mismatch_points_at_install_button(self) -> None:
         from unittest.mock import patch
 
-        from navin.channels.whatsapp import _WHATSAPP_PROTOBUF_MISMATCH, _is_protobuf_runtime_mismatch
+        from navin.channels.whatsapp import (
+            _WHATSAPP_PROTOBUF_MISMATCH,
+            _is_protobuf_runtime_mismatch,
+        )
 
         class VersionError(Exception):
             pass

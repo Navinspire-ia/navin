@@ -119,13 +119,13 @@ export function DevProcessesPanel({ token }: { token: string }) {
                   <button
                     type="button"
                     onClick={() => setExpanded(isOpen ? null : proc.id)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-start"
                     title={proc.command}
                   >
                     {isOpen ? (
                       <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                     ) : (
-                      <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                      <ChevronRight className="rtl:-scale-x-100 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
                     )}
                     <span
                       className={cn(

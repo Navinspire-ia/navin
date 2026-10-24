@@ -5,8 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   NEAR_BOTTOM_PX,
+  PROMPT_JUMP_ECHO_MS,
+  USER_SCROLL_INTENT_MS,
   classifyScrollEvent,
+  hasRecentUserScrollIntent,
   isNearBottom,
+  isUpwardScrollWithSameHeight,
+  isScrollIntentKey,
   isProgrammaticScroll,
   softKeyboardForcesScrollToBottom,
   visibleAnchorMessageCount,
@@ -179,5 +184,83 @@ describe("streaming follow simulation", () => {
       { mark: null, scrollTop: 1400, near: true },
     ]);
     expect(back.reading).toBe(false);
+  });
+});
+
+describe("user scroll intent", () => {
+  it("reads a scroll without a gesture as layout, never as the reader leaving", () => {
+    // A fold spring, the virtual window padding or a hydrate moved scrollTop
+    // 300px above the tail. Nobody touched the wheel: keep following.
+    expect(classifyScrollEvent(null, 400, 1_010, false, false)).toBe("layout");
+    expect(classifyScrollEvent(null, 400, 1_010, false, true)).toBe("user");
+    // Our own marks still win over intent.
+    expect(classifyScrollEvent({ top: 1000, at: 1_000, bottom: true }, 1000, 1_010, false, false))
+      .toBe("catch-up");
+  });
+
+  it("trusts a wheel, touch or key gesture for a short window only", () => {
+    expect(hasRecentUserScrollIntent(0, false, 5_000)).toBe(false);
+    expect(hasRecentUserScrollIntent(5_000, false, 5_000 + USER_SCROLL_INTENT_MS)).toBe(true);
+    expect(hasRecentUserScrollIntent(5_000, false, 5_001 + USER_SCROLL_INTENT_MS)).toBe(false);
+    // Dragging the scrollbar holds intent for as long as the pointer is down.
+    expect(hasRecentUserScrollIntent(0, true, 99_000)).toBe(true);
+  });
+
+  it("counts scroll keys outside the composer, not typing", () => {
+    expect(isScrollIntentKey("PageUp", false)).toBe(true);
+    expect(isScrollIntentKey("ArrowUp", false)).toBe(true);
+    expect(isScrollIntentKey("Home", false)).toBe(true);
+    expect(isScrollIntentKey("ArrowUp", true)).toBe(false);
+    expect(isScrollIntentKey("a", false)).toBe(false);
+  });
+});
+
+describe("prompt jumps while following", () => {
+  it("reads the frames of a jump from Find or the navigator as the jump itself", () => {
+    const start = 10_000;
+    const until = start + PROMPT_JUMP_ECHO_MS;
+    // First smooth frames are still near the bottom and no gesture vouches for
+    // them (the click came from outside the viewport): never "layout".
+    expect(classifyScrollEvent(null, 9_950, start + 16, true, false, until)).toBe("jump");
+    expect(classifyScrollEvent(null, 4_000, start + 300, false, false, until)).toBe("jump");
+    // A bottom mark left from following does not turn a jump frame into a catch-up.
+    expect(classifyScrollEvent({ top: 9_990, at: start, bottom: true }, 9_990, start + 10, false, false, until))
+      .toBe("jump");
+  });
+
+  it("stops claiming frames once the deadline passed or was cleared", () => {
+    const until = 10_000 + PROMPT_JUMP_ECHO_MS;
+    expect(classifyScrollEvent(null, 4_000, until, false, false, until)).toBe("layout");
+    expect(classifyScrollEvent(null, 4_000, until + 5, false, true, until)).toBe("user");
+    expect(classifyScrollEvent(null, 4_000, 10_100, false, false, 0)).toBe("layout");
+  });
+});
+
+describe("upward move with an unchanged height", () => {
+  it("is the reader (selection drag, autoscroll, browser find)", () => {
+    expect(isUpwardScrollWithSameHeight({ top: 5_000, height: 9_000 }, 4_600, 9_000)).toBe(true);
+  });
+
+  it("is layout when the height changed or the move went down", () => {
+    // A fold collapsing clamps scrollTop up and shrinks the content.
+    expect(isUpwardScrollWithSameHeight({ top: 5_000, height: 9_000 }, 4_600, 8_600)).toBe(false);
+    expect(isUpwardScrollWithSameHeight({ top: 5_000, height: 9_000 }, 5_400, 9_000)).toBe(false);
+    // Subpixel jitter is not a move.
+    expect(isUpwardScrollWithSameHeight({ top: 5_000, height: 9_000 }, 4_999.5, 9_000)).toBe(false);
+    expect(isUpwardScrollWithSameHeight(null, 0, 9_000)).toBe(false);
+  });
+
+  it("turns the move into user intent for the classifier", () => {
+    const intent = isUpwardScrollWithSameHeight({ top: 5_000, height: 9_000 }, 4_600, 9_000);
+    expect(classifyScrollEvent(null, 4_600, 20_000, false, intent)).toBe("user");
+  });
+});
+
+describe("composer dock", () => {
+  it("fades the transcript above the prompt instead of a hard cut behind it", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./ThreadViewport.tsx", import.meta.url), "utf8");
+    const dock = source.slice(source.indexOf('data-testid="thread-composer-dock"'));
+    expect(dock).toMatch(/thread-composer-dock-fade[\s\S]{0,200}bottom-full[\s\S]{0,80}from-background/);
   });
 });

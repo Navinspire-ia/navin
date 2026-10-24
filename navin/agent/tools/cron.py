@@ -20,6 +20,9 @@ from navin.cron.service import CronService
 from navin.cron.types import CronJob, CronJobState, CronSchedule
 from navin.session.keys import UNIFIED_SESSION_KEY
 
+# Jobs created by the /loop command (navin/command/loop.py).
+LOOP_NAME_PREFIX = "loop-"
+
 _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),
     name=StringSchema(
@@ -148,7 +151,10 @@ class CronTool(Tool):
         **kwargs: Any,
     ) -> str:
         if action == "add":
-            if self._in_cron_context.get():
+            # A dynamic /loop tick re-arms its own next one-shot tick; any
+            # other scheduling from inside a cron run stays refused.
+            loop_rearm = bool(at) and str(name or "").startswith(LOOP_NAME_PREFIX)
+            if self._in_cron_context.get() and not loop_rearm:
                 return ToolResult.error("Error: cannot schedule new jobs from within a cron job execution")
             return self._add_job(name, message, every_seconds, cron_expr, tz, at)
         elif action == "list":
@@ -208,6 +214,13 @@ class CronTool(Tool):
             delete_after = True
         else:
             return ToolResult.error("Error: either every_seconds, cron_expr, or at is required")
+
+        if name and name.startswith(LOOP_NAME_PREFIX):
+            # /loop names are stable per chat: arming one again replaces the
+            # pending job instead of stacking duplicate ticks.
+            for existing in self._cron.list_jobs(include_disabled=True):
+                if existing.name == name and existing.payload.session_key == session_key:
+                    self._cron.remove_job(existing.id)
 
         job = self._cron.add_job(
             name=name or message[:30],

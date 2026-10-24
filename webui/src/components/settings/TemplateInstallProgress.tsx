@@ -187,7 +187,7 @@ export function TemplateInstallProgress({
       <div className="relative h-1.5 overflow-hidden rounded-full bg-background/80">
         <motion.div
           className={cn(
-            "absolute inset-y-0 left-0 rounded-full",
+            "absolute inset-y-0 start-0 rounded-full",
             failed ? "bg-destructive" : "bg-primary",
           )}
           initial={false}

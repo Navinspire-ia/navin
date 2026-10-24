@@ -187,7 +187,7 @@ export function SessionSearchDialog({
                         onMouseEnter={() => setHighlightedIndex(index)}
                         aria-current={active ? "page" : undefined}
                         className={cn(
-                          "grid min-h-[54px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[11px] px-3 py-2 text-left transition-colors",
+                          "grid min-h-[54px] w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[11px] px-3 py-2 text-start transition-colors",
                           highlighted
                             ? "bg-muted text-foreground"
                             : "text-foreground hover:bg-muted",

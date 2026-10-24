@@ -35,8 +35,8 @@ _MEDIA_EMPTY = (
 )
 _RATE_LIMIT = (
     "The model is at capacity right now. Navin already retried "
-    "automatically. Wait a few seconds and send your message again, "
-    "or pick another model."
+    "automatically and resumes by itself. You can also "
+    "pick another model."
 )
 _QUOTA = (
     "Your own API key is out of credit. Top up at the provider, "
@@ -44,13 +44,13 @@ _QUOTA = (
 )
 _CONNECTION = (
     "Could not reach the model provider. Navin already retried "
-    "automatically. Check your internet connection, and any VPN, "
-    "proxy or firewall that could block the request, then send your "
-    "message again."
+    "automatically and resumes by itself. If it persists, check your "
+    "internet connection, and any VPN, proxy or firewall that could "
+    "block the request."
 )
 _UPSTREAM = (
     "The model provider hit a temporary error. Navin already retried "
-    "automatically. Send your message again, or pick another model."
+    "automatically and resumes by itself. You can also pick another model."
 )
 _CONTEXT = (
     "This turn no longer fits in the model's context window. Start a "
@@ -64,6 +64,25 @@ _NOT_FOUND = (
     "This model is no longer available. Pick another model from the "
     "selector and try again."
 )
+# The gateway serves the model but its provider account cannot reach it
+# (Bedrock: "... is not available for this account"). Not a key problem: the
+# user has no key to fix, and another model of the plan can finish the turn.
+_MODEL_UNAVAILABLE = (
+    "This model is not available right now. Navin moves on to another "
+    "model of your plan; you can also pick one from the selector."
+)
+_MODEL_UNAVAILABLE_MARKERS = (
+    "is not available for this account",
+    "don't have access to the model",
+    "do not have access to the model",
+    "not have access to the model with the specified model id",
+)
+
+
+def is_model_unavailable_text(text: str | None) -> bool:
+    """True when a provider refused the model itself, not the caller's key."""
+    lower = (text or "").lower()
+    return any(marker in lower for marker in _MODEL_UNAVAILABLE_MARKERS)
 
 _SENTINELS = frozenset(
     {
@@ -79,12 +98,13 @@ _SENTINELS = frozenset(
         _CONTEXT,
         _AUTH,
         _NOT_FOUND,
+        _MODEL_UNAVAILABLE,
     }
 )
 # Capacity / transport / unknown provider failures: another catalog model on
 # the same plan can finish the turn. Auth, a too-long prompt, and a retired
 # model cannot, so those stay out of the failover set.
-_FAILOVER_SENTINELS = frozenset({_DEFAULT, _UPSTREAM, _RATE_LIMIT, _CONNECTION})
+_FAILOVER_SENTINELS = frozenset({_DEFAULT, _UPSTREAM, _RATE_LIMIT, _CONNECTION, _MODEL_UNAVAILABLE})
 _HTTP_STATUS_RE = re.compile(r"\b([45]\d{2})\b")
 
 _ERROR_PREFIX_RE = re.compile(r"^(?:error:\s*)+", re.IGNORECASE)
@@ -335,6 +355,8 @@ def _classify_error_text(lower: str) -> str | None:
         return _QUOTA
     if _is_connection_failure(lower):
         return _CONNECTION
+    if is_model_unavailable_text(lower):
+        return _MODEL_UNAVAILABLE
     if any(marker in lower for marker in _CONTEXT_MARKERS):
         return _CONTEXT
     if (

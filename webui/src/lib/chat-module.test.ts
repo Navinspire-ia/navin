@@ -77,6 +77,7 @@ describe("chat-module", () => {
 describe("inferChatModuleFromPreview", () => {
   it("maps known composer slashes", () => {
     expect(inferChatModuleFromPreview("/forge hello")).toBe("dev");
+    expect(inferChatModuleFromPreview("/reverse app.apk")).toBe("dev");
     expect(inferChatModuleFromPreview("/ask hello")).toBe("chat");
     expect(inferChatModuleFromPreview("/meeting notes")).toBe("meeting");
     expect(inferChatModuleFromPreview("/crm pipeline")).toBe("crm");

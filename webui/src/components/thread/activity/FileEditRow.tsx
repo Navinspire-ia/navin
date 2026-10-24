@@ -1,7 +1,11 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+
+import { hunksToTexts, pairSideBySide } from "@/components/thread/activity/sideBySideDiff";
+import { openInspector } from "@/lib/activity-inspector";
+import type { RenderableFileDiffLine } from "@/lib/file-diff";
 import {
   AlertCircle,
   CheckCircle2,
@@ -252,6 +256,7 @@ function FileUnifiedDiff({
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const [open, setOpen] = useState(false);
   const [expandedLines, setExpandedLines] = useState(false);
+  const [split, setSplit] = useState(false);
   const renderableDiff = useMemo(() => parseRenderableFileDiff(diff), [diff]);
   const language = useMemo(() => codeLanguageFromPath(previewPath), [previewPath]);
   const totalLineCount = useMemo(() => countDiffLines(renderableDiff), [renderableDiff]);
@@ -290,17 +295,45 @@ function FileUnifiedDiff({
 
   const renderBody = () => (
     <div
-      className="mt-1 overflow-hidden rounded-md border border-border/55 bg-background/80 shadow-[0_1px_0_rgba(15,23,42,0.03)]"
+      className="mt-1 max-w-[52rem] overflow-hidden rounded-lg border border-border/55 bg-background/80 shadow-[0_1px_0_rgba(15,23,42,0.03)]"
       data-testid="file-edit-diff"
+      data-view={split ? "split" : "unified"}
     >
+      <div className="flex justify-end gap-1 border-b border-border/45 px-2 py-0.5">
+        <button
+          type="button"
+          data-testid="file-edit-diff-inspect"
+          onClick={() =>
+            openInspector({
+              kind: "diff",
+              ...hunksToTexts(renderableDiff.hunks),
+              language: language ?? undefined,
+              path: previewPath ?? "",
+              id: `diff:${previewPath ?? ""}`,
+            })
+          }
+          className="rounded px-1 py-0.5 text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-muted/65 hover:text-foreground"
+        >
+          {tx("inspector.open", "Inspect")}
+        </button>
+        <button
+          type="button"
+          aria-pressed={split}
+          data-testid="file-edit-diff-view-toggle"
+          onClick={() => setSplit((v) => !v)}
+          className="rounded px-1 py-0.5 text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-muted/65 hover:text-foreground"
+        >
+          {split ? tx("message.fileEditUnifiedView", "Unified view") : tx("message.fileEditSplitView", "Side by side")}
+        </button>
+      </div>
       {visibleDiff.hunks.map(({ hunk, skippedBefore }, index) => (
         <div
           key={`${hunk.old_start}-${hunk.new_start}-${index}`}
           className={cn("min-w-0", index > 0 && "border-t border-border/45")}
         >
           {skippedBefore > 0 ? <DiffHunkGap lineCount={skippedBefore} /> : null}
-          <div className="overflow-x-auto">
-            <DiffSyntaxHighlight language={language} lines={hunk.lines} />
+          <div className="code-scroll overflow-x-auto">
+            {split ? <SplitHunk lines={hunk.lines} /> : <DiffSyntaxHighlight language={language} lines={hunk.lines} />}
           </div>
         </div>
       ))}
@@ -375,12 +408,12 @@ function FileUnifiedDiff({
         data-testid="file-edit-diff-toggle"
         onClick={handleToggleOpen}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-md border border-border/45 bg-muted/35 px-2 py-1 text-left",
+          "flex w-full cursor-pointer items-center gap-2 rounded-md border border-border/45 bg-muted/35 px-2 py-1 text-start",
           "text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-muted/50",
         )}
       >
         <ChevronRight
-          className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
+          className={cn("rtl:[&:not(.rotate-90)]:rotate-180 h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
           aria-hidden
         />
         <span className="min-w-0 flex-1">{viewDiffLabel}</span>
@@ -388,6 +421,34 @@ function FileUnifiedDiff({
         {showCollapsedStats ? <DiffPair added={added} deleted={deleted} /> : null}
       </button>
       {open ? renderBody() : null}
+    </div>
+  );
+}
+
+function SplitHunk({ lines }: { lines: RenderableFileDiffLine[] }) {
+  const cell = (line: RenderableFileDiffLine | null, side: "old" | "new") => (
+    <div
+      className={cn(
+        "flex min-w-0 gap-2 px-2 font-mono text-[12px] leading-5",
+        line?.kind === "delete" && "bg-rose-500/10",
+        line?.kind === "add" && "bg-emerald-500/10",
+        !line && "bg-muted/30",
+      )}
+    >
+      <span className="w-8 shrink-0 text-end text-muted-foreground/60 tabular-nums">
+        {line ? (side === "old" ? line.old_lineno : line.new_lineno) ?? "" : ""}
+      </span>
+      <span className="min-w-0 whitespace-pre">{line?.content ?? ""}</span>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-2 divide-x divide-border/45" data-testid="file-edit-diff-split">
+      {pairSideBySide(lines).map((row, i) => (
+        <Fragment key={i}>
+          {cell(row.left, "old")}
+          {cell(row.right, "new")}
+        </Fragment>
+      ))}
     </div>
   );
 }

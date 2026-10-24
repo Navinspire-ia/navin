@@ -166,13 +166,13 @@ export function DevDebugPanel({
         <span className="text-[11px] font-medium text-foreground">
           {t("dev.debug.title", { defaultValue: "Debug" })}
         </span>
-        <span className="ml-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+        <span className="ms-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
           {status}
         </span>
         <span className="text-[10.5px] text-muted-foreground">
           {bpCount} {t("dev.debug.bps", { defaultValue: "bps" })}
         </span>
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="ms-auto flex items-center gap-0.5">
           <Button
             type="button"
             size="sm"
@@ -243,7 +243,7 @@ export function DevDebugPanel({
             <button
               type="button"
               onClick={onClose}
-              className="ml-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+              className="ms-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
             >
               {t("dev.debug.close", { defaultValue: "Close" })}
             </button>
@@ -276,7 +276,7 @@ export function DevDebugPanel({
       ) : null}
 
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-0">
-        <div className="min-h-0 overflow-y-auto border-r border-border/40 p-1.5">
+        <div className="min-h-0 overflow-y-auto border-e border-border/40 p-1.5">
           <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("dev.debug.stack", { defaultValue: "Call stack" })}
           </p>
@@ -291,11 +291,11 @@ export function DevDebugPanel({
                   <button
                     type="button"
                     onClick={() => onOpenFrame?.(frame.path, frame.line)}
-                    className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-muted"
+                    className="block w-full truncate rounded px-1 py-0.5 text-start text-[11px] hover:bg-muted"
                     title={`${frame.path}:${frame.line}`}
                   >
                     <span className="text-foreground">{frame.name}</span>
-                    <span className="ml-1 text-muted-foreground">
+                    <span className="ms-1 text-muted-foreground">
                       {frame.path}:{frame.line}
                     </span>
                   </button>
@@ -305,7 +305,7 @@ export function DevDebugPanel({
           )}
         </div>
 
-        <div className="min-h-0 overflow-y-auto border-r border-border/40 p-1.5">
+        <div className="min-h-0 overflow-y-auto border-e border-border/40 p-1.5">
           <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("dev.debug.variables", { defaultValue: "Variables" })}
           </p>

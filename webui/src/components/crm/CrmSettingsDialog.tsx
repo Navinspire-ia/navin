@@ -102,7 +102,7 @@ export function CrmSettingsDialog({
         onEscapeKeyDown={required ? (event) => event.preventDefault() : undefined}
       >
         <form className="grid gap-4" onSubmit={form.handleSubmit((values) => onSave(values))}>
-          <DialogHeader className="text-left">
+          <DialogHeader className="text-start">
             <DialogTitle style={{ textWrap: "balance" } as never}>
               {tx("crm.setupTitle", "Configurer le CRM")}
             </DialogTitle>
@@ -213,7 +213,7 @@ export function CrmSettingsDialog({
             <p className="text-[12px] text-destructive">{String(firstError || error)}</p>
           ) : null}
 
-          <DialogFooter className="gap-2 sm:space-x-0">
+          <DialogFooter className="gap-2 sm:space-x-0 rtl:space-x-reverse">
             {required ? null : (
               <Button type="button" variant="outline" onClick={onClose}>
                 {tx("crm.cancel", "Annuler")}
@@ -241,7 +241,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1.5 text-left">
+    <label className="grid gap-1.5 text-start">
       <span className="text-[12px] font-medium text-foreground">
         {label}
         {required ? <span className="text-destructive"> *</span> : null}

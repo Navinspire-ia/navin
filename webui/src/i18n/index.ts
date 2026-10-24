@@ -14,13 +14,16 @@ import {
   resolveInitialLocale,
   type SupportedLocale,
 } from "./config";
+import { translateMissingDefault } from "./phrases";
 
 import enCommon from "./locales/en/common.json";
 import frCommon from "./locales/fr/common.json";
+import arCommon from "./locales/ar/common.json";
 
 export const resources = {
   en: { common: enCommon },
   fr: { common: frCommon },
+  ar: { common: arCommon },
 } as const;
 
 export function currentLocale(): SupportedLocale {
@@ -47,6 +50,9 @@ if (!i18n.isInitialized) {
       },
       returnNull: false,
       supportedLngs: Object.keys(resources),
+      // Keys that only exist as an English defaultValue go through the
+      // phrasebook, so Arabic does not fall back to English for them.
+      parseMissingKeyHandler: translateMissingDefault,
     });
 }
 

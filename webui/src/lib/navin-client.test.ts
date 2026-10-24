@@ -47,6 +47,24 @@ describe("live desktop control acknowledgements", () => {
     return { socket, client, reply };
   }
 
+  it("correlates agent history with its chat and rejects interrupted queries", async () => {
+    const { socket, client, reply } = setup();
+    const pending = client.querySubagents("chat-1", "history", { task_id: "worker-1", after: 100 });
+    const frame = JSON.parse(socket.sent.at(-1)!);
+    expect(frame).toMatchObject({ type: "subagent_history", chat_id: "chat-1", task_id: "worker-1", after: 100 });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    reply({ event: "subagent_query_result", request_id: frame.request_id, chat_id: "chat-2", result: [] });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    reply({ event: "subagent_query_result", request_id: frame.request_id, chat_id: "chat-1", result: { events: [] } });
+    await expect(pending).resolves.toEqual({ events: [] });
+    const interrupted = client.querySubagents("chat-1", "list");
+    socket.serverClose(1006);
+    await expect(interrupted).rejects.toThrow("interrupted");
+    await expect(client.querySubagents("chat-1", "recover", { task_id: "worker-1" })).rejects.toThrow("offline");
+  });
+
   it("waits for the acknowledgement for the exact chat and live session", async () => {
     const { socket, client, reply } = setup();
     const pending = client.agentBrowserInput("chat-1", "takeover", {}, "desktop-1");

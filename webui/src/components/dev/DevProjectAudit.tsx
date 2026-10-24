@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -401,7 +402,7 @@ function FindingsList({
         <div key={category} className="rounded-2xl border border-border/55 bg-background/60">
           <p className="border-b border-border/40 px-4 py-2 text-[12px] font-semibold text-foreground">
             {category}
-            <span className="ml-2 font-normal text-muted-foreground">({findings.length})</span>
+            <span className="ms-2 font-normal text-muted-foreground">({findings.length})</span>
           </p>
           <ul className="divide-y divide-border/35">
             {findings.map((finding, index) => (
@@ -586,7 +587,7 @@ function ApiExplorer({ audit }: { audit: ProjectAuditPayload }) {
           placeholder={tx("dev.audit.explorer.search", "Filter endpoints…")}
           className="mb-2 h-8 rounded-lg text-[12px]"
         />
-        <ul className="max-h-[26rem] space-y-1 overflow-y-auto pr-1">
+        <ul className="max-h-[26rem] space-y-1 overflow-y-auto pe-1">
           {filtered.map((endpoint) => (
             <li key={`${endpoint.method} ${endpoint.path}`}>
               <button
@@ -600,7 +601,7 @@ function ApiExplorer({ audit }: { audit: ProjectAuditPayload }) {
                   setPath(endpoint.path);
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/60",
+                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start transition-colors hover:bg-muted/60",
                   path === endpoint.path && "bg-muted/70 ring-1 ring-border/60",
                 )}
               >
@@ -654,9 +655,9 @@ function ApiExplorer({ audit }: { audit: ProjectAuditPayload }) {
               className="h-9 rounded-lg px-3 text-[12.5px]"
             >
               {sending ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
-                <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                <Send className="me-1.5 h-3.5 w-3.5" aria-hidden />
               )}
               {tx("dev.audit.explorer.send", "Send")}
             </Button>
@@ -743,7 +744,7 @@ export default function DevProjectAudit({
     [t],
   );
   const numberFormat = useMemo(
-    () => new Intl.NumberFormat(i18n.language === "fr" ? "fr-FR" : "en-US"),
+    () => new Intl.NumberFormat(intlLocale()),
     [i18n.language],
   );
   const fmt = useCallback((value: number) => numberFormat.format(value), [numberFormat]);
@@ -853,7 +854,7 @@ export default function DevProjectAudit({
         <AlertTriangle className="h-7 w-7 text-destructive" aria-hidden />
         <p className="max-w-md text-[13px] text-destructive">{error}</p>
         <Button type="button" variant="outline" onClick={() => void load(true)}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          <RefreshCw className="me-1.5 h-3.5 w-3.5" aria-hidden />
           {tx("dev.audit.retry", "Retry")}
         </Button>
       </div>
@@ -885,7 +886,7 @@ export default function DevProjectAudit({
         <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           <span>
             {tx("dev.audit.generatedAt", "Generated")}{" "}
-            {generatedAt.toLocaleTimeString(i18n.language === "fr" ? "fr-FR" : undefined)}
+            {generatedAt.toLocaleTimeString(intlLocale())}
             {" · "}
             {(audit.duration_ms / 1000).toFixed(1)} s
           </span>
@@ -898,9 +899,9 @@ export default function DevProjectAudit({
             className="h-7 rounded-lg px-2.5 text-[11.5px]"
           >
             {loading ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+              <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
             ) : (
-              <RefreshCw className="mr-1 h-3 w-3" aria-hidden />
+              <RefreshCw className="me-1 h-3 w-3" aria-hidden />
             )}
             {tx("dev.audit.refresh", "Refresh")}
           </Button>
@@ -914,12 +915,12 @@ export default function DevProjectAudit({
                 className="h-7 rounded-lg px-2.5 text-[11.5px]"
               >
                 {exporting ? (
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden />
+                  <Loader2 className="me-1 h-3 w-3 animate-spin" aria-hidden />
                 ) : (
-                  <FileDown className="mr-1 h-3 w-3" aria-hidden />
+                  <FileDown className="me-1 h-3 w-3" aria-hidden />
                 )}
                 {tx("dev.audit.export.button", "Export PDF")}
-                <ChevronDown className="ml-1 h-3 w-3" aria-hidden />
+                <ChevronDown className="ms-1 h-3 w-3" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 rounded-xl">
@@ -927,7 +928,7 @@ export default function DevProjectAudit({
                 onSelect={() => void exportPdf(audit, REPORT_SECTIONS)}
                 className="rounded-lg text-[12.5px] font-medium"
               >
-                <FileDown className="mr-2 h-3.5 w-3.5" aria-hidden />
+                <FileDown className="me-2 h-3.5 w-3.5" aria-hidden />
                 {tx("dev.audit.export.full", "Full 360° report")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -944,7 +945,7 @@ export default function DevProjectAudit({
                     onSelect={() => void exportPdf(audit, [id])}
                     className="rounded-lg text-[12.5px]"
                   >
-                    <Icon className="mr-2 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    <Icon className="me-2 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                     {tx(entry.key, entry.fallback)}
                   </DropdownMenuItem>
                 );
@@ -956,7 +957,7 @@ export default function DevProjectAudit({
 
       <div className="flex min-h-0 flex-1">
         {/* Section rail */}
-        <nav className="w-48 shrink-0 space-y-0.5 overflow-y-auto border-r border-border/55 bg-muted/10 p-2">
+        <nav className="w-48 shrink-0 space-y-0.5 overflow-y-auto border-e border-border/55 bg-muted/10 p-2">
           {SECTIONS.map((entry) => {
             const Icon = entry.icon;
             const badge =
@@ -977,7 +978,7 @@ export default function DevProjectAudit({
                 type="button"
                 onClick={() => setSection(entry.id)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] font-medium transition-colors",
+                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[12.5px] font-medium transition-colors",
                   section === entry.id
                     ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
                     : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -1169,7 +1170,7 @@ export default function DevProjectAudit({
                       {overview.largest_files.map((file) => (
                         <li key={file.path} className="flex items-center gap-2 text-[12px]">
                           <FileLink file={file.path} onOpenFile={onOpenFile} />
-                          <span className="ml-auto shrink-0 text-muted-foreground">
+                          <span className="ms-auto shrink-0 text-muted-foreground">
                             {fmt(file.lines)} {tx("dev.audit.lines", "lines")}
                           </span>
                         </li>
@@ -1362,7 +1363,7 @@ export default function DevProjectAudit({
                           <span className="font-mono text-[12px] text-foreground/90">
                             {mechanism.name}
                           </span>
-                          <span className="ml-auto">
+                          <span className="ms-auto">
                             <FileLink
                               file={mechanism.file}
                               line={mechanism.line}
@@ -1495,7 +1496,7 @@ export default function DevProjectAudit({
                         ) : null}
                         <FileLink file={query.file} line={query.line} onOpenFile={onOpenFile} />
                         {query.risky ? (
-                          <span className="ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold text-red-500">
+                          <span className="ms-auto inline-flex items-center gap-1 text-[11.5px] font-semibold text-red-500">
                             <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
                             {query.risk_reason}
                           </span>
@@ -1583,7 +1584,7 @@ export default function DevProjectAudit({
                     {audit.infrastructure.dockerfiles.map((dockerfile) => (
                       <li key={dockerfile.path} className="text-[12px]">
                         <FileLink file={dockerfile.path} onOpenFile={onOpenFile} />
-                        <span className="ml-2 text-muted-foreground">
+                        <span className="ms-2 text-muted-foreground">
                           {dockerfile.base_images.join(" → ")}
                           {dockerfile.exposed_ports.length
                             ? ` · EXPOSE ${dockerfile.exposed_ports.join(", ")}`
@@ -1608,7 +1609,7 @@ export default function DevProjectAudit({
                             jobs: {workflow.jobs.join(", ")}
                           </span>
                         ) : null}
-                        <span className="ml-auto">
+                        <span className="ms-auto">
                           <FileLink file={workflow.path} onOpenFile={onOpenFile} />
                         </span>
                       </li>
@@ -1700,7 +1701,7 @@ export default function DevProjectAudit({
                       <li key={entry.path} className="flex items-center gap-2 text-[12px]">
                         <PlayCircle className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
                         <FileLink file={entry.path} onOpenFile={onOpenFile} />
-                        <span className="ml-auto text-muted-foreground">{entry.kind}</span>
+                        <span className="ms-auto text-muted-foreground">{entry.kind}</span>
                       </li>
                     ))}
                   </ul>

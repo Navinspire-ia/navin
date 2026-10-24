@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import asyncio
 import hashlib
 import json
@@ -18,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from navin.agent.tools.base import Tool, ToolResult
+from navin.utils.proc import no_window_kwargs
 
 
 class ExecutionUnavailableError(RuntimeError):

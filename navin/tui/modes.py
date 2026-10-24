@@ -3,8 +3,8 @@
 
 """Composer modes: how free text is routed to the engine.
 
-Mirrors the desktop composer (ask / plan / agent / review / security / debug)
-plus a plain ``chat`` mode that sends text untouched.
+Mirrors the desktop composer (ask / plan / agent / review / security / debug /
+reverse) plus a plain ``chat`` mode that sends text untouched.
 """
 
 from __future__ import annotations
@@ -30,6 +30,14 @@ MODES: tuple[ComposerMode, ...] = (
     ComposerMode("review", "Review", "/inspect", "Review code quality and risks.", "$warning", "5"),
     ComposerMode("security", "Security", "/fortify", "Security audit and hardening.", "$error", "6"),
     ComposerMode("debug", "Debug", "/debug", "Reproduce, diagnose and fix a bug.", "$secondary-lighten-2", "7"),
+    ComposerMode(
+        "reverse",
+        "Reverse",
+        "/reverse",
+        "Static-first reverse engineering: evidence, report, rebuild plan.",
+        "#84CC16",
+        "8",
+    ),
 )
 
 MODE_BY_ID: dict[str, ComposerMode] = {m.id: m for m in MODES}

@@ -120,8 +120,6 @@ def test_close_before_history_write_recovers_the_accepted_input_once(tmp_path):
 
 def test_backoff_survives_restart_and_does_not_hammer_the_provider(tmp_path):
     sessions, session, recovery = setup_record(tmp_path)
-    delays = [recovery.schedule(session) for _ in range(9)]
-    assert delays == [5, 10, 20, 40, 60, 60, 60, 60, 60]
     assert recovery.schedule(session, retry_after=150) == 150
     reborn = TurnRecovery(SessionManager(tmp_path))
     reborn.discover(channel="websocket")
@@ -255,3 +253,145 @@ def test_final_checkpoint_is_delivered_without_running_the_task_again(tmp_path):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(check())
+
+
+def test_replays_stop_after_a_bounded_number_of_attempts(tmp_path):
+    from navin.session.turn_recovery import MAX_RECOVERY_ATTEMPTS, RECOVERY_KEY
+
+    _, session, recovery = setup_record(tmp_path)
+    delays = [recovery.schedule(session) for _ in range(MAX_RECOVERY_ATTEMPTS)]
+    assert delays == [5, 10, 20, 40, 60, 60]
+    # One more and the turn is given up: the error goes to the user instead.
+    assert recovery.schedule(session) is None
+    assert RECOVERY_KEY not in session.metadata
+
+
+# -- Restart resumes the request itself: the user never has to resend it. --
+
+def _interrupted_chat_app_turn(tmp_path, *, content="Summarise the weekly report"):
+    """A gateway turn from a chat app cut after only the user message was saved."""
+    msg = request(content, channel="telegram", chat="42")
+    sessions = SessionManager(tmp_path)
+    loop = make_loop(tmp_path, LocalProvider(), sessions)
+    session = sessions.get_or_create(msg.session_key)
+    assert loop._persist_user_message_early(msg, session)
+    sessions.save(session, fsync=True)
+    return msg, session
+
+
+def _run_until(loop, predicate, timeout=15):
+    async def check():
+        task = asyncio.create_task(loop.run())
+        try:
+            async def done():
+                while not predicate():
+                    await asyncio.sleep(0.02)
+            await asyncio.wait_for(done(), timeout)
+            await asyncio.sleep(0.1)
+        finally:
+            loop.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(check())
+
+
+def test_gateway_restart_resumes_a_chat_app_request_once(tmp_path):
+    msg, session = _interrupted_chat_app_turn(tmp_path)
+    provider = LocalProvider(LLMResponse(content="Here is the summary."))
+    loop = make_loop(tmp_path, provider, SessionManager(tmp_path))
+
+    def finished():
+        current = loop.sessions.get_or_create(session.key)
+        return bool(provider.requests) and current.messages[-1].get("role") == "assistant"
+
+    _run_until(loop, finished)
+    current = loop.sessions.get_or_create(session.key)
+    assert len(provider.requests) == 1
+    sent = "\n".join(str(m.get("content")) for m in provider.requests[0])
+    assert "Original request:\nSummarise the weekly report" in sent
+    assert [m["role"] for m in current.messages] == ["user", "assistant"]
+    assert current.messages[-1]["content"] == "Here is the summary."
+    assert RECOVERY_KEY not in current.metadata
+    assert "pending_user_turn" not in current.metadata
+    # A second restart has nothing left to replay.
+    again = TurnRecovery(SessionManager(tmp_path))
+    assert again.discover(channel="websocket", external=True) == []
+
+
+def test_restart_does_not_resume_a_stopped_request(tmp_path):
+    msg, session = _interrupted_chat_app_turn(tmp_path)
+    TurnRecovery(SessionManager(tmp_path)).cancel(session.key)
+    provider = LocalProvider()
+    sessions = SessionManager(tmp_path)
+    loop = make_loop(tmp_path, provider, sessions)
+    assert loop._adopt_interrupted_turns() == []
+    current = sessions.get_or_create(session.key)
+    assert loop._restore_pending_user_turn(current)
+    note = current.messages[-1]["content"]
+    assert current.messages[-1]["role"] == "assistant"
+    assert "again" not in note.lower() and "continue" not in note.lower()
+    assert not provider.requests
+
+
+def test_restart_does_not_resume_an_old_request(tmp_path):
+    msg, session = _interrupted_chat_app_turn(tmp_path)
+    session.metadata["pending_user_turn"]["at"] = time.time() - 7 * 3600
+    session.metadata["pending_user_turn"]["request"]["content"] = msg.content
+    SessionManager(tmp_path).save(session, fsync=True)
+    loop = make_loop(tmp_path, LocalProvider(), SessionManager(tmp_path))
+    assert loop._adopt_interrupted_turns() == []
+
+
+def test_errored_request_is_not_replayed_after_restart(tmp_path):
+    msg, session = _interrupted_chat_app_turn(tmp_path)
+    loop = make_loop(tmp_path, LocalProvider(), SessionManager(tmp_path))
+    current = loop.sessions.get_or_create(session.key)
+    loop._settle_pending_user_turn(current)
+    loop.sessions.save(current)
+    assert loop._adopt_interrupted_turns() == []
+
+
+def test_crash_loop_replays_are_bounded_across_restarts(tmp_path):
+    from navin.session.turn_recovery import MAX_RECOVERY_ATTEMPTS
+
+    _, session, _ = setup_record(tmp_path)
+    for _ in range(MAX_RECOVERY_ATTEMPTS):
+        reborn = TurnRecovery(SessionManager(tmp_path))
+        assert reborn.discover(channel="websocket") == [session.key]
+        assert len(reborn.take_due(active_keys=set())) == 1
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == []
+    assert reborn.abandoned == [session.key]
+    assert RECOVERY_KEY not in SessionManager(tmp_path).get_or_create(session.key).metadata
+
+
+def test_request_idle_past_the_window_is_dropped_with_a_neutral_note(tmp_path):
+    from types import SimpleNamespace
+
+    from navin.session import turn_recovery as module
+
+    _, session, _ = setup_record(tmp_path)
+    later = time.time() + module.MAX_RECOVERY_AGE_S + 60
+    provider = LocalProvider()
+    loop = make_loop(tmp_path, provider, SessionManager(tmp_path))
+    with patch.object(module, "time", SimpleNamespace(time=lambda: later)):
+        _run_until(loop, lambda: RECOVERY_KEY not in loop.sessions.get_or_create(session.key).metadata)
+    current = loop.sessions.get_or_create(session.key)
+    assert not provider.requests
+    assert current.messages[-1]["role"] == "assistant"
+    note = current.messages[-1]["content"].lower()
+    assert "again" not in note and "continue" not in note and "resend" not in note
+
+
+def test_new_message_supersedes_a_queued_chat_app_replay(tmp_path):
+    msg, session = _interrupted_chat_app_turn(tmp_path)
+    sessions = SessionManager(tmp_path)
+    loop = make_loop(tmp_path, LocalProvider(), sessions)
+    assert loop._adopt_interrupted_turns() == [session.key]
+    recovery = loop.turn_recovery
+    assert recovery.discover(channel="websocket", external=True) == [session.key]
+    queued = recovery.take_due(active_keys=set())[0]
+    assert queued.channel == "telegram" and queued.chat_id == "42"
+    assert queued.metadata["_skip_user_persist"] is True
+    recovery.begin(sessions.get_or_create(session.key), request("Another question", channel="telegram", chat="42"))
+    assert not recovery.matches(queued, session.key)

@@ -25,6 +25,8 @@ import {
   type BoardPayload,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { setVisibleInterval } from "@/lib/visible-interval";
+import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 const MILESTONE_STATUS_COLORS: Record<string, string> = {
@@ -60,6 +62,9 @@ export function DevEvolutions({
   projectPath?: string | null;
 }) {
   const { client, token } = useClient();
+  // Reads take the token at call time, so a rotation does not reload.
+  const tokenRef = useLatestTokenRef();
+  const hasToken = Boolean(token);
   const { t } = useTranslation();
   const tx = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }),
@@ -78,10 +83,10 @@ export function DevEvolutions({
 
   const load = useCallback(
     async (silent = false) => {
-      if (!token) return;
+      if (!hasToken) return;
       if (!silent) setLoading(true);
       try {
-        const data = await fetchBoard(token, boardKey);
+        const data = await fetchBoard(tokenRef.current, boardKey);
         setPayload(data);
         setError(null);
       } catch (err) {
@@ -90,7 +95,7 @@ export function DevEvolutions({
         if (!silent) setLoading(false);
       }
     },
-    [token, boardKey],
+    [hasToken, tokenRef, boardKey],
   );
 
   useEffect(() => {
@@ -104,10 +109,10 @@ export function DevEvolutions({
       if (changedProject && currentProject && changedProject !== currentProject) return;
       void load(true);
     });
-    const interval = window.setInterval(() => void load(true), 20_000);
+    const stopPolling = setVisibleInterval(() => void load(true), 20_000);
     return () => {
       unsubscribe();
-      window.clearInterval(interval);
+      stopPolling();
     };
   }, [client, load, payload, projectPath]);
 
@@ -472,10 +477,10 @@ export function DevEvolutions({
               {tx("dev.evolutions.noActivity", "No activity yet.")}
             </p>
           ) : (
-            <ol className="relative flex flex-col gap-0 border-l border-border/60 pl-4">
+            <ol className="relative flex flex-col gap-0 border-s border-border/60 ps-4">
               {activity.map((entry, index) => (
                 <li key={`${entry.ts}-${index}`} className="relative pb-3">
-                  <span className="absolute -left-[21.5px] top-1 flex h-3 w-3 items-center justify-center rounded-full border border-border bg-background">
+                  <span className="absolute -start-[21.5px] top-1 flex h-3 w-3 items-center justify-center rounded-full border border-border bg-background">
                     <ActorIcon
                       type={entry.actor_type}
                       className="h-2 w-2 text-muted-foreground"

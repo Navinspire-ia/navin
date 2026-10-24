@@ -134,7 +134,7 @@ export function DevDesignModePrompt({
             <button
               type="button"
               onClick={onClose}
-              className="ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="ms-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
               title={tx("dev.designMode.close", "Close (Esc)")}
               aria-label={tx("dev.designMode.close", "Close (Esc)")}
             >

@@ -7,6 +7,7 @@
  * real clock time when the meeting start is known, and the speech below.
  */
 
+import { intlLocale } from "@/i18n/intl";
 import { useMemo } from "react";
 
 import {
@@ -38,7 +39,7 @@ function clockTime(startedAt: string, time: string, locale: string): string | nu
   const startMs = Date.parse(startedAt);
   if (!Number.isFinite(startMs)) return null;
   const at = new Date(startMs + timecodeToSeconds(time) * 1000);
-  return at.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  return at.toLocaleTimeString(intlLocale(locale), { hour: "2-digit", minute: "2-digit" });
 }
 
 interface TranscriptTurnsProps {

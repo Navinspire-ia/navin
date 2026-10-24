@@ -15,8 +15,8 @@ describe("meeting header chrome", () => {
     expect(src.indexOf('data-testid="meeting-new"')).toBeLessThan(
       src.indexOf('data-testid="meeting-toggle-chat"'),
     );
-    expect(src.indexOf("ml-auto")).toBeGreaterThan(src.indexOf('data-testid="meeting-new"'));
-    expect(src.indexOf("ml-auto")).toBeLessThan(src.indexOf('data-testid="meeting-toggle-chat"'));
+    expect(src.indexOf("ms-auto")).toBeGreaterThan(src.indexOf('data-testid="meeting-new"'));
+    expect(src.indexOf("ms-auto")).toBeLessThan(src.indexOf('data-testid="meeting-toggle-chat"'));
     expect(src).toContain('text={recording ? elapsedLabel : tx("meeting.record"');
     expect(src).toContain('tx("meeting.importAction", "Import")');
     expect(src).toContain('tx("meeting.newAction", "New")');

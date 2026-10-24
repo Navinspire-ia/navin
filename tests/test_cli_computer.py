@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from rich.console import Console
+
 pytest.importorskip("typer.testing")
 from typer.testing import CliRunner  # noqa: E402
 

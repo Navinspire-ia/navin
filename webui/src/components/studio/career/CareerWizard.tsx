@@ -531,7 +531,7 @@ export function CareerWizard({
                   type="button"
                   onClick={() => setKind("solo")}
                   className={cn(
-                    "min-h-28 rounded-2xl px-5 py-4 text-left outline outline-1 transition-colors",
+                    "min-h-28 rounded-2xl px-5 py-4 text-start outline outline-1 transition-colors",
                     kind === "solo"
                       ? "bg-indigo-600/10 outline-indigo-500"
                       : "outline-black/10 hover:bg-muted/40 dark:outline-white/10",
@@ -546,7 +546,7 @@ export function CareerWizard({
                   type="button"
                   onClick={() => { if (onCompanySetup) onCompanySetup(); else setKind("company"); }}
                   className={cn(
-                    "min-h-28 rounded-2xl px-5 py-4 text-left outline outline-1 transition-colors",
+                    "min-h-28 rounded-2xl px-5 py-4 text-start outline outline-1 transition-colors",
                     kind === "company"
                       ? "bg-indigo-600/10 outline-indigo-500"
                       : "outline-black/10 hover:bg-muted/40 dark:outline-white/10",
@@ -1023,7 +1023,7 @@ export function CareerWizard({
                           setSourceIds((current) => toggleCareerLiveSource(current, live, row.id))
                         }
                         className={cn(
-                          "flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left outline outline-1",
+                          "flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-start outline outline-1",
                           on
                             ? "bg-emerald-600/10 outline-emerald-500"
                             : "outline-black/10 dark:outline-white/10",
@@ -1070,7 +1070,7 @@ export function CareerWizard({
                                 : [...current, meta.id],
                             )
                           }
-                          className="flex w-full items-start justify-between gap-3 text-left"
+                          className="flex w-full items-start justify-between gap-3 text-start"
                         >
                           <span>
                             <span className="block text-sm font-medium">{row?.name || meta.id}</span>
@@ -1147,7 +1147,7 @@ export function CareerWizard({
                             )
                           }
                           className={cn(
-                            "flex w-full items-start justify-between gap-3 rounded-xl px-4 py-3 text-left outline outline-1",
+                            "flex w-full items-start justify-between gap-3 rounded-xl px-4 py-3 text-start outline outline-1",
                             on
                               ? "bg-indigo-600/10 outline-indigo-500"
                               : "outline-black/10 dark:outline-white/10",

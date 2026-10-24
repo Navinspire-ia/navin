@@ -941,12 +941,32 @@ class TelegramChannel(BaseChannel):
         stream_id: str | None = None,
         stream_end: bool = False,
         resuming: bool = False,
+        discarded: bool = False,
     ) -> None:
         """Progressive message editing: send on first delta, edit on subsequent ones."""
         if not self._app:
             return
         meta = metadata or {}
         int_chat_id = int(chat_id)
+
+        if stream_end and discarded:
+            # A mid-stream retry restarts the answer in a new segment: remove
+            # the partial preview so the chat shows the answer only once.
+            buf = self._stream_bufs.get(chat_id)
+            if not buf or (
+                stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id
+            ):
+                return
+            self._stream_bufs.pop(chat_id, None)
+            if buf.message_id:
+                try:
+                    await self._call_with_retry(
+                        self._app.bot.delete_message,
+                        chat_id=int_chat_id, message_id=buf.message_id,
+                    )
+                except Exception as e:
+                    self.logger.debug("Discarded stream preview delete failed: {}", e)
+            return
 
         if stream_end:
             buf = self._stream_bufs.get(chat_id)

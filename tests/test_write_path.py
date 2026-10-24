@@ -1007,5 +1007,24 @@ class ReviewAndCheckpointAgreementTest(_WorkspaceTest):
         self.assertEqual(base64.b64decode(encoded), payload)
 
 
+class PartialReadBeforeOverwriteTest(unittest.TestCase):
+    def test_overwrite_after_a_partial_read_warns_but_a_full_read_does_not(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "big.txt"
+            target.write_text("".join(f"l{n}\n" for n in range(100)), encoding="utf-8")
+            states = FileStates()
+            states.record_read(target, offset=1, limit=5)
+            tool = WriteFileTool(workspace=root, file_states=states)
+            out = asyncio.run(tool.execute(path=str(target), content="new\n"))
+            self.assertIn("partially read", out)
+            target.write_text("".join(f"l{n}\n" for n in range(100)), encoding="utf-8")
+            states = FileStates()
+            states.record_read(target)
+            tool = WriteFileTool(workspace=root, file_states=states)
+            out = asyncio.run(tool.execute(path=str(target), content="new\n"))
+            self.assertNotIn("partially read", out)
+
+
 if __name__ == "__main__":
     unittest.main()

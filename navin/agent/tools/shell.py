@@ -78,6 +78,59 @@ from navin.utils.task_progress import (
 
 _IS_WINDOWS = sys.platform == "win32"
 
+_SCAN_RE = re.compile(r"(?:^|[\s;&|(])(?:(?:find|du|tree|rg)\b|grep\s+[^|;&]*-\w*[rR]|ls\s+[^|;&]*-\w*R)")
+# Both directions of the WSL/Windows boundary: a Windows drive seen from WSL
+# (/mnt/c) and a WSL tree seen from Windows (\\wsl$ or \\wsl.localhost).
+_MOUNT_RE = re.compile(
+    r"/mnt/[a-z](?:/|\b)|[\\/]{2}wsl(?:\$|\.localhost)[\\/]"
+    # macOS: network shares / external disks and file-provider cloud folders
+    # (iCloud Drive, Dropbox, OneDrive, Google Drive): each stat can trigger a
+    # network round trip or an on-demand download.
+    r"|/Volumes/|/Library/Mobile Documents/|/Library/CloudStorage/",
+    re.IGNORECASE,
+)
+_WIN_SCAN_RE = re.compile(r"\b(?:dir\b[^|;&]*/s|(?:get-childitem|gci|ls)\b[^|;&]*-recurse)", re.IGNORECASE)
+_WIN_BOUND_RE = re.compile(r"-depth\s+\d", re.IGNORECASE)
+
+
+def unbounded_mount_scan(command: str) -> str | None:
+    """Refuse a recursive walk of a Windows drive (/mnt/<x>) with no bound.
+
+    Crossing the WSL/Windows boundary costs milliseconds per file, so a bare
+    ``find /mnt/c/...`` can hang for minutes. A walk is allowed when it is
+    bounded by ``-maxdepth``/``--max-depth``/``-L`` or wrapped in ``timeout``.
+    """
+    for segment in re.split(r"&&|\|\||;|\|", command):
+        if not _MOUNT_RE.search(segment):
+            continue
+        if not (_SCAN_RE.search(segment) or _WIN_SCAN_RE.search(segment)):
+            continue
+        if re.search(r"-maxdepth\s+\d|--max-depth[=\s]+\d|\btree\b[^|;&]*-L\s*\d|\btimeout\s+\d", segment):
+            continue
+        if _WIN_BOUND_RE.search(segment):
+            continue
+        return (
+            "Error: recursive scan of a slow mount (/mnt/<drive>, \\\\wsl$, macOS "
+            "/Volumes or iCloud/CloudStorage) without a bound. These walks are very slow. Add -maxdepth N "
+            "(--max-depth N, Get-ChildItem -Depth N) and/or prefix with 'timeout 20', "
+            "or target the exact folder."
+        )
+    return None
+
+
+def _desktop_logs_note() -> str:
+    """Tell the agent where Desktop conversation logs really live."""
+    try:
+        from navin.config.paths import get_webui_dir
+        webui = wsl.windows_path_to_wsl(str(get_webui_dir())) or str(get_webui_dir())
+    except Exception:
+        return ""
+    return (
+        f"Navin Desktop conversation logs are {webui}/websocket_<id>.jsonl "
+        "(not workspace/sessions); read them directly, never walk /mnt/c with an "
+        "unbounded find/grep -r. "
+    )
+
 
 def _runtime_bin_dir() -> str:
     """The directory to put first on PATH so ``python`` means navin's Python.
@@ -101,6 +154,67 @@ def _runtime_bin_dir() -> str:
     except OSError:
         return ""
     return str(shims) if shims else ""
+
+
+_PYTHON_PROJECT_MARKERS = (
+    "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile", "manage.py",
+    "poetry.lock", "uv.lock", "requirements-dev.txt", ".python-version",
+)
+_VENV_NAMES = (".venv", "venv", "env", ".env-py")
+
+
+def _python_project_root(cwd: Path, *, depth: int = 6) -> Path | None:
+    """The nearest folder (cwd or a parent) that is a Python project, or None."""
+    try:
+        here = cwd.expanduser().resolve()
+    except OSError:
+        return None
+    for folder in [here, *list(here.parents)[:depth]]:
+        if any((folder / name).exists() for name in _PYTHON_PROJECT_MARKERS):
+            return folder
+        if any((folder / name / "pyvenv.cfg").is_file() for name in _VENV_NAMES):
+            return folder
+    return None
+
+
+def _project_venv_bin(cwd: Path, project: Path) -> Path | None:
+    """bin/ (Scripts\\ on Windows) of the project's virtualenv, nearest first."""
+    sub = "Scripts" if _IS_WINDOWS else "bin"
+    try:
+        here = cwd.expanduser().resolve()
+    except OSError:
+        return None
+    chain = [here, *here.parents]
+    for folder in chain:
+        for name in _VENV_NAMES:
+            candidate = folder / name
+            if (candidate / "pyvenv.cfg").is_file() and (candidate / sub).is_dir():
+                return candidate / sub
+        if folder == project:
+            break
+    return None
+
+
+def _navin_python_dir() -> str:
+    try:
+        from navin.config.paths import get_runtime_subdir
+        from navin.python_runtime import navin_python_dir
+
+        found = navin_python_dir(get_runtime_subdir("bin") / "navin")
+    except Exception:
+        return ""
+    return str(found) if found else ""
+
+
+def _py_launcher_dir() -> str:
+    try:
+        from navin.config.paths import get_runtime_subdir
+        from navin.python_runtime import py_launcher_dir
+
+        found = py_launcher_dir(get_runtime_subdir("bin") / "py-launcher")
+    except Exception:
+        return ""
+    return str(found) if found else ""
 
 
 async def request_exec_policy_reload(bus: Any, *, timeout: float = 10.0) -> dict[str, Any]:
@@ -394,6 +508,264 @@ _DENY_RULE_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def _refusal_result(refusal: Any) -> ToolResult:
+    """A refused or unanswered approval is a failed call, never a success.
+
+    It used to come back as a plain string: the runner logged the exec as
+    "ok", so neither the identical-failure throttle nor the stall detector
+    saw the agent retrying a command the user had already said no to.
+    """
+    if isinstance(refusal, ToolResult) and refusal.is_error:
+        return refusal
+    text = str(refusal or "The user refused this operation.")
+    if not text.startswith("Error"):
+        text = f"Error: not run. {text}"
+    return ToolResult.error(
+        text,
+        recovery_hint="Do not run this command again in this request. Continue without it or ask the user.",
+    )
+
+
+# Filters that read their whole input. `pytest | tail -20` used to report
+# "Exit code: 0" (tail's) for a failing test run, so the agent, the stall
+# detector and validation all saw a success. With pipefail the pipeline fails
+# when the command feeding the filter fails. `head` is left out: it closes the
+# pipe early and the writer's SIGPIPE would turn a success into a failure.
+_FULL_READ_FILTERS = frozenset({
+    "tail", "grep", "egrep", "fgrep", "rg", "sed", "awk", "cut", "sort", "uniq", "wc",
+    "tee", "cat", "tr", "nl", "column", "jq", "fold", "fmt", "ts",
+})
+
+
+def _wants_pipefail(command: str) -> bool:
+    """True when a pipeline ends in a full-read filter that would hide a failure."""
+    if "pipefail" in command:
+        return False
+    # Quoted text is data (grep -E 'passed|failed'), not pipes or separators.
+    command = re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", "Q", command)
+    for segment in re.split(r"&&|;|\n|\|\|", command):
+        stages = [stage.strip() for stage in re.split(r"(?<!\|)\|(?!\|)", segment)]
+        if len(stages) < 2:
+            continue
+        last = stages[-1].split()
+        if not last:
+            continue
+        program = last[0].rsplit("/", 1)[-1]
+        if program in _FULL_READ_FILTERS and not (program in {"grep", "egrep", "fgrep", "rg"} and any(
+            flag in last for flag in ("-q", "--quiet", "-m", "--max-count")
+        )):
+            return True
+    return False
+
+
+_SQUOTED = re.compile(r"'[^']*'")
+_ANY_QUOTED = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+# Command separators, outside quotes. `2>&1`, `&>f` and `>&2` are redirections.
+_SEPARATORS = re.compile(r"\|\||&&|;|\n|\|&?|(?<![<>&0-9])&(?![>&])")
+_ASSIGNMENTS = re.compile(r"^(?:[a-z_][a-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\S*)\s+)+")
+
+
+def _blank(match: re.Match[str]) -> str:
+    return " " * len(match.group(0))
+
+
+def _substitutions(text: str) -> list[str]:
+    """Bodies of `$( )`, `<( )`, `>( )` and backticks, which run as commands."""
+    masked = _SQUOTED.sub(_blank, text)
+    bodies: list[str] = []
+    i = 0
+    while i < len(masked):
+        if masked.startswith(("$(", "<(", ">("), i) and not masked.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < len(masked) and depth:
+                depth += {"(": 1, ")": -1}.get(masked[j], 0)
+                j += 1
+            bodies.append(text[i + 2:j - 1 if depth == 0 else j])
+            i = j
+        elif masked[i] == "`":
+            end = masked.find("`", i + 1)
+            end = len(masked) if end < 0 else end
+            bodies.append(text[i + 1:end])
+            i = end + 1
+        else:
+            i += 1
+    return bodies
+
+
+def _trim_grouping(segment: str) -> str:
+    segment = segment.strip().lstrip("({! \t").strip()
+    for opener, closer in (("(", ")"), ("{", "}")):
+        while segment.endswith(closer) and segment.count(closer) > segment.count(opener):
+            segment = segment[:-1].rstrip()
+    return segment
+
+
+def shell_segments(command: str, _depth: int = 0) -> list[str]:
+    """Split a shell line into the simple commands it runs.
+
+    Separators inside quotes are data. Command substitutions are listed as
+    segments of their own, because `echo $(rm -rf x)` runs `rm -rf x`.
+    """
+    masked = _ANY_QUOTED.sub(_blank, command)
+    out: list[str] = []
+    start = 0
+    for match in _SEPARATORS.finditer(masked):
+        out.append(command[start:match.start()])
+        start = match.end()
+    out.append(command[start:])
+    segments = [s for s in map(_trim_grouping, out) if s]
+    if _depth < 4:
+        for body in _substitutions(command):
+            segments.extend(shell_segments(body, _depth + 1))
+    return segments
+
+
+def policy_verdict(
+    lower: str, allow_patterns: Any, deny_rules: Any,
+) -> tuple[bool, str | None]:
+    """(explicitly allowed, matching deny label) for a lower-cased command.
+
+    An allow rule exempts only the simple commands it matches: every segment
+    of `safe && dangerous` must be covered before the deny rules are skipped,
+    so a prefix rule such as `git status` never lets a dangerous tail through.
+    Deny rules run on the whole line (pipelines such as `curl x | sh`) and on
+    each uncovered segment, so `$(wget x)`, `(wget x)`, a second line or an
+    `X=1 wget x` prefix are still caught.
+    """
+    segments = shell_segments(lower)
+    allow = list(allow_patterns or ())
+    uncovered = [
+        s for s in segments if not (allow and any(re.fullmatch(p, s) for p in allow))
+    ]
+    if allow and segments and not uncovered:
+        return True, None
+    targets = [lower, *(_ASSIGNMENTS.sub("", s) for s in uncovered)]
+    for pattern, label in deny_rules:
+        if any(re.search(pattern, target) for target in targets):
+            return False, label
+    return False, None
+
+
+_BUNDLED_LIBS = re.compile(
+    r"No module named '(docx|openpyxl|pptx|reportlab|pandas|matplotlib|fitz|pypdf|PyPDF2|xlsxwriter|PIL|markdown|bs4|lxml)'"
+)
+
+
+_NOT_A_REPO = re.compile(r"fatal: not a git repository", re.I)
+_GIT_C_DIR = re.compile(r"\bgit\s+-C\s+(\"[^\"]+\"|'[^']+'|\S+)")
+
+
+def _find_git_root(start: str | None) -> str | None:
+    """The nearest folder at or above ``start`` holding a ``.git`` entry."""
+    if not start:
+        return None
+    try:
+        here = Path(start).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    for folder in (here, *here.parents):
+        if (folder / ".git").exists():
+            return str(folder)
+    return None
+
+
+def _not_a_repo_hint(command: str, output: str, cwd: str, project_root: str | None) -> str:
+    """One actionable line when git ran in a folder that is not a repository.
+
+    The generic diagnosis ("run the command from the project folder") left the
+    agent with a red failure and no folder to go to. Naming the folder git ran
+    in and the repository the project actually lives in fixes it in one step.
+    Empty when the output carries no such error.
+    """
+    if not _NOT_A_REPO.search(output):
+        return ""
+    match = _GIT_C_DIR.search(command)
+    target = match.group(1).strip("\"'") if match else cwd
+    root = _find_git_root(project_root) or _find_git_root(cwd)
+    if root and Path(target).expanduser().resolve(strict=False) != Path(root):
+        return f"\nHint: {target} is not a git repository - use the project root {root}"
+    return f"\nHint: {target} is not a git repository - run git from the project folder, or git init a new project"
+
+
+_MACOS_PRIVACY_RE = re.compile(
+    r"/Users/[^/\s]+/(?:Desktop|Documents|Downloads|Library/Mobile Documents|Library/CloudStorage)\b"
+    r"|/Volumes/[^/\s:'\"]+",
+    re.IGNORECASE,
+)
+
+# Folders macOS (TCC) already refused in this process. Granting access needs a
+# Navin restart anyway, so the memory lives as long as the process.
+_MACOS_DENIED: set[str] = set()
+
+
+def _macos_denied_folder(output: str) -> str:
+    if sys.platform != "darwin" or "operation not permitted" not in output.lower():
+        return ""
+    match = _MACOS_PRIVACY_RE.search(output)
+    return match.group(0) if match else ""
+
+
+def _macos_privacy_hint(output: str) -> str:
+    """macOS TCC refuses Desktop/Documents/Downloads/iCloud until the user allows it.
+
+    Logs one clear line, remembers the folder so the next command on it is
+    refused instantly (no retry loop), and tells the agent to ask once and
+    move on.
+    """
+    folder = _macos_denied_folder(output)
+    if not folder:
+        return ""
+    if folder not in _MACOS_DENIED:
+        _MACOS_DENIED.add(folder)
+        logger.warning(
+            "macOS blocked access to {} (privacy protection). Allow Navin in System Settings > "
+            "Privacy & Security > Files and Folders (or Full Disk Access), then restart Navin.",
+            folder,
+        )
+    return (
+        f"\nLikely cause:\n- macOS privacy protection (TCC) blocked access to {folder}. "
+        "Do not retry: commands on this folder are now refused until Navin restarts. "
+        "Tell the user once, in plain words: allow Navin in System Settings > Privacy & Security > "
+        "Files and Folders (or Full Disk Access), then restart Navin. Then continue with the "
+        "rest of the task that does not need this folder."
+    )
+
+
+def macos_denied_refusal(command: str) -> str | None:
+    """Refuse at once a command on a folder macOS already denied."""
+    for folder in _MACOS_DENIED:
+        if folder in command:
+            return (
+                f"Error: macOS already refused access to {folder} (privacy protection); not retrying. "
+                "Waiting for the user to allow Navin in System Settings > Privacy & Security, "
+                "then restart Navin. Skip this folder and continue the rest of the task."
+            )
+    return None
+
+
+def _failure_hint(output: str) -> str:
+    """The likely cause of a failed command, whatever the language (project diagnoses)."""
+    privacy = _macos_privacy_hint(output)
+    if privacy:
+        return privacy
+    bundled = _BUNDLED_LIBS.search(output)
+    if bundled:
+        return (
+            f"\nLikely cause:\n- `{bundled.group(1)}` is bundled with Navin but not installed in this "
+            "Python: for a document/data script, run it with navin-python instead of python. "
+            "For the project's own code, add it to the project's requirements and install it there."
+        )
+    try:
+        from navin.agent.tools.project import diagnose
+
+        hints = diagnose(output)
+    except Exception:
+        return ""
+    if not hints:
+        return ""
+    return "\nLikely cause:\n" + "\n".join(f"- {hint}" for hint in hints)
+
+
 def _chat_rule(label: str, *, fallback: str = "operatorDeny") -> str:
     """Label the chat card should use, or empty for a hard denial."""
     if label in _HARD_DENY_LABELS:
@@ -460,17 +832,13 @@ class StdinCommandGuard:
         lower = line.strip().lower()
         if not lower:
             return None
-        if self.allow_patterns and any(
-            re.fullmatch(p, lower) for p in self.allow_patterns
-        ):
+        allowed, label = policy_verdict(lower, self.allow_patterns, self.deny_rules)
+        if allowed or label is None:
             return None
-        for pattern, label in self.deny_rules:
-            if re.search(pattern, lower):
-                return _GuardVerdict(
-                    ToolResult.error("Error: stdin blocked by deny pattern filter"),
-                    approvable_rule=_chat_rule(label),
-                )
-        return None
+        return _GuardVerdict(
+            ToolResult.error("Error: stdin blocked by deny pattern filter"),
+            approvable_rule=_chat_rule(label),
+        )
 
     async def check(self, chars: str | None, *, session_command: str | None) -> str | None:
         """Return a refusal message when the stdin payload must not be sent.
@@ -534,6 +902,24 @@ class StdinCommandGuard:
         return None
 
 
+def _workspace_policy_block(command: str) -> str | None:
+    """Refusal when an isolated subagent's workspace policy forbids ``command``."""
+    ctx = current_request_context()
+    metadata = getattr(ctx, "metadata", None)
+    task_id = metadata.get("subagent_task_id") if isinstance(metadata, dict) else None
+    if not task_id:
+        return None
+    from navin.agent import workspace_policy
+
+    policy = workspace_policy.get_policy(str(task_id))
+    if policy is None or policy.command_allowed(command):
+        return None
+    return (
+        "Error: command refused by this subagent's workspace policy; allowed "
+        "prefixes: " + ", ".join(policy.allowed_commands)
+    )
+
+
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
     enable: bool = True
@@ -548,6 +934,9 @@ class ExecToolConfig(Base):
     path_prepend: str = ""
     path_append: str = ""
     sandbox: str = ""
+    # "deny" cuts the network of sandboxed commands (no route out at all);
+    # "open" keeps it, the historical default. Only applies with a sandbox.
+    sandbox_network: str = Field(default="open", pattern="^(open|deny)$")
     allowed_env_keys: list[str] = Field(default_factory=list)
     allow_patterns: list[str] = Field(default_factory=list)
     deny_patterns: list[str] = Field(default_factory=list)
@@ -590,7 +979,7 @@ class _AgentExecStream:
     exactly as before.
     """
 
-    _FLUSH_INTERVAL_S = 0.5
+    _FLUSH_INTERVAL_S = 0.08
     # Ceiling on output held between two flushes; a runaway process must not
     # outpace the websocket. Oldest chunks are dropped and counted.
     _MAX_PENDING_CHARS = 100_000
@@ -715,6 +1104,27 @@ class _AgentExecStream:
             logger.debug("agent exec stream: emit failed: {}", exc)
 
 
+# Background commands that keep crashing, per (session, command): each exit
+# wakes the agent, which restarted the server, which crashed again, forever.
+_CRASH_WINDOW_S = 1800.0
+_CRASH_REPORT_AT = 3
+_CRASH_SILENT_AFTER = 3
+_crash_history: dict[tuple[str, str], list[float]] = {}
+
+
+def _record_background_exit(session_key: str, command: str, returncode: Any) -> int:
+    """How many times this command crashed recently here (0 after a success)."""
+    key = (session_key, " ".join(command.split()))
+    if returncode == 0:
+        _crash_history.pop(key, None)
+        return 0
+    now = time.monotonic()
+    recent = [t for t in _crash_history.get(key, []) if now - t < _CRASH_WINDOW_S]
+    recent.append(now)
+    _crash_history[key] = recent[-10:]
+    return len(recent)
+
+
 class _ExecCompletionAnnouncer:
     """Tell the agent when a background command ends, so it never has to poll.
 
@@ -773,11 +1183,27 @@ class _ExecCompletionAnnouncer:
             if tail:
                 lines.append("--- last output ---")
                 lines.append(tail)
-            lines.append(
-                "Act on this if you were waiting for it (build, tests, install). "
-                "If it was a server or a watcher, it has stopped. This session is "
-                "closed; do not poll it."
-            )
+            crashes = _record_background_exit(self._session_key, self._command, returncode)
+            if crashes > _CRASH_SILENT_AFTER:
+                logger.warning(
+                    "exec: `{}` crashed {} times in {}; not waking the agent again",
+                    self._command.strip()[:80], crashes, self._session_key,
+                )
+                return
+            if crashes >= _CRASH_REPORT_AT:
+                lines.append(
+                    f"This command has now failed {crashes} times in a row. Do NOT start "
+                    "it again. Read the output above, tell the user the exact error and "
+                    "its likely cause, and what you need (a fix you could not make, a "
+                    "missing tool, a credential, a decision) to go on."
+                )
+            else:
+                lines.append(
+                    "Act on this if you were waiting for it (build, tests, install). "
+                    "If it was a server or a watcher, it has stopped. This session is "
+                    "closed; do not poll it. Before starting it again, fix what the "
+                    "output above reports."
+                )
             from navin.bus.events import InboundMessage
 
             await self._bus.publish_inbound(
@@ -915,16 +1341,16 @@ class ExecTool(Tool):
     @classmethod
     def create(cls, ctx: Any) -> Tool:
         cfg = ctx.config.exec
-        path_prepend = os.pathsep.join(
-            value for value in (_runtime_bin_dir(), cfg.path_prepend) if value
-        )
+        path_prepend = cfg.path_prepend
         return cls(
+            runtime_bin=_runtime_bin_dir(),
             working_dir=ctx.workspace,
             timeout=cfg.timeout,
             restrict_to_workspace=ctx.config.restrict_to_workspace,
             webui_allow_local_service_access=ctx.config.webui_allow_local_service_access,
             sandbox=cfg.sandbox,
             sandbox_strict=getattr(ctx.config, "security_profile", None) == "strict",
+            sandbox_deny_net=getattr(cfg, "sandbox_network", "open") == "deny",
             path_prepend=path_prepend,
             path_append=cfg.path_append,
             allowed_env_keys=cfg.allowed_env_keys,
@@ -953,11 +1379,13 @@ class ExecTool(Tool):
         allow_local_preview_access: bool | None = None,
         sandbox: str = "",
         sandbox_strict: bool = False,
+        sandbox_deny_net: bool = False,
         path_prepend: str = "",
         path_append: str = "",
         allowed_env_keys: list[str] | None = None,
         forge_tokens: dict[str, str] | None = None,
         session_manager: Any | None = None,
+        runtime_bin: str = "",
         builtin_deny_rules: bool = False,
         ask_every_command: bool = False,
         allowed_shells: list[str] | None = None,
@@ -973,6 +1401,7 @@ class ExecTool(Tool):
         # sandbox refuses to run when the OS cannot enforce the policy,
         # instead of warning and running unconfined.
         self.sandbox_strict = sandbox_strict
+        self.sandbox_deny_net = sandbox_deny_net
         self.builtin_deny_rules = builtin_deny_rules
         self.ask_every_command = ask_every_command
         self.allowed_shells = [s.lower() for s in (allowed_shells or [])]
@@ -988,6 +1417,10 @@ class ExecTool(Tool):
         self.webui_allow_local_service_access = webui_allow_local_service_access
         self.path_prepend = path_prepend
         self.path_append = path_append
+        # Navin's own interpreter directory (venv bin, or the packaged shims).
+        # Kept apart from the operator's PATH settings: it goes first for skill
+        # scripts, but never in front of a Python project's own interpreter.
+        self.runtime_bin = runtime_bin
         self.allowed_env_keys = allowed_env_keys or []
         self.forge_tokens = dict(forge_tokens or {})
         self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
@@ -1036,8 +1469,14 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
+        wsl_workspace = _IS_WINDOWS and wsl.parse_unc(str(self.working_dir or "")) is not None
         platform_note = (
-            "On Windows, use PowerShell syntax by default; pass shell='cmd' "
+            "This project lives inside WSL: commands run in Linux bash, so use "
+            "bash syntax (ls, grep, test -f, ~/.navin). PowerShell and cmd are "
+            "not available here; Windows paths are under /mnt/c. "
+            + _desktop_logs_note()
+            if wsl_workspace
+            else "On Windows, use PowerShell syntax by default; pass shell='cmd' "
             "only for cmd-specific commands. "
             if _IS_WINDOWS
             else "On Unix, commands run through bash by default; pass shell='sh' "
@@ -1050,7 +1489,7 @@ class ExecTool(Tool):
             "git) over cat/sed/rm/mv/cp or shelling out to git. Use -y/--yes "
             "to avoid interactive prompts. "
             f"{platform_note}"
-            f"{sandbox_tool_description(self.sandbox)}"
+            f"{sandbox_tool_description(self.sandbox, deny_net=self.sandbox_deny_net)}"
             "For long-running or interactive commands pass background=true; "
             "a still-running command returns a session_id usable with "
             "write_stdin. A foreground command that outlives its timeout is "
@@ -1102,12 +1541,22 @@ class ExecTool(Tool):
         )
         if isinstance(prepared, str):
             return prepared
+        # Settings > Execution = AWS: same checks and approvals, run in the cloud sandbox.
+        from navin.agent.tools.cloud_sandbox import cloud_target_active, run_cloud_command
+
+        if await asyncio.to_thread(cloud_target_active):
+            return await run_cloud_command(command)
         await self._announce_sandbox(prepared)
 
+        waited = await self._wait_for_package_manager(command, prepared.cwd)
+        if waited.startswith("Error"):
+            return ToolResult.error(waited)
+
         if yield_time_ms is not None:
-            return await self._execute_session(
+            result = await self._execute_session(
                 prepared, yield_time_ms, max_output_chars, display_command=command
             )
+            return f"{waited}{result}" if waited and isinstance(result, str) else result
 
         process: asyncio.subprocess.Process | None = None
         handed_over = False
@@ -1183,6 +1632,16 @@ class ExecTool(Tool):
 
             result = "\n".join(output_parts) if output_parts else "(no output)"
             result = self._compact_exec_output(command, result)
+            result += _python_env_hint(result)
+            result += _scaffold_hint(command, result)
+            result += _shell_search_hint(command)
+            if process.returncode not in (0, None):
+                repo_hint = _not_a_repo_hint(
+                    command, result, prepared.cwd, self._project_root()
+                )
+                result += repo_hint or _failure_hint(result)
+            if waited:
+                result = waited + result
             result += sandbox_result_note(
                 prepared.sandbox,
                 exit_code=process.returncode,
@@ -1331,7 +1790,7 @@ class ExecTool(Tool):
             return None
 
     # Live output streaming to the chat activity card (Cursor-style).
-    _STREAM_INTERVAL_S = 0.5
+    _STREAM_INTERVAL_S = 0.08
     _STREAM_TAIL_CHARS = 8000
 
     async def _communicate_streaming(
@@ -1525,6 +1984,16 @@ class ExecTool(Tool):
             return self.timeout
         return None
 
+    def _project_root(self) -> str | None:
+        """The open project folder, or the configured working dir."""
+        try:
+            access = current_tool_workspace(
+                self.working_dir, restrict_to_workspace=self.restrict_to_workspace
+            )
+        except Exception:
+            return self.working_dir
+        return str(access.project_path) if access.project_path is not None else self.working_dir
+
     @staticmethod
     def _resolve_cwd(
         requested: str | None,
@@ -1580,7 +2049,9 @@ class ExecTool(Tool):
             workspace_root,
             restrict=access.restrict_to_workspace,
         )
-        if working_dir and not Path(cwd).is_dir():
+        # Off the event loop: on a \\wsl.localhost project every stat crosses
+        # the Windows/WSL boundary and can take seconds.
+        if working_dir and not await asyncio.to_thread(Path(cwd).is_dir):
             return ToolResult.error(
                 f"Error: working_dir not found: {working_dir}. "
                 "It is resolved against the project root, so pass a path relative "
@@ -1614,9 +2085,13 @@ class ExecTool(Tool):
                     cwd,
                 )
                 if refusal is not None:
-                    return refusal
+                    return _refusal_result(refusal)
 
-        verdict = self._guard_command(
+        denied = macos_denied_refusal(command)
+        if denied is not None:
+            return _refusal_result(denied)
+        verdict = await asyncio.to_thread(
+            self._guard_command,
             command,
             cwd,
             restrict_to_workspace=access.restrict_to_workspace,
@@ -1625,18 +2100,18 @@ class ExecTool(Tool):
         if verdict is not None:
             refusal = await self._ask_to_lift(verdict, command, cwd)
             if refusal is not None:
-                return refusal
+                return _refusal_result(refusal)
         elif self.ask_every_command:
             refusal = await self._ask_to_run(command, cwd)
             if refusal is not None:
-                return refusal
+                return _refusal_result(refusal)
 
         applied_sandbox = ""
         sandbox_lifted = False
         if self.sandbox and unsandboxed:
             refusal = await self._ask_to_unsandbox(command, cwd)
             if refusal is not None:
-                return refusal
+                return _refusal_result(refusal)
             sandbox_lifted = True
         elif self.sandbox:
             if _IS_WINDOWS:
@@ -1658,9 +2133,12 @@ class ExecTool(Tool):
                 workspace = workspace_root or cwd
                 unwrapped = command
                 try:
-                    command = wrap_command(
+                    # May probe or even compile the helper: keep it off the loop.
+                    command = await asyncio.to_thread(
+                        wrap_command,
                         self.sandbox, command, workspace, cwd,
                         strict=self.sandbox_strict,
+                        deny_net=self.sandbox_deny_net,
                     )
                 except Exception as exc:  # noqa: BLE001 - missing/broken helper must not brick exec
                     if self.sandbox_strict:
@@ -1683,16 +2161,39 @@ class ExecTool(Tool):
                     cwd = str(Path(workspace).resolve())
 
         effective_timeout = self._resolve_timeout(timeout)
+        if (
+            not timeout
+            and effective_timeout
+            and effective_timeout < _INSTALL_TIMEOUT_S
+            and _is_package_manager_command(command)
+            and not _LONG_RUNNING_RE.search(command)
+        ):
+            # An install or a build is meant to finish: keep it in the
+            # foreground so its result comes back in this call. At 60s a slow
+            # npm install (Windows Defender scans every file) moved to the
+            # background and the agent spent turns polling, echoing and
+            # re-running it.
+            effective_timeout = (
+                min(_INSTALL_TIMEOUT_S, self.max_timeout) if self.max_timeout else _INSTALL_TIMEOUT_S
+            )
         env = self._build_env()
 
-        if self.path_prepend or self.path_append:
+        wsl_project = _IS_WINDOWS and wsl.parse_unc(cwd) is not None
+        # A WSL project runs inside the distribution through wsl.exe: Windows
+        # PATH entries (venv Scripts, py launcher) mean nothing there, and
+        # looking for them walks every parent folder over the UNC boundary.
+        if wsl_project:
+            prepend, append = "", ""
+        else:
+            prepend, append = await asyncio.to_thread(self._path_for, cwd, env.get("PATH", ""))
+        if prepend or append:
             if _IS_WINDOWS:
-                env["PATH"] = self._compose_path(env.get("PATH", ""))
+                env["PATH"] = self._compose_path(env.get("PATH", ""), prepend, append)
             else:
-                command = self._wrap_path_export(command, env)
+                command = self._wrap_path_export(command, env, prepend, append)
 
         shell_program, shell_error = self._resolve_shell(
-            shell, wsl_project=_IS_WINDOWS and wsl.parse_unc(cwd) is not None,
+            shell, wsl_project=wsl_project,
         )
         if shell_error:
             return shell_error
@@ -1722,24 +2223,68 @@ class ExecTool(Tool):
             sandbox_lifted=True if prepared.sandbox_lifted else None,
         )
 
-    def _compose_path(self, current_path: str) -> str:
+    def _path_for(self, cwd: str, current_path: str) -> tuple[str, str]:
+        """PATH entries to add in front of / behind the user's PATH for this command.
+
+        Outside a Python project, navin's interpreter goes first, so a skill's
+        ``python3 build_report.py`` finds python-docx and friends. Inside one,
+        ``python`` must be the project's: its venv, else the user's Python (on
+        Windows the ``py -3`` launcher when ``python`` is only the Store alias).
+        Navin's interpreter then only comes last, as a fallback, and is always
+        reachable by name as ``navin-python``. Without this, the agent created
+        venvs from navin.exe and ``pip install`` went into navin's own venv.
+        """
+        prepend = [self.path_prepend] if self.path_prepend else []
+        append = [self.path_append] if self.path_append else []
+        extra = _navin_python_dir()
+        if not self.runtime_bin:
+            return os.pathsep.join(prepend), os.pathsep.join(append + ([extra] if extra else []))
+        project = _python_project_root(Path(cwd)) if cwd else None
+        if project is None:
+            return (
+                os.pathsep.join([self.runtime_bin, *prepend]),
+                os.pathsep.join(append + ([extra] if extra else [])),
+            )
+        front: list[str] = []
+        venv_bin = _project_venv_bin(Path(cwd), project)
+        if venv_bin is not None:
+            front.append(str(venv_bin))
+        else:
+            from navin.python_runtime import system_python
+
+            if _IS_WINDOWS and system_python(current_path) is None:
+                launcher = _py_launcher_dir()
+                if launcher:
+                    front.append(launcher)
+        return (
+            os.pathsep.join(front + prepend),
+            os.pathsep.join(append + [self.runtime_bin] + ([extra] if extra else [])),
+        )
+
+    def _compose_path(self, current_path: str, prepend: str | None = None, append: str | None = None) -> str:
+        prepend = self.path_prepend if prepend is None else prepend
+        append = self.path_append if append is None else append
         parts = []
-        if self.path_prepend:
-            parts.append(self.path_prepend)
+        if prepend:
+            parts.append(prepend)
         if current_path:
             parts.append(current_path)
-        if self.path_append:
-            parts.append(self.path_append)
+        if append:
+            parts.append(append)
         return os.pathsep.join(parts)
 
-    def _wrap_path_export(self, command: str, env: dict[str, str]) -> str:
+    def _wrap_path_export(
+        self, command: str, env: dict[str, str], prepend: str | None = None, append: str | None = None,
+    ) -> str:
+        prepend = self.path_prepend if prepend is None else prepend
+        append = self.path_append if append is None else append
         segments = []
-        if self.path_prepend:
-            env["NAVIN_PATH_PREPEND"] = self.path_prepend
+        if prepend:
+            env["NAVIN_PATH_PREPEND"] = prepend
             segments.append("$NAVIN_PATH_PREPEND")
         segments.append("$PATH")
-        if self.path_append:
-            env["NAVIN_PATH_APPEND"] = self.path_append
+        if append:
+            env["NAVIN_PATH_APPEND"] = append
             segments.append("$NAVIN_PATH_APPEND")
         path_expr = os.pathsep.join(segments)
         return f'export PATH="{path_expr}"; {command}'
@@ -1836,7 +2381,10 @@ class ExecTool(Tool):
         mount = wsl.drive_to_mount(cwd)
         if mount:
             argv += ["--cd", mount]
-        argv += ["--", "bash", "-lc", command]
+        if _wants_pipefail(command):
+            command = "set -o pipefail\n" + command
+        # --exec: no second parse by the default shell (see wsl.command_prefix).
+        argv += ["--exec", "bash", "-lc", command]
         return await asyncio.create_subprocess_exec(
             *argv,
             stdin=stdin,
@@ -1860,6 +2408,8 @@ class ExecTool(Tool):
         shell_name = Path(shell_program).name.lower().removesuffix(".exe")
         if login and shell_name in {"bash", "zsh"}:
             args.append("-l")
+        if shell_name in {"bash", "zsh"} and _wants_pipefail(command):
+            command = "set -o pipefail\n" + command
         args.extend(["-c", command])
         # Own process group, so a timeout can kill the whole tree. Without it a
         # dev server or watcher the command backgrounded outlives the SIGKILL
@@ -1900,9 +2450,12 @@ class ExecTool(Tool):
         ``bash -lc`` rather than a bare command, because a login shell is what
         puts the distribution's own toolchain - nvm, pyenv, cargo - on PATH.
         """
-        distro = wsl.resolve_distro(location.distro) or location.distro
+        # resolve_distro may call `wsl.exe -l -q` (up to 10s): not on the loop.
+        distro = await asyncio.to_thread(wsl.resolve_distro, location.distro) or location.distro
         program = shell_program or "bash"
         login_shell = (shell_program is None or login) and PurePosixPath(program).name in {"bash", "zsh"}
+        if Path(program).name in {"bash", "zsh"} and _wants_pipefail(command):
+            command = "set -o pipefail\n" + command
         argv = [*wsl.command_prefix(distro, location.path), program, "-lc" if login_shell else "-c", command]
         return await asyncio.create_subprocess_exec(
             *argv,
@@ -1980,6 +2533,12 @@ class ExecTool(Tool):
                 return None, ToolResult.error("Error: shell must be a shell name or absolute Linux path")
             if not self._shell_allowed(name):
                 return self._refuse_shell(shell)
+            if name.lower().removesuffix(".exe") in {"cmd", "powershell", "pwsh"}:
+                return None, ToolResult.error(
+                    f"Error: this project lives inside WSL, so '{shell}' is not available: "
+                    "commands run in Linux bash. Rewrite the command in bash syntax "
+                    "(Windows files are under /mnt/c) and omit the shell parameter."
+                )
             # 'wsl' explicitly selects the bridge already selected by the cwd.
             if shell.lower() in {"wsl", "wsl.exe"}:
                 return None, None
@@ -2031,6 +2590,67 @@ class ExecTool(Tool):
         finally:
             _reap_pid(process.pid)
 
+    async def _wait_for_package_manager(self, command: str, cwd: str) -> str:
+        """Let a package-manager command in this project finish before another starts.
+
+        Two installs in one folder race on node_modules and the lockfile: on
+        Windows the second fails on locked files ("directory not empty",
+        4294963245), elsewhere the tree ends up half written. A measured
+        session started npm install, npm list and rmdir node_modules while the
+        first install was still running in the background. Returns "" when
+        nothing ran, a note when it waited, or "Error..." when still busy.
+        """
+        if not (_is_package_manager_command(command) or _DEPENDENCY_PATH_RE.search(command or "")):
+            return ""
+        target = _effective_dir(cwd, command)
+        # A session counts when it is a known package-manager command, or when
+        # it is any foreground command that outlived its window (meant to
+        # finish: an install or a build whose name this list does not know).
+        # Servers started with background=true never hold anything.
+        busy = [
+            (session_id, session)
+            for session_id, session in self._session_manager.running_sessions()
+            if not _LONG_RUNNING_RE.search(session.command or "")
+            and (
+                (_is_package_manager_command(session.command) and _families_conflict(command, session.command))
+                or (getattr(session, "adopted", False) and not _is_package_manager_command(session.command))
+            )
+            and _same_project(target, _effective_dir(session.cwd, session.command))
+        ]
+        if not busy:
+            return ""
+        session_id, session = busy[0]
+        # A known package-manager run is a certain conflict: wait, and refuse
+        # rather than race. An adopted command of unknown kind only might be:
+        # give it a short head start, then run anyway.
+        certain = _is_package_manager_command(session.command)
+        started = time.monotonic()
+        await emit_tool_meta(
+            label=f"Waiting for {_short(session.command)} to finish", indeterminate=True
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(session.process.wait()),
+                timeout=_PACKAGE_MANAGER_WAIT_S if certain else _UNKNOWN_SESSION_WAIT_S,
+            )
+        except asyncio.TimeoutError:
+            if not certain:
+                return (
+                    f"[navin] `{_short(session.command)}` (session {session_id}) is still "
+                    "running in this project; ran this anyway after a short wait.\n"
+                )
+            return (
+                f"Error: `{_short(session.command)}` is still running in session "
+                f"{session_id} in this project, and a second package-manager command "
+                "would corrupt node_modules / the lockfile. This command was not run. "
+                f"Wait for it: write_stdin(session_id='{session_id}', yield_time_ms=60000), "
+                "then retry."
+            )
+        return (
+            f"[navin] Waited {time.monotonic() - started:.0f}s for `{_short(session.command)}` "
+            f"(session {session_id}, exit code {session.process.returncode}) before running this.\n"
+        )
+
     def _build_env(self) -> dict[str, str]:
         """Build a curated environment for subprocess execution.
 
@@ -2079,11 +2699,18 @@ class ExecTool(Tool):
             path = os.environ.get("PATH")
             if path:
                 base["PATH"] = path
-        return build_exec_env(
+        env = build_exec_env(
             base=base,
             allowed_env_keys=self.allowed_env_keys,
             forge_tokens=self.forge_tokens,
         )
+        try:
+            from navin.agent.managed_policy import apply_env
+
+            apply_env(env)  # organization-pinned variables always win
+        except Exception:  # noqa: BLE001 - policy errors never break exec
+            logger.exception("Managed policy env could not be applied")
+        return env
 
     async def _ask_to_lift(
         self,
@@ -2197,19 +2824,26 @@ class ExecTool(Tool):
         cmd = command.strip()
         lower = cmd.lower()
 
-        # allow_patterns take priority over deny_patterns so that users can
-        # exempt specific commands (e.g. "rm -rf" inside a build directory)
-        # from the hardcoded deny list via configuration.
-        explicitly_allowed = bool(self.allow_patterns) and any(
-            re.fullmatch(p, lower) for p in self.allow_patterns
+        policy_block = _workspace_policy_block(cmd)
+        if policy_block:
+            return _GuardVerdict(ToolResult.error(policy_block))
+
+        mount_hint = unbounded_mount_scan(cmd)
+        if mount_hint:
+            return _GuardVerdict(ToolResult.error(mount_hint))
+
+        # allow_patterns exempt specific commands (e.g. "rm -rf build") from
+        # the deny list, but only the simple commands they match: see
+        # policy_verdict for why `allowed && dangerous` is not exempt.
+        explicitly_allowed, denied_label = policy_verdict(
+            lower, self.allow_patterns, self._deny_rules
         )
         if not explicitly_allowed:
-            for pattern, label in self._deny_rules:
-                if re.search(pattern, lower):
-                    return _GuardVerdict(
-                        ToolResult.error("Error: Command blocked by deny pattern filter"),
-                        approvable_rule=_chat_rule(label),
-                    )
+            if denied_label is not None:
+                return _GuardVerdict(
+                    ToolResult.error("Error: Command blocked by deny pattern filter"),
+                    approvable_rule=_chat_rule(denied_label),
+                )
 
             if self.allow_patterns:
                 return _GuardVerdict(
@@ -2319,3 +2953,210 @@ class ExecTool(Tool):
             r"(?:^|[\s|>'\"=])((?:\.\.[\\/])+[^\s\"'>;|<]*)",
             command,
         )
+
+
+def _python_env_hint(output: str) -> str:
+    """One line that ends the "pip into the system Python" detour.
+
+    PEP 668 refusals used to cost a measured session a dozen turns of
+    --break-system-packages / --user / --target attempts. The fix is always
+    the same: a project virtualenv, which test_run and verify also use.
+    """
+    if "externally-managed-environment" not in output:
+        return ""
+    installer = (
+        "uv venv .venv && uv pip install --python .venv -r requirements.txt"
+        if shutil.which("uv")
+        else "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    )
+    return (
+        "\n[navin] This Python belongs to the OS. Install into a project virtualenv "
+        f"instead (next to the code, e.g. backend/.venv): `{installer}`, then run "
+        "with `.venv/bin/python`. test_run and verify pick that venv up; do not use "
+        "--break-system-packages or --user."
+    )
+
+
+_PACKAGE_MANAGER_WAIT_S = 300.0
+_INSTALL_TIMEOUT_S = 600
+_UNKNOWN_SESSION_WAIT_S = 30.0
+# Servers, watchers and log tails run until stopped: they never hold anything.
+_LONG_RUNNING_RE = re.compile(
+    r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|watch|preview)\b|"
+    r"\b(?:next|nuxt|astro|remix|ng)\s+(?:dev|serve|start)\b|"
+    r"\bcargo\s+watch\b|\bwatchexec\b|"
+    r"uvicorn|gunicorn|flask\s+run|manage\.py\s+runserver|rails\s+s(?:erver)?\b|"
+    r"nodemon|http\.server|\bvite\b(?!\s+build)|next\s+dev|"
+    r"docker[\s-]compose\s+(?:[^;&|]*\s)?up\b(?![^;&|]*\s-d\b)|"
+    r"(?:logs|tail)\s+(?:[^;&|]*\s)?-f\b|port-forward|--watch\b",
+    re.IGNORECASE,
+)
+_PACKAGE_MANAGER_RE = re.compile(
+    # Commands that write (or read mid-write) node_modules / site-packages or a
+    # lockfile. Scripts (npm run dev, start, test) are not here: a dev server
+    # in the background must not hold the next install for minutes.
+    r"(?:^|[;&|(]\s*)(?:"
+    r"(?:npm|pnpm|bun)\s+(?:install|i|add|ci|remove|rm|uninstall|un|update|up|upgrade|dedupe|prune|link|create|init|list|ls|audit)\b"
+    r"|yarn(?:\s+(?:install|add|remove|upgrade|up|dedupe|create|init|list))?\s*(?:$|[;&|])"
+    r"|npx\s+(?:--yes\s+|-y\s+)?create-"
+    r"|(?:pip|pip3|python3?\s+-m\s+pip|uv\s+pip|poetry|pipenv)\s+(?:install|uninstall|add|remove|sync|lock|update)\b"
+    r"|uv\s+(?:sync|add|remove|lock)\b"
+    r"|cargo\s+(?:add|remove|update|install|fetch|generate-lockfile|build|check|test)\b"
+    r"|go\s+(?:get|mod\s+(?:tidy|download|vendor)|install|build)\b"
+    r"|composer\s+(?:install|update|require|remove)\b"
+    r"|bundle(?:\s+(?:install|update|add))?\s*(?:$|[;&|])|gem\s+install\b"
+    r"|dotnet\s+(?:restore|add|remove|build)\b"
+    r"|(?:flutter|dart)\s+pub\s+(?:get|add|remove|upgrade)\b"
+    r"|(?:\./gradlew|gradle)\b[^;&|]*\b(?:build|assemble|dependencies)\b|mvn\b[^;&|]*\b(?:install|package|dependency:)"
+    r"|pod\s+(?:install|update)\b"
+    r"|terraform\s+(?:init|plan|apply|destroy|import|state\s+(?:mv|rm|push))\b|tofu\s+(?:init|plan|apply|destroy)\b"
+    r"|pulumi\s+(?:up|preview|destroy|refresh)\b|helm\s+(?:install|upgrade|uninstall|rollback|dependency\s+(?:build|update))\b"
+    r"|docker[\s-]compose\s+(?:[^;&|]*\s)?(?:build|pull)\b"
+    # Migration and infra tools are often started through a runner.
+    r"|(?:(?:npx|bunx|pnpm\s+(?:exec|dlx)|yarn|python3?(?:\s+-m)?|poetry\s+run|uv\s+run|bundle\s+exec)\s+|bin/|\./)?(?:"
+    r"prisma\s+(?:migrate|db\s+push|generate)\b|alembic\s+(?:upgrade|downgrade|revision)\b"
+    r"|manage\.py\s+(?:migrate|makemigrations)\b|rails\s+db:|rake\s+db:|flyway\s+migrate\b|liquibase\s+update\b"
+    r"|knex\s+migrate|sequelize(?:-cli)?\s+db:migrate|typeorm\s+migration:run|drizzle-kit\s+(?:push|migrate)\b)"
+    r"|(?:del|erase)\s+/s\b|rd\s+/s\b"
+    r"|(?:rm\s+-[a-z]*r[a-z]*|rmdir\s+/s|remove-item\b[^;&|]*-recurse)[^;&|]*node_modules"
+    r")",
+    re.IGNORECASE,
+)
+# Any command naming a dependency tree or lockfile, whatever tool it uses.
+_DEPENDENCY_PATH_RE = re.compile(
+    r"node_modules|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|"
+    r"\.venv\b|requirements[\w.-]*\.txt|poetry\.lock|uv\.lock|Cargo\.lock|go\.sum|"
+    r"composer\.lock|Gemfile\.lock|Podfile\.lock|(?:^|[\s/])vendor(?:/|\s|$)",
+    re.IGNORECASE,
+)
+# Which toolchain a command belongs to: only commands of one family share
+# state (a JS install and a terraform apply in a sub-folder do not). Order
+# matters: "npx prisma migrate" is a migration, not a JS install.
+_COMMAND_FAMILIES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (name, re.compile(pattern, re.IGNORECASE))
+    for name, pattern in (
+        ("db", r"prisma|alembic|manage\.py\s+(?:migrate|makemigrations)|(?:rails|rake)\s+db:|flyway|liquibase|knex|sequelize|typeorm|drizzle-kit"),
+        ("cleanup", r"\brm\s+-[a-z]*r|\brmdir\b|\b(?:del|erase|rd)\s+/s\b|remove-item\b"),
+        ("terraform", r"\b(?:terraform|tofu)\b"),
+        ("pulumi", r"\bpulumi\b"),
+        ("helm", r"\bhelm\b"),
+        ("compose", r"docker[\s-]compose"),
+        ("js", r"\b(?:npm|pnpm|yarn|bun|bunx|npx)\b|node_modules|package-lock|yarn\.lock|pnpm-lock|bun\.lock"),
+        ("python", r"\b(?:pip3?|uv|poetry|pipenv)\b|\.venv\b|requirements[\w.-]*\.txt|poetry\.lock|uv\.lock"),
+        ("rust", r"\bcargo\b|Cargo\.lock"),
+        ("go", r"\bgo\s|go\.sum"),
+        ("php", r"\bcomposer\b"),
+        ("ruby", r"\b(?:bundle|gem)\b|Gemfile"),
+        ("dotnet", r"\bdotnet\b"),
+        ("dart", r"\b(?:flutter|dart)\b"),
+        ("jvm", r"\b(?:gradlew?|mvn)\b"),
+        ("ios", r"\bpod\b|Podfile"),
+    )
+)
+
+
+def _command_family(command: str) -> str | None:
+    for name, pattern in _COMMAND_FAMILIES:
+        if pattern.search(command or ""):
+            return name
+    return None
+
+
+def _families_conflict(new: str, running: str) -> bool:
+    """Whether two commands touch the same state (lockfile, tree, state lock)."""
+    a, b = _command_family(new), _command_family(running)
+    if "cleanup" in (a, b):
+        return True  # deleting a tree races with whatever writes it
+    return a is not None and a == b
+
+
+_CD_PREFIX_RE = re.compile(r"^\s*(?:cd|pushd|set-location)\s+(?:/d\s+)?([\"']?)([^\"'&;|]+)\1\s*(?:&&|;)", re.IGNORECASE)
+
+
+def _is_package_manager_command(command: str) -> bool:
+    return bool(_PACKAGE_MANAGER_RE.search(command or ""))
+
+
+def _effective_dir(cwd: str, command: str) -> Path:
+    """The directory a command acts on: its cwd, after leading ``cd x &&`` steps."""
+    base = Path(cwd or ".")
+    rest = command or ""
+    for _ in range(4):
+        match = _CD_PREFIX_RE.match(rest)
+        if not match:
+            break
+        step = Path(os.path.expanduser(match.group(2).strip()))
+        base = step if step.is_absolute() else base / step
+        rest = rest[match.end():]
+    try:
+        return base.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return base
+
+
+def _same_project(a: Path, b: Path) -> bool:
+    return a == b or a in b.parents or b in a.parents
+
+
+def _short(command: str, limit: int = 60) -> str:
+    text = " ".join((command or "").split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+_SCAFFOLD_RE = re.compile(
+    r"\b(?:npm|pnpm|yarn|bun)\s+create\b|\bnpx\s+(?:--yes\s+|-y\s+)?create-|\bcreate-[a-z0-9-]+\b|"
+    r"\bng\s+new\b|\bnuxi\s+init\b|\bcargo\s+new\b|\bdjango-admin\s+startproject\b|\brails\s+new\b",
+    re.IGNORECASE,
+)
+_SCAFFOLD_REFUSAL_RE = re.compile(
+    r"operation cancell?ed|not empty|already exists|aborted|cancell?ed by user|is not an empty directory|could conflict|directory is not empty|refusing to",
+    re.IGNORECASE,
+)
+
+
+def _scaffold_hint(command: str, output: str) -> str:
+    """One line that ends retrying a scaffolder against a non-empty folder.
+
+    The folder an agent works in already holds navin's own files (.navin/),
+    so ``npm create vite@latest .`` asks to overwrite, gets no answer (no
+    terminal) and prints "Operation cancelled" with exit code 0. A measured
+    run then tried six variants (yes |, --y, npx, echo y...).
+    """
+    if not _SCAFFOLD_RE.search(command or "") or not _SCAFFOLD_REFUSAL_RE.search(output or ""):
+        return ""
+    return (
+        "\n[navin] The scaffolder stopped at a question it cannot get answered here "
+        "(no terminal): the target folder is not empty, and it holds navin's .navin/ "
+        "which must not be overwritten. Do not retry with yes/echo. Scaffold into a "
+        "new sub-folder instead (e.g. `npm create vite@latest app -- --template "
+        "react-ts`) and work inside it."
+    )
+
+
+_SHELL_CODE_SEARCH_RE = re.compile(
+    r"\bgrep(?:\s+-[a-zA-Z]+)*\s+-[a-zA-Z]*[rR][a-zA-Z]*\b"
+    r"|\bgrep\b[^|;&\n]*\s--recursive\b"
+    r"|(?:^|[;&(\n])\s*rg\s"
+    r"|\bgit\s+grep\b"
+)
+# Logs, transcripts and home folders are not project code: the grep tool is
+# bound to the workspace, so the shell is the right tool there.
+_SHELL_SEARCH_OUTSIDE_RE = re.compile(r"/mnt/|\.navin\b|~/|\$HOME")
+
+
+def _shell_search_hint(command: str) -> str:
+    """One line that moves a recursive code search back to the grep tool.
+
+    Measured on real sessions: 154 recursive grep/rg runs on project code went
+    through the shell, their output cut by ``| head`` (the rest silently lost),
+    unranked, generated trees included. The grep tool ranks declarations first,
+    skips generated trees and pages instead of truncating.
+    """
+    text = command or ""
+    if not _SHELL_CODE_SEARCH_RE.search(text) or _SHELL_SEARCH_OUTSIDE_RE.search(text):
+        return ""
+    return (
+        "\n[navin] Recursive code search through the shell: use the grep tool for "
+        "the next one (declarations ranked first, generated trees skipped, results "
+        "paged instead of cut by head; several patterns in one call)."
+    )

@@ -16,3 +16,17 @@ export function isDuplicateDefault(preset: Preset, settings: SettingsPayload): b
     && (["model", "provider", "max_tokens", "context_window_tokens", "temperature",
       "reasoning_effort"] as const).every((key) => preset[key] === row[key]));
 }
+
+/**
+ * A preset is offered only when its provider can run it: a configured provider,
+ * the Navin plan (the gateway only lists it with a live account) or automatic
+ * routing. The active row stays listed so the badge never loses its model.
+ */
+export function presetProviderReady(
+  preset: Pick<Preset, "provider">,
+  providers: SettingsPayload["providers"],
+): boolean {
+  const name = (preset.provider ?? "").trim().toLowerCase();
+  if (!name || name === "auto" || name === "navin") return true;
+  return providers.some((row) => row.name === name && row.configured);
+}

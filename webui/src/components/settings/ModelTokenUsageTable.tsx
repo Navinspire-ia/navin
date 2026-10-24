@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -39,14 +40,14 @@ function formatTokens(tokens: number): string {
 }
 
 function formatRequests(count: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(count);
+  return new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 0 }).format(count);
 }
 
 function monthLabel(month: string | undefined, language: string): string {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return month || "";
   const [year, mon] = month.split("-").map(Number);
   try {
-    return new Intl.DateTimeFormat(language, {
+    return new Intl.DateTimeFormat(intlLocale(language), {
       month: "long",
       year: "numeric",
       timeZone: "UTC",
@@ -237,9 +238,9 @@ export function ModelTokenUsageTable({ usage }: { usage?: TokenUsagePayload }) {
           aria-expanded={open}
         >
           {open ? (
-            <ChevronDown className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <ChevronDown className="me-1.5 h-3.5 w-3.5" aria-hidden />
           ) : (
-            <ChevronRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <ChevronRight className="rtl:-scale-x-100 me-1.5 h-3.5 w-3.5" aria-hidden />
           )}
           {open
             ? tx("settings.usage.models.hide", "Hide")
@@ -293,7 +294,7 @@ export function ModelTokenUsageTable({ usage }: { usage?: TokenUsagePayload }) {
           ) : (
             <div className="space-y-2">
               <div className="overflow-x-auto rounded-xl border border-border/55">
-                <table className="w-full min-w-[680px] border-collapse text-left text-[12px]">
+                <table className="w-full min-w-[680px] border-collapse text-start text-[12px]">
                   <thead>
                     <tr className="border-b border-border/55 bg-muted/25 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-2 font-medium">

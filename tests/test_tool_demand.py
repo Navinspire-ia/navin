@@ -15,6 +15,7 @@ from navin.agent.tool_demand import (
     BROWSER_TOOL,
     CRON_TOOL,
     LIST_EXEC_SESSIONS_TOOL,
+    MCP_MANAGE_TOOL,
     MOBILE_TOOL,
     NOTEBOOK_TOOL,
     ON_DEMAND_TOOLS,
@@ -61,6 +62,14 @@ class TextLiftTest(unittest.TestCase):
     def test_accents_and_apostrophes_do_not_hide_the_word(self) -> None:
         self.assertIn(CRON_TOOL, on_demand_tools_for_text("Planifie-le pour chaque matin"))
         self.assertIn(MOBILE_TOOL, on_demand_tools_for_text("l'émulateur ne démarre pas"))
+
+    def test_naming_mcp_loads_the_mcp_manager_without_ungating_anything(self) -> None:
+        for text in ("installe le serveur MCP fetch", "add the github mcp", '{"mcpServers": {}}'):
+            with self.subTest(text=text):
+                self.assertIn(MCP_MANAGE_TOOL, on_demand_tools_for_text(text))
+        self.assertNotIn(MCP_MANAGE_TOOL, on_demand_tools_for_text("corrige parse_date"))
+        self.assertNotIn(MCP_MANAGE_TOOL, ON_DEMAND_TOOLS)
+        self.assertEqual(_gated("installe le serveur MCP fetch", workspace=tempfile.mkdtemp()), set(ON_DEMAND_TOOLS))
 
 
 class RepositoryFactsTest(unittest.TestCase):
@@ -157,3 +166,40 @@ class DenylistWiringTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_lifted_on_demand_tool_stays_for_the_conversation(tmp_path):
+    """Dropping a lifted schema next message rewrote the cached prompt prefix."""
+    from navin.agent.loop import AgentLoop
+
+    key = "websocket:sticky-lift-test"
+    first = AgentLoop._denied_tools(
+        None, {}, "edit the jupyter notebook", None, workspace=tmp_path, session_key=key
+    )
+    assert "notebook_edit" not in first
+    second = AgentLoop._denied_tools(
+        None, {}, "thanks", None, workspace=tmp_path, session_key=key
+    )
+    assert "notebook_edit" not in second
+    other = AgentLoop._denied_tools(
+        None, {}, "thanks", None, workspace=tmp_path, session_key="websocket:other-chat"
+    )
+    assert "notebook_edit" in other
+
+
+def test_sticky_lift_never_overrides_a_mode_denial(tmp_path):
+    from navin.agent.loop import AgentLoop
+
+    key = "websocket:sticky-mode-test"
+    AgentLoop._denied_tools(
+        None, {}, "edit the jupyter notebook", None, workspace=tmp_path, session_key=key
+    )
+    denied = AgentLoop._denied_tools(
+        None,
+        {"denied_tools": ["notebook_edit"]},
+        "thanks",
+        None,
+        workspace=tmp_path,
+        session_key=key,
+    )
+    assert "notebook_edit" in denied

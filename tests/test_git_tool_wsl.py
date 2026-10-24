@@ -26,7 +26,7 @@ def test_wsl_git_runs_without_windows_git_and_uses_linux_working_directory(monke
     code, out, err = asyncio.run(git._git(root, ["status", "--short"]))
     assert code == 0 and out == "main\n" and not err
     argv = spawn.call_args.args
-    assert argv[:7] == ("wsl.exe", "-d", "Ubuntu", "--cd", "/home/aymen/projects/deploy7/financeIa-v2", "--", "git")
+    assert argv[:7] == ("wsl.exe", "-d", "Ubuntu", "--cd", "/home/aymen/projects/deploy7/financeIa-v2", "--exec", "git")
     assert "\\wsl.localhost" not in " ".join(argv)
     assert "GIT_TERMINAL_PROMPT" in spawn.call_args.kwargs["env"]["WSLENV"]
 
@@ -50,3 +50,25 @@ def test_access_errors_never_recommend_initializing_an_existing_repository(tmp_p
     assert reason in result
     assert "Use action=init" not in result
     assert "not inside a git repository" not in result
+
+
+def test_missing_windows_git_tells_how_it_gets_installed(tmp_path, monkeypatch):
+    from navin.utils import path_env
+
+    monkeypatch.setattr(git, "git_route", lambda _path: None)
+    monkeypatch.setattr(path_env, "ensure_git", lambda **_kw: "recent-attempt")
+    code, out, err = asyncio.run(git._git(tmp_path, ["status"]))
+    assert code == 127 and out == ""
+    assert err.startswith("git is not installed or not on PATH")
+    assert "winget install --id Git.Git -e --silent" in err
+    assert 'Test-Path "C:\\Program Files\\Git\\cmd\\git.exe"' in err
+
+
+def test_missing_git_off_windows_keeps_the_plain_message(tmp_path, monkeypatch):
+    from navin.utils import path_env
+
+    monkeypatch.setattr(git, "git_route", lambda _path: None)
+    monkeypatch.setattr(path_env, "ensure_git", lambda **_kw: "unsupported")
+    code, _out, err = asyncio.run(git._git(tmp_path, ["status"]))
+    assert code == 127
+    assert err == "git is not installed or not on PATH"

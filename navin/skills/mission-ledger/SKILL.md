@@ -17,13 +17,14 @@ Use the `board` tool ledger actions: `ledger_init`, `ledger_get`, `ledger_update
 
 ## Orchestrator protocol (every step)
 
-1. **Read** `ledger_get` + `board next` (never guess).
+1. **Read** `ledger_get` + `board next` at the start or after a context reset (never guess). After that, the `move ... claim_next=true` of the previous step already returns the next one.
 2. **Choose** one ready step (or spawn parallel independent ready steps in /cruise|/mission).
 3. **Act** with Navin tools.
 4. **Verify** per step `validation` (`test` / `lint` / `verify` / `manual` / `none`).
-5. **Write** `ledger_progress` with `ok`, `evidence`, `progress`.
+5. **Record**: `board move status=done evidence=... claim_next=true` records the progress and claims the next step in one call; use `ledger_progress ok=false` only for a failed attempt.
 6. **Decide**: next | retry (cap max_retries) | `ledger_replan` local | `ledger_pause`.
 7. **Never** mark `done` without evidence when validation is test/lint/verify.
+8. **Mission contract**: `ledger_update status=done` is refused while any acceptance criterion has no proof. Record one per criterion with `ledger_update evidence="1: pytest tests/test_x.py -> 12 passed\n2: curl :8000/health -> HTTP 200"` (a bare "ok" is refused; rewording a criterion drops its proof).
 
 ## One mission at a time
 
@@ -46,7 +47,7 @@ into your context every turn. Two things follow.
 | --- | --- |
 | part of the open mission | `board create` the tasks, then `ledger_update` |
 | a separate one-off | just do the work, no ledger |
-| the open mission is finished | `ledger_update status=done`, then `ledger_init` |
+| the open mission is finished | `ledger_update status=done evidence="N: proof"` for every criterion, then `ledger_init` |
 | the open mission is abandoned | `ledger_init` with `replace=true`, and say so |
 
 ## Planning (/blueprint)

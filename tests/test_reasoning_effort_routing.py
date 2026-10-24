@@ -9,7 +9,7 @@ import unittest
 from typing import Any
 
 from navin.agent.hook import AgentHook
-from navin.agent.reasoning_router import route_reasoning_effort
+from navin.agent.reasoning_router import fit_effort_to_output, route_reasoning_effort
 from navin.agent.runner import AgentRunner, AgentRunSpec
 from navin.agent.tools.base import Tool
 from navin.agent.tools.registry import ToolRegistry
@@ -22,6 +22,38 @@ class RoutingRulesTest(unittest.TestCase):
         self.assertEqual(route_reasoning_effort(None), "none")
         self.assertEqual(route_reasoning_effort("medium"), "medium")
         self.assertEqual(route_reasoning_effort("high"), "high")
+
+    def test_a_conversational_turn_never_thinks_whatever_the_setting(self) -> None:
+        for choice in (None, "low", "high", "xhigh", "max"):
+            self.assertEqual(route_reasoning_effort(choice, conversational=True), "none")
+            self.assertEqual(
+                route_reasoning_effort(choice, composer_mode="plan", conversational=True), "none"
+            )
+        # Real work keeps the configured effort.
+        self.assertEqual(route_reasoning_effort("high", conversational=False), "high")
+
+    def test_followup_effort_lightens_only_steps_after_tool_results(self) -> None:
+        light = {"followup_effort": "low"}
+        self.assertEqual(route_reasoning_effort("high", tool_followup=True, **light), "low")
+        self.assertEqual(route_reasoning_effort("max", tool_followup=True, **light), "low")
+        # The first step keeps the configured effort.
+        self.assertEqual(route_reasoning_effort("high", tool_followup=False, **light), "high")
+        # A retry after a red verify keeps it too.
+        self.assertEqual(route_reasoning_effort("high", tool_followup=True, escalations=1, **light), "high")
+        self.assertEqual(route_reasoning_effort("high", tool_followup=True, empty_retry=True, **light), "low")
+
+    def test_followup_effort_never_raises_and_ignores_typos(self) -> None:
+        self.assertEqual(route_reasoning_effort("low", tool_followup=True, followup_effort="high"), "low")
+        self.assertEqual(route_reasoning_effort("none", tool_followup=True, followup_effort="low"), "none")
+        self.assertEqual(route_reasoning_effort("high", tool_followup=True, followup_effort="bogus"), "high")
+        self.assertEqual(route_reasoning_effort("high", tool_followup=True, followup_effort=None), "high")
+
+    def test_followup_effort_does_not_touch_auto_or_plan_defaults(self) -> None:
+        self.assertEqual(route_reasoning_effort(None, tool_followup=True, followup_effort="low"), "none")
+        self.assertEqual(
+            route_reasoning_effort(None, composer_mode="plan", escalations=1, tool_followup=True, followup_effort="low"),
+            "high",
+        )
 
     def test_plan_mode_floors_at_high(self) -> None:
         self.assertEqual(route_reasoning_effort(None, composer_mode="plan"), "high")
@@ -74,13 +106,31 @@ class RoutingRulesTest(unittest.TestCase):
             "low",
         )
 
-    def test_empty_retry_only_disables_automatic_thinking(self) -> None:
-        self.assertEqual(route_reasoning_effort("high", empty_retry=True), "high")
+    def test_empty_retry_caps_heavy_effort_at_low(self) -> None:
+        # A blank reply at max/xhigh/high is retried with less thinking.
+        for heavy in ("max", "xhigh", "high", "adaptive"):
+            self.assertEqual(route_reasoning_effort(heavy, empty_retry=True), "low")
+        self.assertEqual(route_reasoning_effort("medium", empty_retry=True), "low")
+        # A blank reply at low or below would repeat byte for byte: drop thinking.
+        for light in ("low", "minimal", "none"):
+            self.assertEqual(route_reasoning_effort(light, empty_retry=True), "none")
         self.assertEqual(route_reasoning_effort(None, empty_retry=True), "none")
-        self.assertEqual(
-            route_reasoning_effort("xhigh", empty_retry=True),
-            "xhigh",
-        )
+
+    def test_effort_fits_the_output_budget(self) -> None:
+        # Room for the answer: the choice stands.
+        self.assertEqual(fit_effort_to_output("max", 64_000), "max")
+        # A 17k budget at "max" was spent entirely on thinking.
+        self.assertEqual(fit_effort_to_output("max", 17_600), "medium")
+        self.assertEqual(fit_effort_to_output("xhigh", 20_000), "medium")
+        self.assertEqual(fit_effort_to_output("medium", 20_000), "medium")
+        self.assertEqual(fit_effort_to_output("high", 4_096), "low")
+        self.assertEqual(fit_effort_to_output("medium", 4_096), "low")
+        # Never raised, unknown values and missing budgets untouched.
+        self.assertEqual(fit_effort_to_output("none", 4_096), "none")
+        self.assertEqual(fit_effort_to_output("low", 4_096), "low")
+        self.assertEqual(fit_effort_to_output("bogus", 4_096), "bogus")
+        self.assertEqual(fit_effort_to_output("max", None), "max")
+        self.assertIsNone(fit_effort_to_output(None, 4_096))
 
     def test_explicit_off_still_passes_through(self) -> None:
         self.assertEqual(
@@ -221,6 +271,39 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
         ])
         await AgentRunner().run(_spec(provider, registry, effort="high"))
         self.assertEqual(provider.efforts, ["high", "high"])
+
+    async def test_blank_reply_retries_with_less_thinking_until_it_answers(self) -> None:
+        provider = _EffortCapturingProvider([
+            LLMResponse(content="", finish_reason="length"),
+            LLMResponse(content=""),
+            LLMResponse(content="answer"),
+        ])
+        result = await AgentRunner().run(_spec(provider, ToolRegistry(), effort="max"))
+        self.assertEqual(result.final_content, "answer")
+        self.assertEqual(provider.efforts[0], "max")
+        self.assertTrue(all(effort in ("low", "none") for effort in provider.efforts[1:]))
+
+    async def test_a_blank_reply_at_low_is_not_resent_identically(self) -> None:
+        provider = _EffortCapturingProvider([
+            LLMResponse(content=""),
+            LLMResponse(content="answer"),
+        ])
+        result = await AgentRunner().run(_spec(provider, ToolRegistry(), effort="low"))
+        self.assertEqual(result.final_content, "answer")
+        self.assertEqual(provider.efforts, ["low", "none"])
+
+    async def test_heavy_effort_is_capped_when_the_prompt_fills_the_window(self) -> None:
+        provider = _EffortCapturingProvider([LLMResponse(content="done")])
+        spec = _spec(provider, ToolRegistry(), effort="max")
+        spec.runtime = LLMRuntime(
+            provider=provider,
+            model="test-model",
+            generation=GenerationSettings(reasoning_effort="max", max_tokens=128_000),
+            context_window_tokens=200_000,
+        )
+        spec.last_prompt_tokens = 173_352
+        await AgentRunner().run(spec)
+        self.assertEqual(provider.efforts, ["medium"])
 
     async def test_identical_reads_are_blocked_after_two_successes(self) -> None:
         registry = ToolRegistry()

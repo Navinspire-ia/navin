@@ -49,5 +49,32 @@ class PerCallFinishTest(unittest.TestCase):
         self.assertEqual(sent[0][0]["result"], "contents")
 
 
+class RunningLabelTest(unittest.TestCase):
+    """The live strip says the call runs, not that it is still being written."""
+
+    def test_start_replaces_the_drafting_line(self) -> None:
+        labels: list[str] = []
+
+        async def on_progress(text: str, *, agent_ui=None, **_: Any) -> None:
+            if agent_ui and agent_ui.get("kind") == "task_progress":
+                labels.append(agent_ui["data"]["label"])
+
+        hook = AgentProgressHook(on_progress=on_progress)
+        context = AgentHookContext(iteration=0, messages=[])
+        context.tool_calls = [
+            SimpleNamespace(id="g1", name="grep", arguments={"pattern": "DUPLICATE_INVOICE"}),
+            _call("r1"),
+        ]
+        asyncio.run(hook.before_execute_tools(context))
+        self.assertEqual(len(labels), 1)
+        self.assertIn("DUPLICATE_INVOICE", labels[0])
+        self.assertTrue(labels[0].endswith("(+1 more)"))
+        self.assertNotIn("Preparing", labels[0])
+
+    def test_a_multi_pattern_grep_names_its_first_pattern(self) -> None:
+        calls = [SimpleNamespace(id="g1", name="grep", arguments={"patterns": ["OCR_PURCHASE", "celery"], "path": "backend"})]
+        self.assertIn("OCR_PURCHASE", AgentProgressHook._running_label(calls))
+
+
 if __name__ == "__main__":
     unittest.main()

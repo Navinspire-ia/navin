@@ -856,6 +856,11 @@ class AccountScreen(ModalScreen[str | None]):
                 filled = int(pct / 5)
                 bar = "█" * filled + "░" * (20 - filled)
                 lines.append(f"usage {bar} {pct}%")
+                extra_usd = int(usage.get("extra_budget_micro_usd") or 0) / 1_000_000
+                if extra_usd > 0:
+                    until = str(usage.get("extra_budget_until") or "")[:10]
+                    ends = f" until {until}" if until else ""
+                    lines.append(f"[dim]bonus +${extra_usd:,.0f}{ends}[/dim]")
             if payload.get("org_id"):
                 lines.append(
                     f"[dim]org {escape(str(payload['org_id']))}  role {escape(str(payload.get('org_role') or ''))}  seats {payload.get('seat_count') or '-'}[/dim]"

@@ -13,12 +13,12 @@ from unittest.mock import patch
 import httpx
 
 from navin.config.schema import Config, ModelPresetConfig, ProvidersConfig
+from navin.optional_live import live_modules_available
 from navin.providers.connection_presets import (
     lookup_connection_base,
     resolve_connection_api_base,
 )
 from navin.providers.factory import make_provider
-from navin.optional_live import live_modules_available
 from navin.providers.registry import PROVIDERS, find_by_name
 from tests.provider_test_utils import isolated_provider_env
 
@@ -194,9 +194,10 @@ class SettingsConnectionTest(unittest.TestCase):
         reloaded = load_config()
         self.assertEqual(reloaded.providers.qwen.endpoint_region, "china")
         self.assertEqual(reloaded.providers.qwen.access_plan, "coding")
+        # The Coding Plan has its own host: its keys are refused on compatible-mode.
         self.assertEqual(
             reloaded.providers.qwen.api_base,
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://coding.dashscope.aliyuncs.com/v1",
         )
 
     def test_connection_probe_times_out_without_hanging(self) -> None:

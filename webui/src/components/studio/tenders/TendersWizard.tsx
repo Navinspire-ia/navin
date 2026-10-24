@@ -919,7 +919,7 @@ export function TendersWizard({
                       <button
                         type="button"
                         data-zone-header
-                        className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left active:scale-[0.99]"
+                        className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-start active:scale-[0.99]"
                         onClick={() => setOpenZone(open ? "" : group.zone)}
                         aria-expanded={open}
                       >

@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from navin.quality import wsl_route
 from navin.quality.linters import _binary_for, _read_json
+from navin.utils import wsl
 from navin.utils.proc import no_window_kwargs
 
 _TABLE_PATH = Path(__file__).with_name("test_runners.json")
@@ -145,14 +147,67 @@ def runner_table() -> dict[str, dict[str, Any]]:
     return merged
 
 
-def _workdir_for(spec: dict[str, Any], root: Path) -> Path:
+_SUBPROJECT_SKIP = frozenset({
+    "node_modules", "dist", "build", "target", "coverage", "vendor", "__pycache__",
+})
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs", "testing", "e2e"})
+# Monorepo roots whose children are the projects (apps/web, packages/api...).
+_MONOREPO_DIRS = ("apps", "packages", "services", "libs")
+
+
+def _subproject_dirs(root: Path) -> list[Path]:
+    """Directories that may hold their own project: one level down, plus monorepo children.
+
+    Separate front and back ends (``frontend/`` + ``backend/``, ``client/`` +
+    ``server/``, ``apps/web``) keep their package.json, Cargo.toml, go.mod or
+    pytest config there, not at the root.
+    """
+    def children(parent: Path) -> list[Path]:
+        try:
+            return sorted(
+                child for child in parent.iterdir()
+                if child.is_dir()
+                and not child.name.startswith(".")
+                and child.name not in _SUBPROJECT_SKIP
+            )[:64]
+        except OSError:
+            return []
+
+    first = children(root)
+    nested = [grand for child in first if child.name in _MONOREPO_DIRS for grand in children(child)]
+    return first + nested
+
+
+def _workdir_for(spec: dict[str, Any], root: Path, target: str | None = None) -> Path:
     """Pick the directory this suite actually lives in.
 
-    Candidates usually start with ``"."``, which always exists, so choosing the
-    first directory present would always answer the project root and never look
-    into ``webui`` or ``frontend``. A suite configured only in a subdirectory
-    would then be reported as absent and silently skipped by ``verify``.
+    With a target, the nearest directory above it that holds this runner's
+    project wins (``client/src/a.test.tsx`` runs from ``client``). Otherwise
+    the root, the runner's listed candidates, then any subproject. Candidates
+    usually start with ``"."``, which always exists, so choosing the first
+    directory present would always answer the project root; a suite configured
+    only in a subdirectory would then be reported as absent and silently
+    skipped by ``verify``.
     """
+    if target:
+        rel = Path(target.split("::", 1)[0].replace("\\", "/"))
+        current = (root / rel).parent if rel.suffix else root / rel
+        try:
+            current.resolve().relative_to(root.resolve())
+        except (OSError, ValueError):
+            current = root
+        while True:
+            # A test directory (tests/unit with its conftest.py) is not where
+            # the project, and so the runner, lives.
+            inside_tests = False
+            with suppress(ValueError):
+                parts = current.relative_to(root).parts
+                inside_tests = any(part.lower() in _TEST_DIR_NAMES for part in parts)
+            if not inside_tests and _detected(spec, current):
+                return current
+            if current == root or current.parent == current:
+                break
+            current = current.parent
     existing = [
         candidate
         for rel in spec.get("workdir", [])
@@ -161,7 +216,24 @@ def _workdir_for(spec: dict[str, Any], root: Path) -> Path:
     for candidate in existing:
         if _detected(spec, candidate):
             return candidate
+    if _detected(spec, root):
+        return root
+    for candidate in _subproject_dirs(root):
+        if _detected(spec, candidate):
+            return candidate
     return existing[0] if existing else root
+
+
+def _target_for_workdir(target: str, workdir: Path, root: Path) -> str:
+    """Rewrite a root-relative target so the runner, started in workdir, finds it."""
+    if workdir == root:
+        return target
+    path, sep, rest = target.partition("::")
+    try:
+        rel = (root / path).resolve().relative_to(workdir.resolve())
+    except (OSError, ValueError):
+        return target
+    return f"{rel.as_posix()}{sep}{rest}"
 
 
 def _detected(spec: dict[str, Any], root: Path) -> bool:
@@ -184,12 +256,22 @@ def _detected(spec: dict[str, Any], root: Path) -> bool:
 def detect_suites(root: Path) -> list[dict[str, Any]]:
     """Report the test suites this project has, and whether they can run."""
     out: list[dict[str, Any]] = []
-    for name, spec in sorted(runner_table().items()):
+    table = sorted(runner_table().items())
+    location = wsl_route.wsl_root(root)
+    # A WSL project: one probe inside the distribution answers for every runner.
+    found = wsl_route.available(dict(table), root, location) if location is not None else None
+    for name, spec in table:
         workdir = _workdir_for(spec, root)
         detected = _detected(spec, workdir) or _detected(spec, root)
         reason = ""
         if not detected:
             reason = "no test layout or config detected"
+        elif location is not None:
+            if found is not None and name not in found:
+                reason = (
+                    f"{(spec.get('binary') or {}).get('name', name)} not installed "
+                    f"in the WSL distribution {location.distro}"
+                )
         elif _runner_argv(spec, root) is None:
             reason = f"{(spec.get('binary') or {}).get('name', name)} not installed"
         out.append(
@@ -693,6 +775,196 @@ def runners_for_changes(root: Path, changed: list[str]) -> list[str] | None:
     return matching
 
 
+# Test files by name: pytest (test_x.py, x_test.py), go (x_test.go), the JS runners
+# (x.test.ts, x.spec.tsx, ...).
+_TEST_FILE_RE = re.compile(
+    r"(?:^|/)(?:test_[^/]+\.py|[^/]+_test\.(?:py|go)|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?)$",
+    re.IGNORECASE,
+)
+_JS_SOURCE_SUFFIXES = frozenset({
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte",
+})
+_JS_TEST_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+_MAX_RELATED_TESTS = 24
+# Above this many importers a module is a hub (the app, a shared widget): its
+# importers are the whole suite, so only tests named after it are kept.
+_MAX_IMPORTERS = 6
+
+
+def _target_language(target: str) -> str | None:
+    path = target.split("::", 1)[0].replace("\\", "/")
+    suffix = Path(path).suffix.lower()
+    if not suffix:
+        return "python" if Path(path).name.lower() in _TEST_DIR_NAMES else None
+    return _CHANGE_LANGUAGES.get(suffix)
+
+
+def _python_test_files(root: Path, rel: str, cache: dict[str, list[str]]) -> list[str]:
+    """Python test files in the test folders above ``rel`` (tests/, site/back/tests/)."""
+    found: list[str] = []
+    current = (root / rel).parent
+    while True:
+        for name in _TEST_DIR_NAMES:
+            folder = current / name
+            key = folder.as_posix()
+            if key not in cache:
+                files: list[str] = []
+                with suppress(OSError):
+                    if folder.is_dir():
+                        files = sorted(
+                            path.relative_to(root).as_posix()
+                            for path in folder.rglob("*.py")
+                            if _TEST_FILE_RE.search(path.as_posix())
+                            and not any(part in _SUBPROJECT_SKIP for part in path.parts)
+                        )
+                cache[key] = files
+            found.extend(cache[key])
+        if current == root or current.parent == current:
+            break
+        current = current.parent
+    return list(dict.fromkeys(found))
+
+
+def _python_related(root: Path, rel: str, cache: dict[str, list[str]]) -> list[str]:
+    stem = Path(rel).stem
+    module = rel[: -len(Path(rel).suffix)].replace("/", ".")
+    if stem == "__init__":
+        module = module.rsplit(".", 1)[0]
+        stem = module.rsplit(".", 1)[-1]
+    parent, _, leaf = module.rpartition(".")
+    imports = re.compile(
+        rf"(?:\b{re.escape(module)}\b|from\s+{re.escape(parent)}\s+import\s[^\n]*\b{re.escape(leaf)}\b)"
+        if parent else rf"\b{re.escape(module)}\b"
+    )
+    named: list[str] = []
+    importers: list[str] = []
+    for test in _python_test_files(root, rel, cache):
+        words = Path(test).stem.lower().split("_")
+        if stem.lower() in words:
+            named.append(test)
+            continue
+        with suppress(OSError):
+            if imports.search((root / test).read_text(encoding="utf-8", errors="ignore")):
+                importers.append(test)
+    return named + (importers if len(importers) <= _MAX_IMPORTERS else [])
+
+
+def _js_related(root: Path, rel: str) -> list[str]:
+    path = Path(rel)
+    found: list[str] = []
+    for folder in (path.parent, path.parent / "__tests__"):
+        for kind in ("test", "spec"):
+            for suffix in _JS_TEST_SUFFIXES:
+                candidate = folder / f"{path.stem}.{kind}{suffix}"
+                if (root / candidate).is_file():
+                    found.append(candidate.as_posix())
+    return found
+
+
+def related_test_targets(root: Path, changed: list[str]) -> list[str]:
+    """The test files that exercise the changed files, changed tests first.
+
+    A change is judged by its own tests: the edited test files, tests next to
+    the edited source (``a.ts`` -> ``a.test.ts``), and Python tests named after
+    or importing the edited module. Never the whole suite, so a slow or broken
+    test elsewhere cannot send the agent off repairing code nobody asked about.
+    """
+    tests: list[str] = []
+    related: list[str] = []
+    cache: dict[str, list[str]] = {}
+    for raw in changed:
+        rel = raw.replace("\\", "/")
+        if rel.startswith("./"):
+            rel = rel[2:]
+        suffix = Path(rel).suffix.lower()
+        if _TEST_FILE_RE.search(rel):
+            if (root / rel).is_file():
+                tests.append(rel)
+        elif suffix == ".py":
+            if Path(rel).name == "conftest.py":
+                related.append(Path(rel).parent.as_posix() or ".")
+            else:
+                related.extend(_python_related(root, rel, cache))
+        elif suffix in _JS_SOURCE_SUFFIXES:
+            related.extend(_js_related(root, rel))
+    return list(dict.fromkeys(tests + related))[:_MAX_RELATED_TESTS]
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    try:
+        path.resolve().relative_to(folder.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _runner_for_target(root: Path, target: str) -> tuple[str, Path] | None:
+    """The installed runner whose project holds ``target``, and where it runs."""
+    language = _target_language(target)
+    if language is None:
+        return None
+    table = runner_table()
+    names = sorted(
+        (name for name, spec in table.items() if spec.get("language") == language),
+        key=lambda name: bool(table[name].get("fallback_only")),
+    )
+    path = root / target.split("::", 1)[0]
+    for name in names:
+        spec = table[name]
+        workdir = _workdir_for(spec, root, target)
+        # webui's vitest must not be handed site/back/a.test.ts: it would find
+        # no test and fail. The runner has to live above the file it runs.
+        if not _detected(spec, workdir) or not _inside(path, workdir):
+            continue
+        if wsl_route.wsl_root(root) is not None or _runner_argv(spec, workdir) or _runner_argv(spec, root):
+            # On a WSL project the runner is resolved inside the distribution
+            # when it runs; a missing one comes back as "not installed".
+            return name, workdir
+    return None
+
+
+def run_tests_for_changes(
+    root: Path,
+    changed: list[str],
+    *,
+    on_output: Callable[[str], None] | None = None,
+) -> tuple[list[TestOutcome], list[str]]:
+    """Run only the tests of the changed files, each with its own runner.
+
+    Go and Rust keep their tests inside the package, so a change there runs
+    that language's suite. Files no test can see (docs, JSON, styles) run
+    nothing: the notes say so instead of a red run of unrelated suites.
+    """
+    table = runner_table()
+    notes: list[str] = []
+    groups: dict[tuple[str, str], list[str]] = {}
+    targets = related_test_targets(root, changed)
+    for target in targets:
+        picked = _runner_for_target(root, target)
+        if picked is None:
+            notes.append(f"No installed test runner reaches {target}; run it with the project's own command.")
+            continue
+        name, workdir = picked
+        groups.setdefault((name, str(workdir)), []).append(target)
+    outcomes = [
+        _run_one(name, table[name], root, group, on_output=on_output)
+        for (name, _workdir), group in groups.items()
+    ]
+    languages = {_CHANGE_LANGUAGES.get(Path(path).suffix.lower()) for path in changed}
+    suites = [
+        name for name in _primary_runners(root)
+        if table.get(name, {}).get("language") in languages & {"go", "rust"}
+    ]
+    if suites:
+        outcomes.extend(run_tests(root, runners=suites, on_output=on_output))
+    if not targets and not suites:
+        notes.append(
+            "No test file covers the changed files, so no suite was run. "
+            "Run the tests that exercise this change with test_run target=<test file>."
+        )
+    return outcomes, notes
+
+
 def run_tests(
     root: Path,
     *,
@@ -785,15 +1057,26 @@ def _runner_argv(spec: dict[str, Any], root: Path) -> list[str] | None:
 
 
 def _run_one(
-    name: str, spec: dict[str, Any], root: Path, target: str | None,
+    name: str, spec: dict[str, Any], root: Path, target: str | list[str] | None,
     *, on_output: Callable[[str], None] | None = None,
 ) -> TestOutcome:
-    workdir = _workdir_for(spec, root)
+    targets = [target] if isinstance(target, str) else list(target or [])
+    workdir = _workdir_for(spec, root, targets[0] if targets else None)
     if not (_detected(spec, workdir) or _detected(spec, root)):
         return TestOutcome(
             runner=name, ran=False, skipped_reason="no test layout or config detected"
         )
-    launch = _runner_argv(spec, root)
+    targets = [_target_for_workdir(item, workdir, root) for item in targets]
+    location = wsl_route.wsl_root(root)
+    if location is not None:
+        # A WSL project seen from Windows: its runner, interpreter and
+        # dependencies live in the distribution, so the run happens there.
+        launch: list[str] | None = []
+    else:
+        # The subproject's own tools first (client/node_modules/.bin/vitest,
+        # backend/.venv/bin/pytest), then the root's.
+        launch = _runner_argv(spec, workdir) if workdir != root else None
+        launch = launch or _runner_argv(spec, root)
     if launch is None:
         wanted = (spec.get("binary") or {}).get("name", name)
         return TestOutcome(runner=name, ran=False, skipped_reason=f"{wanted} not installed")
@@ -809,25 +1092,36 @@ def _run_one(
         report_path = Path(handle.name)
 
     argv = list(launch)
+    spelled_root = location.posix if location is not None else str(root)
+    spelled_report = (
+        wsl_route.linux_path(report_path, location)
+        if location is not None and report_path is not None else str(report_path)
+    )
     for arg in spec.get("args", []):
-        text = str(arg).replace("{root}", str(root))
+        text = str(arg).replace("{root}", spelled_root)
         if "{report}" in text:
             if report_path is None:
                 continue
-            text = text.replace("{report}", str(report_path))
+            text = text.replace("{report}", spelled_report)
         argv.append(text)
-    if target:
+    for item in targets:
+        if location is not None and wsl.parse_unc(item.split("::", 1)[0]) is not None:
+            item = wsl_route.linux_path(item, location)
         for arg in spec.get("target_args", []):
-            argv.append(str(arg).replace("{target}", target))
+            argv.append(str(arg).replace("{target}", item))
     if on_output is not None and name == "pytest":
         argv.extend(["-o", "console_output_style=progress", "-vv"])
+    cwd = str(workdir)
+    if location is not None:
+        argv = wsl_route.tool_argv(spec, root, workdir, argv, location=location) or argv
+        cwd = wsl_route.launch_cwd()
 
     started = time.monotonic()
     try:
         execute = _run_streaming if on_output is not None else subprocess.run
         completed = execute(
             argv,
-            cwd=str(workdir),
+            cwd=cwd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -852,6 +1146,14 @@ def _run_one(
 
     duration_ms = int((time.monotonic() - started) * 1000)
     output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+    if location is not None and completed.returncode == wsl_route.MISSING_EXIT:
+        if report_path is not None:
+            report_path.unlink(missing_ok=True)
+        wanted = (spec.get("binary") or {}).get("name", name)
+        return TestOutcome(
+            runner=name, ran=False, duration_ms=duration_ms,
+            skipped_reason=f"{wanted} not installed in the WSL distribution {location.distro}",
+        )
 
     try:
         if parser == "junit_xml" and report_path is not None and report_path.exists():

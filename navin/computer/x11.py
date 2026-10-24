@@ -12,8 +12,6 @@ command-line grabber. Every path is picked at first use and reported by
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import io
 import os
 import shutil
@@ -35,6 +33,7 @@ from navin.computer.base import (
     WindowInfo,
 )
 from navin.computer.keys import KeyCombo
+from navin.utils.proc import no_window_kwargs
 
 # canonical key name -> X keysym name
 _KEYSYM_NAMES: dict[str, str] = {

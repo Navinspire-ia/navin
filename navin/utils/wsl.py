@@ -279,13 +279,37 @@ def command_prefix(distro: str, cwd: str | PurePosixPath | None = None) -> list[
     ``--cd`` is what puts the command in the project rather than in the user's
     home; without it a build runs in the wrong directory, or in ``/mnt/c`` when
     the caller passed a Windows path through.
+
+    ``--exec`` rather than ``--``: after ``--`` wsl.exe joins the rest of the
+    line and hands it to the distribution's default shell, so every command
+    was parsed twice. That outer shell expanded ``$(...)`` and ``$var`` before
+    the real ``bash -lc`` ran and kept ``\\"`` escaped inside a substitution:
+    ``files=$(grep -E "a|b" ...)`` turned the quoted ``|`` into a pipe
+    ("b: command not found") and left ``$files`` empty. ``--exec`` runs the
+    argv as given, one parse, the one the caller wrote.
     """
     wsl = wsl_executable() or "wsl.exe"
     argv = [wsl, "-d", distro]
     if cwd is not None:
         argv += ["--cd", str(PurePosixPath(cwd))]
-    argv.append("--")
+    argv.append("--exec")
     return argv
+
+
+# Runs ripgrep inside the distribution, or exits 127 when it is not installed
+# there: a missing binary through ``wsl.exe --exec`` exits 1, which ripgrep
+# uses for "no matches", and a silent empty answer is the worst outcome.
+RG_SCRIPT = 'command -v rg >/dev/null 2>&1 || exit 127; exec rg "$@"'
+
+
+def rg_prefix(distro: str, cwd: str | PurePosixPath | None = None) -> list[str]:
+    """Argv prefix running the distribution's own ripgrep; append rg flags.
+
+    A Windows ripgrep pointed at ``\\\\wsl.localhost`` reads every file over
+    the 9P bridge (minutes on a large project); inside the distribution the
+    same search reads ext4 directly. Exit code 127 means no ripgrep there.
+    """
+    return [*command_prefix(distro, cwd), "sh", "-c", RG_SCRIPT, "sh"]
 
 
 # --- Opening things on the Windows side, from inside a distribution ----------

@@ -511,3 +511,62 @@ class TrackedBriefTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissionScopeTest(unittest.TestCase):
+    """The ledger is project-wide: only the chat working on it sees its goal."""
+
+    _MISSION = {
+        "goal": "Ajouter 8 langues au webui",
+        "status": "running",
+        "version": 1,
+        "steps": [{"id": "t-lang"}],
+        "progress": {},
+    }
+
+    def test_another_chat_plan_is_not_titled_with_the_mission(self) -> None:
+        tasks = [_task("t-lang"), _task("t-chat", title="Accelerer le changement de chat")]
+        plan = session_plan(tasks, ["t-chat"], mission=self._MISSION)
+        assert plan is not None
+        self.assertNotIn("goal", plan)
+        self.assertEqual(plan["title"], "Accelerer le changement de chat")
+
+    def test_the_chat_running_the_mission_keeps_its_goal(self) -> None:
+        plan = session_plan([_task("t-lang")], ["t-lang"], mission=self._MISSION)
+        assert plan is not None
+        self.assertEqual(plan["goal"], "Ajouter 8 langues au webui")
+
+    def test_a_new_chat_prompt_does_not_carry_the_mission(self) -> None:
+        import json
+
+        from navin.board.context import board_digest
+        from navin.board.ledger import MissionLedgerStore
+
+        session_focus.clear()
+        self.addCleanup(session_focus.clear)
+        with tempfile.TemporaryDirectory() as tmp:
+            board = ProjectBoardStore(Path(tmp))
+            task_id = board.create_task(title="Ajouter les langues", actor="t", actor_type="agent")["id"]
+            store = MissionLedgerStore(Path(tmp))
+            store.create(goal="Ajouter 8 langues au webui", steps=[{"id": task_id, "title": "x"}], status="running")
+            self.assertTrue(json.loads(store.path.read_text())["steps"])
+            fresh = "\n".join(board_digest(tmp, "websocket:new-chat"))
+            self.assertNotIn("Ajouter 8 langues", fresh)
+            session_focus.remember("websocket:mission-chat", [task_id])
+            owner = "\n".join(board_digest(tmp, "websocket:mission-chat"))
+            self.assertIn("Ajouter 8 langues", owner)
+            self.assertIn("Ajouter 8 langues", "\n".join(board_digest(tmp)))
+
+
+class LedgerDoneScopeTest(unittest.TestCase):
+    def test_closing_a_task_outside_the_mission_leaves_the_ledger_alone(self) -> None:
+        from navin.agent.tools.board import BoardTool
+        from navin.board.ledger import MissionLedgerStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MissionLedgerStore(Path(tmp))
+            store.create(goal="Ajouter 8 langues", steps=[{"id": "t-lang", "title": "x"}], status="running")
+            before = store.path.read_text()
+            self.assertEqual(BoardTool._record_ledger_done(Path(tmp), "t-other", "ok", "agent"), "")
+            self.assertEqual(store.path.read_text(), before)
+            self.assertIn("recorded", BoardTool._record_ledger_done(Path(tmp), "t-lang", "ok", "agent"))

@@ -125,6 +125,7 @@ export default function AgentExecTerminal({
   return (
     <div
       ref={containerRef}
+      dir="ltr"
       className="navin-terminal h-full w-full overflow-hidden px-2 py-1"
       style={{
         ...terminalSurfaceStyle(isDark),

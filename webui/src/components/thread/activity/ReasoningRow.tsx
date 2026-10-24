@@ -98,27 +98,27 @@ export function ReasoningCard({
             <button
               type="button"
               onClick={() => setOpen((value) => !value)}
-              className="inline-flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left"
+              className="inline-flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-start"
               aria-expanded={open}
               aria-live={streaming ? "polite" : undefined}
               data-testid="activity-reasoning-expand"
             >
-              <span className={cn("text-[12.5px] font-medium", REASONING_LABEL_CLASS)}>
+              <span className={cn("text-[14.5px] font-medium", REASONING_LABEL_CLASS)}>
                 {streaming
                   ? t("message.reasoningStreaming", { defaultValue: "Thinking…" })
                   : t("message.reasoning", { defaultValue: "Thinking" })}
               </span>
               {duration && duration !== "0s" ? (
-                <span className="text-[11.5px] tabular-nums text-muted-foreground/55">
+                <span className="text-[13.5px] tabular-nums text-muted-foreground/55">
                   {duration}
                 </span>
               ) : null}
-              <span className="ml-auto flex shrink-0 items-center gap-1 text-[11.5px] text-muted-foreground/70">
+              <span className="ms-auto flex shrink-0 items-center gap-1 text-[13.5px] text-muted-foreground/70">
                 {expandLabel}
                 <ChevronRight
                   aria-hidden
                   className={cn(
-                    "h-3.5 w-3.5 transition-transform duration-200",
+                    "rtl:[&:not(.rotate-90)]:rotate-180 h-3.5 w-3.5 transition-transform duration-200",
                     open && "rotate-90",
                   )}
                 />
@@ -145,9 +145,9 @@ export function ReasoningCard({
             <button
               type="button"
               onClick={() => setOpen((value) => !value)}
-              className="mt-1.5 block w-full text-left"
+              className="mt-1.5 block w-full text-start"
             >
-              <span className="line-clamp-6 text-[13.5px] leading-6 text-muted-foreground antialiased [text-wrap:pretty]">
+              <span className="line-clamp-6 whitespace-pre-line text-[14.5px] leading-6 text-muted-foreground antialiased [text-wrap:pretty]">
                 {summary}
               </span>
             </button>
@@ -175,6 +175,36 @@ export function ReasoningCard({
           </AnimatePresence>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The full thought behind a reasoning row of the activity journal, opened
+ * from its one- or two-line preview.
+ */
+export function ReasoningJournalBody({
+  text,
+  streaming,
+  onOpenFilePreview,
+}: {
+  text: string;
+  streaming: boolean;
+  onOpenFilePreview?: (path: string) => void;
+}) {
+  useEffect(() => {
+    if (text.length > 0) preloadMarkdownText();
+  }, [text.length]);
+  if (!text.trim()) return null;
+  return (
+    <div className={cn("min-w-0 py-1", REASONING_RAIL_CLASS)} data-testid="activity-reasoning-body">
+      <MarkdownText
+        streaming={streaming}
+        onOpenFilePreview={onOpenFilePreview}
+        className={REASONING_PROSE_CLASS}
+      >
+        {text}
+      </MarkdownText>
     </div>
   );
 }

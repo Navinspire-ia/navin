@@ -126,7 +126,9 @@ def offer_rejection(row: dict[str, Any], criteria: dict[str, Any]) -> str:
         if not posted:
             return "date_unknown"
         age = (datetime.now(timezone.utc).date() - date.fromisoformat(posted)).days
-        if age < 0 or age > min(30, max_age):
+        # Sites date offers in their local day, which runs up to a day ahead
+        # of UTC (a French offer posted at 00:30 is "tomorrow" in UTC).
+        if age < -1 or age > min(30, max_age):
             return "date"
     project = is_project_need(facts)
     if not project and not actual and facts.get("track") != "jobs" and selling_floor(criteria, "remote") != selling_floor(criteria, "onsite"):

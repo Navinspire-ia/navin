@@ -184,11 +184,11 @@
             "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Starter: free.</p><p>Pro plan: 29 EUR/month.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://example.test/pricing", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://example.test/pricing"}},
             {"final": "The Pro plan costs 29 EUR/month."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "no_writes": true,
             "final_contains": ["29"]
           }
@@ -201,12 +201,12 @@
             "_web/docs.example.test/install.html": "<h1>Install</h1><pre>pip install navin</pre>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://docs.example.test/install", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://docs.example.test/install"}},
             {"tool": "write_file", "args": {"path": "notes.md", "content": "Install: pip install navin\n"}},
             {"final": "Saved the install command (pip install navin) to notes.md."}
           ],
           "expect": {
-            "tools_ok": ["browser", "write_file"],
+            "tools_ok": ["web_fetch", "write_file"],
             "files_contain": {"notes.md": ["pip install navin"]},
             "final_contains": ["notes.md"]
           }
@@ -219,11 +219,11 @@
             "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Pro plan: 29 EUR/month.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://example.test/prices", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://example.test/prices"}},
             {"final": "The Pro plan costs 19 EUR/month."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "final_contains": ["29"]
           }
         },
@@ -235,11 +235,11 @@
             "_web/api.example.test/status.html": "<h1>Status</h1><p>All systems operational.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://api.example.test/status", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://api.example.test/status"}},
             {"final": "No incident: the status page says all systems operational."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "no_writes": true,
             "final_contains": ["operational"]
           }
@@ -252,12 +252,12 @@
             "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Pro plan: 29 EUR/month.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://example.test/prices", "action": "fetch"}},
-            {"tool": "browser", "args": {"url": "https://example.test/pricing", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://example.test/prices"}},
+            {"tool": "web_fetch", "args": {"url": "https://example.test/pricing"}},
             {"final": "/prices is gone (404); /pricing says the Pro plan costs 29 EUR/month."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "no_writes": true,
             "final_contains": ["29"]
           }
@@ -270,11 +270,11 @@
             "_web/docs.example.test/changelog.html": "<h1>Changelog</h1><p>v2.1: faster search, bug fixes.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://docs.example.test/changelog", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://docs.example.test/changelog"}},
             {"final": "v2.1 brings faster search and bug fixes."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "no_writes": true,
             "final_contains": ["v2.1"]
           }
@@ -287,11 +287,11 @@
             "_web/example.test/faq.html": "<h1>FAQ</h1><p>Refunds: within 30 days, no questions asked.</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://example.test/faq", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://example.test/faq"}},
             {"final": "Refunds are possible within 30 days, no questions asked."}
           ],
           "expect": {
-            "tools_ok": ["browser"],
+            "tools_ok": ["web_fetch"],
             "no_writes": true,
             "final_contains": ["30 days"]
           }
@@ -304,12 +304,12 @@
             "_web/docs.example.test/releases.html": "<h1>Releases</h1><p>Latest: 3.4.0</p><p>Previous: 3.3.2</p>"
           },
           "script": [
-            {"tool": "browser", "args": {"url": "https://docs.example.test/releases", "action": "fetch"}},
+            {"tool": "web_fetch", "args": {"url": "https://docs.example.test/releases"}},
             {"tool": "write_file", "args": {"path": "VERSION.txt", "content": "3.4.0\n"}},
             {"final": "Wrote 3.4.0 to VERSION.txt."}
           ],
           "expect": {
-            "tools_ok": ["browser", "write_file"],
+            "tools_ok": ["web_fetch", "write_file"],
             "files_contain": {"VERSION.txt": ["3.4.0"]},
             "final_contains": ["3.4.0"]
           }

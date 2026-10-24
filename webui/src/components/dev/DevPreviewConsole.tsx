@@ -201,7 +201,7 @@ export function DevPreviewConsole({
                       : "text-foreground/85",
               )}
             >
-              <span className="mr-1.5 select-none text-[10px] uppercase opacity-60">
+              <span className="me-1.5 select-none text-[10px] uppercase opacity-60">
                 {entry.level}
               </span>
               {entry.text}

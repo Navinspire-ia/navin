@@ -50,7 +50,28 @@ export function commitOnSelect(
   return true;
 }
 
-/** Test hook: forget any previous pointerdown commit. */
+/**
+ * The press that opens a menu ends with a pointerup. Radix treats a pointerup
+ * on a row as a pick (press on the trigger, release on a row), and WebKit
+ * sometimes reports it as an interaction outside the menu: either way the
+ * menu used to close the moment the button was released, so people had to
+ * keep the button pressed while scrolling. That release is ignored.
+ */
+const OPENING_GESTURE_MS = 450;
+
+let lastMenuOpenAt = Number.NEGATIVE_INFINITY;
+
+export function noteMenuOpened(now: () => number = Date.now): void {
+  lastMenuOpenAt = now();
+}
+
+/** True while the gesture that opened a menu is still finishing. */
+export function isOpeningGesture(now: () => number = Date.now): boolean {
+  return now() - lastMenuOpenAt < OPENING_GESTURE_MS;
+}
+
+/** Test hook: forget any previous pointerdown commit or opening. */
 export function resetMenuChoiceForTests(): void {
   lastPointerCommitAt = Number.NEGATIVE_INFINITY;
+  lastMenuOpenAt = Number.NEGATIVE_INFINITY;
 }

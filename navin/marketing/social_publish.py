@@ -10,8 +10,6 @@ HTTP transports are injected. No adapter retries a publication request.
 
 from __future__ import annotations
 
-from navin.utils.proc import no_window_kwargs
-
 import ipaddress
 import json
 import math
@@ -27,6 +25,7 @@ from urllib.parse import quote, urlencode, urlsplit
 
 from navin.marketing.errors import MarketingError
 from navin.marketing.store import MarketingStore
+from navin.utils.proc import no_window_kwargs
 
 HttpFn = Callable[[str, str, dict[str, str], bytes | None], tuple[int, dict[str, str], bytes]]
 SOCIAL_CHANNELS = frozenset({"reddit", "instagram", "tiktok", "linkedin", "facebook"})

@@ -198,3 +198,165 @@ class TestLoopLagMonitor:
         finally:
             await monitor.stop()
         assert log.warnings == []
+
+    def test_a_loop_idle_in_its_selector_is_not_a_freeze(self) -> None:
+        import selectors
+        import socket
+        import sys
+
+        from navin.webui.stall_watch import idle_in_selector
+
+        def frame_of(target) -> tuple[object, threading.Thread]:
+            ready = threading.Event()
+            thread = threading.Thread(target=target, args=(ready,), daemon=True)
+            thread.start()
+            ready.wait(1)
+            time.sleep(0.05)
+            return sys._current_frames()[thread.ident], thread
+
+        def waits_for_io(ready: threading.Event) -> None:
+            reader, writer = socket.socketpair()
+            with selectors.DefaultSelector() as selector:
+                selector.register(reader, selectors.EVENT_READ)
+                ready.set()
+                selector.select(0.5)
+            reader.close()
+            writer.close()
+
+        def busy(ready: threading.Event) -> None:
+            ready.set()
+            end = time.monotonic() + 0.5
+            while time.monotonic() < end:
+                sum(range(1000))
+
+        frame, thread = frame_of(waits_for_io)
+        assert idle_in_selector(frame)
+        thread.join()
+        frame, thread = frame_of(busy)
+        assert not idle_in_selector(frame)
+        thread.join()
+        assert not idle_in_selector(None)
+
+    def test_a_running_collection_is_named_and_a_slow_full_one_reported(self) -> None:
+        from navin.webui.stall_watch import GcClock
+
+        seen: list[float] = []
+        clock = GcClock(slow_full_s=1.0, on_slow_full=seen.append)
+        assert clock.describe() == ""
+        clock("start", {"generation": 2})
+        clock.started -= 2.0
+        assert "garbage collection of generation 2 running for 2.0s" in clock.describe()
+        clock("stop", {"generation": 2, "collected": 0, "uncollectable": 0})
+        assert clock.describe() == ""
+        assert len(seen) == 1 and seen[0] >= 2.0
+        # A fast full collection or a young one asks for nothing.
+        clock("start", {"generation": 2})
+        clock("stop", {"generation": 2})
+        clock("start", {"generation": 0})
+        clock.started -= 5.0
+        clock("stop", {"generation": 0})
+        assert len(seen) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_slow_full_collection_runs_the_reaction_on_the_loop_once(self) -> None:
+        import gc
+
+        calls: list[int] = []
+        monitor = LoopLagMonitor(
+            _Log(), warn_after_s=5, poll_s=0.02,
+            after_slow_full_gc=lambda: calls.append(threading.get_ident()), slow_full_gc_s=0.0,
+        )
+        monitor.start()
+        try:
+            gc.collect()
+            gc.collect()
+            await asyncio.sleep(0.05)
+        finally:
+            await monitor.stop()
+        # On the loop thread, and once per interval however often it fires.
+        assert calls == [threading.get_ident()]
+        assert monitor._gc not in gc.callbacks
+
+
+class TestCliFreezeWatch:
+    def test_cli_freeze_is_written_to_the_freeze_log(self, tmp_path):
+        from navin.tui.runtime import _FileLog
+
+        path = tmp_path / "cli-freeze.log"
+
+        async def run() -> None:
+            with open(path, "a", encoding="utf-8", buffering=1) as handle:
+                monitor = LoopLagMonitor(_FileLog(handle), warn_after_s=0.1, poll_s=0.02, min_interval_s=0)
+                monitor.start()
+                await asyncio.sleep(0.05)
+                time.sleep(0.4)  # the kind of call that froze the CLI
+                await asyncio.sleep(0.05)
+                await monitor.stop()
+
+        asyncio.run(run())
+        text = path.read_text(encoding="utf-8")
+        assert "event loop blocked for" in text
+        assert "test_cli_freeze_is_written_to_the_freeze_log" in text
+
+    def test_the_cli_never_freezes_live_widgets_after_a_slow_collection(self, tmp_path, monkeypatch):
+        # gc.freeze() after a slow full collection kept the widgets alive at
+        # that moment out of the collector for good: once windowed out of the
+        # chat they leaked (2.2 M objects after 30 probe turns).
+        import faulthandler
+        from types import SimpleNamespace
+
+        from navin.tui.runtime import TuiRuntime
+
+        monkeypatch.setattr("navin.config.paths.get_logs_dir", lambda: tmp_path)
+        monkeypatch.setattr(faulthandler, "enable", lambda *args, **kwargs: None)
+        host = SimpleNamespace()
+
+        async def run() -> None:
+            TuiRuntime._start_freeze_watch(host)
+            try:
+                assert host._loop_lag._after_slow_full_gc is None
+            finally:
+                await host._loop_lag.stop()
+                host._freeze_file.close()
+
+        asyncio.run(run())
+        assert (tmp_path / "cli-freeze.log").exists()
+
+    def test_dream_commit_runs_off_the_event_loop(self):
+        import inspect
+
+        from navin.cli import commands
+        from navin.command import builtin
+
+        assert "await asyncio.to_thread(_commit_dream_changes, store)" in inspect.getsource(commands)
+        assert "await asyncio.to_thread(store.git.auto_commit, commit_msg)" in inspect.getsource(builtin)
+
+    def test_open_url_routes_do_not_block_the_loop(self):
+        import inspect
+
+        from navin.webui import ws_http
+
+        source = inspect.getsource(ws_http)
+        assert "opened = open_external_url(" not in source
+        assert source.count("await asyncio.to_thread(open_external_url,") == 3
+
+
+def test_cron_timer_store_io_runs_off_the_event_loop(tmp_path) -> None:
+    """A slow store save (WSL /mnt/c) froze the gateway for 36.9 s: tick I/O must use a thread."""
+    import asyncio
+    import threading
+
+    from navin.cron.service import CronService
+
+    service = CronService(tmp_path / "jobs.json")
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    service._load_store = lambda: seen.append(threading.get_ident()) or service._store  # type: ignore[method-assign]
+    service._save_store = lambda: seen.append(threading.get_ident())  # type: ignore[method-assign]
+    service._arm_timer = lambda: None  # type: ignore[method-assign]
+    from navin.cron.types import CronStore
+
+    service._store = CronStore()
+    asyncio.run(service._on_timer())
+    assert len(seen) == 2
+    assert all(ident != loop_thread for ident in seen)

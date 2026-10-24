@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cta_end_card</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .ce-ring { position: absolute; left: 50%; top: 50%; border-radius: 50%; border: 1px solid var(--c-line); transform: translate(-50%, -50%); }
+  .ce-ring.r1 { width: calc(var(--u) * 760); height: calc(var(--u) * 760); }
+  .ce-ring.r2 { width: calc(var(--u) * 1120); height: calc(var(--u) * 1120); border-style: dashed; opacity: 0.6; }
+  .ce-ring.r3 { width: calc(var(--u) * 1500); height: calc(var(--u) * 1500); opacity: 0.35; }
+  .ce-orb { position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 900); height: calc(var(--u) * 900); border-radius: 50%; transform: translate(-50%, -50%); background: radial-gradient(circle, color-mix(in srgb, var(--c-primary) 55%, transparent), transparent 66%); }
+  .ce-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: calc(var(--u) * 34); padding: 0 8%; }
+  .ce-logo { height: calc(var(--u) * 120); max-width: 60%; }
+  .ce-logo.nm-wordmark { height: auto; font-size: calc(var(--u) * 96); }
+  .ce-headline { font-size: calc(var(--u) * 80); max-width: 18ch; text-wrap: balance; }
+  .nm-portrait .ce-headline { font-size: calc(var(--u) * 86); max-width: 12ch; }
+  .ce-button { position: relative; overflow: hidden; font-size: calc(var(--u) * 36); padding: calc(var(--u) * 24) calc(var(--u) * 52); box-shadow: 0 calc(var(--u) * 20) calc(var(--u) * 60) color-mix(in srgb, var(--c-primary) 55%, transparent); }
+  .ce-button .shine { position: absolute; top: -20%; bottom: -20%; width: 30%; left: 0; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent); transform: skewX(-18deg) translateX(-200%); }
+  .ce-button svg { width: 1em; height: 1em; }
+  .ce-pulse { position: absolute; inset: 0; border-radius: 999px; border: calc(var(--u) * 3) solid var(--c-primary); }
+  .ce-btnwrap { position: relative; display: inline-flex; }
+  .ce-url { font-size: calc(var(--u) * 30); font-weight: 600; letter-spacing: 0.08em; color: var(--c-muted); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop"></div>
+  <div class="ce-orb"></div>
+  <div class="ce-ring r1"></div><div class="ce-ring r2"></div><div class="ce-ring r3"></div>
+  <div class="ce-wrap">
+    <div class="ce-logo-slot"></div>
+    <h1 class="nm-heading ce-headline"></h1>
+    <div class="ce-btnwrap"><div class="ce-pulse"></div><div class="nm-pill ce-button"><span class="label"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg><span class="shine"></span></div></div>
+    <div class="ce-url"></div>
+  </div>
+  <div class="nm-grain"></div>
+  <div class="nm-vignette"></div>
+</div>
+<script>
+const NM = window.NavinMotion;
+
+NM.mount({
+  duration: 4,
+  async setup(nm) {
+    const { brand, duration } = nm;
+    const logo = await nm.logo({ className: 'ce-logo' });
+    document.querySelector('.ce-logo-slot').appendChild(logo);
+    const headline = document.querySelector('.ce-headline');
+    headline.textContent = nm.prop('headline', brand.tagline || '');
+    if (!headline.textContent) headline.style.display = 'none';
+    document.querySelector('.ce-button .label').textContent = nm.prop('button', 'Try it free');
+    const urlEl = document.querySelector('.ce-url');
+    urlEl.textContent = nm.prop('url', brand.url || '');
+    if (!urlEl.textContent) urlEl.style.display = 'none';
+
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.nm-backdrop', { scale: 1.15 }, { scale: 1, duration, ease: 'sine.out' }, 0);
+    tl.fromTo('.ce-orb', { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.4, ease: 'expo.out' }, 0);
+    tl.fromTo('.ce-ring', { scale: 0.7, opacity: 0 }, { scale: 1, opacity: (i) => [1, 0.6, 0.35][i], duration: 1.4, ease: 'expo.out', stagger: 0.1 }, 0.05);
+    tl.to('.ce-ring.r2', { rotate: 40, duration, ease: 'none' }, 0);
+    tl.from(logo, { scale: 0.7, opacity: 0, filter: 'blur(14px)', duration: 0.9, ease: 'expo.out' }, 0.15);
+    if (headline.textContent) tl.from(nm.split(headline, 'words'), { yPercent: 115, duration: 0.9, ease: 'expo.out', stagger: 0.06 }, 0.4);
+    tl.from('.ce-btnwrap', { scale: 0.6, opacity: 0, duration: 0.8, ease: 'back.out(1.8)' }, 0.75);
+    tl.fromTo('.ce-button .shine', { xPercent: -200 }, { xPercent: 450, duration: 0.9, ease: 'power2.inOut' }, 1.5);
+    tl.fromTo('.ce-pulse', { scale: 1, opacity: 0.8 }, { scale: 1.35, opacity: 0, duration: 1.1, ease: 'power2.out', repeat: Math.max(0, Math.floor((duration - 1.6) / 1.2) - 1), repeatDelay: 0.1 }, 1.4);
+    if (urlEl.textContent) tl.from(urlEl, { opacity: 0, letterSpacing: '0.3em', duration: 0.9, ease: 'expo.out' }, 1.0);
+    tl.set({}, {}, duration);
+    gsap.set('.ce-pulse', { opacity: 0 });
+    return { timeline: tl };
+  },
+});
+</script>
+</body>
+</html>

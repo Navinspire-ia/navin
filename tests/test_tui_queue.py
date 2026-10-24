@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from navin.bus.events import OutboundMessage
 from navin.tui.prefs import TuiPrefs
@@ -64,6 +64,51 @@ def test_queue_waits_for_final_reply_and_sends_fifo_without_touching_draft(tmp_p
             assert [row.text for row in app.query(AssistantMessage)] == ["First answer", "Second answer", "Third answer"]
             last = app.query(AssistantMessage).last()
             assert app.query_one("#composer-block").region.y - last.region.bottom <= 1
+    asyncio.run(run())
+
+
+def test_alt_enter_and_alt_s_reach_the_running_turn_instead_of_the_queue(tmp_path):
+    """Ctrl+Enter is a plain Enter in most terminals: the agent never saw it."""
+    async def run():
+        for key in ("alt+enter", "alt+s"):
+            workspace = tmp_path / key.replace("+", "-")
+            workspace.mkdir()
+            app = make_app(workspace)
+            async with app.run_test(size=(100, 32)) as pilot:
+                await app.submit_text("first")
+                await app.runtime.bus.consume_inbound()
+                # Plain Enter still queues, and the queue says how to send now.
+                await app.submit_text("run the linter after")
+                await pilot.pause()
+                assert "Alt+Enter sends to the running task" in str(
+                    app.query_one("#queue-title", Static).content
+                )
+                app.composer.focus()
+                app.composer.set_text("also check the logs")
+                await pilot.press(key)
+                await pilot.pause()
+                sent = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+                assert sent.content == "also check the logs"
+                assert [row.text for row in app._queued_prompts[app.runtime.session_key]] == [
+                    "run the linter after"
+                ]
+                assert app.composer.text == ""
+                assert "also check the logs" in [r.raw_text for r in app.query(UserMessage)]
+
+    asyncio.run(run())
+
+
+def test_agents_command_opens_the_inspector_like_f8(tmp_path):
+    async def run():
+        from navin.tui.agents import AgentsScreen
+
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("/agents")
+            await pilot.pause()
+            assert isinstance(app.screen, AgentsScreen)
+            assert app.runtime.bus.inbound_size == 0
+
     asyncio.run(run())
 
 
@@ -136,6 +181,9 @@ def test_stop_pauses_queue_and_remove_resume_controls_work(tmp_path):
             await app.submit_text("keep this")
             await pilot.pause()
             await pilot.click(app.query(QueuedPromptRow).first().query_one(".queue-remove"))
+            # Removal is handled from the posted message: let it run before
+            # counting (counting right after the click raced the handler).
+            await pilot.pause()
             assert len(app.query(QueuedPromptRow)) == 1
             await pilot.press("escape")
             assert (await app.runtime.bus.consume_inbound()).content == "/stop"
@@ -148,6 +196,37 @@ def test_stop_pauses_queue_and_remove_resume_controls_work(tmp_path):
     asyncio.run(run())
 
 
+def test_queued_message_is_never_shown_twice_while_it_is_sent(tmp_path):
+    # Regression: a message sent while the reply was finishing went to the
+    # queue, then stayed in the queue row and in the chat for the whole send.
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await app.submit_text("first")
+            await app.runtime.bus.consume_inbound()
+            await app.submit_text("second")
+            await pilot.pause()
+            assert len(app.query(QueuedPromptRow)) == 1
+            seen: list[tuple[int, list[str]]] = []
+            real_send = app.runtime.send
+
+            async def slow_send(inbound, **kwargs):
+                await asyncio.sleep(0.05)
+                seen.append((
+                    len(app.query(QueuedPromptRow)),
+                    [row.raw_text for row in app.query(UserMessage)],
+                ))
+                return await real_send(inbound, **kwargs)
+
+            with patch.object(app.runtime, "send", new=slow_send):
+                await app.runtime._dispatch(OutboundMessage("cli", "direct", "First answer"))
+                assert (await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)).content == "second"
+                await pilot.pause()
+            assert seen == [(0, ["first", "second"])]
+            assert not app.query_one(PromptQueue).display
+    asyncio.run(run())
+
+
 def test_failed_queued_send_keeps_message_and_draft_for_retry(tmp_path):
     async def run():
         app = make_app(tmp_path)
@@ -156,15 +235,23 @@ def test_failed_queued_send_keeps_message_and_draft_for_retry(tmp_path):
             await app.runtime.bus.consume_inbound()
             await app.submit_text("retry me")
             app.composer.set_text("my draft")
+            resume = app.query_one("#queue-resume", Button)
             with patch.object(app.runtime, "send", new=AsyncMock(side_effect=RuntimeError("offline"))):
                 await app.runtime._dispatch(OutboundMessage("cli", "direct", "First answer"))
-                await pilot.pause(0.4)
+                # Wait on the state, not a fixed delay: on a busy machine the failed
+                # send pauses the queue late, and the resume button is laid out
+                # after that, so clicking earlier would miss a hidden button.
+                for _ in range(200):
+                    if app.runtime.session_key in app._queue_paused and resume.display and resume.region.area:
+                        break
+                    await pilot.pause(0.05)
             assert app._queued_prompts[app.runtime.session_key][0].text == "retry me"
             assert app.runtime.session_key in app._queue_paused
+            assert resume.display and resume.region.area, "the resume button is shown once the queue pauses"
             assert app.composer.text == "my draft"
             assert [row.raw_text for row in app.query(UserMessage)] == ["first"]
             await pilot.click("#queue-resume")
-            assert (await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)).content == "retry me"
+            assert (await asyncio.wait_for(app.runtime.bus.consume_inbound(), 10)).content == "retry me"
     asyncio.run(run())
 
 
@@ -244,7 +331,7 @@ def test_queue_sends_after_turn_end_without_any_assistant_message(tmp_path):
 
 @pytest.mark.parametrize("width", [48, 100])
 @pytest.mark.parametrize("effort", ["", "high"])
-def test_context_percentage_stays_at_right_of_model_effort_line(tmp_path, width, effort):
+def test_model_and_effort_share_the_footer_line_without_context_or_permission(tmp_path, width, effort):
     async def run():
         app = make_app(tmp_path)
         async with app.run_test(size=(width, 25)) as pilot:
@@ -257,17 +344,15 @@ def test_context_percentage_stays_at_right_of_model_effort_line(tmp_path, width,
                 app._set_status()
             await pilot.pause()
             meta = app.query_one(ComposerMeta)
-            context = app.query_one("#meta-context", Static)
             model = app.query_one("#meta-model", Static)
             reasoning = app.query_one("#meta-reasoning", Static)
-            assert str(context.content) == "Context 23%"
+            assert not app.query("#meta-context") and not app.query("#meta-permission")
             assert str(model.content) == "model-with-a-long-name"
             assert str(reasoning.content) == (effort or "Auto")
             dock = app.query_one("#dock")
             assert meta.parent is dock
-            assert context.region.y == model.region.y == dock.region.y
+            assert model.region.y == reasoning.region.y == dock.region.y
             assert reasoning.region.x >= model.region.right
-            assert context.region.x >= reasoning.region.right
             assert app.query_one("#composer-block").styles.padding.top == 1
             assert app.transcript.styles.padding.bottom == 0
             assert app.screen.styles.background.hex == "#181A1D"

@@ -104,7 +104,7 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         restored = runtime_for(self.config)
         self.assertEqual(restored.reasoning_details()[0], "xhigh")
         await restored.switch_session("cli:another")
-        self.assertEqual(restored.reasoning_details()[0], "")
+        self.assertEqual(restored.reasoning_details()[0], "low")  # the default for a chat that chose none
         await restored.switch_session("cli:direct")
         restored.set_model_preset("minimax")
         self.assertEqual(restored.reasoning_details(), ("", (("", "Auto"),)))
@@ -114,12 +114,19 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.reasoning_details()[0], "xhigh")
         restored.set_reasoning_effort("")
         self.assertEqual(restored.reasoning_details()[0], "")
-        self.assertEqual(adaptive_reasoning_effort("high", override=""), "none")
+        self.assertEqual(adaptive_reasoning_effort("high", override=""), "medium")
 
     async def test_media_and_hidden_models_cannot_replace_chat(self):
         for name in ("image", "video", "audio", "hidden", "missing"):
             with self.assertRaises(ValueError):
                 self.runtime.set_model_preset(name)
+
+    async def test_default_is_listed_once_even_when_the_agent_carries_it(self):
+        from navin.agent.model_presets import configured_model_presets
+
+        self.runtime.agent_loop.model_presets = configured_model_presets(self.runtime.config)
+        names = [row["name"] for row in self.runtime.preset_details()]
+        self.assertEqual(names.count("default"), 1)
 
     async def test_provider_groups_capabilities_and_media_order(self):
         items = model_pick_items(self.runtime.preset_details())

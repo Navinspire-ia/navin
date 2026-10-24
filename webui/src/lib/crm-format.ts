@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { intlLocale } from "@/i18n/intl";
 import { format } from "date-fns";
 import { enUS, fr } from "date-fns/locale";
 
@@ -40,14 +41,14 @@ export const ACTIVITY_KINDS = [
 export function money(value: number, currency = "EUR", locale = "fr-FR") {
   const amount = Number.isFinite(value) ? value : 0;
   try {
-    return new Intl.NumberFormat(locale || "fr-FR", {
+    return new Intl.NumberFormat(intlLocale(locale || "fr"), {
       style: "currency",
       currency: currency || "EUR",
       maximumFractionDigits: 2,
       minimumFractionDigits: 0,
     }).format(amount);
   } catch {
-    return `${new Intl.NumberFormat(locale || "fr-FR").format(amount)} ${currency || "EUR"}`;
+    return `${new Intl.NumberFormat(intlLocale(locale || "fr")).format(amount)} ${currency || "EUR"}`;
   }
 }
 
@@ -161,7 +162,7 @@ export function formatWhen(unix?: number | string | null, locale = "fr-FR"): str
       locale: String(locale || "").toLowerCase().startsWith("fr") ? fr : enUS,
     });
   } catch {
-    return date.toLocaleString(locale || "fr-FR", {
+    return date.toLocaleString(intlLocale(locale || "fr"), {
       dateStyle: "short",
       timeStyle: "short",
     });

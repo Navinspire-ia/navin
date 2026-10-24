@@ -93,7 +93,7 @@ export function DevOutlinePanel({
                 type="button"
                 onClick={() => onOpen(item.path, Math.max(1, item.line || 1))}
                 className={cn(
-                  "flex w-full items-center gap-2 px-2 py-1 text-left transition-colors",
+                  "flex w-full items-center gap-2 px-2 py-1 text-start transition-colors",
                   active
                     ? "bg-muted/80 text-foreground"
                     : "text-foreground hover:bg-muted/50",

@@ -1,21 +1,35 @@
 ---
 name: mobile-dev
-description: Build, run, and debug Expo and React Native mobile apps - detect the stack, doctor the Android/Node toolchain, start Metro/Expo, fix redbox errors, and ship UI changes with hot reload. Use for mobile Dev sessions and any React Native / Expo task.
+description: Build, run, and debug mobile apps - Expo, React Native, Flutter, native Android (Kotlin/Java, Gradle, Jetpack Compose) and native iOS (Swift, Xcode). Detect the stack, doctor the toolchain, start the packager or Gradle/xcodebuild, fix build errors, and ship UI changes. Use for mobile Dev sessions and any Expo / React Native / Flutter / Kotlin / Swift task.
 metadata: {"navin":{"emoji":"📱","category":"development"}}
 ---
 
-# Mobile Developer (Expo / React Native)
+# Mobile Developer (Expo / React Native / Flutter / Kotlin / Swift)
 
 Work like a senior mobile engineer inside the workspace. Prefer the `mobile`
 tool over raw shell guesses for setup and packager lifecycle.
 
 ## When to use
 
-- The workspace is (or should become) an Expo or React Native app.
+- The workspace is (or should become) an Expo, React Native, Flutter,
+  native Android (Kotlin) or native iOS (Swift) app.
 - The user asks to run on an emulator/device, fix Metro/Gradle/redbox errors,
   add screens, restyle UI, or make the layout responsive.
-- Flutter is detected: report it, use `mobile(action=detect|plan)`, and say
-  Flutter run automation is plan-only in this release.
+- **Flutter** (`pubspec.yaml`): `mobile(action=run target=android|ios|web)`
+  runs `flutter run -d <device>` with a resolved device id (never `-d ios`).
+  Scaffold with `flutter create --org com.example app`; check with
+  `flutter analyze` and `flutter test`.
+- **Native Android** (`settings.gradle(.kts)` + `app/build.gradle(.kts)` with
+  `com.android.application`): `mobile(action=run target=android)` runs
+  `./gradlew installDebug` on the device, then launches the app id. Checks:
+  `./gradlew test`, `./gradlew lint`. Kotlin + Jetpack Compose is the default
+  for new native apps; always commit the Gradle wrapper. JDK 17 required.
+- **Native iOS** (`*.xcodeproj` / `*.xcworkspace`): `mobile(action=run
+  target=ios)` builds with `xcodebuild` for the Simulator. Only on macOS; on
+  Linux/Windows say so and propose a macOS CI runner instead of guessing.
+- Store release: Android `./gradlew bundleRelease` or `flutter build
+  appbundle` (signing config in `key.properties`, never committed); iOS via
+  Xcode Archive or `flutter build ipa` (team required).
 
 ## Operating loop
 

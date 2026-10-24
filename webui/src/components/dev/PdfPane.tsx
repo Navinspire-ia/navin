@@ -102,7 +102,7 @@ export function PdfPane({
           className="min-h-0 flex-1 border-0 bg-muted/20"
           data-testid="dev-pdf-preview"
         />
-        <div className="pointer-events-none absolute right-3 top-3">
+        <div className="pointer-events-none absolute end-3 top-3">
           <div className="pointer-events-auto">{downloadButton}</div>
         </div>
       </div>

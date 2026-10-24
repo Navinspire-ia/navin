@@ -9,8 +9,10 @@ import {
   Cookie,
   Copy,
   ExternalLink,
+  Share2,
   Globe,
   History,
+  KeyRound,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -24,6 +26,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { SiteLoginsPanel } from "@/components/settings/SiteLoginsPanel";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -108,6 +111,7 @@ export function DevPreviewBrowser({
   onOpen,
   onRefresh,
   onOpenExternal,
+  onShare,
   onRetry,
   onStartViaChat,
   onSeedChat,
@@ -131,6 +135,8 @@ export function DevPreviewBrowser({
   onOpen: (url?: string) => void;
   onRefresh: () => void;
   onOpenExternal: () => void;
+  /** Share this site with the chat's live share link (navin.live). */
+  onShare?: () => void;
   onRetry: () => void;
   onStartViaChat?: () => void;
   /** Puts text (and optional file chips) in the composer without sending. */
@@ -166,6 +172,8 @@ export function DevPreviewBrowser({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [reloadToken, setReloadToken] = useState(0);
   const [busyCmd, setBusyCmd] = useState<ProbeCommand | null>(null);
+  /** Inline Sites & logins for the previewed app (agent sign-in, browser tests). */
+  const [loginsOpen, setLoginsOpen] = useState(false);
   const [designMode, setDesignMode] = useState(false);
   const [picked, setPicked] = useState<PickedElement | null>(null);
   const [pickedSource, setPickedSource] = useState<string | null>(null);
@@ -553,7 +561,7 @@ export function DevPreviewBrowser({
             title={tx("dev.browserBack", "Back")}
             aria-label={tx("dev.browserBack", "Back")}
           >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            <ArrowLeft className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
           </Button>
           <Button
             type="button"
@@ -565,7 +573,7 @@ export function DevPreviewBrowser({
             title={tx("dev.browserForward", "Forward")}
             aria-label={tx("dev.browserForward", "Forward")}
           >
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            <ArrowRight className="rtl:-scale-x-100 h-3.5 w-3.5" aria-hidden />
           </Button>
           <Input
             value={url}
@@ -611,6 +619,20 @@ export function DevPreviewBrowser({
           >
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </Button>
+          {onShare ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-9 shrink-0 rounded-lg px-2.5"
+              onClick={() => onShare()}
+              disabled={!hasFrame && !url.trim()}
+              title={tx("dev.browserShare", "Share this site (navin.live link)")}
+              aria-label={tx("dev.browserShare", "Share this site (navin.live link)")}
+            >
+              <Share2 className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -650,12 +672,25 @@ export function DevPreviewBrowser({
             >
               <TerminalSquare className="h-3.5 w-3.5" aria-hidden />
               {problemCount > 0 ? (
-                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-semibold leading-none text-white">
+                <span className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-semibold leading-none text-white">
                   {problemCount > 99 ? "99+" : problemCount}
                 </span>
               ) : null}
             </Button>
           ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant={loginsOpen ? "secondary" : "outline"}
+            className="h-9 w-9 shrink-0 rounded-lg p-0"
+            onClick={() => setLoginsOpen((open) => !open)}
+            aria-pressed={loginsOpen}
+            title={tx("dev.browserLogins", "Site logins for this app")}
+            aria-label={tx("dev.browserLogins", "Site logins for this app")}
+            data-testid="dev-preview-logins-toggle"
+          >
+            <KeyRound className="h-4 w-4" aria-hidden />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -818,6 +853,14 @@ export function DevPreviewBrowser({
             ) : null}
           </div>
         ) : null}
+        {loginsOpen ? (
+          <SiteLoginsPanel
+            compact
+            token={token}
+            site={url.trim() || undefined}
+            className="max-h-[50vh] overflow-y-auto"
+          />
+        ) : null}
         {error ? (
           <p className="text-[11px] leading-4 text-destructive" title={error}>
             {error}
@@ -890,7 +933,7 @@ export function DevPreviewBrowser({
                   <li key={href}>
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left font-mono text-[12.5px] text-foreground/85 hover:bg-muted/70"
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-start font-mono text-[12.5px] text-foreground/85 hover:bg-muted/70"
                       onClick={() => openFromList(href)}
                       title={href}
                     >

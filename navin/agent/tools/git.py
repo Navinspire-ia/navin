@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from collections.abc import Sequence
 from contextvars import ContextVar
@@ -32,7 +33,7 @@ from typing import Any
 
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.filesystem import _FsTool
-from navin.utils import wsl
+from navin.utils import git_credentials, wsl
 from navin.utils.git_argv import git_route
 from navin.utils.git_state import RepoState, clear_cache, repo_state
 from navin.utils.proc import no_window_kwargs
@@ -126,21 +127,70 @@ def _git_env() -> dict[str, str]:
     username prompt on push does not ask anyone anything - it blocks until the
     timeout and reports a hang instead of the real problem. Credential helpers
     are left alone: those answer without a prompt, which is the point.
-    Settings > Git tokens are forwarded under the same names ``gh`` / ``glab``
+    Settings > Git & GitHub tokens are forwarded under the same names ``gh`` / ``glab``
     / ``tea`` already read, so HTTPS helpers see what the Code panel uses.
     """
 
     env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
+    # GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never, SSH BatchMode: the same
+    # non-interactive contract as every other git subprocess Navin starts.
+    git_credentials.apply_noninteractive(env)
     env["GIT_EDITOR"] = "true"
     env["GIT_PAGER"] = "cat"
-    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env.pop("EDITOR", None)
     env.pop("VISUAL", None)
     from navin.agent.tools.exec_env import forge_tokens_from_config
 
     env.update(forge_tokens_from_config(_GIT_FORGE_TOKENS.get(), environ=env))
     return env
+
+
+def _network_urls(args: Sequence[str]) -> list[str]:
+    """The URL a clone targets (its first URL-looking positional argument)."""
+    if not args or args[0] != "clone":
+        return []
+    for arg in args[1:]:
+        text = str(arg)
+        if text.startswith("-"):
+            continue
+        return [text]
+    return []
+
+
+async def _network_env(
+    cwd: Path,
+    args: Sequence[str],
+    env: dict[str, str],
+    *,
+    wsl_route: bool,
+) -> dict[str, str]:
+    """``env`` plus the scoped forge auth header for the remotes involved.
+
+    Clone authenticates against its URL; fetch / pull / push against every
+    remote URL of the repository (the header is scoped per host, so listing
+    all of them never sends a token to the wrong server). The token travels
+    in env-scoped git config, never in argv.
+    """
+    urls = _network_urls(args)
+    if not urls:
+        code, out, _ = await _git(
+            cwd, ["config", "--get-regexp", r"^remote\..*\.(push)?url$"], timeout=_SHORT_TIMEOUT
+        )
+        if code == 0:
+            for line in out.splitlines():
+                value = line.strip().partition(" ")[2].strip()
+                if value and value not in urls:
+                    urls.append(value)
+    if not any(git_credentials.http_target(url) for url in urls):
+        return env
+    tokens = dict(_GIT_FORGE_TOKENS.get() or {})
+    try:
+        # A gh token lookup is a subprocess: keep it off the event loop.
+        return await asyncio.to_thread(
+            git_credentials.git_env, urls, tokens=tokens, base=env, wsl=wsl_route
+        )
+    except Exception:  # noqa: BLE001 - no token is still a prompt-free env
+        return env
 
 
 async def _git(
@@ -152,12 +202,19 @@ async def _git(
     """Run one git command, never through a shell and never paging."""
     route = git_route(cwd)
     if route is None:
-        return 127, "", "git is not installed or not on PATH"
+        from navin.utils.path_env import git_missing_hint
+
+        hint = git_missing_hint()
+        return 127, "", "git is not installed or not on PATH" + (f". {hint}" if hint else "")
     env = _git_env()
+    if git_credentials.is_network_command(args):
+        env = await _network_env(cwd, args, env, wsl_route=bool(route.distro))
     if route.distro:
         # wsl.exe only imports explicitly listed Windows environment values.
         forwarded = ["GIT_TERMINAL_PROMPT", "GIT_EDITOR", "GIT_PAGER", "GIT_SSH_COMMAND"]
-        env["WSLENV"] = ":".join(filter(None, [env.get("WSLENV", ""), *forwarded]))
+        env["WSLENV"] = git_credentials.merge_wslenv(
+            env.get("WSLENV", ""), [*forwarded, *git_credentials.wsl_forward_names(env)]
+        )
     try:
         proc = await asyncio.create_subprocess_exec(
             *route.argv,
@@ -311,6 +368,34 @@ def _clip(text: str) -> str:
     )
 
 
+_AUTH_RETRY_ACTIONS = frozenset({"fetch", "push", "pull", "clone"})
+_URL_HOST_RE = re.compile(r"https?://([^/\s'\"]+)")
+
+
+def _is_auth_failure(result: Any) -> bool:
+    text = str(result or "")
+    if not (getattr(result, "is_error", False) or text.startswith("Error")):
+        return False
+    return git_credentials.classify_git_failure(text) == "auth"
+
+
+def _reload_forge_tokens(fallback: dict[str, str]) -> dict[str, str]:
+    """Settings > Git & GitHub tokens as saved right now (the card just wrote one)."""
+    try:
+        from navin.agent.tools.exec_env import forge_tokens_from_tools_config
+        from navin.config.loader import load_config
+
+        return forge_tokens_from_tools_config(load_config())
+    except Exception:  # noqa: BLE001
+        return dict(fallback or {})
+
+
+def _auth_suffix(text: str, host: str = "") -> str:
+    """A newline plus how to fix a credential failure, or ``""``."""
+    hint = git_credentials.auth_hint(text, host=host)
+    return f"\n{hint}" if hint else ""
+
+
 def _combined(out: str, err: str) -> str:
     """Git reports success on stdout and progress on stderr; keep both."""
     parts = [part for part in (out.strip(), err.strip()) if part]
@@ -322,7 +407,7 @@ _NO_REMOTE = (
     "Use action=remote create=true name=origin remote=<url>."
 )
 
-# Settings > Git tokens for this git-tool call. Empty outside execute().
+# Settings > Git & GitHub tokens for this git-tool call. Empty outside execute().
 _GIT_FORGE_TOKENS: ContextVar[dict[str, str]] = ContextVar(
     "navin_git_forge_tokens",
     default={},
@@ -441,8 +526,9 @@ class GitTool(_FsTool):
                 "commit": {
                     "type": "string",
                     "description": (
-                        "Commit-ish for show, or the base for diff "
-                        "(e.g. 'HEAD~2', a branch name, or a sha)"
+                        "Commit-ish for show, the base for diff, the target "
+                        "of reset, or where switch create=true starts the new "
+                        "branch (a tag, a branch or a sha; default HEAD)"
                     ),
                 },
                 "staged": {
@@ -487,7 +573,10 @@ class GitTool(_FsTool):
                 },
                 "create": {
                     "type": "boolean",
-                    "description": "switch: create the branch rather than expect it (default false)",
+                    "description": (
+                        "switch: create the branch rather than expect it (default false); "
+                        "it starts at 'commit' when given (e.g. a tag), else at HEAD"
+                    ),
                 },
                 "all": {
                     "type": "boolean",
@@ -633,38 +722,76 @@ class GitTool(_FsTool):
         allow_empty: bool = False,
         **kwargs: Any,
     ) -> Any:
+        call: dict[str, Any] = dict(
+            action=action,
+            paths=paths,
+            path=path,
+            message=message,
+            commit=commit,
+            staged=staged,
+            stat=stat,
+            context=context,
+            limit=limit,
+            line_start=line_start,
+            line_end=line_end,
+            name=name,
+            create=create,
+            all=all,
+            include_untracked=include_untracked,
+            remote=remote,
+            step=step,
+            mode=mode,
+            force=force,
+            stale=stale,
+            set_upstream=set_upstream,
+            rebase=rebase,
+            squash=squash,
+            no_verify=no_verify,
+            allow_empty=allow_empty,
+            **kwargs,
+        )
+        result = await self._execute_with_tokens(call)
+        if action not in _AUTH_RETRY_ACTIONS or not _is_auth_failure(result):
+            return result
+        # Missing or rejected credentials: ask once (secure card, values never
+        # reach the model), then retry exactly once if the account connected.
+        from navin.agent.credentials import ensure_git_credentials, git_auth_note
+
+        host = await self._auth_host(action, remote, str(result))
+        if not host:
+            return result
+        answer = await ensure_git_credentials(
+            host, f"Connect {host} so git can {action} for this project."
+        )
+        if answer is not None and answer.ok:
+            self._forge_tokens = _reload_forge_tokens(getattr(self, "_forge_tokens", {}))
+            return await self._execute_with_tokens(call)
+        note = git_auth_note(host, answer)
+        return ToolResult.error(f"{result}\n{note}") if note else result
+
+    async def _execute_with_tokens(self, call: dict[str, Any]) -> Any:
         token = _GIT_FORGE_TOKENS.set(getattr(self, "_forge_tokens", {}) or {})
         try:
-            return await self._execute_bound(
-                action=action,
-                paths=paths,
-                path=path,
-                message=message,
-                commit=commit,
-                staged=staged,
-                stat=stat,
-                context=context,
-                limit=limit,
-                line_start=line_start,
-                line_end=line_end,
-                name=name,
-                create=create,
-                all=all,
-                include_untracked=include_untracked,
-                remote=remote,
-                step=step,
-                mode=mode,
-                force=force,
-                stale=stale,
-                set_upstream=set_upstream,
-                rebase=rebase,
-                squash=squash,
-                no_verify=no_verify,
-                allow_empty=allow_empty,
-                **kwargs,
-            )
+            return await self._execute_bound(**call)
         finally:
             _GIT_FORGE_TOKENS.reset(token)
+
+    async def _auth_host(self, action: str, remote: str | None, text: str) -> str:
+        """The forge host a failed network call talked to, or ``""``."""
+        match = _URL_HOST_RE.search(text or "")
+        if match:
+            return git_credentials.host_of(match.group(0)) or match.group(1).rsplit("@", 1)[-1].lower()
+        if action == "clone" and remote:
+            return git_credentials.host_of(remote)
+        workspace = self._display_workspace() or self._workspace
+        if workspace is None:
+            return ""
+        name = (remote or "").strip()
+        if "://" in name or "@" in name:
+            return git_credentials.host_of(name)
+        name = name or "origin"
+        code, out, _ = await _git(Path(workspace), ["remote", "get-url", "--", name], timeout=_SHORT_TIMEOUT)
+        return git_credentials.host_of(out.strip()) if code == 0 and out.strip() else ""
 
     async def _execute_bound(
         self,
@@ -1010,15 +1137,25 @@ class GitTool(_FsTool):
         *,
         name: str | None,
         create: bool,
+        commit: str | None = None,
         **_: Any,
     ) -> Any:
         target = _ref_arg(name)
         if not target:
             return ToolResult.error("Error: action=switch requires 'name'")
+        start = _ref_arg(commit)
+        if start and not create:
+            return ToolResult.error(
+                "Error: 'commit' sets where a new branch starts: use create=true with it."
+            )
         args = ["switch"]
         if create:
             args.append("-c")
         args.append(target)
+        if start:
+            # A new branch from a tag or a commit, in one step: creating it at
+            # HEAD and resetting afterwards dragged the wrong tree along.
+            args.append(start)
         code, out, err = await _git(root, args)
         if code != 0:
             return ToolResult.error(f"Error: {err.strip() or 'git switch failed'}")
@@ -1066,7 +1203,8 @@ class GitTool(_FsTool):
             root, ["fetch", "--prune", target], timeout=_NETWORK_TIMEOUT
         )
         if code != 0:
-            return ToolResult.error(f"Error: {_combined(out, err) or 'git fetch failed'}")
+            text = _combined(out, err) or "git fetch failed"
+            return ToolResult.error(f"Error: {text}{_auth_suffix(text)}")
         after = await self._state(root)
         moved = _combined(out, err) or f"{target} was already up to date."
         return _clip(f"{moved}\nbranch {after.branch or 'HEAD'} ({_tracking_note(after)})")
@@ -1112,7 +1250,10 @@ class GitTool(_FsTool):
             root, ["clone", "--", url, clone_dest], timeout=_NETWORK_TIMEOUT
         )
         if code != 0:
-            return ToolResult.error(f"Error: {_combined(out, err) or 'git clone failed'}")
+            text = _combined(out, err) or "git clone failed"
+            return ToolResult.error(
+                f"Error: {text}{_auth_suffix(text, git_credentials.host_of(url))}"
+            )
         return _clip(_combined(out, err) or f"Cloned {url} into {dest}.")
 
     async def _do_remote(
@@ -1225,6 +1366,8 @@ class GitTool(_FsTool):
                 )
             elif "stale info" in text:
                 hint = "\naction=fetch first, then push again with force=true."
+            else:
+                hint = _auth_suffix(text)
             return ToolResult.error(f"Error: {text or 'git push failed'}{hint}")
         return _clip(text or f"Pushed {branch} to {target}.")
 

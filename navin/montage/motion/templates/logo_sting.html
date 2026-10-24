@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>logo_sting</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/navin-motion.css">
+<script type="importmap">{"imports":{"three":"../assets/three.module.min.js","three/addons/":"../assets/addons/"}}</script>
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/navin-motion.js"></script>
+<style>
+  .ls-tag {
+    position: absolute; left: 0; right: 0; top: 64%; text-align: center;
+    font-size: calc(var(--u) * 34); font-weight: 600; letter-spacing: 0.24em; text-transform: uppercase; color: var(--c-muted);
+  }
+  .ls-flash { position: absolute; inset: 0; background: radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0.9), transparent 45%); opacity: 0; mix-blend-mode: screen; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="nm-backdrop"></div>
+  <div class="ls-flash"></div>
+  <div class="ls-tag"></div>
+  <div class="nm-grain"></div>
+  <div class="nm-vignette"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+
+const NM = window.NavinMotion;
+
+const LOGO_FRAG = `
+uniform sampler2D map;
+uniform float uGlint;
+uniform float uOpacity;
+uniform vec3 uGlintColor;
+varying vec2 vUv;
+void main(){
+  vec4 c=texture2D(map,vUv);
+  float band=smoothstep(0.09,0.0,abs((vUv.x+vUv.y*0.45)-uGlint));
+  vec3 col=c.rgb+uGlintColor*band*0.9*c.a;
+  gl_FragColor=vec4(col,c.a*uOpacity);
+  #include <colorspace_fragment>
+}`;
+
+function glowTexture(THREE) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const g = cv.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.25, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(cv);
+}
+
+function streakTexture(THREE) {
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 16;
+  const g = cv.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 512, 0);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.85, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(1, 'rgba(255,255,255,1)');
+  g.fillStyle = grad;
+  g.fillRect(0, 4, 512, 8);
+  return new THREE.CanvasTexture(cv);
+}
+
+NM.mount({
+  duration: 2.5,
+  async setup(nm) {
+    const { brand, canvas, duration } = nm;
+    const c = brand.colors;
+    const renderer = nm.three(THREE, { alpha: true, toneMapping: THREE.NoToneMapping });
+    const scene = new THREE.Scene();
+    const aspect = canvas.width / canvas.height;
+    const camera = new THREE.PerspectiveCamera(35, aspect, 0.1, 100);
+    camera.position.set(0, 0, 6);
+
+    const logoCanvas = await nm.logoCanvas({ size: 1024 });
+    const la = logoCanvas.width / logoCanvas.height;
+    const vh = 2 * 6 * Math.tan(THREE.MathUtils.degToRad(35) / 2);
+    const vw = vh * aspect;
+    let lw = Math.min(vw * 0.46, 3.6);
+    let lh = lw / la;
+    if (lh > vh * 0.28) { lh = vh * 0.28; lw = lh * la; }
+    const logoTex = nm.texture(THREE, logoCanvas);
+    const logoMat = new THREE.ShaderMaterial({
+      uniforms: { map: { value: logoTex }, uGlint: { value: -1 }, uOpacity: { value: 0 }, uGlintColor: { value: new THREE.Color(1, 1, 1) } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: LOGO_FRAG, transparent: true, depthWrite: false, toneMapped: false,
+    });
+    const logo = new THREE.Mesh(new THREE.PlaneGeometry(lw, lh), logoMat);
+    logo.position.y = 0.15;
+    scene.add(logo);
+
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE), color: new THREE.Color(c.primary), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 }));
+    glow.scale.set(lw * 1.8, lw * 1.8, 1);
+    glow.position.set(0, 0.15, -0.2);
+    scene.add(glow);
+
+    // Streaks converge on the logo from every direction.
+    const sTex = streakTexture(THREE);
+    const streaks = [];
+    const palette = [c.primary, c.secondary, c.accent, c.text];
+    for (let i = 0; i < 26; i++) {
+      const ang = (i / 26) * Math.PI * 2 + Math.random() * 0.2;
+      const len = 1.2 + Math.random() * 1.8;
+      const mat = new THREE.MeshBasicMaterial({ map: sTex, color: new THREE.Color(palette[i % palette.length]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.03 + Math.random() * 0.03), mat);
+      mesh.rotation.z = ang;
+      scene.add(mesh);
+      streaks.push({ mesh, ang, len, dist: 6 + Math.random() * 4, delay: Math.random() * 0.25 });
+    }
+
+    // Particle burst.
+    const COUNT = 220;
+    const dirs = new Float32Array(COUNT * 3);
+    const pos = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const z = (Math.random() - 0.5) * 0.8;
+      const sp = 0.6 + Math.random() * 2.2;
+      dirs[i * 3] = Math.cos(a) * sp; dirs[i * 3 + 1] = Math.sin(a) * sp; dirs[i * 3 + 2] = z;
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const pMat = new THREE.PointsMaterial({ size: 0.06, map: glowTexture(THREE), color: new THREE.Color(nm.mix(c.text, c.accent, 0.35)), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+    scene.add(new THREE.Points(pGeo, pMat));
+
+    const tag = document.querySelector('.ls-tag');
+    tag.textContent = nm.prop('tagline', '');
+    tag.style.top = (50 - (0.15 / vh) * 100 + (lh / vh) * 50 + 4) + "%";
+    if (!tag.textContent) tag.style.display = 'none';
+
+    const hit = Math.min(0.85, duration * 0.34);
+    const st = { conv: 0, flip: -Math.PI / 2, op: 0, glint: -0.6, glow: 0, burst: 0, burstOp: 0, scale: 0.6 };
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo('.nm-backdrop', { scale: 1.2, opacity: 0.4 }, { scale: 1, opacity: 1, duration, ease: 'expo.out' }, 0);
+    tl.to(st, { conv: 1, duration: hit, ease: 'power3.in' }, 0);
+    tl.to(st, { flip: 0, scale: 1, duration: 0.7, ease: 'back.out(1.6)' }, hit - 0.12);
+    tl.to(st, { op: 1, duration: 0.2, ease: 'power1.out' }, hit - 0.12);
+    tl.fromTo('.ls-flash', { opacity: 0 }, { opacity: 0.85, duration: 0.08, ease: 'none' }, hit - 0.02);
+    tl.to('.ls-flash', { opacity: 0, duration: 0.6, ease: 'power2.out' }, hit + 0.06);
+    tl.to(st, { burst: 1, duration: 1.4, ease: 'expo.out' }, hit);
+    tl.fromTo(st, { burstOp: 1 }, { burstOp: 0, duration: 1.3, ease: 'power2.in' }, hit);
+    tl.to(st, { glow: 1, duration: 0.3, ease: 'power2.out' }, hit);
+    tl.to(st, { glow: 0.35, duration: 1.0, ease: 'power2.inOut' }, hit + 0.3);
+    tl.to(st, { glint: 2.0, duration: 0.8, ease: 'power2.inOut' }, hit + 0.45);
+    if (tag.textContent) tl.from(tag, { opacity: 0, letterSpacing: '0.5em', duration: 0.8, ease: 'expo.out' }, hit + 0.35);
+    tl.set({}, {}, duration);
+
+    return {
+      timeline: tl,
+      render(t) {
+        streaks.forEach((s) => {
+          const k = nm.clamp((st.conv - s.delay) / (1 - s.delay), 0, 1);
+          const d = s.dist * (1 - k) + s.len * 0.5;
+          s.mesh.position.set(Math.cos(s.ang) * d, Math.sin(s.ang) * d + 0.15, -0.5);
+          s.mesh.material.opacity = k > 0 && k < 1 ? Math.sin(k * Math.PI) * 0.95 : 0;
+        });
+        logo.rotation.y = st.flip;
+        logo.scale.setScalar(st.scale + Math.max(0, t - hit) * 0.02);
+        logoMat.uniforms.uOpacity.value = st.op;
+        logoMat.uniforms.uGlint.value = st.glint;
+        glow.material.opacity = st.glow * 0.8;
+        for (let i = 0; i < COUNT; i++) {
+          pos[i * 3] = dirs[i * 3] * st.burst * 1.6;
+          pos[i * 3 + 1] = dirs[i * 3 + 1] * st.burst * 1.6 + 0.15;
+          pos[i * 3 + 2] = dirs[i * 3 + 2] * st.burst;
+        }
+        pGeo.attributes.position.needsUpdate = true;
+        pMat.opacity = st.burstOp;
+        renderer.render(scene, camera);
+      },
+    };
+  },
+});
+</script>
+</body>
+</html>

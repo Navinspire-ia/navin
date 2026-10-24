@@ -7,7 +7,49 @@ from __future__ import annotations
 
 import unittest
 
-from navin.tui.modes import display_user_text, inbound_for_submit, route_text
+from navin.tui.modes import (
+    MODES,
+    display_user_text,
+    get_mode,
+    inbound_for_submit,
+    next_mode,
+    route_text,
+)
+
+
+class ModeListTests(unittest.TestCase):
+    """The picker order, shortcuts and slashes are a user contract."""
+
+    def test_modes_keep_their_order_keys_and_slashes(self) -> None:
+        self.assertEqual(
+            [(m.id, m.command, m.key) for m in MODES],
+            [
+                ("chat", "", "1"),
+                ("ask", "/ask", "2"),
+                ("plan", "/blueprint", "3"),
+                ("agent", "/forge", "4"),
+                ("review", "/inspect", "5"),
+                ("security", "/fortify", "6"),
+                ("debug", "/debug", "7"),
+                ("reverse", "/reverse", "8"),
+            ],
+        )
+        self.assertEqual(len({m.key for m in MODES}), len(MODES))
+
+    def test_reverse_routes_free_text_and_hides_its_prefix(self) -> None:
+        self.assertEqual(get_mode("REVERSE").id, "reverse")
+        self.assertEqual(route_text("reverse", "analyse app.apk"), "/reverse analyse app.apk")
+        self.assertEqual(display_user_text("/reverse analyse app.apk"), "analyse app.apk")
+        payload, followup = inbound_for_submit("reverse", "et le manifest ?", turn_active=True)
+        self.assertTrue(followup)
+        self.assertEqual(payload, "et le manifest ?")
+
+    def test_cycle_wraps_from_reverse_to_chat(self) -> None:
+        self.assertEqual(next_mode("debug").id, "reverse")
+        self.assertEqual(next_mode("reverse").id, "chat")
+
+    def test_unknown_mode_falls_back_to_chat(self) -> None:
+        self.assertEqual(get_mode("explore").id, "chat")
 
 
 class RouteTextTests(unittest.TestCase):
@@ -202,6 +244,20 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
 
             await block.set_text("Quelle option veux-tu ?")
             self.assertTrue(block._open)
+
+            # A click on the open answer never folds it into the raw preview.
+            await _pilot.click(type(block), offset=(2, 0))
+            await _pilot.pause()
+            self.assertTrue(block._open)
+            self.assertFalse(block.query_one(".assistant-preview", Static).display)
+
+        from navin.tui.widgets import assistant_preview, markdown_plain
+
+        self.assertEqual(
+            assistant_preview("## Résumé\n\nLa **barre** est `fine`."),
+            "Résumé La barre est fine.",
+        )
+        self.assertEqual(markdown_plain("- [x] a\n| A | B |\n| --- | --- |"), "a\nA · B")
 
     async def test_tool_head_markup_stays_valid(self) -> None:
         from textual.app import App, ComposeResult

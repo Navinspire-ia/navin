@@ -57,3 +57,12 @@ cron(action="remove", job_id="abc123")
 ## Timezone
 
 Use `tz` with `cron_expr` to schedule in a specific IANA timezone. Without `tz`, the server's local timezone is used.
+
+## Loops
+
+`/loop [interval] <prompt>` runs the prompt once now, then keeps running it in this chat. Loop jobs are named `loop-<slug>` (same prompt, same name); `/loop list` shows them and `/loop stop <name|all>` ends them.
+
+- **Fixed** (`/loop 5m check the deploy`, `run tests every 10 minutes`, `toutes les 10 minutes`, `every weekday at 9am standup`): Navin creates a recurring task job (`every_seconds` or `cron_expr`). Starting the same loop again replaces it. During a fixed tick, do the task and report; never create, change or remove its cron job.
+- **Dynamic** (`/loop watch the CI run`, no interval): after each tick you arm the next one yourself with `cron(action="add", name="loop-<slug>", at="<ISO now + delay>", message=<the loop message verbatim>)`. Use 1-5 minutes while something is changing, 15-60 minutes when idle, and stop (do not re-arm) once the work is done. Re-arming a `loop-*` name replaces its pending tick.
+
+A loop reports on every tick. For silent checks that should only speak up when something actionable changes, add a task to `.navin/HEARTBEAT.md` instead of starting a loop.

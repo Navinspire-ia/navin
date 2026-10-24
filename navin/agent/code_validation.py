@@ -59,15 +59,23 @@ _GENERATED_DIRS = frozenset({
 # Lists the files and stamps them inside the distribution, in one process, so a
 # Windows host watching a \\wsl.localhost project pays one wsl.exe start
 # instead of a 9P round trip per directory and per file.
+#
+# `%Y` keeps the epoch seconds as an integer and `%y` carries the nanosecond
+# suffix in its human-readable form.  `%.9Y` looks simpler, but GNU stat
+# formats that directive through a floating-point value and loses low bits for
+# current epoch timestamps.
+_WSL_STAT_COMMAND = "stat --printf='%Y %y %s %n\\0' --"
 _WSL_SNAPSHOT_SCRIPT = (
+    "export LC_ALL=C; "
     "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
     "git ls-files -z --cached --others --exclude-standard -- .; "
     "else find . -mindepth 1 -type d \\( "
     + " -o ".join(f"-name {shlex.quote(name)}" for name in sorted(_GENERATED_DIRS))
     + " \\) -prune -o -type f -printf '%P\\0'; fi"
-    " | xargs -0 -r stat --printf='%.9Y %s %n\\0' --"
+    " | xargs -0 -r "
+    + _WSL_STAT_COMMAND
 )
-_WSL_STAMP_SCRIPT = "stat --printf='%.9Y %s %n\\0' -- \"$@\""
+_WSL_STAMP_SCRIPT = "export LC_ALL=C; " + _WSL_STAT_COMMAND + " \"$@\""
 _WSL_SNAPSHOT_TIMEOUT_S = 60
 
 
@@ -83,14 +91,19 @@ def _parse_wsl_stamps(raw: bytes) -> dict[str, tuple[int, int]] | None:
         if not record:
             continue
         try:
-            mtime, size, name = os.fsdecode(record).split(" ", 2)
-            seconds, _, fraction = mtime.partition(".")
+            # `%Y` is exact epoch seconds. `%y` is split into fields so only
+            # its textual fractional seconds are converted to nanoseconds;
+            # no timestamp passes through a floating-point value.
+            seconds, _date, clock, _zone, size, name = os.fsdecode(record).split(" ", 5)
+            _whole, separator, fraction = clock.partition(".")
+            if not separator or not fraction or len(fraction) > 9 or not fraction.isdecimal():
+                raise ValueError
             stamps[name.removeprefix("./")] = (
-                int(seconds) * 1_000_000_000 + int(fraction.ljust(9, "0")[:9] or 0),
+                int(seconds) * 1_000_000_000 + int(fraction.ljust(9, "0")),
                 int(size),
             )
         except ValueError:
-            return None  # an older stat without %.9Y: let the caller fall back
+            return None  # an older stat without nanoseconds: let the caller fall back
     return stamps
 
 
@@ -149,12 +162,92 @@ def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
         for current, directories, names in os.walk(root):
             directories[:] = [name for name in directories if name not in _GENERATED_DIRS]
             paths.extend(str((Path(current) / name).relative_to(root)) for name in names)
+    # Plain string work per file: on a 3,700-file repo, building a PurePosixPath
+    # and a Path for each one cost more than the stat calls themselves, and
+    # this runs twice around every exec.
     snapshot = {}
+    root_text = str(root)
     for raw in paths:
         path = raw.replace("\\", "/")
-        if development_path(path) and not _GENERATED_DIRS.intersection(PurePosixPath(path).parts):
-            snapshot[path] = _file_stamp(root / raw)
+        if _is_development_file(path):
+            try:
+                stat = os.stat(os.path.join(root_text, raw))
+                snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                snapshot[path] = None
     return snapshot
+
+
+def _is_development_file(path: str) -> bool:
+    """``development_path`` and not under a generated folder, for a "/" path."""
+    name = path.rsplit("/", 1)[-1].lower()
+    dot = name.rfind(".")
+    suffix = name[dot:] if 0 < dot < len(name) - 1 else ""
+    if suffix not in _CHECK_SUFFIXES and name not in _CHECK_FILENAMES:
+        return False
+    return not _GENERATED_DIRS.intersection(path.split("/"))
+
+
+# Commands that only read: no snapshot around them. Anything not clearly in
+# this list (or with a redirect, substitution, background job...) still gets
+# one, so a missed edit is never the price of the shortcut.
+_READ_ONLY_PROGRAMS = frozenset({
+    "ls", "cat", "head", "tail", "wc", "pwd", "echo", "printf", "grep", "egrep", "fgrep",
+    "rg", "which", "type", "whoami", "date", "env", "printenv", "uname", "stat", "file",
+    "du", "df", "tree", "realpath", "dirname", "basename", "id", "hostname", "ps", "sleep",
+    "true", "false", "cd", "less", "more", "sort", "uniq", "cut", "nl", "diff", "cmp",
+    "md5sum", "sha1sum", "sha256sum", "jq", "column", "test", "[",
+})
+_READ_ONLY_GIT = frozenset({"status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe"})
+_UNSAFE_SHELL = re.compile(r"[>`]|\$\(|<\(|;|\|\||(?<!&)&(?!&)|\n")
+
+
+_GIT_TREE_MOVES = frozenset({"switch", "reset", "pull", "merge", "rebase", "stash", "stash_pop", "restore", "clone"})
+_GIT_TREE_MOVE_COMMAND = re.compile(
+    r"(?:^|&&|;|\|\|)\s*git\s+(?:-C\s+\S+\s+)?(?:checkout|switch|reset|pull|merge|rebase|stash|restore|cherry-pick|revert|am)\b"
+)
+
+
+def moves_worktree(name: str, arguments: Any) -> bool:
+    """True when a call replaces the working tree with existing commits (checkout, reset...)."""
+    if not isinstance(arguments, dict):
+        return False
+    if name == "git":
+        return arguments.get("action") in _GIT_TREE_MOVES
+    if name == "exec":
+        command = arguments.get("command") or arguments.get("cmd")
+        return isinstance(command, str) and bool(_GIT_TREE_MOVE_COMMAND.search(command))
+    return False
+
+
+def exec_cannot_edit(arguments: Any) -> bool:
+    """True when an exec call clearly cannot write a file (``ls``, ``git status``...)."""
+    if not isinstance(arguments, dict) or arguments.get("background"):
+        return False
+    command = arguments.get("command") or arguments.get("cmd")
+    if not isinstance(command, str) or not command.strip() or _UNSAFE_SHELL.search(command):
+        return False
+    for segment in re.split(r"&&|\|", command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            return False
+        if not tokens:
+            return False
+        program = tokens[0].rsplit("/", 1)[-1]
+        args = tokens[1:]
+        if program in _READ_ONLY_PROGRAMS:
+            continue
+        if program == "git" and args and args[0] in _READ_ONLY_GIT and "--output" not in " ".join(args):
+            continue
+        if program == "find" and not {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"} & set(args):
+            continue
+        if program == "sed" and not any(arg.startswith("-i") or arg.startswith("--in-place") for arg in args):
+            continue
+        if len(args) == 1 and args[0] in {"--version", "-v", "-V", "version", "--help", "-h"}:
+            continue
+        return False
+    return True
 
 
 def _requires_tests(path: str) -> bool:
@@ -185,10 +278,24 @@ def edit_paths(params: dict[str, Any]) -> set[str]:
     for value in params.get("paths", []) or []:
         if isinstance(value, str):
             paths.add(value.replace("\\", "/"))
-    for edit in params.get("edits", []) or []:
-        if isinstance(edit, dict):
-            paths.update(edit_paths(edit))
+    for key in ("edits", "files"):  # files: write_file writing several at once
+        for edit in params.get(key, []) or []:
+            if isinstance(edit, dict):
+                paths.update(edit_paths(edit))
     return paths
+
+
+def _is_mutation(name: str, params: dict[str, Any]) -> bool:
+    """Whether this tool call writes files (a dry run or a mkdir does not count)."""
+    action = params.get("action")
+    mutation = name in _EDIT_TOOLS and not params.get("dry_run")
+    if name == "manage_files" and action in {"mkdir", "list", "stat"}:
+        mutation = False
+    if name == "lsp" and action == "rename" and params.get("apply"):
+        mutation = True
+    if name in {"verify", "lint"} and action in {"fix", "rollback"}:
+        mutation = True
+    return mutation
 
 
 def development_path(path: str) -> bool:
@@ -220,6 +327,15 @@ def _script_tests_ran(text: str) -> bool:
     ran = re.search(r"\bRan ([1-9]\d*) tests?\b", text)
     skipped = re.search(r"\bskipped=(\d+)\b", text)
     return bool(ran and re.search(r"\bOK\b", text) and int(ran[1]) > (int(skipped[1]) if skipped else 0))
+
+
+def _output_filter(stage: list[str]) -> bool:
+    """tail/tee on the runner's own output keep its final summary intact."""
+    program, args = PurePosixPath(stage[0]).name, stage[1:]
+    if program == "tail":
+        return (not args or (len(args) == 1 and bool(re.fullmatch(r"-\d+|-n\d+|--lines=\d+", args[0])))
+                or (len(args) == 2 and args[0] in {"-n", "--lines"} and args[1].isdigit()))
+    return program == "tee"
 
 
 def _filtered_pytest_command(command: str, is_test_command: Callable[[str], bool]) -> bool:
@@ -257,14 +373,127 @@ def _filtered_pytest_command(command: str, is_test_command: Callable[[str], bool
         return False
     if not any(PurePosixPath(token).name in {"pytest", "py.test", "pytest.exe", "py.test.exe"} for token in stages[0]):
         return False
-    for stage in stages[1:]:
-        program, args = PurePosixPath(stage[0]).name, stage[1:]
-        if program == "tail":
-            if not (not args or (len(args) == 1 and re.fullmatch(r"-\d+|-n\d+|--lines=\d+", args[0]))
-                    or (len(args) == 2 and args[0] in {"-n", "--lines"} and args[1].isdigit())):
-                return False
-        elif program != "tee":
-            return False
+    return all(_output_filter(stage) for stage in stages[1:])
+
+
+# Steps a test chain may hold besides the runs themselves: none of them can
+# write code or print an older result back into the output.
+_CHAIN_STEPS = frozenset({"cd", "echo", "printf", "true", ":", "pwd", "sleep", "date", "set", "export"})
+_CHAIN_REFUSED = re.compile(r"`|\$\(|<\(|>\(|\n|\b\d+ (?:passed|failed|total)\b")
+
+
+def _runner_kind(tokens: list[str]) -> str:
+    names = [PurePosixPath(token).name.lower().removesuffix(".exe") for token in tokens]
+    if {"pytest", "py.test"} & set(names) or any(
+        names[index:index + 2] == ["-m", "pytest"] for index in range(len(names))
+    ):
+        return "pytest"
+    if {"vitest", "jest"} & set(names):
+        return "js"
+    if {"npm", "pnpm", "yarn", "bun"} & set(names) and any(
+        name in {"test", "t"} or name.startswith("test:") for name in names
+    ):
+        return "js"
+    return "other"
+
+
+def _chain_step(tokens: list[str]) -> bool:
+    while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=\S*", tokens[0]):
+        tokens = tokens[1:]
+    if not tokens:
+        return True
+    program, args = PurePosixPath(tokens[0]).name, tokens[1:]
+    if program in _CHAIN_STEPS:
+        return True
+    # ``source .venv/bin/activate`` before the run.
+    return program in {"source", "."} and len(args) == 1 and PurePosixPath(args[0]).name == "activate"
+
+
+def chained_test_kinds(command: str, is_test_command: Callable[[str], bool]) -> list[str] | None:
+    """Runner kinds of a command made only of test runs and harmless steps.
+
+    ``cd api && pytest -q ; echo == ; cd ../web && npx vitest run`` is one
+    chain: every ``;``/``&&`` part is a test run (optionally piped through
+    tail/tee) or a step such as cd/echo that cannot edit code or replay an old
+    log. Fallbacks (``||``), background jobs, substitutions, redirections and
+    a summary typed into the command itself are refused, so only the runners'
+    own summaries can decide the result. None when the command is not one.
+    """
+    if _CHAIN_REFUSED.search(command):
+        return None
+    try:
+        lexer = shlex.shlex(command.replace("\\", "/"), posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    pipelines: list[list[list[str]]] = [[[]]]
+    index = 0
+    while index < len(tokens):
+        if tokens[index:index + 3] in (["2", ">&", "1"], ["2", ">", "/dev/null"]):
+            index += 3
+            continue
+        token = tokens[index]
+        if token in {";", "&&"}:
+            pipelines.append([[]])
+        elif token == "|":
+            pipelines[-1].append([])
+        elif token and set(token) <= set(";&|<>"):
+            return None
+        else:
+            pipelines[-1][-1].append(token)
+        index += 1
+    if len(pipelines) > 1 and pipelines[-1] == [[]]:
+        pipelines.pop()  # trailing ``;``
+    kinds = []
+    for pipeline in pipelines:
+        if not all(pipeline):
+            return None
+        head, filters = pipeline[0], pipeline[1:]
+        if is_test_command(shlex.join(head)):
+            if not all(_output_filter(stage) for stage in filters):
+                return None
+            kinds.append(_runner_kind(head))
+        elif filters or not _chain_step(head):
+            return None
+    return kinds or None
+
+
+def exec_runs_only_tests(arguments: Any, is_test_command: Callable[[str], bool]) -> bool:
+    """True when an exec call only runs pytest/JS tests, plus cd/echo steps.
+
+    Files such a run rewrites (a generated module, a fixture, a snapshot) are
+    side effects of the run, not edits by the agent.
+    """
+    if not isinstance(arguments, dict):
+        return False
+    command = arguments.get("command") or arguments.get("cmd")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    kinds = chained_test_kinds(command, is_test_command)
+    return bool(kinds) and "other" not in kinds
+
+
+_VITEST_TESTS = re.compile(r"^[ \t]*Tests[ \t]+(?P<counts>\d+ [a-z]+(?: \| \d+ [a-z]+)*) \(\d+\)", re.MULTILINE)
+_JEST_TESTS = re.compile(r"^Tests:[ \t]+(?P<counts>(?:\d+ [a-z]+, )*\d+ total)", re.MULTILINE)
+_JS_FAILED_GROUP = re.compile(
+    r"^[ \t]*(?:Test Files|Test Suites:|Errors)[ \t]+.*\b[1-9]\d* (?:failed|errors?)\b", re.MULTILINE,
+)
+
+
+def _chain_outcome(text: str, kinds: list[str]) -> bool | None:
+    """False on any reported failure, True when every run printed a passing summary."""
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    pytest_runs = [match["counts"] for match in _PYTEST_SUMMARY.finditer(text)]
+    js_runs = [match["counts"] for match in (*_VITEST_TESTS.finditer(text), *_JEST_TESTS.finditer(text))]
+    if any(re.search(r"\b[1-9]\d* (?:failed|errors?)\b", counts) for counts in pytest_runs + js_runs):
+        return False
+    if "js" in kinds and _JS_FAILED_GROUP.search(text):
+        return False
+    if len(pytest_runs) < kinds.count("pytest") or len(js_runs) < kinds.count("js"):
+        return None
+    if not all(re.search(r"\b[1-9]\d* passed\b", counts) for counts in pytest_runs + js_runs):
+        return None
     return True
 
 
@@ -307,6 +536,9 @@ class CodeValidationState:
     """Small, request-local evidence record, independent of transcript compaction."""
 
     paths: set[str] = field(default_factory=set)
+    # Every path the run wrote, docs and command-made files included, whether
+    # or not it arms the gates: the file list a subagent hands to its parent.
+    touched: set[str] = field(default_factory=set)
     revision: int = 0
     needs_tests: bool = False
     checks_revision: int = -1
@@ -317,6 +549,8 @@ class CodeValidationState:
     pending_tests: dict[str, int] = field(default_factory=dict)
     pending_script_outputs: dict[str, str] = field(default_factory=dict)
     pending_filtered_outputs: dict[str, str] = field(default_factory=dict)
+    # Runner kinds of background chained test commands, by session id.
+    pending_chains: dict[str, list[str]] = field(default_factory=dict)
     test_result_note: str = ""
     last_nudge_key: tuple[Any, ...] | None = None
     ignored_nudges: int = 0
@@ -326,6 +560,14 @@ class CodeValidationState:
     # generator run by the tests, a formatter) is not mistaken for an edit.
     content_hashes: dict[str, str] = field(default_factory=dict)
     root: Path | None = None
+    # Whether the project has a test runner at all (detected once per run).
+    _has_tests: bool | None = None
+    # A command that may write files ran (exec, spawn, a project action that
+    # changes the tree). Until then a changed tree is someone else's work: a
+    # parallel session or the user, not this agent's edits to validate.
+    commands_may_edit: bool = False
+    # Tests covering the changed files, keyed by (revision, path count).
+    _related_cache: tuple[tuple[int, int], list[str]] | None = None
 
     def observe_workspace(
         self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None,
@@ -378,11 +620,56 @@ class CodeValidationState:
             for path, stamp in (stamps or {}).items():
                 self.workspace_snapshot[path] = stamp
 
+    def rebaseline(self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None) -> None:
+        """Take the tree as it is now without counting the difference as edits.
+
+        A branch switch, reset, pull or stash rewrites the working tree with
+        code the agent did not write: counting it as 56 "changed files" made
+        a plain "create a branch from this tag" run the whole test suite and
+        refuse to finish on failures that live in the tag itself.
+        """
+        if root is not None:
+            self.root = Path(root)
+        self.workspace_snapshot = snapshot
+        self.content_hashes.clear()
+
+    def note_tool_writes(self, name: str, params: dict[str, Any], *, status: str) -> None:
+        """Record what a successful edit tool wrote, without arming any gate."""
+        if status == "ok" and _is_mutation(name, params):
+            self.touched.update(edit_paths(params))
+
+    def note_tree_changes(
+        self,
+        before: dict[str, tuple[int, int] | None],
+        after: dict[str, tuple[int, int] | None],
+    ) -> None:
+        """Record the files a command created, changed or deleted, for the file list only."""
+        self.touched.update(
+            path for path in before.keys() | after.keys() if before.get(path) != after.get(path)
+        )
+
     def edited(self, paths: set[str], *, require_tests: bool) -> None:
         self.paths.update(paths)
+        self.touched.update(paths)
         self.revision += 1
+        if require_tests and not self._project_has_tests():
+            # No test runner in the project: asking for tests only pushed the
+            # agent into extra steps (a fake shell "test", then verify) before
+            # it could stop. A green verify is the proof here, as on the board.
+            require_tests = False
+            self.test_result_note = "No test suite in this project: a passing verify is enough."
+        else:
+            self.test_result_note = ""
         self.needs_tests |= require_tests
-        self.test_result_note = ""
+
+    def _project_has_tests(self) -> bool:
+        if self.root is None:
+            return True  # unknown project: keep asking for tests
+        if self._has_tests is None:
+            from navin.quality.verification_log import _project_has_tests
+
+            self._has_tests = _project_has_tests(self.root)
+        return self._has_tests
 
     def record(self, evidence: VerificationEvidence, *, revision: int | None = None) -> None:
         checked_revision = self.revision if revision is None else revision
@@ -407,14 +694,7 @@ class CodeValidationState:
         is_test_command: Callable[[str], bool],
         execution_revision: int | None = None,
     ) -> None:
-        action = params.get("action")
-        mutation = name in _EDIT_TOOLS and not params.get("dry_run")
-        if name == "manage_files" and action in {"mkdir", "list", "stat"}:
-            mutation = False
-        if name == "lsp" and action == "rename" and params.get("apply"):
-            mutation = True
-        if name in {"verify", "lint"} and action in {"fix", "rollback"}:
-            mutation = True
+        mutation = _is_mutation(name, params)
         if status == "ok" and mutation:
             paths = edit_paths(params)
             relevant = {path for path in paths if development_path(path)}
@@ -448,30 +728,42 @@ class CodeValidationState:
             return
         text = str(result or "")
         revision = self.revision if execution_revision is None else execution_revision
+        chain: list[str] | None = None
         if name == "exec":
             command = str(params.get("command") or params.get("cmd") or "")
             filtered_pytest = _filtered_pytest_command(command, is_test_command)
             if not is_test_command(command) and not filtered_pytest:
-                if "|" in command and is_test_command(command.split("|", 1)[0]):
-                    self.test_result_note = (
-                        "The last test command used an unsupported output filter or fallback. "
-                        "Run the tests directly, without a pipe or fallback, so their result can be verified."
-                    )
-                return
+                # ``pytest -q ; echo == ; npx vitest run``: the exit code is
+                # the last step's, so the runners' summaries decide instead.
+                chain = chained_test_kinds(command, is_test_command)
+                if chain is not None and "other" in chain:
+                    chain = None
+                if chain is None:
+                    if ("|" in command and is_test_command(command.split("|", 1)[0])) or (
+                        ";" in command and any(is_test_command(part) for part in command.split(";"))
+                    ):
+                        self.test_result_note = (
+                            "The last test command used an unsupported output filter, fallback or chain. "
+                            "Run the tests directly, without a pipe or fallback, so their result can be verified."
+                        )
+                    return
             session_match = _SESSION_ID.search(text)
             if session_match:
                 self.pending_tests[session_match[1]] = revision
                 if python_test_script(command):
                     self.pending_script_outputs[session_match[1]] = (text + "\n")[-16000:]
-                if filtered_pytest:
+                if filtered_pytest or chain is not None:
                     self.pending_filtered_outputs[session_match[1]] = (text + "\n")[-16000:]
+                if chain is not None:
+                    self.pending_chains[session_match[1]] = chain
         else:
             session_id = str(params.get("session_id") or "")
             if session_id not in self.pending_tests:
                 return
             revision = self.pending_tests[session_id]
-            filtered_pytest = session_id in self.pending_filtered_outputs
-            if filtered_pytest:
+            chain = self.pending_chains.get(session_id)
+            filtered_pytest = session_id in self.pending_filtered_outputs and chain is None
+            if session_id in self.pending_filtered_outputs:
                 text = self.pending_filtered_outputs[session_id] + text
                 self.pending_filtered_outputs[session_id] = text[-16000:]
             if session_id in self.pending_script_outputs:
@@ -487,7 +779,18 @@ class CodeValidationState:
             self.pending_tests.pop(session_id, None)
             self.pending_script_outputs.pop(session_id, None)
             self.pending_filtered_outputs.pop(session_id, None)
+            self.pending_chains.pop(session_id, None)
         ok = codes[-1] == "0" and status == "ok"
+        if chain is not None:
+            outcome = _chain_outcome(text, chain)
+            if outcome is False or (outcome and ok):
+                self.record(VerificationEvidence(tests_ok=bool(outcome), summary=text[-800:]), revision=revision)
+            else:
+                self.test_result_note = (
+                    "The chained test command did not show a complete passing summary for every test run "
+                    "it started, or it exited non-zero. Run the tests directly so their result can be verified."
+                )
+            return
         if filtered_pytest:
             outcome = _pytest_summary_outcome(text)
             if ok and outcome is None:
@@ -535,21 +838,53 @@ class CodeValidationState:
                     "for session_id: " + ", ".join(current_tests) + ". Do not start duplicate tests."
                 )
             else:
-                details.append("Run meaningful tests for the requested behavior after the latest code/test edits.")
+                details.append(
+                    "Run the tests that cover the changed files after the latest edits, not the "
+                    "whole suite: the full suite is for shared code or a final delivery check."
+                )
             if self.test_result_note:
                 details.append(self.test_result_note)
-            targets = sorted(path for path in self.paths if (
-                PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
-            ))
-            if targets and not current_tests:
-                command = "python -m pytest " + " ".join(shlex.quote(path) for path in targets)
-                details.append("Run the changed tests, for example with exec: " + command)
+            if not current_tests:
+                hint = self._targeted_tests_hint()
+                if hint:
+                    details.append(hint)
             details.append("Wait for the test process to finish, inspect its results, fix failures, then retry closing the task.")
         elif max(self.checks_revision, self.tests_revision) != self.revision:
             details.append("Run an appropriate check after the latest edits.")
+            if self.test_result_note:
+                details.append(self.test_result_note)
         if self.paths:
             details.append("Changed files: " + ", ".join(sorted(self.paths)[:12]))
         return "\n".join(details)
+
+    def _related_tests(self) -> list[str]:
+        """Test files that exercise the changed files (cached per revision)."""
+        cached = self._related_cache
+        if cached is not None and cached[0] == (self.revision, len(self.paths)):
+            return cached[1]
+        targets: list[str] = []
+        if self.root is not None and self.paths:
+            try:
+                from navin.quality.testing import related_test_targets
+
+                targets = related_test_targets(self.root, sorted(self.paths))
+            except Exception:  # noqa: BLE001 - a hint only
+                targets = []
+        self._related_cache = ((self.revision, len(self.paths)), targets)
+        return targets
+
+    def _targeted_tests_hint(self) -> str:
+        targets = self._related_tests() or sorted(path for path in self.paths if (
+            PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
+        ))
+        if not targets:
+            return ("Pick the tests closest to the changed code (its test file, or a -k filter "
+                    "on the changed behavior) and run only those.")
+        python = [path for path in targets if path.endswith(".py") or "." not in PurePosixPath(path).name]
+        if python and len(python) == len(targets):
+            command = "python -m pytest -q " + " ".join(shlex.quote(path) for path in python)
+            return "Tests covering the changed files: run them with exec: " + command
+        return "Tests covering the changed files (run only these): " + ", ".join(targets)
 
     def completion_message(self, *, reason: str = "repeated") -> str:
         """A user-facing report, separate from the agent's repair instructions."""
@@ -604,7 +939,7 @@ class CodeValidationState:
         if self.pending_tests:
             lines.append("Wait for the running tests to finish and inspect their results before retrying completion.")
         elif self.needs_tests:
-            lines.append("Run meaningful tests for the requested behavior from the project root.")
+            lines.append("Run the tests that cover the changed files (not the whole suite).")
             if targets:
                 lines.extend(["", "```bash", "python -m pytest " + " ".join(shlex.quote(path) for path in targets), "```"])
             lines.extend(["", "Inspect the results, fix any failures, then retry completing the task."])

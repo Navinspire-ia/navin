@@ -132,7 +132,7 @@ export function CrmLeads({
                       type="button"
                       onClick={() => onOpen(row.id)}
                       className={cn(
-                        "min-h-10 min-w-0 flex-1 cursor-pointer rounded-md px-1 text-left hover:bg-muted/40",
+                        "min-h-10 min-w-0 flex-1 cursor-pointer rounded-md px-1 text-start hover:bg-muted/40",
                         openId === row.id && "bg-muted/50",
                       )}
                     >

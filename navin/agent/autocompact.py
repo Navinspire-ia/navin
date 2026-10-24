@@ -33,6 +33,10 @@ class AutoCompact:
         self.consolidator = consolidator
         self._ttl = session_ttl_minutes
         self._archiving: set[str] = set()
+        # Expired sessions found not worth compacting, by their updated_at:
+        # loading a large session to re-learn that, every check, is wasted.
+        self._not_compactable: dict[str, str] = {}
+        self._seen_stamp: dict[str, str] = {}
         self._summaries: dict[str, tuple[str, datetime]] = {}
 
     def _is_expired(self, ts: datetime | str | None,
@@ -98,7 +102,20 @@ class AutoCompact:
         active_session_keys: Collection[str] = (),
     ) -> None:
         """Schedule archival for idle sessions, skipping those with in-flight agent tasks."""
+        for key in self.expired_candidates(active_session_keys):
+            self.archive_if_compactable(key, schedule_background, resolve_runtime)
+
+    def expired_candidates(self, active_session_keys: Collection[str] = ()) -> list[str]:
+        """Idle sessions past the TTL, from the session index only.
+
+        Read-only (it lists session files, it does not load them), so the loop
+        runs it in a worker thread: listing every session every second on the
+        event loop froze the UI and the reply stream for seconds at a time.
+        """
+        if self._ttl <= 0:
+            return []
         now = datetime.now()
+        keys: list[str] = []
         for info in self.sessions.list_sessions():
             key = info.get("key", "")
             if not key or self._is_internal_session(key) or key in self._archiving:
@@ -106,10 +123,43 @@ class AutoCompact:
             if key in active_session_keys:
                 continue
             updated_at = info.get("updated_at")
-            if self._is_expired(updated_at, now) and self._has_compactable_idle_tail(key):
-                runtime = resolve_runtime()
-                self._archiving.add(key)
-                schedule_background(self._archive(key, runtime=runtime))
+            stamp = str(updated_at or "")
+            if self._not_compactable.get(key) == stamp:
+                continue
+            if self._is_expired(updated_at, now):
+                self._seen_stamp[key] = stamp
+                keys.append(key)
+        return keys
+
+    def archive_if_compactable(
+        self,
+        key: str,
+        schedule_background: Callable[[Coroutine], None],
+        resolve_runtime: Callable[[], LLMRuntime],
+        *,
+        checked: bool = False,
+    ) -> None:
+        """Start archiving one expired session when its idle tail is worth it.
+
+        ``checked``: the caller already ran ``check_compactable`` (in a thread).
+        """
+        if key in self._archiving:
+            return
+        if not checked and not self.check_compactable(key):
+            return
+        runtime = resolve_runtime()
+        self._archiving.add(key)
+        schedule_background(self._archive(key, runtime=runtime))
+
+    def check_compactable(self, key: str) -> bool:
+        """Whether the idle tail is worth archiving; loads the session file.
+
+        Blocking (a full JSONL parse): idle checks run it in a thread.
+        """
+        if self._has_compactable_idle_tail(key):
+            return True
+        self._not_compactable[key] = self._seen_stamp.get(key, "")
+        return False
 
     async def _archive(self, key: str, *, runtime: LLMRuntime) -> None:
         if self._is_internal_session(key):
