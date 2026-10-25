@@ -136,5 +136,17 @@ class EngineIdentityTest(unittest.TestCase):
         self.assertEqual(payload["engine"]["executable"], sys.executable)
 
 
+class WslNoticeTest(unittest.TestCase):
+    """The status bar reads the WSL verdict from the health payload."""
+
+    def test_no_notice_while_wsl_is_fine(self) -> None:
+        self.assertIsNone(runtime_health_payload()["wsl"])
+
+    def test_a_distribution_that_no_longer_starts_sessions_is_named(self) -> None:
+        notice = {"distro": "Ubuntu", "state": "hung", "sinceSeconds": 63, "detail": "", "command": "wsl --shutdown"}
+        with mock.patch("navin.webui.runtime_health.wsl_health.status", return_value=notice):
+            self.assertEqual(runtime_health_payload()["wsl"], notice)
+
+
 if __name__ == "__main__":
     unittest.main()

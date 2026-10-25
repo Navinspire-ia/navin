@@ -510,6 +510,11 @@ def websocket_turn_wall_started_at(chat_id: str) -> float | None:
     return _WEBSOCKET_TURN_WALL_STARTED_AT.get(chat_id)
 
 
+def running_websocket_turns() -> dict[str, float]:
+    """Snapshot of every websocket chat with a live turn: ``chat_id -> started_at``."""
+    return dict(_WEBSOCKET_TURN_WALL_STARTED_AT)
+
+
 def build_bus_progress_callback(
     bus: MessageBus,
     msg: InboundMessage,

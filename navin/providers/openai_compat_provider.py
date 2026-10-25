@@ -32,6 +32,7 @@ from navin.providers.base import (
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
+    wait_stream_idle,
 )
 from navin.providers.gateway import is_navin_gateway
 from navin.providers.openai_responses import (
@@ -2817,9 +2818,9 @@ class OpenAICompatProvider(LLMProvider):
                         stream_iter = stream.__aiter__()
                         while True:
                             try:
-                                yield await asyncio.wait_for(
+                                yield await wait_stream_idle(
                                     stream_iter.__anext__(),
-                                    timeout=idle_timeout_s,
+                                    idle_timeout_s,
                                 )
                             except StopAsyncIteration:
                                 break
@@ -2894,9 +2895,9 @@ class OpenAICompatProvider(LLMProvider):
             while True:
                 window_s = buffered_idle_s if producing_unstreamed else idle_timeout_s
                 try:
-                    chunk = await asyncio.wait_for(
+                    chunk = await wait_stream_idle(
                         stream_iter.__anext__(),
-                        timeout=window_s,
+                        window_s,
                     )
                 except StopAsyncIteration:
                     break

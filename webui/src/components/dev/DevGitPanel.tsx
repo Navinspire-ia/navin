@@ -80,6 +80,11 @@ const STATUS_LETTER: Record<string, string> = {
 
 type CommitAction = "commit-push" | "commit" | "push" | "pull" | "publish";
 
+/** Working-tree changes are local and cheap: kept fresh while the panel shows. */
+export const GIT_CHANGES_POLL_MS = 15_000;
+/** PR and CI status cost a forge round trip: polled four times less often. */
+export const GIT_FORGE_POLL_MS = 60_000;
+
 export function DevGitPanel({
   token,
   sessionKey,
@@ -159,7 +164,7 @@ export function DevGitPanel({
     null,
   );
 
-  const refresh = useCallback(() => {
+  const refreshChanges = useCallback(() => {
     setLoading(true);
     setError(null);
     fetchGitChanges(token, sessionKey)
@@ -177,7 +182,13 @@ export function DevGitPanel({
         setPayload(null);
       })
       .finally(() => setLoading(false));
+  }, [sessionKey, token]);
 
+  // PR and CI status ask the forge (network + git on the workspace): seconds
+  // per call, and every open panel polled them every 15 s.
+  const forgeFetchedAtRef = useRef(0);
+  const refreshForge = useCallback(() => {
+    forgeFetchedAtRef.current = Date.now();
     void fetchGithubPr(token, sessionKey)
       .then(setPrView)
       .catch(() => setPrView(null));
@@ -186,11 +197,20 @@ export function DevGitPanel({
       .catch(() => setCi(null));
   }, [sessionKey, token]);
 
+  const refresh = useCallback(() => {
+    refreshChanges();
+    refreshForge();
+  }, [refreshChanges, refreshForge]);
+
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(refresh, 15_000);
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      refreshChanges();
+      if (Date.now() - forgeFetchedAtRef.current >= GIT_FORGE_POLL_MS) refreshForge();
+    }, GIT_CHANGES_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, refreshChanges, refreshForge]);
 
   useLayoutEffect(() => {
     const el = messageBoxRef.current;

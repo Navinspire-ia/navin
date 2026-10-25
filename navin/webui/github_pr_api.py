@@ -108,7 +108,7 @@ def forge_context(root: Path, *, allow_probe: bool = True) -> ForgeContext:
     remote = forge_api.detect_forge(root, config=config, allow_probe=allow_probe)
     if remote is None:
         return ForgeContext(None, "", "")
-    token, source = forge_api.resolve_token(remote, config=config)
+    token, source = forge_api.resolve_token(remote, config=config, root=root)
     return ForgeContext(remote, token, source)
 
 

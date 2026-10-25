@@ -5,10 +5,12 @@
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import json
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -69,6 +71,61 @@ def resolve_stream_idle_timeout_s(
         logger.warning("Clamping {}={!r} to {}", STREAM_IDLE_TIMEOUT_ENV, raw, maximum)
         return maximum
     return value
+
+
+# A timer at least this late means the engine's own loop was frozen, not that
+# the server went quiet: the window is granted again instead of aborting.
+STREAM_STALL_GRACE_S = 2.0
+STREAM_STALL_GRACE_RATIO = 0.25
+MAX_STREAM_STALL_EXTENSIONS = 5
+
+
+async def _await_next(awaitable: Any) -> Any:
+    return await awaitable
+
+
+async def wait_stream_idle(awaitable: Any, timeout: float | None) -> Any:
+    """``asyncio.wait_for`` for one streamed chunk, robust to a frozen loop.
+
+    With ``wait_for``, a loop stall longer than the idle window aborted healthy
+    replies: on wake-up the expired timer runs before the task that would take
+    the chunk already in the socket, the read is cancelled and the whole call
+    retried. On the desktop engine, 35-100 s freezes cut every running agent
+    and subagents redid the same call for hours. Here a late timer extends the
+    wait (at most ``MAX_STREAM_STALL_EXTENSIONS`` times) and a chunk that
+    arrived meanwhile is still delivered; a server that really stays silent
+    for a whole on-time window still raises ``asyncio.TimeoutError``.
+    """
+    if timeout is None:
+        return await awaitable
+    task = asyncio.ensure_future(_await_next(awaitable))
+    window = max(0.0, float(timeout))
+    try:
+        for _attempt in range(MAX_STREAM_STALL_EXTENSIONS + 1):
+            started = time.monotonic()
+            await asyncio.wait({task}, timeout=window)
+            late = time.monotonic() - started - window
+            # The chunk may sit one or two loop turns behind the timer.
+            for _turn in range(3):
+                if task.done():
+                    return task.result()
+                await asyncio.sleep(0)
+            if task.done():
+                return task.result()
+            if late < max(STREAM_STALL_GRACE_S, STREAM_STALL_GRACE_RATIO * window):
+                break
+            logger.warning(
+                "stream idle timer fired {:.1f}s late: the engine loop was frozen, "
+                "waiting another {:.0f}s instead of dropping the reply",
+                late,
+                window,
+            )
+        raise asyncio.TimeoutError
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 @dataclass

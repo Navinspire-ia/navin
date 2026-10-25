@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from navin.tui.runtime import UiFileEdit, UiStreamDelta, UiToolEvent
 from navin.tui.screens import PickerScreen, PickItem
+from navin.tui.virtual import RecordGap
 from navin.tui.widgets import AssistantMessage, QueuedPromptRow, ToolCall, UserMessage, WorkingLine
 from tests.test_tui_queue import make_app
 
@@ -168,6 +169,15 @@ def test_failed_send_now_retains_queue_draft_and_active_turn(tmp_path):
     asyncio.run(run())
 
 
+def _loaded_blocks(transcript) -> int:
+    """Blocks in the chat, widgets or records paged out far from the viewport.
+
+    A slow CI runner gives the virtualizer time to turn far blocks into a
+    RecordGap between two history pages: they are still loaded.
+    """
+    return sum(len(child.records) if isinstance(child, RecordGap) else 1 for child in transcript.children)
+
+
 def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_place(tmp_path):
     async def run():
         app = make_app(tmp_path)
@@ -220,7 +230,7 @@ def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_plac
             transcript.scroll_to(y=0, animate=False, immediate=True)
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert len(transcript.children) == 24
+            assert _loaded_blocks(transcript) == 24
             anchor = list(transcript.children)[12]
             assert anchor.region.y == transcript.content_region.y + first_y
             assert transcript.children[-1] is last
@@ -232,7 +242,7 @@ def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_plac
             transcript.scroll_to(y=0, animate=False, immediate=True)
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert len(transcript.children) == 36
+            assert _loaded_blocks(transcript) == 36
             assert app.query(UserMessage).first().raw_text == "question 82"
     asyncio.run(run())
 
@@ -273,7 +283,7 @@ def test_older_history_loads_a_screen_ahead_and_the_chat_stays_on_screen(tmp_pat
                 await pilot.pause()
                 await app.workers.wait_for_complete()
                 await pilot.pause()
-            assert len(transcript.children) == 24
+            assert _loaded_blocks(transcript) == 24
             assert not hidden_frames, "the chat never blanks while older messages load"
             assert not transcript.loading_history
     asyncio.run(run())

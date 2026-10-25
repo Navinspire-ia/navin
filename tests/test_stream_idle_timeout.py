@@ -12,6 +12,7 @@ message works without that ritual.
 from __future__ import annotations
 
 import unittest
+import unittest.mock
 
 from navin.channels.websocket import effective_ping_timeout_s
 from navin.providers.base import (
@@ -33,6 +34,81 @@ class StreamIdleTimeoutTests(unittest.TestCase):
         self.assertEqual(resolve_stream_idle_timeout_s(env_value="nope"), 120.0)
         self.assertEqual(resolve_stream_idle_timeout_s(env_value="0"), 120.0)
         self.assertEqual(resolve_stream_idle_timeout_s(env_value="-5"), 120.0)
+
+
+class StreamStallToleranceTests(unittest.TestCase):
+    """A frozen engine loop must not cut a reply the server is still sending."""
+
+    def test_a_chunk_that_arrived_during_a_loop_freeze_is_delivered(self) -> None:
+        import asyncio
+        import time
+
+        from navin.providers.base import wait_stream_idle
+
+        async def scenario(wait) -> str:
+            loop = asyncio.get_running_loop()
+            chunk: asyncio.Future[str] = loop.create_future()
+
+            def freeze_then_deliver() -> None:
+                time.sleep(0.55)  # the loop is frozen well past the 0.2 s window
+                loop.call_soon(chunk.set_result, "token")  # socket read on wake-up
+
+            loop.call_later(0.05, freeze_then_deliver)
+            return await wait(chunk, 0.2)
+
+        # The old wait: the late timer wins over the chunk already received.
+        with self.assertRaises(asyncio.TimeoutError):
+            asyncio.run(scenario(lambda fut, timeout: asyncio.wait_for(fut, timeout=timeout)))
+        self.assertEqual(asyncio.run(scenario(wait_stream_idle)), "token")
+
+    def test_a_late_chunk_after_a_freeze_gets_a_fresh_window(self) -> None:
+        import asyncio
+        import time
+
+        from navin.providers.base import wait_stream_idle
+
+        async def scenario() -> str:
+            loop = asyncio.get_running_loop()
+            chunk: asyncio.Future[str] = loop.create_future()
+            loop.call_later(0.01, lambda: time.sleep(0.5))  # freeze across the timer
+            loop.call_later(0.6, lambda: chunk.set_result("late but alive"))
+            return await wait_stream_idle(chunk, 0.2)
+
+        with unittest.mock.patch("navin.providers.base.STREAM_STALL_GRACE_S", 0.1):
+            self.assertEqual(asyncio.run(scenario()), "late but alive")
+
+    def test_a_silent_server_still_times_out_and_the_read_is_cancelled(self) -> None:
+        import asyncio
+
+        from navin.providers.base import wait_stream_idle
+
+        async def scenario() -> bool:
+            never: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            with self.assertRaises(asyncio.TimeoutError):
+                await wait_stream_idle(never, 0.05)
+            return never.cancelled()
+
+        self.assertTrue(asyncio.run(scenario()))
+
+    def test_end_of_stream_and_no_timeout_pass_through(self) -> None:
+        import asyncio
+
+        from navin.providers.base import wait_stream_idle
+
+        async def empty():
+            if False:
+                yield None
+
+        async def scenario() -> str:
+            with self.assertRaises(StopAsyncIteration):
+                await wait_stream_idle(empty().__anext__(), 1.0)
+
+            async def value() -> str:
+                return "ok"
+
+            return await wait_stream_idle(value(), None)
+
+        self.assertEqual(asyncio.run(scenario()), "ok")
 
 
 class WebSocketPingTimeoutTests(unittest.TestCase):

@@ -3576,7 +3576,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await asyncio.to_thread(self.workspaces.scope_for_session_key, decoded_key)
             payload = await asyncio.to_thread(github_pr_view_payload, scope)
         except (ProjectSearchError, GithubPrError) as e:
             return _http_error(e.status, e.message)
@@ -3613,7 +3613,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await asyncio.to_thread(self.workspaces.scope_for_session_key, decoded_key)
             # Keyed by project, not by session: several chats open on the same
             # repository were each running their own chain of `gh` calls.
             payload = await self.route_cache.get(

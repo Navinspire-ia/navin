@@ -20,18 +20,36 @@ virtualenvs (root, then one level down), then the login shell's PATH. Exit code
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 import sys
+import threading
+import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from navin.utils import wsl
+from loguru import logger
+
+from navin.utils import wsl, wsl_health
 
 # Exit code of the resolver when the tool exists nowhere in the distribution.
 MISSING_EXIT = 127
 
 _VENV_NAMES = (".venv", "venv", "env")
+
+# One probe answer per project and tool table. Installing a linter or a test
+# runner is rare, while every edit and every board close asked again, and each
+# ask was a wsl.exe start.
+_PROBE_TTL_S = 300.0
+# A failed probe is not retried before this: when WSL is wedged (new sessions
+# hang while `wsl -l` still answers) every caller paid the whole timeout.
+_FAILED_PROBE_TTL_S = 60.0
+
+_ProbeKey = tuple[str, str, frozenset[str]]
+_probe_lock = threading.Lock()
+_probe_cache: dict[_ProbeKey, tuple[float, frozenset[str] | None]] = {}
+_probe_threads: dict[_ProbeKey, threading.Thread] = {}
 
 
 def wsl_root(root: Path | str, *, platform: str | None = None) -> wsl.WslLocation | None:
@@ -139,7 +157,70 @@ def probe_script(specs: dict[str, dict[str, Any]], linux_root: str) -> str:
 def available(
     specs: dict[str, dict[str, Any]], root: Path, location: wsl.WslLocation, *, timeout: float = 30,
 ) -> set[str] | None:
-    """Names of ``specs`` whose tool exists in the distribution, or None on failure."""
+    """Names of ``specs`` whose tool exists in the distribution, or None when unknown.
+
+    None means the probe failed or has not answered yet: callers then treat
+    the tools as present and let the real run tell. On the event loop thread
+    the probe never runs inline. That loop serves every agent and window, and
+    wsl.exe hangs for the whole timeout when WSL is wedged: the board gate
+    asking "does this project have tests?" froze the engine for 30 s. There
+    the probe starts in the background and a later call reads its answer.
+    """
+    key: _ProbeKey = (location.distro.lower(), location.posix, frozenset(specs))
+    now = time.monotonic()
+    with _probe_lock:
+        entry = _probe_cache.get(key)
+    if entry is not None and now < entry[0]:
+        return set(entry[1]) if entry[1] is not None else None
+    if _on_event_loop_thread():
+        _probe_in_background(key, specs, location, timeout)
+        return None
+    return _probe(key, specs, location, timeout)
+
+
+def _on_event_loop_thread() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _probe(
+    key: _ProbeKey, specs: dict[str, dict[str, Any]], location: wsl.WslLocation, timeout: float,
+) -> set[str] | None:
+    found = _run_probe(specs, location, timeout)
+    ttl = _PROBE_TTL_S if found is not None else _FAILED_PROBE_TTL_S
+    with _probe_lock:
+        _probe_cache[key] = (time.monotonic() + ttl, frozenset(found) if found is not None else None)
+    return found
+
+
+def _probe_in_background(
+    key: _ProbeKey, specs: dict[str, dict[str, Any]], location: wsl.WslLocation, timeout: float,
+) -> None:
+    """Start one probe for ``key`` off the loop, unless one is already running."""
+
+    def run() -> None:
+        try:
+            _probe(key, specs, location, timeout)
+        finally:
+            with _probe_lock:
+                if _probe_threads.get(key) is threading.current_thread():
+                    del _probe_threads[key]
+
+    with _probe_lock:
+        running = _probe_threads.get(key)
+        if running is not None and running.is_alive():
+            return
+        thread = threading.Thread(target=run, name="navin-wsl-probe", daemon=True)
+        _probe_threads[key] = thread
+    thread.start()
+
+
+def _run_probe(
+    specs: dict[str, dict[str, Any]], location: wsl.WslLocation, timeout: float,
+) -> set[str] | None:
     import subprocess
 
     from navin.utils.proc import no_window_kwargs
@@ -147,14 +228,22 @@ def available(
     distro = wsl.resolve_distro(location.distro) or location.distro
     argv = [*wsl.command_prefix(distro, location.path), "bash", "-lc", probe_script(specs, location.posix)]
     try:
-        out = subprocess.run(  # noqa: S603
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell on the Windows side
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=launch_cwd(), **no_window_kwargs(),
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.TimeoutExpired:
+        logger.warning("WSL tool probe gave no answer in {}s for {}", timeout, distro)
+        wsl_health.suspect(distro)
+        return None
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("WSL tool probe could not start in {}: {}", distro, exc)
         return None
     if out.returncode != 0:
+        # The script itself always exits 0: a failure is wsl.exe's own.
+        wsl_health.suspect(distro)
         return None
+    wsl_health.answered(distro)
     return {line.strip() for line in out.stdout.splitlines() if line.strip() in specs}
 
 

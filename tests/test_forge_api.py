@@ -291,6 +291,11 @@ class TokenResolutionTest(unittest.TestCase):
         self.assertEqual(token, "gh-token")
         self.assertEqual(source, "gh")
 
+    def test_without_a_root_the_repo_sign_in_is_never_asked(self) -> None:
+        with patch.object(forge_api, "repo_sign_in_token") as lookup:
+            self.assertEqual(forge_api.resolve_token(_remote()), ("", ""))
+        lookup.assert_not_called()
+
     def test_no_token_is_not_a_crash(self) -> None:
         token, source = forge_api.resolve_token(_remote())
         self.assertEqual(token, "")
@@ -732,6 +737,35 @@ class PanelPayloadTest(unittest.TestCase):
         self.assertEqual(payload["host"], "forgejo.navinspire.ai")
         self.assertIn("no token", payload["detail"])
         self.assertIsNone(payload["pr"])
+
+    def test_the_panel_and_agent_tools_use_the_project_sign_in(self) -> None:
+        # The reported bug: a WSL project whose user is signed in there showed
+        # "no token" and the connect card on every refresh.
+        from navin.agent.tools import forge as forge_tool
+        from navin.webui.github_pr_api import forge_context
+
+        seen: list[Any] = []
+
+        def fake_sign_in(remote, root):
+            seen.append(root)
+            return "gho_from_repo", "git"
+
+        with (
+            patch.object(forge_api, "detect_forge", return_value=_remote(kind=GITHUB, host="github.com")),
+            patch.object(forge_api, "gh_cli_token", return_value=""),
+            patch.object(forge_api, "repo_sign_in_token", side_effect=fake_sign_in),
+            patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}),
+            patch.object(forge_tool, "_load_config", return_value=None),
+            patch("navin.webui.github_pr_api._load_config", return_value=None),
+        ):
+            ctx = forge_context(self.root)
+            payload = ctx.base_payload()
+            remote, token = forge_tool.resolve_forge(self.root)
+        self.assertTrue(payload["token_configured"])
+        self.assertEqual(payload["token_source"], "git")
+        self.assertEqual(token, "gho_from_repo")
+        self.assertEqual(remote.host, "github.com")
+        self.assertEqual(seen, [self.root, self.root])
 
     def test_view_without_a_supported_remote(self) -> None:
         from navin.webui.github_pr_api import ForgeContext, github_pr_view_payload
@@ -1691,3 +1725,169 @@ class FailedLogTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Sign-in the repository's own git already uses (WSL project, Windows engine)
+# ---------------------------------------------------------------------------
+
+# The layout `gh auth setup-git` and a Forgejo `store` leave in ~/.gitconfig,
+# as `git config -z --get-regexp` prints it.
+_GITCONFIG = "\0".join([
+    "credential.helper\nstore",
+    "credential.helper\noauth",
+    "credential.https://github.com.helper\n",
+    "credential.https://github.com.helper\n!/home/u/.local/bin/gh auth git-credential",
+    "credential.https://forgejo.navinspire.ai.helper\n",
+    "credential.https://forgejo.navinspire.ai.helper\nstore",
+    "credential.https://*.corp.example.helper\nmanager",
+    "credential.https://gitlab.com/team.helper\ncache",
+    "",
+])
+
+
+class CredentialHelperTest(unittest.TestCase):
+    def test_url_entries_reset_and_replace_the_generic_helpers(self) -> None:
+        helpers = forge_api.effective_credential_helpers
+        self.assertEqual(
+            helpers(_GITCONFIG, "https", "github.com"), ["!/home/u/.local/bin/gh auth git-credential"]
+        )
+        self.assertEqual(helpers(_GITCONFIG, "https", "forgejo.navinspire.ai"), ["store"])
+        self.assertEqual(helpers(_GITCONFIG, "https", "git.corp.example"), ["store", "manager"])
+
+    def test_browser_only_helpers_are_left_out(self) -> None:
+        # gitlab.com: store, then oauth, which would open a browser.
+        self.assertEqual(forge_api.effective_credential_helpers(_GITCONFIG, "https", "gitlab.com"), ["store"])
+        for value in ("oauth", "/usr/bin/git-credential-oauth", "!git credential-oauth -device"):
+            self.assertTrue(forge_api.interactive_credential_helper(value), value)
+        for value in ("store", "manager", "!/home/u/.local/bin/gh auth git-credential", "cache --timeout 900"):
+            self.assertFalse(forge_api.interactive_credential_helper(value), value)
+
+    def test_other_schemes_and_paths_do_not_match(self) -> None:
+        self.assertEqual(forge_api.effective_credential_helpers(_GITCONFIG, "http", "github.com"), ["store"])
+
+
+class RepoSignInTokenTest(unittest.TestCase):
+    """Desktop on Windows, project and login in WSL: no new sign-in asked."""
+
+    def setUp(self) -> None:
+        from navin.utils.git_argv import GitRoute
+
+        forge_api.clear_sign_in_cache()
+        self.addCleanup(forge_api.clear_sign_in_cache)
+        self.route = GitRoute(
+            argv=("wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/proj", "--exec", "git"),
+            root="/home/u/proj",
+            distro="Ubuntu",
+        )
+        routing = patch("navin.utils.git_argv.git_route", return_value=self.route)
+        routing.start()
+        self.addCleanup(routing.stop)
+        launcher = patch("navin.utils.wsl.wsl_executable", return_value="wsl.exe")
+        launcher.start()
+        self.addCleanup(launcher.stop)
+        engine_gh = patch.object(forge_api, "gh_cli_token", return_value="")
+        engine_gh.start()
+        self.addCleanup(engine_gh.stop)
+        self.calls: list[tuple[list[str], str]] = []
+        self.answers: list[subprocess.CompletedProcess[str] | None] = []
+
+        def fake_run(argv, *, env, stdin=""):
+            self.calls.append((list(argv), stdin))
+            self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+            self.assertIn("GIT_TERMINAL_PROMPT", env["WSLENV"])
+            return self.answers.pop(0)
+
+        runner = patch.object(forge_api, "_run_sign_in", side_effect=fake_run)
+        runner.start()
+        self.addCleanup(runner.stop)
+
+    @staticmethod
+    def _done(code: int, out: str = "") -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], code, stdout=out, stderr="")
+
+    def _resolve(self, remote: ForgeRemote) -> tuple[str, str]:
+        return forge_api.resolve_token(remote, root=r"\\wsl.localhost\Ubuntu\home\u\proj")
+
+    def test_the_distribution_gh_login_is_used(self) -> None:
+        self.answers = [self._done(0, "gho_wsl\n")]
+        self.assertEqual(self._resolve(_remote(kind=GITHUB, host="github.com")), ("gho_wsl", "gh"))
+        argv, _stdin = self.calls[0]
+        self.assertEqual(argv[:4], ["wsl.exe", "-d", "Ubuntu", "--exec"])
+        self.assertEqual(argv[4:6], ["sh", "-lc"], "login shell: gh lives in ~/.local/bin")
+        self.assertEqual(argv[-1], "github.com")
+
+    def test_the_repo_credential_helper_answers_when_gh_is_missing(self) -> None:
+        self.answers = [
+            self._done(0, _GITCONFIG),
+            self._done(0, "protocol=https\nhost=forgejo.navinspire.ai\nusername=me\npassword=fj_token\n"),
+        ]
+        self.assertEqual(self._resolve(_remote()), ("fj_token", "git"))
+        self.assertEqual(len(self.calls), 2, "gh is only asked for GitHub")
+
+    def test_a_github_repo_falls_back_to_the_helper_when_gh_is_absent(self) -> None:
+        self.answers = [
+            self._done(127),
+            self._done(0, _GITCONFIG),
+            self._done(0, "username=me\npassword=gho_helper\n"),
+        ]
+        self.assertEqual(self._resolve(_remote(kind=GITHUB, host="github.com")), ("gho_helper", "git"))
+
+    def test_the_fill_runs_only_non_interactive_helpers_inside_the_distribution(self) -> None:
+        self.answers = [
+            self._done(0, _GITCONFIG),
+            self._done(0, "username=u\npassword=gl_token\n"),
+        ]
+        self.assertEqual(self._resolve(_remote(kind=GITLAB, host="gitlab.com")), ("gl_token", "git"))
+        argv, stdin = self.calls[1]
+        self.assertEqual(argv[: len(self.route.argv)], list(self.route.argv))
+        self.assertEqual(
+            argv[len(self.route.argv):],
+            ["-c", "credential.helper=", "-c", "credential.helper=store", "credential", "fill"],
+        )
+        self.assertEqual(stdin, "protocol=https\nhost=gitlab.com\n\n")
+        self.assertNotIn("oauth", " ".join(argv))
+
+    def test_nothing_stored_is_an_empty_answer_without_a_fill(self) -> None:
+        self.answers = [self._done(0, "credential.helper\noauth\0")]
+        self.assertEqual(self._resolve(_remote(kind=GITLAB, host="gitlab.com")), ("", ""))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_token_is_cached_and_survives_a_failed_lookup(self) -> None:
+        self.answers = [self._done(0, "gho_wsl\n")]
+        github = _remote(kind=GITHUB, host="github.com")
+        self.assertEqual(self._resolve(github), ("gho_wsl", "gh"))
+        self.assertEqual(self._resolve(github), ("gho_wsl", "gh"))
+        self.assertEqual(len(self.calls), 1, "cached for the next panel refresh")
+        with forge_api._SIGN_IN_LOCK:
+            for key, (_expires, token, source) in list(forge_api._SIGN_IN_TOKENS.items()):
+                forge_api._SIGN_IN_TOKENS[key] = (0.0, token, source)
+        self.answers = [None, None]  # WSL too slow to answer: timeouts
+        self.assertEqual(self._resolve(github), ("gho_wsl", "gh"), "no new sign-in asked")
+
+    def test_a_wsl_service_failure_is_not_read_as_no_sign_in(self) -> None:
+        # Measured: wsl.exe exits 255, "Catastrophic failure Wsl/Service/E_UNEXPECTED"
+        # in UTF-16 on stdout. That must keep the token found earlier.
+        broken = subprocess.CompletedProcess([], 255, stdout="C\0a\0t\0", stderr="")
+        self.answers = [self._done(0, _GITCONFIG), self._done(0, "password=fj_token\n")]
+        self.assertEqual(self._resolve(_remote()), ("fj_token", "git"))
+        with forge_api._SIGN_IN_LOCK:
+            for key, (_expires, token, source) in list(forge_api._SIGN_IN_TOKENS.items()):
+                forge_api._SIGN_IN_TOKENS[key] = (0.0, token, source)
+        self.answers = [broken]
+        self.assertEqual(self._resolve(_remote()), ("fj_token", "git"))
+        self.answers = [self._done(0, _GITCONFIG), broken]
+        forge_api.clear_sign_in_cache()
+        self.assertEqual(self._resolve(_remote()), ("", ""), "nothing known yet: empty, no crash")
+
+    def test_no_helper_configured_is_a_real_miss(self) -> None:
+        self.answers = [self._done(1, "")]
+        self.assertEqual(self._resolve(_remote()), ("", ""))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_settings_and_env_still_come_first(self) -> None:
+        config = Config()
+        config.tools.forge.tokens = {"forgejo.navinspire.ai": "cfg-token"}
+        token = forge_api.resolve_token(_remote(), config=config, root="/x")
+        self.assertEqual(token, ("cfg-token", "settings"))
+        self.assertEqual(self.calls, [])

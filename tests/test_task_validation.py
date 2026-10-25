@@ -765,6 +765,102 @@ def test_rewriting_a_file_with_identical_content_is_not_an_edit(tmp_path):
     assert state.revision == 1 and not state.pending, "same bytes, new mtime: still validated"
 
 
+def test_async_workspace_observation_reads_files_off_the_event_loop(tmp_path, monkeypatch):
+    # Hashing on the loop froze every chat of the desktop engine for up to 35 s
+    # with several agents and subagents on one WSL workspace.
+    import threading
+
+    from navin.agent import code_validation as cv
+
+    readers: list[str] = []
+    real_digest = cv._file_digest
+
+    def spy(path):
+        readers.append(threading.current_thread().name)
+        return real_digest(path)
+
+    monkeypatch.setattr(cv, "_file_digest", spy)
+    generated = tmp_path / "app.py"
+    generated.write_text("A = 1\n")
+    state = CodeValidationState()
+
+    async def scenario() -> None:
+        loop_thread = threading.current_thread().name
+        await state.observe_workspace_async({"app.py": (1, 6)}, root=tmp_path)
+        assert readers == [], "the first snapshot is only a baseline"
+        generated.write_text("A = 2\n")
+        await state.observe_workspace_async({"app.py": (2, 6)}, root=tmp_path)
+        assert state.revision == 1 and state.paths == {"app.py"}
+        await state.observe_workspace_async({"app.py": (3, 6)}, root=tmp_path)
+        assert state.revision == 1, "same bytes, new mtime: not an edit"
+        generated.unlink()
+        await state.observe_workspace_async({}, root=tmp_path)
+        assert state.revision == 2, "a deleted file is a change"
+        assert readers and loop_thread not in readers
+
+    asyncio.run(scenario())
+
+
+def test_prompt_profile_is_counted_off_the_event_loop(tmp_path, monkeypatch):
+    # Counting the tokens of a long run took 2.3 s on the loop and froze
+    # every other agent of the engine meanwhile.
+    import threading
+
+    threads: list[str] = []
+
+    def spy(spec, messages):
+        threads.append(threading.current_thread().name)
+        return None
+
+    monkeypatch.setattr(AgentRunner, "_prompt_profile_dict", staticmethod(spy))
+    provider = ScriptedProvider([LLMResponse(content="Done.")])
+
+    async def run():
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Say done."}],
+            tools=registry(tmp_path),
+            runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            workspace=tmp_path, max_iterations=2, max_tool_result_chars=4_000,
+        ))
+        return result, threading.current_thread().name
+
+    result, loop_thread = asyncio.run(run())
+    assert result.final_content == "Done."
+    assert threads and loop_thread not in threads
+
+
+def test_related_tests_are_looked_up_off_the_event_loop(tmp_path, monkeypatch):
+    import threading
+
+    from navin.agent import code_validation as cv
+
+    lookups: list[str] = []
+
+    def fake_targets(root, paths):
+        lookups.append(threading.current_thread().name)
+        return ["tests/test_app.py"]
+
+    monkeypatch.setattr(cv, "_related_targets", fake_targets)
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_app.py").write_text("def test_a():\n    pass\n")
+    state = CodeValidationState(root=tmp_path)
+    state.edited({"app.py"}, require_tests=True)
+
+    async def scenario() -> str:
+        await state.warm_related_tests()
+        await state.warm_related_tests()
+        return threading.current_thread().name
+
+    loop_thread = asyncio.run(scenario())
+    assert len(lookups) == 1 and lookups[0] != loop_thread, "one lookup, in a worker thread"
+    assert "tests/test_app.py" in state.missing()
+    assert len(lookups) == 1, "missing() reuses the warmed cache"
+    state.edited({"lib.py"}, require_tests=True)
+    asyncio.run(state.warm_related_tests())
+    assert len(lookups) == 2, "a new revision looks again"
+
+
 def test_validation_reminders_have_a_total_cap_even_when_state_moves():
     from navin.agent.runner import _MAX_TOTAL_VALIDATION_NUDGES
 

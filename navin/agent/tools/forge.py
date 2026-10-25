@@ -120,7 +120,7 @@ def resolve_forge(root: Path) -> tuple[Any, str]:
             code="forge_unknown_kind",
             host=remote.host,
         )
-    token, _source = forge_api.resolve_token(remote, config=config)
+    token, _source = forge_api.resolve_token(remote, config=config, root=root)
     if not token:
         raise forge_api.token_missing_error(remote)
     return remote, token

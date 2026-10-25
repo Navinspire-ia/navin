@@ -1867,6 +1867,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disk {{disk}}%",
       "runtimePressureDisk": "Disk {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL svarer ikke - start WSL på nytt",
+      "wslDownHint": "{{distro}} har ikke startet nye økter på {{seconds}} s: tester, git og forhåndsvisning for dette prosjektet feiler. Kjør {{command}} i Windows PowerShell, og åpne Navin igjen. Varselet forsvinner av seg selv når WSL svarer igjen.",
+      "wslCopy": "Kopier kommandoen",
+      "wslCopied": "Kommandoen er kopiert",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnings"
     },
@@ -9634,6 +9638,8 @@
     "showOlder": "Show earlier messages",
     "showOlderCount": "Show earlier messages ({{count}})",
     "subagents": {
+      "openHint": "Velg en agent for å lese alt arbeidet i chatten.",
+      "workTitle": "Underagentens arbeid",
       "allDone": "Subagents finished",
       "showMore": "Vis mer ({{count}})",
       "showLess": "Vis mindre",

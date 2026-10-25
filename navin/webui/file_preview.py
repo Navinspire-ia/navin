@@ -22,7 +22,7 @@ from urllib.parse import quote, unquote, urlparse
 from navin.config.secrets import RUNTIME_CONFIG_DENIED, is_runtime_secret_path
 from navin.security.workspace_access import WorkspaceScope
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
-from navin.utils import wsl
+from navin.utils import wsl, wsl_health
 from navin.utils.upload_limits import MAX_UPLOAD_FILE_BYTES
 
 MAX_FILE_PREVIEW_BYTES = 384 * 1024
@@ -1228,6 +1228,10 @@ def _wsl_find_basename(
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_WSL_FIND_TIMEOUT_S, **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        # The caller walks instead; a hung WSL is for the liveness check to say.
+        wsl_health.suspect(distro)
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     rows: list[tuple[float, int, str]] = []
@@ -1244,6 +1248,7 @@ def _wsl_find_basename(
     # it only counts when it came with matches (an unreadable subfolder).
     if proc.returncode != 0 and not rows:
         return None
+    wsl_health.answered(distro)
     if not rows:
         return None, True
     _mtime, _depth, best = max(rows, key=lambda row: (row[0], -row[1], row[2]))

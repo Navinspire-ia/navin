@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Bot,
+  Check,
+  Copy,
   Gauge,
   GitBranch,
   GitCompare,
@@ -18,7 +20,8 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { useGatewayPace, useGatewayStallSeconds } from "@/hooks/useGatewayPace";
-import type { RuntimeHealth } from "@/lib/api";
+import type { RuntimeHealth, WslNotice } from "@/lib/api";
+import { copyTextOrNotify } from "@/lib/clipboard";
 import type {
   ConnectionStatus,
   ContextUsagePayload,
@@ -60,6 +63,62 @@ export function GatewayPaceChip() {
       <Hourglass className="h-3 w-3 animate-pulse" aria-hidden />
       {t(unreachable ? "transport.pace.unreachable" : "transport.pace.slow")}
       <span className="tabular-nums text-muted-foreground">{seconds}s</span>
+    </span>
+  );
+}
+
+/**
+ * WSL stopped starting sessions: no test, git or preview reaches a project in
+ * the distribution until it is restarted, and the panels only spin. One red
+ * chip names the cause and copies the command that clears it. It goes away by
+ * itself once the engine sees WSL answer again.
+ */
+export function WslRestartChip({ notice }: { notice: WslNotice | null }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  if (!notice) return null;
+  const hint = t("dev.status.wslDownHint", {
+    defaultValue:
+      "{{distro}} has not started new sessions for {{seconds}} s: tests, git and preview for this project fail. In Windows PowerShell run {{command}}, then reopen Navin. This notice clears by itself once WSL answers again.",
+    distro: notice.distro,
+    seconds: notice.sinceSeconds,
+    command: notice.command,
+  });
+  const copyLabel = copied
+    ? t("dev.status.wslCopied", { defaultValue: "Command copied" })
+    : t("dev.status.wslCopy", { defaultValue: "Copy command" });
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1.5 font-medium text-red-500"
+      title={notice.detail ? `${hint} (${notice.detail})` : hint}
+      role="alert"
+      data-testid="wsl-restart-chip"
+      data-distro={notice.distro}
+      data-state={notice.state}
+    >
+      <AlertTriangle className="h-3 w-3" aria-hidden />
+      {t("dev.status.wslDown", { defaultValue: "WSL is not responding - restart WSL" })}
+      <button
+        type="button"
+        onClick={() => {
+          void copyTextOrNotify(notice.command).then((ok) => setCopied(ok));
+        }}
+        className="flex items-center gap-1 rounded-sm border border-red-500/40 px-1 font-mono text-[10.5px] text-foreground/90 transition-[background-color,transform] duration-150 hover:bg-red-500/10 active:scale-[0.97]"
+        title={copyLabel}
+        aria-label={`${copyLabel}: ${notice.command}`}
+      >
+        {copied ? (
+          <Check className="h-3 w-3 text-emerald-500" aria-hidden />
+        ) : (
+          <Copy className="h-3 w-3" aria-hidden />
+        )}
+        {notice.command}
+      </button>
     </span>
   );
 }
@@ -207,6 +266,7 @@ export function DevStatusBar({
         <span className="sr-only">{t(`connection.${connection}`)}</span>
       </span>
       <GatewayPaceChip />
+      <WslRestartChip notice={runtimeHealth?.wsl ?? null} />
       {environment ? (
         <span className="flex shrink-0 items-center gap-1" title={t("dev.status.environment", { defaultValue: "Environment" })}>
           <MonitorSmartphone className="h-3 w-3" aria-hidden />

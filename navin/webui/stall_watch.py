@@ -44,7 +44,8 @@ STALL_DUMP_MIN_INTERVAL_S = 60.0
 # How late the heartbeat may run before the loop counts as blocked.
 LOOP_LAG_WARN_S = 1.0
 LOOP_LAG_POLL_S = 0.25
-LOOP_LAG_MIN_INTERVAL_S = 30.0
+# One stack per freeze episode: at 30 s, 227 s of freezes in a day had none.
+LOOP_LAG_MIN_INTERVAL_S = 5.0
 # A full garbage collection at least this long gets the caller's reaction.
 SLOW_FULL_GC_S = 0.5
 # At most one reaction per interval, whatever the collector does meanwhile.
@@ -346,3 +347,23 @@ class GcClock:
             return ""
         now = time.monotonic() if now is None else now
         return f"(garbage collection of generation {generation} running for {now - started:.1f}s)"
+
+
+_STARTUP_HEAP_FROZEN = False
+
+
+def freeze_startup_heap() -> bool:
+    """Move everything alive at engine start out of later full collections.
+
+    Modules, config and registries live for the whole process, yet every full
+    collection walked them again and paused the loop 4-8 s with many agents
+    running. Only done once, at startup: freezing later would also pin
+    short-lived objects alive at that moment. True when this call froze it.
+    """
+    global _STARTUP_HEAP_FROZEN
+    if _STARTUP_HEAP_FROZEN:
+        return False
+    _STARTUP_HEAP_FROZEN = True
+    gc.collect()
+    gc.freeze()
+    return True

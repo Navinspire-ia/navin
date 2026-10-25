@@ -1982,6 +1982,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disk {{disk}}%",
       "runtimePressureDisk": "Disk {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL is not responding - restart WSL",
+      "wslDownHint": "{{distro}} has not started new sessions for {{seconds}} s: tests, git and preview for this project fail. In Windows PowerShell run {{command}}, then reopen Navin. This notice clears by itself once WSL answers again.",
+      "wslCopy": "Copy command",
+      "wslCopied": "Command copied",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnings"
     },
@@ -10347,6 +10351,8 @@
       "open": "Open in Evolve"
     },
     "subagents": {
+      "openHint": "Select an agent to read all its work in the chat.",
+      "workTitle": "Subagent work",
       "title": "Subagents",
       "historyTitle": "Subagent history",
       "accepted": "Agent request accepted.",

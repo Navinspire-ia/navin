@@ -95,6 +95,26 @@ class DeleteTest(_ManageTest):
         self.assertEqual(self._baseline("pkg/mod.py"), b"one\n")
         self.assertEqual(self._baseline("pkg/sub/other.py"), b"two\n")
 
+    def test_the_uncommitted_check_runs_off_the_event_loop(self) -> None:
+        # git status takes seconds on a WSL tree; on the loop it froze every
+        # chat and subagent of the desktop engine at once.
+        import threading
+
+        from navin.agent.tools import file_manage
+
+        self._write("a.py", "keep me\n")
+        seen: list[str] = []
+
+        def note(root, target):
+            seen.append(threading.current_thread().name)
+            return f"Warning: {Path(target).name} has uncommitted changes."
+
+        with mock.patch.object(file_manage, "uncommitted_note", side_effect=note):
+            out = self._call(action="delete", paths=["a.py"])
+        self.assertIn("a.py has uncommitted changes", out)
+        self.assertTrue(seen)
+        self.assertNotIn(threading.main_thread().name, seen)
+
     def test_a_missing_path_is_refused_before_anything_is_touched(self) -> None:
         self._write("a.py")
         out = self._call(action="delete", paths=["a.py", "gone.py"])

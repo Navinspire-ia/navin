@@ -1867,6 +1867,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disk {{disk}}%",
       "runtimePressureDisk": "Disk {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL이 응답하지 않음 - WSL을 다시 시작하세요",
+      "wslDownHint": "{{distro}}에서 {{seconds}}초 동안 새 세션이 시작되지 않았습니다. 이 프로젝트의 테스트, git, 미리보기가 실패합니다. Windows PowerShell에서 {{command}}를 실행한 뒤 Navin을 다시 여세요. WSL이 다시 응답하면 이 알림은 자동으로 사라집니다.",
+      "wslCopy": "명령 복사",
+      "wslCopied": "명령을 복사했습니다",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnings"
     },
@@ -9634,6 +9638,8 @@
     "showOlder": "Show earlier messages",
     "showOlderCount": "Show earlier messages ({{count}})",
     "subagents": {
+      "openHint": "에이전트를 선택하면 모든 작업을 채팅에서 읽을 수 있습니다.",
+      "workTitle": "서브에이전트 작업",
       "allDone": "Subagents finished",
       "showMore": "더 보기 ({{count}})",
       "showLess": "간단히 보기",

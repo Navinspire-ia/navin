@@ -387,14 +387,14 @@ class WebUISettingsRouter:
         sync_raw = (_query_first(query, "sync_catalog") or _query_first(query, "syncCatalog") or "").strip().lower()
         if sync_raw in {"1", "true", "yes"}:
             await self._sync_catalog_bounded()
-        return self._json_response(
-            self._with_restart_state(
-                settings_payload(
-                    surface=self._runtime_surface,
-                    runtime_capability_overrides=self._runtime_capabilities,
-                )
-            )
+        # Building the payload reads config, credentials and the forge state:
+        # 5-7 s measured on the loop, which stalled every agent meanwhile.
+        payload = await asyncio.to_thread(
+            settings_payload,
+            surface=self._runtime_surface,
+            runtime_capability_overrides=self._runtime_capabilities,
         )
+        return self._json_response(self._with_restart_state(payload))
 
     def _handle_settings_usage(self, request: WsRequest) -> Response:
         if not self._authorized(request):

@@ -1981,6 +1981,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disque {{disk}}%",
       "runtimePressureDisk": "Disque {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL ne répond plus - redémarrez WSL",
+      "wslDownHint": "La distribution {{distro}} n'ouvre plus de nouvelles sessions depuis {{seconds}} s : les tests, git et l'aperçu de ce projet échouent. Dans PowerShell sous Windows, lancez {{command}}, puis rouvrez Navin. Ce message disparaît tout seul dès que WSL répond à nouveau.",
+      "wslCopy": "Copier la commande",
+      "wslCopied": "Commande copiée",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Avertissements",
       "contextClose": "Fermer"
@@ -10352,6 +10356,8 @@
       "open": "Ouvrir dans Evolve"
     },
     "subagents": {
+      "openHint": "Sélectionnez un agent pour lire tout son travail dans le chat.",
+      "workTitle": "Travail du sous-agent",
       "title": "Subagents",
       "historyTitle": "Historique des sous-agents",
       "accepted": "Demande de l'agent acceptée.",

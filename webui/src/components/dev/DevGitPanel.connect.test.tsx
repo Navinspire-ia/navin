@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import i18n from "@/i18n";
 
-import { DevGitPanel } from "./DevGitPanel";
+import { DevGitPanel, GIT_CHANGES_POLL_MS, GIT_FORGE_POLL_MS } from "./DevGitPanel";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -143,5 +143,64 @@ describe("DevGitPanel inline Git connect", () => {
       expect(calls.filter((path) => path.endsWith("/git-commit"))).toHaveLength(2),
     );
     await waitFor(() => expect(screen.queryByTestId("git-connect-panel")).toBeNull());
+  });
+});
+
+describe("DevGitPanel polling", () => {
+  const count = (suffix: string) => calls.filter((path) => path.endsWith(suffix)).length;
+  let ticks: Array<() => void>;
+  let now: number;
+
+  beforeEach(() => {
+    scenario = { tokenConfigured: true, ahead: 0, commits: [] };
+    ticks = [];
+    now = 1_000_000;
+    const realSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation(((handler: () => void, ms?: number) => {
+      if (ms === GIT_CHANGES_POLL_MS) {
+        ticks.push(handler);
+        return 0;
+      }
+      return realSetInterval(handler, ms);
+    }) as typeof window.setInterval);
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(document, "hidden");
+  });
+
+  async function tick() {
+    now += GIT_CHANGES_POLL_MS;
+    await act(async () => {
+      ticks[ticks.length - 1]();
+    });
+  }
+
+  it("polls the forge four times less often than the working tree", async () => {
+    expect(GIT_FORGE_POLL_MS).toBe(4 * GIT_CHANGES_POLL_MS);
+    renderPanel();
+    await waitFor(() => expect(count("/github/pr")).toBe(1));
+    expect(count("/git-changes")).toBe(1);
+
+    for (let i = 0; i < 3; i += 1) await tick();
+    await waitFor(() => expect(count("/git-changes")).toBe(4));
+    expect(count("/github/pr")).toBe(1);
+    expect(count("/github/checks")).toBe(1);
+
+    await tick();
+    await waitFor(() => expect(count("/github/pr")).toBe(2));
+    expect(count("/github/checks")).toBe(2);
+    expect(count("/git-changes")).toBe(5);
+  });
+
+  it("does not poll while the window is hidden", async () => {
+    renderPanel();
+    await waitFor(() => expect(count("/git-changes")).toBe(1));
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    for (let i = 0; i < 4; i += 1) await tick();
+    expect(count("/git-changes")).toBe(1);
+    expect(count("/github/pr")).toBe(1);
   });
 });

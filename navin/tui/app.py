@@ -2134,6 +2134,9 @@ class NavinApp(App[None]):
             self._parked_bubbles = []
             self._last_speaker = None
             self._activity.clear()
+        panel = self._agents_panel()
+        if panel is not None:
+            panel.forget_finished()
         self._place_composer()
         self._new_chat_reply = True
         try:

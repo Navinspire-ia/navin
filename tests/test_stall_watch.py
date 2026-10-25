@@ -360,3 +360,56 @@ def test_cron_timer_store_io_runs_off_the_event_loop(tmp_path) -> None:
     asyncio.run(service._on_timer())
     assert len(seen) == 2
     assert all(ident != loop_thread for ident in seen)
+
+
+def test_startup_heap_is_frozen_once_and_stacks_are_frequent() -> None:
+    import gc
+
+    from navin.webui import stall_watch as sw
+
+    assert sw.LOOP_LAG_MIN_INTERVAL_S <= 5.0
+    saved = sw._STARTUP_HEAP_FROZEN
+    sw._STARTUP_HEAP_FROZEN = False
+    try:
+        assert sw.freeze_startup_heap() is True
+        assert gc.get_freeze_count() > 0
+        assert sw.freeze_startup_heap() is False, "only once per process"
+    finally:
+        gc.unfreeze()
+        sw._STARTUP_HEAP_FROZEN = saved
+
+
+def test_settings_route_builds_its_payload_off_the_event_loop() -> None:
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from unittest import mock
+
+    from navin.webui import settings_routes as sr
+
+    owner = next(
+        obj for obj in vars(sr).values()
+        if isinstance(obj, type) and "_handle_settings" in vars(obj)
+    )
+    threads: list[str] = []
+
+    def fake_payload(**kwargs):
+        threads.append(threading.current_thread().name)
+        return {"ok": True}
+
+    fake = SimpleNamespace(
+        _authorized=lambda request: True,
+        _query=lambda request: {},
+        _json_response=lambda payload: payload,
+        _with_restart_state=lambda payload: payload,
+        _runtime_surface=None,
+        _runtime_capabilities=None,
+    )
+
+    async def scenario():
+        return await owner._handle_settings(fake, object()), threading.current_thread().name
+
+    with mock.patch.object(sr, "settings_payload", side_effect=fake_payload):
+        result, loop_thread = asyncio.run(scenario())
+    assert result == {"ok": True}
+    assert threads and loop_thread not in threads

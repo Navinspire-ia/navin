@@ -1977,6 +1977,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · Festplatte {{disk}}%",
       "runtimePressureDisk": "Festplatte {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL antwortet nicht - WSL neu starten",
+      "wslDownHint": "{{distro}} startet seit {{seconds}} s keine neuen Sitzungen: Tests, Git und Vorschau dieses Projekts schlagen fehl. Führen Sie in der Windows-PowerShell {{command}} aus und öffnen Sie Navin erneut. Dieser Hinweis verschwindet von selbst, sobald WSL wieder antwortet.",
+      "wslCopy": "Befehl kopieren",
+      "wslCopied": "Befehl kopiert",
       "tabLatencyTooltip": "Letzte tab-Vervollständigung: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnungen"
     },
@@ -10244,6 +10248,8 @@
     "showOlder": "Frühere Nachrichten anzeigen",
     "showOlderCount": "Frühere Nachrichten anzeigen ({{count}})",
     "subagents": {
+      "openHint": "Wähle einen Agenten, um seine gesamte Arbeit im Chat zu lesen.",
+      "workTitle": "Arbeit des Subagenten",
       "title": "subagent",
       "historyTitle": "Subagent-Verlauf",
       "accepted": "Agent-Anfrage akzeptiert.",

@@ -38,6 +38,9 @@ from navin.utils.helpers import (
 from navin.utils.subagent_channel_display import scrub_subagent_announce_body
 
 FILE_MAX_MESSAGES = 2000
+# Session metadata: when the conversation on this key last started over (/new),
+# as epoch seconds. Absent for a conversation never restarted.
+CONVERSATION_STARTED_KEY = "conversation_started_at"
 MIN_REPLAY_MAX_MESSAGES = 120
 REPLAY_TOKENS_PER_MESSAGE = 100
 _MESSAGE_TIME_PREFIX_RE = re.compile(r"^\[Message Time: [^\]]+\]\n?")
@@ -313,11 +316,17 @@ class Session:
         return out
 
     def clear(self) -> None:
-        """Clear all messages and reset session to initial state."""
+        """Clear all messages and reset session to initial state.
+
+        The key stays (the CLI keeps ``cli:direct`` across /new), so the time
+        the new conversation started is kept: work recorded under the same key
+        before it, such as earlier subagents, belongs to a previous conversation.
+        """
         self.messages = []
         self.last_consolidated = 0
         self.updated_at = datetime.now()
         self.metadata.pop("_last_summary", None)
+        self.metadata[CONVERSATION_STARTED_KEY] = self.updated_at.timestamp()
 
     def retain_recent_legal_suffix(
         self,

@@ -351,7 +351,10 @@ class _FsTool(Tool):
         from a hang; a card in the thread is the only user block.
         """
         try:
-            return self._resolve_write(path) if write else self._resolve_read(path)
+            # Path resolution stats every component: seconds on a WSL tree read
+            # from Windows, so it runs in a worker thread, not on the loop.
+            resolve = self._resolve_write if write else self._resolve_read
+            return await asyncio.to_thread(resolve, path)
         except WorkspaceBoundaryError as exc:
             if not await self._ask_outside_workspace(path, write=write):
                 raise PermissionError(
@@ -675,13 +678,13 @@ class ReadFileTool(_FsTool):
             if not path:
                 return ToolResult.error("Error reading file: Unknown path")
 
-            if self._block_device_reads and _is_blocked_device(path):
+            if self._block_device_reads and await asyncio.to_thread(_is_blocked_device, path):
                 return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
 
             fp = await self._bound_path(path, write=False)
             if not fp.exists():
                 fp = _builtin_skill_read_path(path) or fp
-            if self._block_device_reads and _is_blocked_device(fp):
+            if self._block_device_reads and await asyncio.to_thread(_is_blocked_device, fp):
                 return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
             if not fp.exists():
                 recovered = await asyncio.to_thread(self._closest_readable_match, fp)
@@ -1076,7 +1079,7 @@ class WriteFileTool(_FsTool):
             # Replacing a whole file is the only edit with no anchor text to
             # fail against, so a stale or unread target is caught here or not
             # at all.
-            warnings = self._overwrite_warnings(fp)
+            warnings = await asyncio.to_thread(self._overwrite_warnings, fp)
             await asyncio.to_thread(record_file_before, fp)
             await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
             layout = _existing_layout(fp)
@@ -1122,7 +1125,7 @@ class WriteFileTool(_FsTool):
                     errors.append(refused)
                     continue
                 text = str(item["content"])
-                warnings = self._overwrite_warnings(fp)
+                warnings = await asyncio.to_thread(self._overwrite_warnings, fp)
                 await asyncio.to_thread(record_file_before, fp)
                 await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
                 layout = _existing_layout(fp)

@@ -11,6 +11,7 @@ import re
 import time
 import uuid
 from collections import deque
+from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -1218,10 +1219,14 @@ class SubagentManager:
         )
         return metadata
 
-    def list_agents(self, session_key: str, *, offset: int = 0, limit: int = 200) -> list[dict]:
+    def list_agents(
+        self, session_key: str, *, offset: int = 0, limit: int = 200,
+        workspaces: Collection[str] | None = None, since: float | None = None,
+    ) -> list[dict]:
         owners: dict[tuple[int, str], bool] = {}
         result = []
-        for row in self.journal.list(session_key, offset, limit):
+        rows = self.journal.list(session_key, offset, limit, workspaces=workspaces, since=since)
+        for row in rows:
             identity = row["owner_pid"], row.get("owner_identity", "")
             if identity not in owners:
                 owners[identity] = owner_alive(*identity)

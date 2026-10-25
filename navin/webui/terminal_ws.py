@@ -229,8 +229,29 @@ def _clamp_size(cols: int, rows: int) -> tuple[int, int]:
     return cols, rows
 
 
+# Dispositions the engine ignores survive exec. An engine started in the
+# background ignores SIGINT and SIGQUIT (nohup adds SIGHUP), and the terminal's
+# shell inherited that: Ctrl+C did nothing. A terminal starts clean, as xterm
+# and node-pty do.
+_CHILD_DEFAULT_SIGNALS = ("SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM", "SIGTSTP", "SIGTTIN", "SIGTTOU")
+
+
+def _reset_child_signals() -> None:
+    """Default dispositions and an empty mask, in the forked child before exec.
+
+    sigaction cannot refuse these signals on POSIX, so an error here is a real
+    fault: it fails the spawn and the parent reports it as a TerminalError.
+    """
+    for name in _CHILD_DEFAULT_SIGNALS:
+        number = getattr(signal, name, None)  # names: the module also loads on Windows
+        if number is not None:
+            signal.signal(number, signal.SIG_DFL)
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_SETMASK, set())
+
+
 def _attach_child_tty(slave_fd: int) -> None:
-    """Make this PTY the child's controlling terminal.
+    """Make this PTY the child's controlling terminal, with default signals.
 
     ``start_new_session`` only creates a session. Without a controlling tty the
     kernel will not turn Ctrl+C / Ctrl+Z into SIGINT / SIGTSTP, so a ``sleep``
@@ -238,6 +259,7 @@ def _attach_child_tty(slave_fd: int) -> None:
     ``os.login_tty`` (setsid + TIOCSCTTY + dup onto 0/1/2) is the usual fix;
     the ioctl path covers hosts where login_tty is missing or already a leader.
     """
+    _reset_child_signals()
     try:
         os.login_tty(slave_fd)
         return
@@ -312,7 +334,9 @@ class UnixTerminalSession:
                 preexec_fn=lambda: _attach_child_tty(slave_fd),
                 close_fds=True,
             )
-        except OSError as e:
+        # A failure in the child before exec (preexec_fn) comes back as a
+        # SubprocessError, not an OSError: both mean no shell was started.
+        except (OSError, subprocess.SubprocessError) as e:
             os.close(master_fd)
             os.close(slave_fd)
             raise TerminalError(f"failed to start shell: {e}") from e

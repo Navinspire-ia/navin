@@ -1998,6 +1998,10 @@
       "runtimePressureBoth": "الذاكرة {{mem}}% · القرص {{disk}}%",
       "runtimePressureDisk": "القرص {{pct}}%",
       "runtimePressureMemory": "الذاكرة {{pct}}%",
+      "wslDown": "WSL لا يستجيب - أعد تشغيل WSL",
+      "wslDownHint": "لم تعد {{distro}} تبدأ جلسات جديدة منذ {{seconds}} ث: تفشل الاختبارات وgit والمعاينة لهذا المشروع. شغّل {{command}} في PowerShell على Windows ثم أعد فتح Navin. يختفي هذا التنبيه تلقائيا عندما يستجيب WSL من جديد.",
+      "wslCopy": "نسخ الأمر",
+      "wslCopied": "تم نسخ الأمر",
       "tabLatencyTooltip": "آخر إكمال Tab: {{latency}} ms من طرف إلى طرف{{ttft}}{{route}}{{pct}}",
       "warnings": "تحذيرات"
     },
@@ -10508,6 +10512,8 @@
       "open": "فتح في Evolve"
     },
     "subagents": {
+      "openHint": "اختر وكيلًا لقراءة كل عمله في المحادثة.",
+      "workTitle": "عمل الوكيل الفرعي",
       "allDone": "أنهت الـsubagents عملها",
       "showMore": "عرض المزيد ({{count}})",
       "showLess": "عرض أقل",

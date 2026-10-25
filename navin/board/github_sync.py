@@ -250,7 +250,7 @@ def issue_target(project_path: Path | str, repo: str | None = None) -> _IssueTar
         remote = origin
     if remote is None:
         return _IssueTarget(api, None, "", slug)
-    token, _source = api.resolve_token(remote, config=config)
+    token, _source = api.resolve_token(remote, config=config, root=root)
     return _IssueTarget(api, remote, token, slug)
 
 
@@ -276,7 +276,7 @@ def _open_pr_via_forge(
         return None
     if remote is None or remote.kind == forge_api.UNKNOWN:
         return None
-    token, _source = forge_api.resolve_token(remote, config=config)
+    token, _source = forge_api.resolve_token(remote, config=config, root=root)
     if not token:
         return None
 
@@ -571,7 +571,7 @@ def close_task_issue(project_path: Path | str, task: dict[str, Any]) -> dict[str
         except Exception:  # noqa: BLE001 - resolution is best-effort
             ref = None
     if ref is not None and ref.remote.kind != api.UNKNOWN:
-        token, _source = api.resolve_token(ref.remote, config=_config())
+        token, _source = api.resolve_token(ref.remote, config=_config(), root=root)
         if token:
             try:
                 api.close_issue(

@@ -917,7 +917,7 @@ export interface ForgeIdentity {
   host?: string;
   repo?: string;
   token_configured?: boolean;
-  /** "settings" | "env:NAME" | "gh" | "" - never the token itself. */
+  /** "settings" | "env:NAME" | "gh" | "git" (the repo's credential helper) | "" - never the token itself. */
   token_source?: string;
   gh_available?: boolean;
 }

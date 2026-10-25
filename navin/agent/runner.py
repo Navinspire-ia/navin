@@ -1982,7 +1982,7 @@ class AgentRunner:
             if spec.workspace and spec.validate_code_changes and validation.workspace_snapshot is not None:
                 snapshot = await asyncio.to_thread(workspace_code_snapshot, spec.workspace)
                 if validation.commands_may_edit:
-                    validation.observe_workspace(snapshot, root=spec.workspace)
+                    await validation.observe_workspace_async(snapshot, root=spec.workspace)
                 else:
                     # Only file tools and checks ran: their edits are already
                     # counted, so other changes belong to a parallel session or
@@ -1999,6 +1999,7 @@ class AgentRunner:
             ):
                 limit = spec.verify_fail_nudge_limit
                 limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
+                await validation.warm_related_tests()
                 attempts = validation.nudge()
                 # Two identical refusals stop a stuck finish. The total cap
                 # also stops a loop whose state keeps moving without progress
@@ -2421,7 +2422,10 @@ class AgentRunner:
         if peak_prompt_tokens > 0:
             usage["peak_prompt_tokens"] = peak_prompt_tokens
         timing.log()
-        prompt_profile = self._prompt_profile_dict(
+        # Token counting walks the whole conversation: 2.3 s measured on the
+        # loop for a long subagent run, so it runs in a worker thread.
+        prompt_profile = await asyncio.to_thread(
+            self._prompt_profile_dict,
             spec,
             peak_request_messages if peak_request_messages is not None else messages,
         )
@@ -3097,7 +3101,7 @@ class AgentRunner:
             if watch_workspace and not tests_only:
                 validation.commands_may_edit = True
             if watch_workspace:
-                validation.observe_workspace(
+                await validation.observe_workspace_async(
                     await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
                 )
             tree_before = None
@@ -3134,7 +3138,7 @@ class AgentRunner:
                     # Checked-out commits are not the agent's edits.
                     validation.rebaseline(after, root=spec.workspace)
                 else:
-                    validation.observe_workspace(after, root=spec.workspace)
+                    await validation.observe_workspace_async(after, root=spec.workspace)
             if tree_before is not None:
                 validation.note_tree_changes(
                     tree_before, await asyncio.to_thread(workspace_code_snapshot, spec.workspace),
@@ -3425,6 +3429,7 @@ class AgentRunner:
             or (tool_call.name == "update_goal" and params.get("action") == "complete")
         )
         if closing_work and validation is not None and validation.pending:
+            await validation.warm_related_tests()
             detail = (
                 "Validation pending: task remains open.\n"
                 "This is a validation prerequisite, not a request for user permission.\n"

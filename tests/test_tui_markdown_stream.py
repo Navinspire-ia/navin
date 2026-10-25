@@ -128,8 +128,13 @@ def test_answer_is_visible_before_stream_finishes():
             block = app.query_one(AssistantMessage)
             await block.delta("First sentence. ")
             await block.delta("The next part must appear before completion.")
-            await pilot.pause(0.12)
             markdown = block.query_one(TranscriptMarkdown)
+            # Painted while the stream is still open; a slow CI runner gets up
+            # to a second for the frame instead of a fixed 0.12 s.
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if markdown.region.height > 0:
+                    break
             assert block.has_class("-open")
             assert markdown.visible and markdown.display and markdown.region.height > 0
             assert "before completion" in markdown.source

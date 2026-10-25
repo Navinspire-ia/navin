@@ -57,6 +57,28 @@ def test_history_is_complete_paginated_private_and_persistent(tmp_path):
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+def test_a_shared_session_key_lists_only_one_project_and_conversation(tmp_path):
+    # Every CLI starts on cli:direct whatever the project, and /new keeps the
+    # key: F8 listed the agents of every project and every earlier chat.
+    journal = SubagentJournal(tmp_path / "execution.sqlite3")
+    for task_id, workspace, created in (
+        ("old-here", "/projects/app", 100.0), ("new-here", "/projects/app", 300.0),
+        ("other-project", "/projects/bbac", 300.0), ("no-folder", None, 300.0),
+    ):
+        descriptor = {"task": task_id} | ({"workspace": workspace} if workspace else {})
+        journal.create("cli:direct", task_id, {"task_id": task_id}, descriptor)
+        journal._db.execute("UPDATE agents SET created_at=? WHERE task_id=?", (created, task_id))
+    journal._db.commit()
+
+    def ids(**scope):
+        return [row["metadata"]["task_id"] for row in journal.list("cli:direct", **scope)]
+
+    assert ids() == ["old-here", "new-here", "no-folder", "other-project"]
+    assert ids(workspaces={"/projects/app"}) == ["old-here", "new-here"]
+    assert ids(workspaces={"/projects/app"}, since=200.0) == ["new-here"]
+    assert ids(workspaces=set()) == []
+
+
 def test_claim_is_exclusive_and_pid_reuse_does_not_hide_interrupted_work(tmp_path):
     path = tmp_path / "execution.sqlite3"
     first, second = SubagentJournal(path), SubagentJournal(path)

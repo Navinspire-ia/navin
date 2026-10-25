@@ -455,6 +455,13 @@ def _prewarm_first_turn() -> None:
         pass
 
 
+def _consume_task_result(task: asyncio.Task) -> None:
+    """Retrieve a finished task's outcome so asyncio never logs it as unhandled."""
+    if task.done() and not task.cancelled():
+        with suppress(Exception):
+            task.exception()
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -2165,6 +2172,8 @@ class AgentLoop:
         started = turn_continuation.internal_continuation_run_started_at(msg.metadata)
         return started is None or started <= stop_ts
 
+    _STOP_GRACE_S = 2.0
+
     async def _cancel_active_tasks(self, key: str) -> int:
         """Cancel and await all active tasks and subagents for *key*.
 
@@ -2172,10 +2181,25 @@ class AgentLoop:
         """
         tasks = self._active_tasks.pop(key, [])
         cancelled = sum(1 for t in tasks if not t.done() and t.cancel())
+        # Bounded wait: this runs inline in run(), the only inbound reader. A
+        # task that unwinds slowly (or swallows one CancelledError) must not
+        # freeze every later message, nor make /stop feel unresponsive.
+        pending = [t for t in tasks if not t.done()]
+        if pending:
+            _, still = await asyncio.wait(pending, timeout=self._STOP_GRACE_S)
+            for t in still:
+                t.cancel()  # second request for tasks that swallowed the first
+                t.add_done_callback(_consume_task_result)
         for t in tasks:
-            with suppress(asyncio.CancelledError, Exception):
-                await t
-        sub_cancelled = await self.subagents.cancel_by_session(key)
+            if t.done():
+                _consume_task_result(t)
+        try:
+            sub_cancelled = await asyncio.wait_for(
+                self.subagents.cancel_by_session(key), timeout=self._STOP_GRACE_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Subagent cancel for {} still unwinding after stop", key)
+            sub_cancelled = 0
         return cancelled + sub_cancelled
 
     async def _cancel_sustained_goal(self, key: str, msg: InboundMessage) -> bool:

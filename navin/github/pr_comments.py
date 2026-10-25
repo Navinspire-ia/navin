@@ -87,7 +87,7 @@ def _forge_pr_context(root: Path, pr: int | None) -> dict[str, Any] | None:
         return None
     if remote is None or remote.kind == api.UNKNOWN:
         return None
-    token, _source = api.resolve_token(remote, config=config)
+    token, _source = api.resolve_token(remote, config=config, root=root)
     label = api.REQUEST_LABELS.get(remote.kind, "pull request")
     if not token:
         if remote.kind == api.GITHUB and gh_available():

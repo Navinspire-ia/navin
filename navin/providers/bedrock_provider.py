@@ -23,6 +23,7 @@ from navin.providers.base import (
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
+    wait_stream_idle,
 )
 from navin.providers.claude_capabilities import claude_version
 from navin.providers.reasoning_control import non_anthropic_effort
@@ -1003,9 +1004,9 @@ class BedrockProvider(LLMProvider):
             event_stream = response.get("stream")
             stream = iter(event_stream or [])
             while True:
-                event = await asyncio.wait_for(
+                event = await wait_stream_idle(
                     asyncio.to_thread(_next_or_none, stream),
-                    timeout=idle_timeout_s,
+                    idle_timeout_s,
                 )
                 if event is None:
                     break

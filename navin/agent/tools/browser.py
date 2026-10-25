@@ -53,6 +53,7 @@ from navin.agent.tools.schema import (
     tool_parameters_schema,
 )
 from navin.bus.outbound_events import AgentBrowserEvent, outbound_message_for_event
+from navin.utils.proc import no_window_kwargs
 from navin.config_base import Base
 from navin.utils.artifacts import ArtifactError, artifact_directory
 from navin.utils.helpers import build_image_content_blocks
@@ -177,7 +178,7 @@ def _rosetta_translated() -> bool:
     try:
         out = subprocess.run(
             ["/usr/sbin/sysctl", "-n", "sysctl.proc_translated"],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True, text=True, timeout=5, check=False, **no_window_kwargs(),
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return False
@@ -189,7 +190,9 @@ def _has_arm64_slice(executable: str) -> bool:
 
     for argv in (["/usr/bin/lipo", "-archs", executable], ["/usr/bin/file", executable]):
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False).stdout
+            out = subprocess.run(
+                argv, capture_output=True, text=True, timeout=10, check=False, **no_window_kwargs(),
+            ).stdout
         except (OSError, subprocess.SubprocessError):
             continue
         if out:

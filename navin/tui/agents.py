@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Scrollable inspector for every live agent, with recent action details."""
+"""Scrollable inspector for the agents of the conversation, with recent action details."""
 
 from __future__ import annotations
 
@@ -40,10 +40,42 @@ def _event_lines(event: dict[str, Any]) -> list[str]:
     return lines
 
 
+# How an agent ended, read the same way as the desktop journal (subagentState).
+_STATE_LABELS = {
+    "running": "Running", "succeeded": "Succeeded", "failed": "Failed",
+    "cancelled": "Cancelled", "interrupted": "Interrupted",
+}
+# The state filters, in button order: (id suffix, label, states kept).
+_FILTERS: tuple[tuple[str, str, frozenset[str] | None], ...] = (
+    ("all", "All", None),
+    ("running", "Running", frozenset({"running"})),
+    ("succeeded", "Succeeded", frozenset({"succeeded"})),
+    # Everything that did not finish well, so it can be resumed or relaunched.
+    ("errors", "Errors", frozenset({"failed", "cancelled", "interrupted"})),
+)
+
+
+def agent_state(row: dict[str, Any]) -> str:
+    """running, succeeded, failed, cancelled or interrupted.
+
+    ``row`` mixes the saved record (``done``, ``error`` text) and the live
+    panel row (``done_at`` once finished, ``error`` as a flag).
+    """
+    if row.get("phase") in {"interrupted", "interrupted_tool"}:
+        return "interrupted"
+    if not (row.get("done") or "done_at" in row):
+        return "running"
+    error = row.get("error")
+    if isinstance(error, str) and error.strip().lower() in {"cancelled", "canceled"}:
+        return "cancelled"
+    return "failed" if row.get("phase") == "error" or error else "succeeded"
+
+
 # Every widget the refresh, detail and operation paths update.
 _UI_SELECTOR = ", ".join(f"#{name}" for name in (
     "agents-heading", "agent-filter", "agent-table", "agent-detail",
     "agents-more", "agents-resume", "agents-relaunch",
+    "agents-show-all", "agents-show-running", "agents-show-succeeded", "agents-show-errors",
 ))
 _UI_COUNT = _UI_SELECTOR.count("#")
 
@@ -57,13 +89,19 @@ class AgentsScreen(ModalScreen[None]):
     }
     AgentsScreen #agents-heading { height: 1; }
     AgentsScreen Input { height: 3; }
+    AgentsScreen #agents-filters { height: 3; }
+    AgentsScreen #agents-filters Button { margin-right: 1; min-width: 12; }
     AgentsScreen DataTable { height: 2fr; min-height: 4; }
     AgentsScreen #agent-detail-scroll { height: 1fr; min-height: 4; }
     AgentsScreen #agent-detail { height: auto; }
     AgentsScreen #agents-actions { height: 3; }
     AgentsScreen #agents-actions Button { margin-right: 1; }
     """
-    BINDINGS = [Binding("escape", "close", "Close", priority=True)]
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        # The filter field keeps the focus: a plain letter would be typed there.
+        Binding("ctrl+r", "restart_selected", "Resume or relaunch", priority=True),
+    ]
 
     def __init__(
         self, snapshot: Callable[[], dict[str, dict[str, Any]]], *,
@@ -84,11 +122,16 @@ class AgentsScreen(ModalScreen[None]):
         self._cursor = 0
         self._has_more = False
         self._history_error = ""
+        self._state_filter = "all"
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("Agents - Escape to close", id="agents-heading", markup=False)
             yield Input(placeholder="Filter by name, task or ID", id="agent-filter")
+            with Horizontal(id="agents-filters"):
+                for suffix, label, _states in _FILTERS:
+                    yield Button(label, id=f"agents-show-{suffix}",
+                                 variant="primary" if suffix == self._state_filter else "default")
             yield DataTable(id="agent-table", cursor_type="row", zebra_stripes=True)
             with VerticalScroll(id="agent-detail-scroll"):
                 yield Static("Select an agent to inspect its recent actions.", id="agent-detail", markup=False)
@@ -149,6 +192,22 @@ class AgentsScreen(ModalScreen[None]):
     def _filter_changed(self) -> None:
         self._refresh_rows()
 
+    @on(Button.Pressed)
+    def _state_filter_pressed(self, event: Button.Pressed) -> None:
+        button_id = str(event.button.id or "")
+        if button_id.startswith("agents-show-"):
+            self.show_state(button_id.removeprefix("agents-show-"))
+
+    def show_state(self, suffix: str) -> None:
+        """Keep the agents in one state group: all, running, succeeded or errors."""
+        if suffix not in {name for name, _label, _states in _FILTERS} or self._leaving():
+            return
+        self._state_filter = suffix
+        for name, _label, _states in _FILTERS:
+            self.query_one(f"#agents-show-{name}", Button).variant = "primary" if name == suffix else "default"
+        self._signature = None
+        self._refresh_rows()
+
     def _refresh_rows(self) -> None:
         if self._leaving():
             return
@@ -156,9 +215,12 @@ class AgentsScreen(ModalScreen[None]):
         for key, row in self._snapshot().items():
             self._rows[key] = {**self._rows.get(key, {}), **row}
         needle = self.query_one(Input).value.strip().casefold()
+        keep = next(states for name, _label, states in _FILTERS if name == self._state_filter)
+        states = {key: agent_state(row) for key, row in self._rows.items()}
         rows = [(key, row) for key, row in self._rows.items()
-                if not needle or needle in f"{key} {row.get('label', '')} {row.get('task', '')}".casefold()]
-        signature = repr(rows)
+                if (keep is None or states[key] in keep)
+                and (not needle or needle in f"{key} {row.get('label', '')} {row.get('task', '')}".casefold())]
+        signature = repr((rows, [states[key] for key, _row in rows]))
         if signature == self._signature:
             return
         self._signature = signature
@@ -167,12 +229,16 @@ class AgentsScreen(ModalScreen[None]):
         table.clear()
         for key, row in rows:
             table.add_row(Text(key), Text(str(row.get("label", key))),
-                          Text(str(row.get("phase", ""))), Text(str(row.get("status", ""))),
+                          Text(_STATE_LABELS[states[key]]), Text(str(row.get("status", ""))),
                           str(row.get("tokens", 0)), key=key)
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
+        counts = {name: sum(1 for state in states.values() if state in group)
+                  for name, _label, group in _FILTERS if group is not None}
         self.query_one("#agents-heading", Static).update(
-            f"Agents: {len(rows)} shown / {len(self._rows)} tracked - Escape to close"
+            f"Agents of this conversation: {len(rows)} shown / {len(self._rows)} - "
+            f"{counts['running']} running, {counts['succeeded']} succeeded, {counts['errors']} with errors - "
+            "Ctrl+R resume or relaunch, Escape to close"
         )
         if rows:
             self._show_detail(str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))
@@ -198,7 +264,7 @@ class AgentsScreen(ModalScreen[None]):
             self._has_more = False
             self._history_error = ""
             self._request_history()
-        lines = [f"{row.get('label', key)} [{key}]", str(row.get("task", "")),
+        lines = [f"{row.get('label', key)} [{key}] - {_STATE_LABELS[agent_state(row)]}", str(row.get("task", "")),
                  f"Model: {row.get('model') or '-'}", str(row.get("status", "")), "Recent actions:"]
         for step in row.get("steps", []):
             lines.append(f"[{step.get('status', '')}] {step.get('verb', '')} {step.get('target', '')}".strip())
@@ -257,6 +323,25 @@ class AgentsScreen(ModalScreen[None]):
     @on(Button.Pressed, "#agents-relaunch")
     def _relaunch(self) -> None:
         self.run_worker(partial(self._operate, "relaunch"), group="agent-operation", exclusive=True)
+
+    def action_restart_selected(self) -> None:
+        """Ctrl+R: resume the selected agent where it stopped, else relaunch it.
+
+        Offered on the same agents as the desktop journal: an interrupted one
+        that can continue, or a failed or ambiguous one to start again.
+        """
+        row = self._rows.get(self._selected or "")
+        if self._operation_loader is None or row is None or self._leaving():
+            return
+        if row.get("recoverable"):
+            self._resume()
+        elif row.get("requires_relaunch"):
+            self._relaunch()
+        else:
+            self.query_one("#agents-heading", Static).update(
+                f"{row.get('label', self._selected)} is {_STATE_LABELS[agent_state(row)].lower()}: "
+                "nothing to resume or relaunch."
+            )
 
     async def _operate(self, operation: str) -> None:
         if self._operation_loader is None or self._selected is None:

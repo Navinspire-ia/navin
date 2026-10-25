@@ -2892,6 +2892,18 @@ export interface RuntimeHealth {
   disk?: { usedRatio?: number | null; freeGb?: number | null; path?: string };
   pid?: number;
   engine?: { version?: string; executable?: string };
+  /** A WSL distribution that no longer starts sessions; null while WSL is fine. */
+  wsl?: WslNotice | null;
+}
+
+export interface WslNotice {
+  distro: string;
+  /** "hung": wsl.exe gives no answer; "error": wsl.exe fails at once. */
+  state: "hung" | "error" | string;
+  sinceSeconds: number;
+  detail?: string;
+  /** What the user runs on the Windows side to clear it. */
+  command: string;
 }
 
 export async function fetchRuntimeHealth(

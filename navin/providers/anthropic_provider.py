@@ -24,6 +24,7 @@ from navin.providers.base import (
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
+    wait_stream_idle,
 )
 
 _ALNUM = string.ascii_letters + string.digits
@@ -981,9 +982,9 @@ class AnthropicProvider(LLMProvider):
                 tool_blocks: dict[int, dict[str, str]] = {}
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(
+                        chunk = await wait_stream_idle(
                             stream.__anext__(),
-                            timeout=idle_timeout_s,
+                            idle_timeout_s,
                         )
                     except StopAsyncIteration:
                         break

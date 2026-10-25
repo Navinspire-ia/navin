@@ -109,6 +109,7 @@ class SendTimeoutTests(unittest.TestCase):
         async def scenario() -> None:
             channel, _cleaned = _channel_with(timeout_s=5.0)
             channel._subs = {}  # type: ignore[attr-defined]
+            channel._conn_chats = {}  # type: ignore[attr-defined]
             channel._invalidate_sessions_cache = lambda: None  # type: ignore[method-assign]
             await channel.send_delta("chat-1", "a", stream_id="s1")
             await channel.send_delta("chat-1", "b", stream_id="s2")

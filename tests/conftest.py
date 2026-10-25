@@ -115,3 +115,21 @@ def _fresh_fallback_refusals():
     fallback_provider._REFUSED_UNTIL.clear()
     yield
     fallback_provider._REFUSED_UNTIL.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_wsl_liveness_check():
+    """No test starts a real wsl.exe check, nor sees another test's WSL verdict.
+
+    Code that saw a wsl.exe launch time out asks for a liveness check in the
+    background. On a WSL host, interop puts wsl.exe on PATH, so that check
+    would start the real one. Tests of the check itself put it back.
+    """
+    from unittest import mock
+
+    from navin.utils import wsl_health
+
+    wsl_health.reset()
+    with mock.patch.object(wsl_health, "_schedule_check"):
+        yield
+    wsl_health.reset()

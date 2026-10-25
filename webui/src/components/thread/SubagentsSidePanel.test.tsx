@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NavinClient, SubagentHistory, SubagentRecord } from "@/lib/navin-client";
 import { createSubagentCardStore } from "./ParallelSubagentsPanel";
-import { SubagentsButton, SubagentsSidePanel, subagentState, summarizeArgs } from "./SubagentsSidePanel";
+import { SubagentChatView, SubagentsButton, SubagentsSidePanel, subagentState, summarizeArgs } from "./SubagentsSidePanel";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const agent = (index: number): SubagentRecord => ({ task_id: `agent-${index}`, label: `Developer ${index}`, done: false, phase: "awaiting_model", status_line: "Waiting for model response", task_description: `Implement task ${index}`, model: "navin-model" });
@@ -117,5 +117,58 @@ describe("Subagent inspection", () => {
     render(<SubagentsSidePanel client={{ querySubagents } as unknown as NavinClient} chatId="chat-1" includeCompleted store={store} onClose={() => undefined} />);
     await screen.findByText("Completed", { selector: "[data-state]" });
     await waitFor(() => expect(store.getSnapshot().cards[0].done).toBe(true));
+  });
+
+  it("hands the selected agent to the chat instead of opening it in the panel", async () => {
+    const querySubagents = vi.fn(async () => [agent(1), agent(2)]);
+    const onSelect = vi.fn();
+    const { rerender } = render(<SubagentsSidePanel client={{ querySubagents } as unknown as NavinClient} chatId="chat-1" onSelect={onSelect} onClose={() => undefined} />);
+    expect(screen.getByText("Select an agent to read all its work in the chat.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /Developer 2/ }));
+    expect(onSelect).toHaveBeenCalledWith(agent(2));
+    expect(screen.queryByRole("button", { name: "Back to agents" })).toBeNull();
+    expect(querySubagents).not.toHaveBeenCalledWith("chat-1", "history", expect.anything());
+    rerender(<SubagentsSidePanel client={{ querySubagents } as unknown as NavinClient} chatId="chat-1" onSelect={onSelect} selectedId="agent-2" onClose={() => undefined} />);
+    expect(screen.getByRole("button", { name: /Developer 2/ }).getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: /Developer 1/ }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("reads an agent's whole work in the chat view, every page, and goes back", async () => {
+    const run = { ...agent(1), task_description: "Fix the share sidebar" };
+    const pages: Record<number, SubagentHistory> = {
+      0: { agent: run, events: [
+        { seq: 1, kind: "message", payload: { role: "user", content: "Start with the relay" }, created_at: 1000 },
+        { seq: 2, kind: "tool_start", payload: { name: "read_file", arguments: { path: "relay.ts" } }, created_at: 1001 },
+      ], next_cursor: 2, has_more: true },
+      2: { agent: { ...run, done: true, phase: "done", status_line: "Finished" }, events: [
+        { seq: 3, kind: "tool_done", payload: { name: "read_file", result: "export const relay = 1" }, created_at: 1002 },
+        { seq: 4, kind: "message", payload: { role: "assistant", content: "**Done** with the relay" }, created_at: 1003 },
+      ], next_cursor: 4, has_more: false },
+    };
+    const querySubagents = vi.fn(async (_chat: string, _operation: string, extra: { after?: number }) => pages[extra.after || 0]);
+    const back = vi.fn();
+    render(<SubagentChatView client={{ querySubagents } as unknown as NavinClient} chatId="chat-1" agent={agent(1)} onBack={back} />);
+    const view = screen.getByTestId("subagent-chat-view");
+    expect(view.getAttribute("aria-label")).toBe("Subagent work");
+    // Every page comes in without a click: the reader sees the whole run.
+    expect((await within(view).findByText("Done")).tagName).toBe("STRONG");
+    expect(querySubagents).toHaveBeenCalledWith("chat-1", "history", { task_id: "agent-1", after: 2, limit: 100 });
+    expect(view.querySelectorAll("[data-event-seq]")).toHaveLength(4);
+    expect(within(view).getByText("Fix the share sidebar")).toBeTruthy();
+    expect(within(view).getByText("navin-model · Finished")).toBeTruthy();
+    expect(within(view).getByText("Start with the relay").closest(".rounded-2xl")).toBeTruthy();
+    expect(within(view).getAllByText("read_file")).toHaveLength(2);
+    expect(within(view).getByText("Completed", { selector: "[data-state]" })).toBeTruthy();
+    expect(within(view).queryByRole("button", { name: "Load more actions" })).toBeNull();
+    fireEvent.click(within(view).getByRole("button", { name: "Return to main chat" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(back).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a history failure in the chat view instead of an empty reading", async () => {
+    const querySubagents = vi.fn(async () => { throw new Error("The agent connection is offline."); });
+    render(<SubagentChatView client={{ querySubagents } as unknown as NavinClient} chatId="chat-1" agent={agent(3)} canManage={false} onBack={() => undefined} />);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("offline"));
+    expect(screen.getByText("Developer 3")).toBeTruthy();
   });
 });

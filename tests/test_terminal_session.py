@@ -446,7 +446,7 @@ class ConPtyLiveTest(unittest.IsolatedAsyncioTestCase):
 class UnixCtrlCTest(unittest.IsolatedAsyncioTestCase):
     """Ctrl+C must SIGINT the foreground job, not sit in stdin as a character."""
 
-    async def test_etx_stops_a_sleeping_child(self) -> None:
+    async def _assert_etx_stops_a_sleeping_child(self) -> None:
         import shutil
 
         sh = shutil.which("sh") or "/bin/sh"
@@ -479,6 +479,43 @@ class UnixCtrlCTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(exited.wait(), timeout=4.0)
         finally:
             session.close()
+
+    async def test_etx_stops_a_sleeping_child(self) -> None:
+        await self._assert_etx_stops_a_sleeping_child()
+
+    async def test_etx_still_works_when_the_engine_ignores_sigint(self) -> None:
+        # An engine started in the background ignores SIGINT; the shell used
+        # to inherit it and Ctrl+C left the command running.
+        import signal
+
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+        await self._assert_etx_stops_a_sleeping_child()
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN, "the engine keeps its own disposition")
+
+    async def test_a_failed_child_setup_is_reported_as_a_terminal_error(self) -> None:
+        import shutil
+
+        def refused() -> None:
+            raise ValueError("signal setup refused")
+
+        async def ignore(*_args: object) -> None:
+            return
+
+        with mock.patch.object(terminal_ws, "_reset_child_signals", refused):
+            with self.assertRaises(terminal_ws.TerminalError) as caught:
+                UnixTerminalSession(
+                    terminal_id="refused",
+                    shell_name="sh",
+                    shell_path=shutil.which("sh") or "/bin/sh",
+                    shell_args=["-c", "exit 0"],
+                    cwd=str(Path.home()),
+                    cols=80,
+                    rows=24,
+                    on_output=ignore,
+                    on_exit=ignore,
+                )
+        self.assertIn("failed to start shell", str(caught.exception))
 
     def test_spawn_installs_a_controlling_tty_hook(self) -> None:
         source = Path(terminal_ws.__file__).read_text(encoding="utf-8")

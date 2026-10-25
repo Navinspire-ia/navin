@@ -25,6 +25,7 @@ from typing import Any
 
 from loguru import logger
 
+from navin.utils import wsl_health
 from navin.utils.proc import no_window_kwargs
 
 _PSUTIL_ERROR = ""
@@ -260,6 +261,9 @@ def runtime_health_payload(*, workspace: str | None = None) -> dict[str, Any]:
         },
         "pid": os.getpid(),
         "engine": _engine_identity(),
+        # A distribution that no longer starts sessions: every test, lint, git
+        # and preview command for its projects fails until WSL is restarted.
+        "wsl": wsl_health.status(),
     }
 
 

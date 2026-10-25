@@ -16,10 +16,10 @@ import type { UIMessage, WebuiThreadPagePayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
 import { applyComposerTurnMode } from "@/components/thread/ComposerModeMenu";
-import { createSubagentCardStore } from "@/components/thread/ParallelSubagentsPanel";
-import { SubagentsButton, SubagentsSidePanel } from "@/components/thread/SubagentsSidePanel";
+import { SubagentChatView, SubagentsButton, SubagentsSidePanel } from "@/components/thread/SubagentsSidePanel";
 
 import { GuestMedia, withGuestMedia } from "./guest-media";
+import { useGuestSubagents } from "./useGuestSubagents";
 // The app icon itself, as in the Dock and the taskbar.
 import navinIcon from "./navin-icon.png";
 import { GuestSiteTunnel, type SiteFailure } from "./guest-site";
@@ -694,15 +694,8 @@ function GuestThread({
   const { t } = useTranslation();
   const { client } = useClient();
   const [mode, setMode] = useGuestMode();
-  // Subagents the host's agent spawns: same live cards as on the host.
-  const [subagentStore] = useState(createSubagentCardStore);
-  const [subagentsOpen, setSubagentsOpen] = useState(false);
-  const [subagentsIncludeCompleted, setSubagentsIncludeCompleted] = useState(false);
-  useEffect(() => { subagentStore.reset(); setSubagentsOpen(false); setSubagentsIncludeCompleted(false); }, [chatId, subagentStore]);
-  useEffect(() => client.onSubagentProgress((update) => {
-    if (update.chatId && update.chatId !== chatId) return;
-    subagentStore.upsert(update);
-  }), [chatId, client, subagentStore]);
+  // Subagents the host's agent spawns: listed on the right, read in the chat.
+  const subagents = useGuestSubagents(client, chatId);
   const initial = useMemo(() => threadPage(thread, "hist"), [thread]);
   const stream = useNavinStream(chatId, initial.messages, initial.pending);
   const { setMessages } = stream;
@@ -857,11 +850,16 @@ function GuestThread({
             className="absolute inset-0 z-20 bg-black/40 min-[900px]:hidden"
             onClick={onCloseSidebar}
           />
-          {cloneElement(sidebar, { onJump: (index: number) => void jump(index), onOpenSubagentHistory: () => { setSubagentsIncludeCompleted(true); setSubagentsOpen(true); onCloseSidebar(); } })}
+          {cloneElement(sidebar, {
+            onJump: (index: number) => { subagents.back(); void jump(index); },
+            onOpenSubagentHistory: () => { subagents.openHistory(); onCloseSidebar(); },
+          })}
         </>
       ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex shrink-0 justify-end px-3"><SubagentsButton store={subagentStore} open={subagentsOpen} onClick={() => { setSubagentsIncludeCompleted(false); setSubagentsOpen((open) => !open); }} /></div>
+      <div className="flex shrink-0 justify-end px-3"><SubagentsButton store={subagents.store} hasHistory={subagents.hasHistory} open={subagents.open} onClick={subagents.toggle} /></div>
+      {/* The agent being read covers the chat without unmounting it: back finds it where it was. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-3xl px-3 py-4 sm:px-4 sm:py-6">
           {page.hasMore ? (
@@ -891,7 +889,20 @@ function GuestThread({
         </div>
       </div>
       <AnimatePresence>
-        {!atBottom && unseen > 0 ? (
+        {subagents.viewing ? (
+          <SubagentChatView
+            key={subagents.viewing.task_id}
+            client={client}
+            chatId={chatId}
+            agent={subagents.viewing}
+            canManage={canDrive}
+            onBack={subagents.back}
+          />
+        ) : null}
+      </AnimatePresence>
+      </div>
+      <AnimatePresence>
+        {!atBottom && unseen > 0 && !subagents.viewing ? (
           <motion.button
             type="button"
             initial={{ opacity: 0, y: 6, x: "-50%" }}
@@ -951,7 +962,19 @@ function GuestThread({
         </div>
       </form>
       </div>
-      {subagentsOpen ? <SubagentsSidePanel key={chatId} client={client} chatId={chatId} includeCompleted={subagentsIncludeCompleted} canManage={canDrive} onClose={() => { setSubagentsOpen(false); setSubagentsIncludeCompleted(false); }} /> : null}
+      {subagents.open ? (
+        <SubagentsSidePanel
+          key={chatId}
+          client={client}
+          chatId={chatId}
+          store={subagents.store}
+          includeCompleted={subagents.includeCompleted}
+          canManage={canDrive}
+          onSelect={subagents.select}
+          selectedId={subagents.viewing?.task_id ?? null}
+          onClose={subagents.close}
+        />
+      ) : null}
       {live}
       </div>
     </>

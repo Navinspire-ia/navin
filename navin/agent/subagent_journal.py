@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Collection
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -200,13 +201,33 @@ class SubagentJournal:
                 "checkpoint": json.loads(row["checkpoint"]) if row["checkpoint"] else None,
                 "owner_pid": row["owner_pid"], "owner_identity": row["owner_identity"]}
 
-    def list(self, session: str, offset: int = 0, limit: int = 200) -> list[dict]:
+    def list(
+        self, session: str, offset: int = 0, limit: int = 200, *,
+        workspaces: Collection[str] | None = None, since: float | None = None,
+    ) -> list[dict]:
+        """Agents of ``session``, oldest first.
+
+        A session key is not unique across projects (every CLI starts on
+        ``cli:direct``) nor across /new. ``workspaces`` keeps the agents started
+        for one of those project folders, ``since`` those started at or after
+        that time (epoch seconds).
+        """
+        where, params = ["session=?"], [session]
+        if workspaces is not None:
+            folders = sorted(set(workspaces))
+            if not folders:
+                return []
+            where.append(f"json_extract(descriptor,'$.workspace') IN ({','.join('?' * len(folders))})")
+            params.extend(folders)
+        if since is not None:
+            where.append("created_at>=?")
+            params.append(since)
         with self._lock:
             rows = self._db.execute(
                 "SELECT metadata,owner_pid,owner_identity,checkpoint_phase,"
                 "json_extract(descriptor,'$.isolate') AS isolated FROM agents "
-                "WHERE session=? ORDER BY created_at,task_id LIMIT ? OFFSET ?",
-                (session, min(1000, max(1, limit)), max(0, offset)),
+                f"WHERE {' AND '.join(where)} ORDER BY created_at,task_id LIMIT ? OFFSET ?",
+                (*params, min(1000, max(1, limit)), max(0, offset)),
             ).fetchall()
             return [{"metadata": json.loads(row["metadata"]),
                      "owner_pid": row["owner_pid"], "owner_identity": row["owner_identity"],

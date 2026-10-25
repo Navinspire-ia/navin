@@ -1,9 +1,11 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { runtimeHealthTooltip } from "@/components/dev/DevStatusBar";
+import { runtimeHealthTooltip, WslRestartChip } from "@/components/dev/DevStatusBar";
 import type { RuntimeHealth } from "@/lib/api";
 
 const t = (key: string, opts?: Record<string, unknown>) =>
@@ -49,5 +51,31 @@ describe("runtimeHealthTooltip", () => {
     expect(title).toContain("runtime.unavailable");
     expect(title).not.toContain("0%");
     expect(title).toContain("engineVersion");
+  });
+});
+
+describe("WslRestartChip", () => {
+  it("renders nothing while WSL answers", () => {
+    expect(renderToStaticMarkup(createElement(WslRestartChip, { notice: null }))).toBe("");
+  });
+
+  it("names the distribution and offers the command that clears it", () => {
+    const html = renderToStaticMarkup(
+      createElement(WslRestartChip, {
+        notice: {
+          distro: "Ubuntu",
+          state: "hung",
+          sinceSeconds: 63,
+          detail: "wsl.exe gave no answer in 20 s",
+          command: "wsl --shutdown",
+        },
+      }),
+    );
+    expect(html).toContain('data-testid="wsl-restart-chip"');
+    expect(html).toContain('data-distro="Ubuntu"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("<button");
+    expect(html).toContain("wsl --shutdown");
+    expect(html).toContain("wsl.exe gave no answer in 20 s");
   });
 });

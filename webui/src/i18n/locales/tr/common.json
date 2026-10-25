@@ -1867,6 +1867,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disk {{disk}}%",
       "runtimePressureDisk": "Disk {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL yanıt vermiyor - WSL'yi yeniden başlatın",
+      "wslDownHint": "{{distro}} {{seconds}} sn'dir yeni oturum başlatmıyor: bu projenin testleri, git ve önizlemesi başarısız oluyor. Windows PowerShell'de {{command}} komutunu çalıştırın, ardından Navin'i yeniden açın. WSL yeniden yanıt verdiğinde bu uyarı kendiliğinden kaybolur.",
+      "wslCopy": "Komutu kopyala",
+      "wslCopied": "Komut kopyalandı",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnings"
     },
@@ -9634,6 +9638,8 @@
     "showOlder": "Show earlier messages",
     "showOlderCount": "Show earlier messages ({{count}})",
     "subagents": {
+      "openHint": "Tüm çalışmasını sohbette okumak için bir ajan seçin.",
+      "workTitle": "Alt ajan çalışması",
       "allDone": "Subagents finished",
       "showMore": "Daha fazla göster ({{count}})",
       "showLess": "Daha az göster",

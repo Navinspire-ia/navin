@@ -20,6 +20,7 @@ creation, each individually rejectable.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import Any
@@ -246,7 +247,7 @@ class ManageFilesTool(_FsTool):
                 doomed.append(target)
 
         self._refuse_oversized(doomed, "delete")
-        warnings = self._warn_about(doomed)
+        warnings = await asyncio.to_thread(self._warn_about, doomed)
         await self._ask_before_losing(
             "delete",
             warnings,
@@ -337,7 +338,7 @@ class ManageFilesTool(_FsTool):
         arriving = _files_under(source)
         tracked = [*replaced, *([] if action == "copy" else arriving)]
         self._refuse_oversized(tracked, action)
-        warnings = self._warn_about(tracked)
+        warnings = await asyncio.to_thread(self._warn_about, tracked)
         await self._ask_before_losing(
             action,
             warnings,

@@ -75,6 +75,43 @@ class _WorkspaceTest(unittest.TestCase):
 
 
 class LeadingSlashTest(_WorkspaceTest):
+    def test_file_tools_resolve_read_and_write_off_the_event_loop(self) -> None:
+        # Each of these stats or reads the disk: seconds on a WSL tree read from
+        # Windows, and on the loop they froze every agent of the engine at once.
+        import threading
+        from unittest import mock
+
+        from navin.agent.tools import apply_patch as patch_module
+
+        seen: dict[str, list[str]] = {}
+
+        def spy(name, real):
+            def wrapper(*args, **kwargs):
+                seen.setdefault(name, []).append(threading.current_thread().name)
+                return real(*args, **kwargs)
+
+            return wrapper
+
+        main = threading.current_thread().name
+        reader = ReadFileTool(**self._kw())
+        patcher = ApplyPatchTool(**self._kw())
+        with (
+            mock.patch.object(reader, "_resolve_read", spy("resolve_read", reader._resolve_read)),
+            mock.patch.object(patcher, "_resolve_write", spy("resolve_write", patcher._resolve_write)),
+            mock.patch.object(patch_module, "_read_source", spy("read_source", patch_module._read_source)),
+            mock.patch.object(patch_module, "write_all", spy("write_all", patch_module.write_all)),
+        ):
+            self.assertIn("marker", _run(reader.execute(path="atlas/code.py")))
+            out = _run(patcher.execute(edits=[{
+                "path": "atlas/code.py", "action": "replace",
+                "old_text": "return 1", "new_text": "return 2",
+            }]))
+        self.assertIn("Patch applied", out)
+        self.assertIn("return 2", (self.root / "atlas" / "code.py").read_text(encoding="utf-8"))
+        self.assertEqual(set(seen), {"resolve_read", "resolve_write", "read_source", "write_all"})
+        for name, threads in seen.items():
+            self.assertNotIn(main, threads, f"{name} ran on the event loop")
+
     def test_list_dir_reads_a_leading_slash_as_the_project_root(self) -> None:
         out = _run(ListDirTool(**self._kw()).execute(path="/atlas"))
         self.assertIn("notes.md", out)

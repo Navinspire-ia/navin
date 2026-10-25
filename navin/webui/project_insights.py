@@ -55,6 +55,16 @@ def _git_argv(path: Path) -> list[str] | None:
     return git_argv(path)
 
 
+def _suspect_wsl(path: Any) -> None:
+    """A git command into a WSL project never answered: have WSL itself checked."""
+    from navin.utils import wsl_health
+    from navin.utils.git_argv import git_route
+
+    route = git_route(path)
+    if route is not None and route.distro:
+        wsl_health.suspect(route.distro)
+
+
 def git_status_payload(raw_path: str) -> dict[str, Any]:
     """Branch / dirty / ahead-behind summary for the project root."""
     path = _check_dir(raw_path)
@@ -71,6 +81,11 @@ def git_status_payload(raw_path: str) -> dict[str, Any]:
             timeout=_GIT_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        # The Git panel polls this: on a wedged WSL it is the first command to
+        # hang, so the status bar learns it here and can ask for a restart.
+        _suspect_wsl(path)
+        return {"available": True, "is_repo": False}
     except (OSError, subprocess.SubprocessError):
         return {"available": True, "is_repo": False}
     if out.returncode != 0:

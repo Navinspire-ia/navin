@@ -442,17 +442,48 @@ class TuiRuntime:
         self.shutdown_warnings: list[str] = []
 
     async def list_subagents(self) -> list[dict[str, Any]]:
+        """Agents of the conversation on screen, not of every chat on this key.
+
+        Every CLI starts on ``cli:direct`` whatever the project, and /new keeps
+        the key: the journal held under it the agents of every project and of
+        every earlier conversation, and F8 listed them all.
+        """
         manager = getattr(self.agent_loop, "subagents", None)
         if manager is None:
             return []
+        workspaces, since = await asyncio.to_thread(self._conversation_scope, manager)
         rows: list[dict[str, Any]] = []
         offset = 0
         while True:
-            page = await asyncio.to_thread(manager.list_agents, self.session_key, offset=offset, limit=200)
+            page = await asyncio.to_thread(
+                manager.list_agents, self.session_key, offset=offset, limit=200,
+                workspaces=workspaces, since=since,
+            )
             rows.extend(page)
             if len(page) < 200:
                 return rows
             offset += len(page)
+
+    def _conversation_scope(self, manager: Any) -> tuple[set[str], float | None]:
+        """Project folders and start time of the current conversation.
+
+        The folders are the ones a subagent of this chat records: the turn's
+        workspace scope, else the engine workspace. The start is the last /new
+        (None for a conversation never restarted).
+        """
+        from navin.session.manager import CONVERSATION_STARTED_KEY
+
+        loop = self.agent_loop
+        workspaces = {str(manager.workspace)}
+        session = loop.sessions.get_or_create(self.session_key)
+        metadata = getattr(session, "metadata", None) or {}
+        scopes = getattr(loop, "workspace_scopes", None)
+        if scopes is not None:
+            scope = scopes.for_turn(channel=self.channel, message_metadata=None, session_metadata=metadata)
+            workspaces.add(str(scope.project_path))
+        started = metadata.get(CONVERSATION_STARTED_KEY)
+        since = float(started) if isinstance(started, (int, float)) and not isinstance(started, bool) else None
+        return workspaces, since
 
     async def subagent_history(self, task_id: str, after: int = 0) -> dict[str, Any]:
         manager = getattr(self.agent_loop, "subagents", None)

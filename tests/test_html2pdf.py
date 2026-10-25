@@ -15,6 +15,16 @@ from navin.documents import _pdf, html2pdf
 from navin.documents._chromium import find_chromium
 from navin.documents.html2pdf import ConversionError
 
+
+def _chromium_installed() -> bool:
+    # find_chromium raises when nothing is found: called bare in a decorator,
+    # a runner without Chromium failed the collection of the whole suite.
+    try:
+        return bool(find_chromium(None))
+    except ConversionError:
+        return False
+
+
 _TWO_PAGES = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <title>Contrat de prestation</title>
 <style>.page{width:210mm;height:297mm;padding:20mm;box-sizing:border-box;font:12pt sans-serif}</style>
@@ -150,7 +160,7 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(info["pages"], 1)
         self.assertEqual(info["warnings"], [])
 
-    @unittest.skipUnless(find_chromium(None), "Chromium is not installed")
+    @unittest.skipUnless(_chromium_installed(), "Chromium is not installed")
     def test_two_sections_print_as_two_a4_pages_with_real_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "document.html"
@@ -170,7 +180,7 @@ class ConvertTests(unittest.TestCase):
             self.assertAlmostEqual(float(box.width), 595, delta=2)
             self.assertAlmostEqual(float(box.height), 842, delta=2)
 
-    @unittest.skipUnless(find_chromium(None), "Chromium is not installed")
+    @unittest.skipUnless(_chromium_installed(), "Chromium is not installed")
     def test_a_folder_of_slides_is_bound_into_one_deck_pdf(self) -> None:
         slide = """<!doctype html><html><head><meta charset="utf-8"><title>Kickoff</title>
 <style>body{margin:0}.nv-slide{width:1920px;height:1080px;background:#123;color:#fff;font:64px sans-serif;padding:80px;box-sizing:border-box}</style>

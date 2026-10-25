@@ -1867,6 +1867,10 @@
       "runtimePressureBoth": "RAM {{mem}}% · disk {{disk}}%",
       "runtimePressureDisk": "Disk {{pct}}%",
       "runtimePressureMemory": "RAM {{pct}}%",
+      "wslDown": "WSL が応答しません - WSL を再起動してください",
+      "wslDownHint": "{{distro}} は {{seconds}} 秒間新しいセッションを開始していません。このプロジェクトのテスト、git、プレビューは失敗します。Windows の PowerShell で {{command}} を実行し、Navin を開き直してください。WSL が再び応答すると、この通知は自動的に消えます。",
+      "wslCopy": "コマンドをコピー",
+      "wslCopied": "コマンドをコピーしました",
       "tabLatencyTooltip": "Last Tab completion: {{latency}} ms end-to-end{{ttft}}{{route}}{{pct}}",
       "warnings": "Warnings"
     },
@@ -9634,6 +9638,8 @@
     "showOlder": "Show earlier messages",
     "showOlderCount": "Show earlier messages ({{count}})",
     "subagents": {
+      "openHint": "エージェントを選択すると、その作業のすべてをチャットで読めます。",
+      "workTitle": "サブエージェントの作業",
       "allDone": "Subagents finished",
       "showMore": "さらに表示 ({{count}})",
       "showLess": "表示を減らす",

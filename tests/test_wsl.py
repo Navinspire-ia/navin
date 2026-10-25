@@ -13,14 +13,20 @@ ordinary network share that must not be mistaken for a distribution.
 from __future__ import annotations
 
 import io
+import subprocess
 import tarfile
+import threading
+import time
 import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
 from unittest.mock import patch
 
 from navin.index import service
-from navin.utils import wsl, wsl_bulk
+from navin.utils import wsl, wsl_bulk, wsl_health
+
+# Captured at import, before the test isolation stubs it out.
+_REAL_SCHEDULE_CHECK = wsl_health._schedule_check
 
 
 class ParseTest(unittest.TestCase):
@@ -432,6 +438,96 @@ class WslBulkTest(unittest.TestCase):
             rows = list(service._iter_stats(UNC, ["a.py", "gone.py"], paced=True))
         self.assertEqual(rows, [("a.py", 5, 7)])
         self.assertEqual(stat.call_count, 1)
+
+    def test_a_launch_that_times_out_asks_whether_wsl_is_down(self):
+        location = wsl.parse_unc(str(UNC))
+        with patch.object(wsl, "resolve_distro", return_value="Ubuntu"), \
+                patch.object(wsl_bulk.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 120)):
+            self.assertIsNone(wsl_bulk._run(location, "true", b""))
+        wsl_health._schedule_check.assert_called_once_with("Ubuntu")
+
+
+class WslHealthTest(unittest.TestCase):
+    """The status bar tells the user to restart WSL only when WSL is really down."""
+
+    def setUp(self) -> None:
+        for patcher in (
+            patch.object(wsl_health, "_schedule_check", _REAL_SCHEDULE_CHECK),
+            patch.object(wsl, "wsl_executable", return_value="wsl.exe"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _settle(self) -> None:
+        for thread in threading.enumerate():
+            if thread.name == "navin-wsl-health":
+                thread.join(5)
+                self.assertFalse(thread.is_alive())
+
+    def test_a_hung_wsl_asks_for_a_restart_until_it_answers_again(self) -> None:
+        with patch.object(wsl_health.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 20)) as run:
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        self.assertEqual(run.call_args.args[0], ["wsl.exe", "-d", "Ubuntu", "--exec", "true"])
+        notice = wsl_health.status()
+        assert notice is not None
+        self.assertEqual(notice["distro"], "Ubuntu")
+        self.assertEqual(notice["state"], "hung")
+        self.assertEqual(notice["command"], "wsl --shutdown")
+        self.assertGreaterEqual(notice["sinceSeconds"], 0)
+
+        # After the restart the next recovery check clears it by itself.
+        healthy = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+        with patch.object(wsl_health, "RECHECK_EVERY_S", 0), \
+                patch.object(wsl_health.subprocess, "run", return_value=healthy):
+            self.assertIsNotNone(wsl_health.status())
+            self._settle()
+        self.assertIsNone(wsl_health.status())
+
+    def test_the_service_failure_is_reported_with_its_own_words(self) -> None:
+        message = "Catastrophic failure\r\nError code: Wsl/Service/E_UNEXPECTED\r\n".encode("utf-16-le")
+        failed = subprocess.CompletedProcess([], 4294967295, stdout=message, stderr=b"")
+        with patch.object(wsl_health.subprocess, "run", return_value=failed):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        notice = wsl_health.status()
+        assert notice is not None
+        self.assertEqual(notice["state"], "error")
+        self.assertEqual(notice["detail"], "Catastrophic failure Error code: Wsl/Service/E_UNEXPECTED")
+
+    def test_a_slow_command_on_a_healthy_wsl_shows_nothing(self) -> None:
+        healthy = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+        with patch.object(wsl_health.subprocess, "run", return_value=healthy) as run:
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+            wsl_health.suspect("Ubuntu")  # within the recheck interval: no second wsl.exe
+            self._settle()
+        self.assertEqual(run.call_count, 1)
+        self.assertIsNone(wsl_health.status())
+
+    def test_reading_the_status_never_waits_on_wsl(self) -> None:
+        release = threading.Event()
+
+        def hung(*_args, **_kwargs):
+            release.wait(5)
+            raise subprocess.TimeoutExpired(["wsl.exe"], 20)
+
+        with patch.object(wsl_health.subprocess, "run", side_effect=hung):
+            wsl_health.suspect("Ubuntu")
+            started = time.monotonic()
+            self.assertIsNone(wsl_health.status())  # verdict still pending
+            self.assertLess(time.monotonic() - started, 1.0)
+            release.set()
+            self._settle()
+        self.assertIsNotNone(wsl_health.status())
+
+    def test_a_launch_that_answered_clears_the_notice_at_once(self) -> None:
+        with patch.object(wsl_health.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 20)):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        self.assertIsNotNone(wsl_health.status())
+        wsl_health.answered("ubuntu")
+        self.assertIsNone(wsl_health.status())
 
 
 class GeneratedScriptsRunForRealTest(unittest.TestCase):

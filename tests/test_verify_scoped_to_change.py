@@ -183,6 +183,53 @@ class ChangedFilesTestsOnlyTest(unittest.TestCase):
             self._write(f"tests/test_feature{index}.py", "import pkg.app\n")
         self.assertEqual(testing.related_test_targets(self.root, ["pkg/app.py"]), ["tests/test_app.py"])
 
+    def test_each_test_file_is_read_once_and_reused_while_unchanged(self) -> None:
+        # Re-reading every test for each changed module froze the desktop
+        # engine ~100 s per lookup on a WSL tree read from Windows.
+        from unittest import mock
+
+        self._write("pkg/alpha.py")
+        self._write("pkg/beta.py")
+        self._write("tests/test_uses_both.py", "from pkg import alpha\nfrom pkg import beta\n")
+        self._write("tests/test_other.py", "import os\n")
+        reads: list[str] = []
+        real_read = Path.read_text
+
+        def counting_read(path, *args, **kwargs):
+            reads.append(Path(path).name)
+            return real_read(path, *args, **kwargs)
+
+        testing._TEST_TEXTS.clear()
+        self.addCleanup(testing._TEST_TEXTS.clear)
+        with mock.patch.object(Path, "read_text", counting_read):
+            first = testing.related_test_targets(self.root, ["pkg/alpha.py", "pkg/beta.py"])
+            self.assertEqual(first, ["tests/test_uses_both.py"])
+            self.assertEqual(sorted(reads), ["test_other.py", "test_uses_both.py"], "one read per file")
+            reads.clear()
+            testing.related_test_targets(self.root, ["pkg/alpha.py"])
+            self.assertEqual(reads, [], "unchanged tests are not read again")
+            self._write("tests/test_other.py", "from pkg import alpha\n")
+            self.assertEqual(
+                testing.related_test_targets(self.root, ["pkg/alpha.py"]),
+                ["tests/test_other.py", "tests/test_uses_both.py"],
+            )
+            self.assertEqual(reads, ["test_other.py"], "an edited test is read again")
+
+    def test_an_exhausted_scan_budget_keeps_the_tests_named_after_the_module(self) -> None:
+        from unittest import mock
+
+        self._write("pkg/app.py")
+        self._write("tests/test_app.py")
+        self._write("tests/test_loader.py", "import pkg.app\n")
+        testing._TEST_TEXTS.clear()
+        self.addCleanup(testing._TEST_TEXTS.clear)
+        with mock.patch.object(testing, "_IMPORT_SCAN_BUDGET_S", -1.0):
+            self.assertEqual(testing.related_test_targets(self.root, ["pkg/app.py"]), ["tests/test_app.py"])
+        self.assertEqual(
+            testing.related_test_targets(self.root, ["pkg/app.py"]),
+            ["tests/test_app.py", "tests/test_loader.py"],
+        )
+
     def test_a_typescript_change_maps_to_its_sibling_test(self) -> None:
         self._write("site/front/src/lib/card.ts")
         self._write("site/front/src/lib/card.test.ts")

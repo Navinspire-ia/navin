@@ -1317,6 +1317,7 @@ class WebSocketChannel(BaseChannel):
             self._attach(connection, default_chat_id)
             await self._presence_join(connection, default_chat_id)
             await self._hydrate_after_subscribe(default_chat_id)
+            await self._replay_running_turns(connection, skip=default_chat_id)
 
             async for raw in connection:
                 if isinstance(raw, bytes):
@@ -2600,6 +2601,9 @@ class WebSocketChannel(BaseChannel):
         # seconds stalls every route at once, and only a thread can see it.
         self._loop_lag = LoopLagMonitor(self.logger)
         self._loop_lag.start()
+        from navin.webui.stall_watch import freeze_startup_heap
+
+        freeze_startup_heap()
 
     async def stop(self) -> None:
         if not self._running:
@@ -2801,13 +2805,14 @@ class WebSocketChannel(BaseChannel):
                 # Turn finished, cancelled or failed: a stream cut short never
                 # sends stream_end, so drop its buffered text here.
                 self._clear_stream_buffers(msg.chat_id)
-            if conns:
-                if event.status in ("running", "idle"):
-                    await self.send_goal_status(
-                        msg.chat_id,
-                        event.status,
-                        started_at=event.started_at,
-                    )
+            # Broadcast even with no subscriber on this chat: the sidebar of
+            # every open window shows the running glyph of each active agent.
+            if event.status in ("running", "idle"):
+                await self.send_goal_status(
+                    msg.chat_id,
+                    event.status,
+                    started_at=event.started_at,
+                )
             return
         # Signal that the agent has fully finished processing the current turn.
         if isinstance(event, TurnEndEvent):
@@ -3134,6 +3139,29 @@ class WebSocketChannel(BaseChannel):
         body = {"event": "goal_state", "chat_id": chat_id, "goal_state": blob}
         raw = json.dumps(body, ensure_ascii=False)
         await _send_to_all(self._safe_send_to, conns, raw, label=" goal_state ")
+
+    async def _replay_running_turns(self, connection: Any, *, skip: str | None = None) -> None:
+        """Tell a (re)connected client about every turn still running.
+
+        The client clears its running set on reconnect; without this replay
+        only the attached chat got its indicator back, so a second or third
+        agent working in parallel looked idle.
+        """
+        from navin.session.webui_turns import running_websocket_turns
+
+        for chat_id, started_at in running_websocket_turns().items():
+            if chat_id == skip:
+                continue
+            raw = json.dumps(
+                {
+                    "event": "goal_status",
+                    "chat_id": chat_id,
+                    "status": "running",
+                    "started_at": started_at,
+                },
+                ensure_ascii=False,
+            )
+            await _send_to_all(self._safe_send_to, [connection], raw, label=" goal_status ")
 
     async def send_goal_status(
         self,

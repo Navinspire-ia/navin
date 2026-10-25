@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
@@ -531,6 +532,28 @@ def _legacy_evidence(name: str, params: dict[str, Any], text: str) -> Verificati
     return VerificationEvidence(checks_ok=outcome, summary=text[:800])
 
 
+def _file_digest(path: Path) -> str | None:
+    """SHA-1 of a file's bytes, None when it cannot be read."""
+    try:
+        return hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
+    except OSError:
+        return None
+
+
+def file_digests(root: Path, paths: set[str]) -> dict[str, str | None]:
+    """Digest of each path under ``root``. Blocking: call it off the event loop."""
+    return {path: _file_digest(root / path) for path in paths}
+
+
+def _related_targets(root: Path, paths: list[str]) -> list[str]:
+    try:
+        from navin.quality.testing import related_test_targets
+
+        return related_test_targets(root, paths)
+    except Exception:  # noqa: BLE001 - a hint only
+        return []
+
+
 @dataclass(slots=True)
 class CodeValidationState:
     """Small, request-local evidence record, independent of transcript compaction."""
@@ -569,28 +592,48 @@ class CodeValidationState:
     # Tests covering the changed files, keyed by (revision, path count).
     _related_cache: tuple[tuple[int, int], list[str]] | None = None
 
+    def stamp_changes(self, snapshot: dict[str, tuple[int, int] | None]) -> set[str]:
+        """Paths whose size or mtime differ from the last observed snapshot."""
+        before = self.workspace_snapshot
+        if before is None:
+            return set()
+        return {path for path in before.keys() | snapshot.keys() if before.get(path) != snapshot.get(path)}
+
     def observe_workspace(
         self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None,
+        digests: dict[str, str | None] | None = None,
     ) -> None:
         if root is not None:
             self.root = Path(root)
-        before = self.workspace_snapshot
+        changed = self.stamp_changes(snapshot)
         self.workspace_snapshot = snapshot
-        if before is None:
-            return
-        changed = {path for path in before.keys() | snapshot.keys() if before.get(path) != snapshot.get(path)}
-        changed = {path for path in changed if self._content_changed(path)}
+        changed = {path for path in changed if self._content_changed(path, digests)}
         if changed:
             self.edited(changed, require_tests=any(
                 _requires_tests(path) for path in changed
             ))
 
-    def _content_changed(self, path: str) -> bool:
+    async def observe_workspace_async(
+        self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None,
+    ) -> None:
+        """``observe_workspace`` with the file reads in a worker thread.
+
+        Hashing the changed files on the event loop froze every chat and
+        subagent of the engine at once: up to 35 s with several agents on a
+        WSL workspace read from Windows.
+        """
+        base = Path(root) if root is not None else self.root
+        candidates = self.stamp_changes(snapshot)
+        digests = None
+        if candidates and base is not None:
+            digests = await asyncio.to_thread(file_digests, base, candidates)
+        self.observe_workspace(snapshot, root=root, digests=digests)
+
+    def _content_changed(self, path: str, digests: dict[str, str | None] | None = None) -> bool:
         if self.root is None:
             return True
-        try:
-            digest = hashlib.sha1((self.root / path).read_bytes()).hexdigest()  # noqa: S324 - change detection
-        except OSError:
+        digest = digests[path] if digests is not None and path in digests else _file_digest(self.root / path)
+        if digest is None:
             self.content_hashes.pop(path, None)
             return True
         previous = self.content_hashes.get(path)
@@ -864,14 +907,22 @@ class CodeValidationState:
             return cached[1]
         targets: list[str] = []
         if self.root is not None and self.paths:
-            try:
-                from navin.quality.testing import related_test_targets
-
-                targets = related_test_targets(self.root, sorted(self.paths))
-            except Exception:  # noqa: BLE001 - a hint only
-                targets = []
+            targets = _related_targets(self.root, sorted(self.paths))
         self._related_cache = ((self.revision, len(self.paths)), targets)
         return targets
+
+    async def warm_related_tests(self) -> None:
+        """Fill the related-tests cache in a worker thread before ``missing()``.
+
+        The lookup reads every changed module and its tests; on the event loop
+        it stalled the whole engine for 21 s.
+        """
+        key = (self.revision, len(self.paths))
+        cached = self._related_cache
+        if self.root is None or not self.paths or (cached is not None and cached[0] == key):
+            return
+        targets = await asyncio.to_thread(_related_targets, self.root, sorted(self.paths))
+        self._related_cache = (key, targets)
 
     def _targeted_tests_hint(self) -> str:
         targets = self._related_tests() or sorted(path for path in self.paths if (

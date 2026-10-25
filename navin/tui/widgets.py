@@ -2205,6 +2205,18 @@ class AgentsPanel(Static):
         self.display = False
         self.update("")
 
+    def forget_finished(self) -> None:
+        """A new conversation starts: the previous one's finished agents leave.
+
+        Agents still running stay, since they are still working.
+        """
+        self._history.clear()
+        for task_id in [key for key, row in self._agents.items() if "done_at" in row]:
+            del self._agents[task_id]
+        self._painted = None
+        if self.is_attached:
+            self.tick(*self._main)
+
     def on_click(self, event: Any = None) -> None:
         lines = str(self.content).splitlines()
         y = getattr(event, "y", None)
@@ -4505,6 +4517,13 @@ class Composer(TextArea):
     async def _on_key(self, event: events.Key) -> None:
         # Live command logs hold their (costly) repaints while the user types.
         note_input(self.app)
+        if event.key == "escape":
+            # TextArea may swallow Escape (focus release in indent mode), so
+            # the app-level Stop binding never fired from the prompt.
+            event.prevent_default()
+            event.stop()
+            await self.app.run_action("app.stop_turn")
+            return
         if event.key == "enter":
             event.prevent_default()
             event.stop()

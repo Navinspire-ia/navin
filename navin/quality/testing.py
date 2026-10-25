@@ -825,7 +825,44 @@ def _python_test_files(root: Path, rel: str, cache: dict[str, list[str]]) -> lis
     return list(dict.fromkeys(found))
 
 
-def _python_related(root: Path, rel: str, cache: dict[str, list[str]]) -> list[str]:
+# Test sources already read, keyed by absolute path: (mtime_ns, size, text).
+# A lookup used to re-read every test file for each changed module: 761 files
+# times the changed modules, 100 s per lookup on a WSL tree read from Windows.
+_TEST_TEXTS: dict[str, tuple[int, int, str]] = {}
+_TEST_TEXTS_MAX = 5000
+# Importer scan budget per lookup: the result is a hint, never worth a stall.
+_IMPORT_SCAN_BUDGET_S = 5.0
+
+
+def _test_text(path: Path, texts: dict[str, str | None]) -> str | None:
+    """Source of one test file: read once per lookup, reused while unchanged."""
+    key = str(path)
+    if key in texts:
+        return texts[key]
+    text: str | None = None
+    try:
+        stat = path.stat()
+        cached = _TEST_TEXTS.get(key)
+        if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+            text = cached[2]
+        else:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if len(_TEST_TEXTS) >= _TEST_TEXTS_MAX:
+                _TEST_TEXTS.clear()
+            _TEST_TEXTS[key] = (stat.st_mtime_ns, stat.st_size, text)
+    except OSError:
+        _TEST_TEXTS.pop(key, None)
+    texts[key] = text
+    return text
+
+
+def _python_related(
+    root: Path,
+    rel: str,
+    cache: dict[str, list[str]],
+    texts: dict[str, str | None] | None = None,
+    deadline: float | None = None,
+) -> list[str]:
     stem = Path(rel).stem
     module = rel[: -len(Path(rel).suffix)].replace("/", ".")
     if stem == "__init__":
@@ -836,6 +873,7 @@ def _python_related(root: Path, rel: str, cache: dict[str, list[str]]) -> list[s
         rf"(?:\b{re.escape(module)}\b|from\s+{re.escape(parent)}\s+import\s[^\n]*\b{re.escape(leaf)}\b)"
         if parent else rf"\b{re.escape(module)}\b"
     )
+    texts = {} if texts is None else texts
     named: list[str] = []
     importers: list[str] = []
     for test in _python_test_files(root, rel, cache):
@@ -843,9 +881,11 @@ def _python_related(root: Path, rel: str, cache: dict[str, list[str]]) -> list[s
         if stem.lower() in words:
             named.append(test)
             continue
-        with suppress(OSError):
-            if imports.search((root / test).read_text(encoding="utf-8", errors="ignore")):
-                importers.append(test)
+        if deadline is not None and time.monotonic() > deadline:
+            continue  # out of budget: the tests named after the module still count
+        text = _test_text(root / test, texts)
+        if text is not None and imports.search(text):
+            importers.append(test)
     return named + (importers if len(importers) <= _MAX_IMPORTERS else [])
 
 
@@ -872,6 +912,8 @@ def related_test_targets(root: Path, changed: list[str]) -> list[str]:
     tests: list[str] = []
     related: list[str] = []
     cache: dict[str, list[str]] = {}
+    texts: dict[str, str | None] = {}
+    deadline = time.monotonic() + _IMPORT_SCAN_BUDGET_S
     for raw in changed:
         rel = raw.replace("\\", "/")
         if rel.startswith("./"):
@@ -884,7 +926,7 @@ def related_test_targets(root: Path, changed: list[str]) -> list[str]:
             if Path(rel).name == "conftest.py":
                 related.append(Path(rel).parent.as_posix() or ".")
             else:
-                related.extend(_python_related(root, rel, cache))
+                related.extend(_python_related(root, rel, cache, texts, deadline))
         elif suffix in _JS_SOURCE_SUFFIXES:
             related.extend(_js_related(root, rel))
     return list(dict.fromkeys(tests + related))[:_MAX_RELATED_TESTS]

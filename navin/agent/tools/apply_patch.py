@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 from dataclasses import dataclass
 from pathlib import Path
@@ -302,10 +303,11 @@ class ApplyPatchTool(_FsTool):
                 # old_text to anchor it, so nothing else would catch the case
                 # where the file moved on since the agent last looked at it.
                 if source not in writes and source.exists() and path not in stale:
-                    warning = self._file_states.check_read(source)
+                    warning = await asyncio.to_thread(self._file_states.check_read, source)
                     if warning:
                         root = self._display_workspace()
-                        note = uncommitted_note(root, source) if root else ""
+                        # git status: seconds on a WSL tree, keep it off the loop.
+                        note = (await asyncio.to_thread(uncommitted_note, root, source)) if root else ""
                         stale[path] = f"{warning}\n{note}" if note else warning
 
                 if action == "add":
@@ -318,7 +320,7 @@ class ApplyPatchTool(_FsTool):
                         content = pending
                         exists = True
                     elif source.exists():
-                        content = _read_source(source, path, encodings)
+                        content = await asyncio.to_thread(_read_source, source, path, encodings)
                         exists = True
                     else:
                         content = ""
@@ -362,7 +364,7 @@ class ApplyPatchTool(_FsTool):
                     if pending is not None:
                         content = pending
                     elif source.exists():
-                        content = _read_source(source, path, encodings)
+                        content = await asyncio.to_thread(_read_source, source, path, encodings)
                     else:
                         raise _PatchError(f"file to update does not exist: {path}")
 
@@ -451,7 +453,7 @@ class ApplyPatchTool(_FsTool):
                     + "\n".join(_format_summary(summary) for summary in summaries),
                 )
 
-            write_all(writes, encodings=encodings, file_states=self._file_states)
+            await asyncio.to_thread(write_all, writes, encodings=encodings, file_states=self._file_states)
             applied = _prefix_warnings(
                 stale,
                 "Patch applied:\n"

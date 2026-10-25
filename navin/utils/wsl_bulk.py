@@ -21,7 +21,7 @@ import zlib
 from collections.abc import Iterable
 from pathlib import Path
 
-from navin.utils import wsl
+from navin.utils import wsl, wsl_health
 from navin.utils.proc import no_window_kwargs
 
 _TIMEOUT_S = 120
@@ -50,10 +50,18 @@ def _run(location: wsl.WslLocation, script: str, payload: bytes) -> bytes | None
             [*wsl.command_prefix(distro, location.path), "sh", "-c", script],
             input=payload, capture_output=True, timeout=_TIMEOUT_S, **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        # Callers fall back to their per-file path; whether WSL itself stopped
+        # starting sessions is for the liveness check to say.
+        wsl_health.suspect(distro)
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     # 1 / 123: some listed file vanished or was unreadable; the rest is good.
-    return out.stdout if out.returncode in (0, 1, 2, 123) else None
+    if out.returncode in (0, 1, 2, 123):
+        wsl_health.answered(distro)
+        return out.stdout
+    return None
 
 
 def _paths_payload(rels: Iterable[str]) -> bytes:

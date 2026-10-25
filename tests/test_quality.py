@@ -10,10 +10,13 @@ the parsing and orchestration logic with fixtures.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
 import textwrap
+import threading
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -903,6 +906,67 @@ class WslRoutedToolsTest(unittest.TestCase):
         patcher = patch.object(wsl_route.sys, "platform", "win32")
         patcher.start()
         self.addCleanup(patcher.stop)
+        for table in (wsl_route._probe_cache, wsl_route._probe_threads):
+            table.clear()
+            self.addCleanup(table.clear)
+
+    def test_the_tool_probe_is_reused_instead_of_starting_wsl_each_time(self):
+        specs = {"ruff": {"binary": {"name": "ruff"}}, "mypy": {"binary": {"name": "mypy"}}}
+        location = self.wsl_route.wsl_root(self.unc)
+        done = subprocess.CompletedProcess([], 0, stdout="ruff\n", stderr="")
+        with patch("subprocess.run", return_value=done) as run:
+            first = self.wsl_route.available(specs, self.unc, location)
+            second = self.wsl_route.available(specs, self.unc, location)
+        self.assertEqual(first, {"ruff"})
+        self.assertEqual(second, {"ruff"})
+        self.assertEqual(run.call_count, 1)
+
+    def test_a_hung_wsl_is_not_waited_on_again_by_the_next_caller(self):
+        specs = {"ruff": {"binary": {"name": "ruff"}}}
+        location = self.wsl_route.wsl_root(self.unc)
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 30)) as run:
+            self.assertIsNone(self.wsl_route.available(specs, self.unc, location))
+            self.assertIsNone(self.wsl_route.available(specs, self.unc, location))
+        self.assertEqual(run.call_count, 1)
+        # The status bar learns WSL may be down and checks it on its own.
+        from navin.utils import wsl_health
+
+        wsl_health._schedule_check.assert_called_once()
+
+    def test_the_board_gate_on_the_event_loop_never_waits_on_wsl(self):
+        # Measured: a 30.5 s engine freeze. Closing a board step asked whether
+        # the project has tests, which probed WSL inline on the event loop
+        # while new WSL sessions hung.
+        from navin.quality.verification_log import _project_has_tests
+
+        release = threading.Event()
+
+        def hung_wsl(*_args, **_kwargs):
+            release.wait(10)
+            return subprocess.CompletedProcess([], 0, stdout="pytest\n", stderr="")
+
+        async def ask():
+            started = time.monotonic()
+            answer = _project_has_tests(self.unc)
+            return answer, time.monotonic() - started
+
+        async def suites():
+            return {row["runner"]: row for row in testing_mod.detect_suites(self.unc)}
+
+        with patch.object(testing_mod, "_detected", return_value=True), \
+                patch("subprocess.run", side_effect=hung_wsl) as run:
+            answer, waited = asyncio.run(ask())
+            self.assertTrue(answer)  # not known yet: the safe side, tests stay required
+            self.assertLess(waited, 2.0)
+            asyncio.run(ask())  # the probe already running is not started twice
+            probe = next(iter(self.wsl_route._probe_threads.values()))
+            release.set()
+            probe.join(5)
+            self.assertFalse(probe.is_alive())
+            rows = asyncio.run(suites())
+        self.assertEqual(run.call_count, 1)
+        self.assertTrue(rows["pytest"]["available"])
+        self.assertIn("not installed in the WSL distribution", rows["vitest"]["reason"])
 
     def _run_script(self, spec, *args):
         """Run the generated resolver for real, wsl.exe itself left out."""

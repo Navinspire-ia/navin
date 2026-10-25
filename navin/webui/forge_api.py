@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -616,12 +617,19 @@ def gh_cli_token(host: str) -> str:
     return (completed.stdout or "").strip()
 
 
-def resolve_token(remote: ForgeRemote, *, config: Any | None = None) -> tuple[str, str]:
+def resolve_token(
+    remote: ForgeRemote,
+    *,
+    config: Any | None = None,
+    root: Path | str | None = None,
+) -> tuple[str, str]:
     """``(token, source)`` for this remote, most explicit source first.
 
-    ``source`` is ``"settings"``, ``"env:NAME"``, ``"gh"`` or ``""``. It is
-    safe to show in the UI: it names where the token came from, never the
-    token itself.
+    ``source`` is ``"settings"``, ``"env:NAME"``, ``"gh"``, ``"git"`` or
+    ``""``. It is safe to show in the UI: it names where the token came from,
+    never the token itself. With ``root``, the sign-in the project's own git
+    already uses (``gh`` and git credential helpers, inside WSL for a WSL
+    project) is the last road.
     """
     from_config = _configured_tokens(config).get(remote.host)
     if from_config:
@@ -634,7 +642,188 @@ def resolve_token(remote: ForgeRemote, *, config: Any | None = None) -> tuple[st
         token = gh_cli_token(remote.host)
         if token:
             return token, "gh"
+    if root is not None:
+        return repo_sign_in_token(remote, root)
     return "", ""
+
+
+# ---------------------------------------------------------------------------
+# The sign-in the repository's own git already uses
+# ---------------------------------------------------------------------------
+#
+# Desktop runs on Windows; a WSL project and the user's login live in the
+# distribution (``gh auth login``, ``credential.helper store``...). Only the
+# Windows side used to be asked, so a user signed in for months saw the Git
+# panel ask to connect again. The lookup runs where git runs for that root.
+
+# (root, scheme, netloc) -> (expires_at, token, source)
+_SIGN_IN_TOKENS: dict[tuple[str, str, str], tuple[float, str, str]] = {}
+_SIGN_IN_LOCK = threading.Lock()
+_SIGN_IN_HIT_TTL_S = 300.0
+_SIGN_IN_MISS_TTL_S = 30.0
+_SIGN_IN_TIMEOUT_S = 15
+_GH_IN_DISTRO = 'command -v gh >/dev/null 2>&1 || exit 127; exec gh auth token --hostname "$1"'
+
+
+def clear_sign_in_cache() -> None:
+    with _SIGN_IN_LOCK:
+        _SIGN_IN_TOKENS.clear()
+
+
+def interactive_credential_helper(value: str) -> bool:
+    """A helper that can only answer through a browser sign-in.
+
+    git-credential-oauth ignores ``GIT_TERMINAL_PROMPT=0`` and opens a browser
+    when it has nothing stored: never started from a background lookup.
+    """
+    text = (value or "").strip().lstrip("!").strip()
+    if not text:
+        return False
+    program = re.split(r"[\\/]", text.split()[0].strip("\"'"))[-1].lower()
+    program = program.removesuffix(".exe").removeprefix("git-credential-")
+    if program == "git" and len(text.split()) > 1:
+        program = text.split()[1].lower().removeprefix("credential-")
+    return program == "oauth"
+
+
+def _credential_url_matches(pattern: str, scheme: str, netloc: str) -> bool:
+    try:
+        parts = urlsplit(pattern)
+    except ValueError:
+        return False
+    if parts.scheme.lower() != scheme or parts.username or parts.password:
+        return False
+    if parts.path not in ("", "/"):
+        return False  # the lookup sends no path: git would not match it either
+    wanted = (parts.netloc or "").lower()
+    if wanted.startswith("*."):
+        return netloc.endswith(wanted[1:])
+    return wanted == netloc
+
+
+def effective_credential_helpers(raw: str, scheme: str, netloc: str) -> list[str]:
+    """Helpers git would run for ``scheme://netloc/``, in order.
+
+    ``raw`` is ``git config -z --get-regexp ^credential\\..*helper$``. Every
+    matching entry counts in config order and an empty value resets the list
+    (what ``gh auth setup-git`` relies on); interactive-only helpers are left
+    out.
+    """
+    helpers: list[str] = []
+    for entry in raw.split("\0"):
+        key, _, value = entry.partition("\n")
+        key = key.strip()
+        if not key.lower().startswith("credential.") or not key.lower().endswith(".helper"):
+            continue
+        middle = key[len("credential."):-len(".helper")]
+        if middle and not _credential_url_matches(middle, scheme, netloc):
+            continue
+        value = value.strip()
+        if not value:
+            helpers.clear()
+        elif not interactive_credential_helper(value):
+            helpers.append(value)
+    return helpers
+
+
+def _run_sign_in(argv: list[str], *, env: dict[str, str], stdin: str = "") -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            argv,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_SIGN_IN_TIMEOUT_S,
+            check=False,
+            env=env,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+# ``wsl.exe`` exits 255 (or a negative 32-bit code) when the WSL service itself
+# fails ("Catastrophic failure ... Wsl/Service/E_UNEXPECTED"): no answer about
+# the sign-in, never read as "nothing stored".
+def _launcher_failed(result: subprocess.CompletedProcess[str] | None) -> bool:
+    return result is None or result.returncode == 255 or result.returncode < 0
+
+
+def _sign_in_lookup(remote: ForgeRemote, root: Path | str) -> tuple[str, str] | None:
+    """``(token, source)``; ``("", "")`` when nothing is stored, None when the
+    lookup itself failed (timeout, git missing) and says nothing."""
+    from navin.utils import git_credentials, wsl
+    from navin.utils.git_argv import git_route
+
+    route = git_route(root)
+    if route is None:
+        return None
+    env = git_credentials.git_env((), wsl=bool(route.distro))
+    scheme = (remote.scheme or "https").lower()
+    netloc = remote.host if not remote.port else f"{remote.host}:{remote.port}"
+    failed = False
+    if remote.kind == GITHUB and route.distro:
+        # The engine's own gh was asked already; this is the distribution's.
+        result = _run_sign_in(
+            [*wsl.command_prefix(route.distro), "sh", "-lc", _GH_IN_DISTRO, "sh", netloc],
+            env=env,
+        )
+        if _launcher_failed(result):
+            failed = True
+        elif result is not None and result.returncode == 0 and (result.stdout or "").strip():
+            return (result.stdout or "").strip(), "gh"
+    listing = _run_sign_in(
+        [*route.argv, "config", "-z", "--get-regexp", r"^credential\..*helper$"], env=env
+    )
+    # git config exits 1 when no helper is configured: a real "nothing".
+    if listing is None or listing.returncode not in (0, 1):
+        return None
+    helpers = effective_credential_helpers(listing.stdout or "", scheme, netloc)
+    if not helpers:
+        return None if failed else ("", "")
+    overrides = ["-c", "credential.helper="]
+    for helper in helpers:
+        overrides += ["-c", f"credential.helper={helper}"]
+    filled = _run_sign_in(
+        [*route.argv, *overrides, "credential", "fill"],
+        env=env,
+        stdin=f"protocol={scheme}\nhost={netloc}\n\n",
+    )
+    if _launcher_failed(filled):
+        return None
+    if filled is not None and filled.returncode == 0:
+        for line in (filled.stdout or "").splitlines():
+            if line.startswith("password=") and line[len("password="):].strip():
+                return line[len("password="):].strip(), "git"
+    return None if failed else ("", "")
+
+
+def repo_sign_in_token(remote: ForgeRemote, root: Path | str) -> tuple[str, str]:
+    """Token from the sign-in the project's own git already uses, cached.
+
+    Found tokens are kept 5 minutes, misses 30 s. A lookup that fails (WSL
+    slow to answer, timeout) keeps the last token found instead of asking the
+    user to connect again.
+    """
+    scheme = (remote.scheme or "https").lower()
+    netloc = remote.host if not remote.port else f"{remote.host}:{remote.port}"
+    key = (str(root), scheme, netloc)
+    now = time.monotonic()
+    with _SIGN_IN_LOCK:
+        cached = _SIGN_IN_TOKENS.get(key)
+    if cached is not None and cached[0] > now:
+        return cached[1], cached[2]
+    found = _sign_in_lookup(remote, root)
+    if found is None:
+        if cached is not None and cached[1]:
+            return cached[1], cached[2]
+        found = ("", "")
+    ttl = _SIGN_IN_HIT_TTL_S if found[0] else _SIGN_IN_MISS_TTL_S
+    with _SIGN_IN_LOCK:
+        _SIGN_IN_TOKENS[key] = (time.monotonic() + ttl, found[0], found[1])
+    return found
 
 
 def token_missing_error(remote: ForgeRemote) -> ForgeError:

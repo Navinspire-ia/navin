@@ -60,7 +60,10 @@ class FileEditActivityHook(AgentHook):
     ) -> None:
         if self._on_progress is None or not isinstance(params, dict):
             return
-        trackers = prepare_file_edit_trackers(
+        # Snapshotting the files before the edit reads them: off the loop, like
+        # the end-of-edit diff below (5.9 s measured on a WSL tree).
+        trackers = await asyncio.to_thread(
+            prepare_file_edit_trackers,
             call_id=tool_call.id,
             tool_name=tool_call.name,
             tool=tool,
