@@ -76,13 +76,15 @@ def _clean_preview(text: str) -> str:
 
 def session_display_title(row: dict[str, Any]) -> str:
     """Name a chat from its title, first user line, or Untitled chat."""
+    from navin.session.webui_turns import limit_title_words
+
     title = str(row.get("title") or "").strip()
     if _usable_title(title):
-        return " ".join(title.split())
+        return limit_title_words(title)
     preview = _clean_preview(str(row.get("preview") or ""))
     if _usable_title(preview):
-        return " ".join(preview.split())
+        return limit_title_words(preview)
     words = preview.split()
     if words and not _JUNK_TITLE_RE.search(preview):
-        return " ".join(words[:8])
+        return limit_title_words(preview)
     return "Untitled chat"

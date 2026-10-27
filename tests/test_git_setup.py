@@ -119,6 +119,35 @@ def test_machine_report_lists_what_is_left_to_do_and_never_a_secret(repo):
     assert "secret123" not in json.dumps(report)
 
 
+def _gitlab_origin(repo, monkeypatch):
+    for name in ("GL_TOKEN", "GLAB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(forge_api, "gh_cli_token", lambda host: "")
+    forge_api.clear_sign_in_cache()
+    _git(repo, "remote", "add", "origin", "https://gitlab.com/team/app.git")
+
+
+def test_a_remote_signed_in_in_the_project_git_is_not_asked_to_connect(repo, monkeypatch, tmp_path):
+    # The reported bug: pushes worked from WSL for months, the panel still said
+    # "no token yet" and offered Connect.
+    _gitlab_origin(repo, monkeypatch)
+    store = tmp_path / "creds"
+    store.write_text("https://alice:glpat-project@gitlab.com\n", encoding="utf-8")
+    _git(repo, "config", "credential.helper", f"store --file={store}")
+    report = git_setup.machine_report(str(repo), config=Config())
+    checks = {check["id"]: check for check in report["checks"]}
+    assert "remote_no_token" not in checks
+    assert checks["remote_ok"]["params"] == {"remote": "origin", "host": "gitlab.com", "auth": "git"}
+    assert "glpat-project" not in json.dumps(report)
+
+
+def test_a_remote_with_no_sign_in_anywhere_still_offers_to_connect(repo, monkeypatch):
+    _gitlab_origin(repo, monkeypatch)
+    report = git_setup.machine_report(str(repo), config=Config())
+    checks = {check["id"]: check for check in report["checks"]}
+    assert checks["remote_no_token"]["fix"] == {"action": "connect", "host": "gitlab.com"}
+
+
 def test_plaintext_store_helper_is_reported(repo):
     subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=True)
     report = git_setup.machine_report(str(repo), config=Config())

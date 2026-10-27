@@ -9,12 +9,12 @@
  * an overscan strip in the DOM and replaces the rest with spacers.
  */
 import {
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type RefObject,
 } from "react";
+import { useIsomorphicLayoutEffect } from "./useIsomorphicLayoutEffect";
 
 export type VirtualWindow = {
   start: number;
@@ -111,13 +111,13 @@ export function useVirtualWindow(opts: {
   const [viewportHeight, setViewportHeight] = useState(800);
   const [measureVersion, setMeasureVersion] = useState(0);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (heightsRef.current.length > count) {
       heightsRef.current.length = count;
     }
   }, [count]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const el = scrollParentRef?.current;
     if (!el || !enabled) return undefined;
     let frame = 0;
@@ -164,7 +164,7 @@ export function useVirtualWindow(opts: {
     viewportHeight,
   ]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!enabled || !windowRange) return;
     const root = listRef.current;
     if (!root) return;

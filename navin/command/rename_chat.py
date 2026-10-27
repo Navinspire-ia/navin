@@ -4,7 +4,7 @@
 """``/rename-chat [hint]``: the model names the current chat, once, without asking.
 
 Slash-only. The model reads the recent exchange (the optional hint steers the
-wording) and returns a 3-5 word sentence-case title; the engine stores it as
+wording) and returns a 2-3 word sentence-case title; the engine stores it as
 the session title (marked user-edited so auto-titles leave it alone), drops a
 stale WebUI sidebar override for this chat and tells connected WebUIs to
 refresh the row (``session_updated`` with scope ``title``). Works the same
@@ -21,8 +21,8 @@ from navin.bus.events import OutboundMessage
 from navin.command.router import CommandContext
 
 TITLE_MAX_CHARS = 200
-_MIN_WORDS = 3
-_MAX_WORDS = 5
+_MIN_WORDS = 2
+_MAX_WORDS = 3
 _BANNED_WORDS = frozenset({"chat", "conversation", "discussion", "session"})
 _RECENT_MESSAGES = 12
 _MESSAGE_CHARS = 600
@@ -52,7 +52,7 @@ def _recent_exchange(session: Any) -> str:
 
 
 def polish_title(raw: str) -> str:
-    """Clean a model answer into a 3-5 word sentence-case title ('' if unusable)."""
+    """Clean a model answer into a 2-3 word sentence-case title ('' if unusable)."""
     from navin.session.webui_turns import clean_generated_title, is_usable_generated_title
 
     text = clean_generated_title(raw.splitlines()[0] if raw and raw.strip() else "")

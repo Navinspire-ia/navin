@@ -70,6 +70,67 @@ describe("journal phases render", () => {
       }),
     );
 
+  it("shows quick/long, the usual minutes and the real percent on the Tests line", () => {
+    const testRun = (extra: Record<string, unknown>): JournalStep => ({
+      kind: "tool", name: "test_run", args: '{"action":"run"}', status: "running", ...extra,
+    } as JournalStep);
+    const html = render({
+      live: true,
+      entries: buildJournalTimeline([testRun({ percent: 42, expectedS: 240, testKind: "long" })], { streaming: true }),
+    });
+    expect(html).toContain("journal-test-progress");
+    expect(html).toContain("Long tests");
+    expect(html).toContain("~4 min");
+    expect(html).toContain("42%");
+  });
+
+  it("says nothing about duration for a first run and shows no percent when none is known", () => {
+    const html = render({
+      live: true,
+      entries: buildJournalTimeline(
+        [{ kind: "tool", name: "test_run", args: '{"action":"run"}', status: "running" } as JournalStep],
+        { streaming: true },
+      ),
+    });
+    expect(html).not.toContain("Long tests");
+    expect(html).not.toContain("Quick tests");
+    expect(html).not.toContain("journal-test-percent");
+  });
+
+  it("shows long command ~minutes and the estimated percent while a piped command runs", () => {
+    const step = {
+      kind: "shell",
+      key: "call:c9",
+      command: "python -m pytest -q 2>&1 | tail -25",
+      status: "running",
+      run: {
+        key: "call:c9",
+        command: "python -m pytest -q 2>&1 | tail -25",
+        status: "running",
+        percent: 37,
+        expectedS: 180,
+        runKind: "long",
+      },
+    } as JournalStep;
+    const html = render({ live: true, entries: buildJournalTimeline([step], { streaming: true }) });
+    expect(html).toContain("journal-test-progress");
+    expect(html).toMatch(/Long (command|tests)/);
+    expect(html).toContain("~3 min");
+    expect(html).toContain("37%");
+  });
+
+  it("drops the bar once a command has finished", () => {
+    const step = {
+      kind: "shell",
+      key: "call:c10",
+      command: "npm run build",
+      status: "done",
+      run: { key: "call:c10", command: "npm run build", status: "done", percent: 100, expectedS: 200, runKind: "long" },
+    } as JournalStep;
+    const html = render({ live: false, entries: buildJournalTimeline([step], { streaming: false }) });
+    expect(html).not.toContain("journal-test-progress");
+  });
+
   it("folds every section to one line with its count", () => {
     const html = render();
     for (const key of ["explore", "edit", "check", "attention"]) {

@@ -62,6 +62,73 @@ export function saveLastModelPick(preset: string | null): void {
   }
 }
 
+const EFFORT_KEY = "navin.thread-reasoning-efforts";
+const LAST_EFFORT_KEY = "navin.thread-reasoning-last-pick";
+
+/**
+ * Reasoning effort chosen in a chat, keyed by chat then preset, so reopening
+ * the chat restores both the model and the effort the user left it on.
+ */
+function readEfforts(): Record<string, Record<string, string>> {
+  try {
+    const raw = window.localStorage.getItem(EFFORT_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, Record<string, string>> = {};
+    for (const [chat, value] of Object.entries(parsed)) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+      const row: Record<string, string> = {};
+      for (const [preset, effort] of Object.entries(value)) {
+        if (typeof effort === "string") row[preset] = effort;
+      }
+      out[chat] = row;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function loadThreadEffort(chatId: string | null, preset: string): string | null {
+  if (chatId) {
+    const value = readEfforts()[chatId]?.[preset];
+    if (value !== undefined) return value;
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_EFFORT_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const value = (parsed as Record<string, unknown>)[preset];
+      if (typeof value === "string") return value;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function saveThreadEffort(chatId: string | null, preset: string, effort: string): void {
+  try {
+    if (chatId) {
+      const all = readEfforts();
+      const prev = all[chatId] ?? {};
+      delete all[chatId];
+      all[chatId] = { ...prev, [preset]: effort };
+      const keys = Object.keys(all);
+      for (const stale of keys.slice(0, Math.max(0, keys.length - MAX_ENTRIES))) {
+        delete all[stale];
+      }
+      window.localStorage.setItem(EFFORT_KEY, JSON.stringify(all));
+    }
+    const raw = window.localStorage.getItem(LAST_EFFORT_KEY);
+    const last: Record<string, string> = raw ? JSON.parse(raw) : {};
+    last[preset] = effort;
+    window.localStorage.setItem(LAST_EFFORT_KEY, JSON.stringify(last));
+  } catch {
+    // The effort just will not survive a reload.
+  }
+}
+
 export function saveThreadModelPreset(chatId: string, preset: string | null): void {
   const entries = readAll();
   if (preset) {

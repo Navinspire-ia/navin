@@ -28,13 +28,23 @@ function isLowInformationTitlePreview(text: string): boolean {
   );
 }
 
+/** A chat name is a label: at most this many words (same rule as the engine). */
+export const TITLE_MAX_WORDS = 3;
+
+export function limitTitleWords(text: string, max = TITLE_MAX_WORDS): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= max) return words.join(" ");
+  return words.slice(0, max).join(" ").replace(/[\s,;:-]+$/, "");
+}
+
 /** Truncate the first user message into a chat title. */
 export function deriveTitle(preview: string | undefined, fallback: string): string {
   if (!preview) return fallback;
   const oneLine = preview.replace(/\s+/g, " ").trim();
   if (!oneLine) return fallback;
   if (isLowInformationTitlePreview(oneLine)) return fallback;
-  return oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine;
+  const short = limitTitleWords(oneLine);
+  return short.length > 60 ? `${short.slice(0, 57)}…` : short;
 }
 
 /** Loose ISO-or-epoch parser; returns ``null`` for missing/invalid input. */

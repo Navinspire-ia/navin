@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChoiceGroup, DefaultButton, TextField, Toggle } from "@fluentui/react";
 import "@/lib/fluent-icons";
@@ -45,6 +45,7 @@ import {
   type TenderProfile,
   type TenderSite,
 } from "@/lib/tenders-api";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 const STEPS = [
   { id: 1, key: "company", icon: "CityNext" },
@@ -238,7 +239,7 @@ export function TendersWizard({
   );
   const zoneSectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!openZone) return;
     const node = zoneSectionRefs.current[openZone];
     pinElementToScrollStart(node);

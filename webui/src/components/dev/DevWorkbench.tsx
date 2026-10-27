@@ -375,6 +375,7 @@ function PlainFileEditor({
 }) {
   return (
     <textarea
+      data-navin-editor
       value={value}
       readOnly={readOnly}
       spellCheck={false}

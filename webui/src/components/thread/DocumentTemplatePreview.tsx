@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { DocumentTemplateInfo } from "@/lib/types";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 /**
  * URL of one file inside a template folder, derived from the authenticated
@@ -85,7 +86,7 @@ export function DocumentTemplatePreviewDialog({
   const baseWidth = isDeck ? DECK_WIDTH : DOC_WIDTH[template.category] ?? 880;
   const frameWrapRef = useRef<HTMLDivElement>(null);
   const [frameBox, setFrameBox] = useState({ scale: 0, height: 0, width: 0 });
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const el = frameWrapRef.current;
     if (!el) return undefined;
     const update = () => {

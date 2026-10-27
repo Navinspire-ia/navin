@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -627,9 +627,13 @@ def resolve_token(
 
     ``source`` is ``"settings"``, ``"env:NAME"``, ``"gh"``, ``"git"`` or
     ``""``. It is safe to show in the UI: it names where the token came from,
-    never the token itself. With ``root``, the sign-in the project's own git
-    already uses (``gh`` and git credential helpers, inside WSL for a WSL
-    project) is the last road.
+    never the token itself.
+
+    With ``root``, the sign-in the project's own git uses (its credential
+    helper, asked with the account its origin names, then ``gh`` inside WSL
+    for a WSL project) comes before the engine's ``gh``: two projects on one
+    host can push with two accounts, and the API must act with the account of
+    the project at hand, not with whoever ``gh`` was last logged in as.
     """
     from_config = _configured_tokens(config).get(remote.host)
     if from_config:
@@ -638,12 +642,14 @@ def resolve_token(
         value = (os.environ.get(name) or "").strip()
         if value:
             return value, f"env:{name}"
+    if root is not None:
+        token, source = repo_sign_in_token(remote, root)
+        if token:
+            return token, source
     if remote.kind == GITHUB:
         token = gh_cli_token(remote.host)
         if token:
             return token, "gh"
-    if root is not None:
-        return repo_sign_in_token(remote, root)
     return "", ""
 
 
@@ -686,28 +692,34 @@ def interactive_credential_helper(value: str) -> bool:
     return program == "oauth"
 
 
-def _credential_url_matches(pattern: str, scheme: str, netloc: str) -> bool:
+def _credential_url_matches(pattern: str, scheme: str, netloc: str, path: str = "") -> bool:
     try:
         parts = urlsplit(pattern)
     except ValueError:
         return False
     if parts.scheme.lower() != scheme or parts.username or parts.password:
         return False
-    if parts.path not in ("", "/"):
-        return False  # the lookup sends no path: git would not match it either
+    wanted_path = (parts.path or "").strip("/")
+    if wanted_path:
+        # git matches a path-scoped entry on whole segments of the repo path.
+        have = (path or "").strip("/")
+        if not have or (have != wanted_path and not have.startswith(wanted_path + "/")):
+            return False
     wanted = (parts.netloc or "").lower()
     if wanted.startswith("*."):
         return netloc.endswith(wanted[1:])
     return wanted == netloc
 
 
-def effective_credential_helpers(raw: str, scheme: str, netloc: str) -> list[str]:
-    """Helpers git would run for ``scheme://netloc/``, in order.
+def effective_credential_helpers(raw: str, scheme: str, netloc: str, *, path: str = "") -> list[str]:
+    """Helpers git would run for ``scheme://netloc/path``, in order.
 
     ``raw`` is ``git config -z --get-regexp ^credential\\..*helper$``. Every
     matching entry counts in config order and an empty value resets the list
     (what ``gh auth setup-git`` relies on); interactive-only helpers are left
-    out.
+    out. ``path`` is the project's repository path, so an entry scoped to one
+    organisation (``credential.https://gitlab.com/team.helper``) counts for
+    that project only.
     """
     helpers: list[str] = []
     for entry in raw.split("\0"):
@@ -716,7 +728,7 @@ def effective_credential_helpers(raw: str, scheme: str, netloc: str) -> list[str
         if not key.lower().startswith("credential.") or not key.lower().endswith(".helper"):
             continue
         middle = key[len("credential."):-len(".helper")]
-        if middle and not _credential_url_matches(middle, scheme, netloc):
+        if middle and not _credential_url_matches(middle, scheme, netloc, path):
             continue
         value = value.strip()
         if not value:
@@ -751,45 +763,76 @@ def _launcher_failed(result: subprocess.CompletedProcess[str] | None) -> bool:
     return result is None or result.returncode == 255 or result.returncode < 0
 
 
-def _sign_in_lookup(remote: ForgeRemote, root: Path | str) -> tuple[str, str] | None:
-    """``(token, source)``; ``("", "")`` when nothing is stored, None when the
-    lookup itself failed (timeout, git missing) and says nothing."""
-    from navin.utils import git_credentials, wsl
-    from navin.utils.git_argv import git_route
+# One ``git config`` call gives both the helpers and the project's origin.
+_SIGN_IN_KEYS = r"^(credential\..*helper|remote\.origin\.url)$"
 
-    route = git_route(root)
-    if route is None:
-        return None
-    env = git_credentials.git_env((), wsl=bool(route.distro))
+
+def _clean_credential_value(value: str) -> str:
+    """A value safe on one line of the credential protocol, else empty."""
+    return "" if any(ch in value for ch in "\n\r\0") else value
+
+
+def origin_identity(raw: str, remote: ForgeRemote) -> tuple[str, str]:
+    """``(username, path)`` git sends for ``remote`` from the project's origin.
+
+    ``raw`` is ``git config -z --get-regexp`` output holding ``remote.origin.url``.
+    ``https://alice@github.com/team/app.git`` pushes as ``alice``: the lookup
+    asks for that account, not for the first one stored for the host. Empty
+    when origin is another repository (an issues repo set in the panel), SSH,
+    or missing.
+    """
+    for entry in raw.split("\0"):
+        key, _, value = entry.partition("\n")
+        if key.strip().lower() != "remote.origin.url":
+            continue
+        url = value.strip()
+        parsed = parse_remote_url(url)
+        same = parsed is not None and (
+            parsed.netloc.lower(), parsed.owner.lower(), parsed.repo.lower()
+        ) == (remote.netloc.lower(), remote.owner.lower(), remote.repo.lower())
+        if not same or "://" not in url:
+            return "", ""
+        try:
+            parts = urlsplit(url)
+            username = unquote(parts.username or "")
+        except ValueError:
+            return "", ""
+        if parts.scheme.lower() not in ("http", "https"):
+            return "", ""
+        return _clean_credential_value(username), _clean_credential_value(parts.path.lstrip("/"))
+    return "", ""
+
+
+def credential_request(scheme: str, netloc: str, *, username: str = "", path: str = "") -> str:
+    """What ``git credential fill`` reads; git drops ``path`` unless useHttpPath."""
+    lines = [f"protocol={scheme}", f"host={netloc}"]
+    if path:
+        lines.append(f"path={path}")
+    if username:
+        lines.append(f"username={username}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _helper_sign_in(route: Any, env: dict[str, str], remote: ForgeRemote) -> tuple[str, str] | None:
+    """The token the project's credential helper gives for its own origin."""
     scheme = (remote.scheme or "https").lower()
-    netloc = remote.host if not remote.port else f"{remote.host}:{remote.port}"
-    failed = False
-    if remote.kind == GITHUB and route.distro:
-        # The engine's own gh was asked already; this is the distribution's.
-        result = _run_sign_in(
-            [*wsl.command_prefix(route.distro), "sh", "-lc", _GH_IN_DISTRO, "sh", netloc],
-            env=env,
-        )
-        if _launcher_failed(result):
-            failed = True
-        elif result is not None and result.returncode == 0 and (result.stdout or "").strip():
-            return (result.stdout or "").strip(), "gh"
-    listing = _run_sign_in(
-        [*route.argv, "config", "-z", "--get-regexp", r"^credential\..*helper$"], env=env
-    )
-    # git config exits 1 when no helper is configured: a real "nothing".
+    netloc = remote.netloc
+    listing = _run_sign_in([*route.argv, "config", "-z", "--get-regexp", _SIGN_IN_KEYS], env=env)
+    # git config exits 1 when no key matches: a real "nothing".
     if listing is None or listing.returncode not in (0, 1):
         return None
-    helpers = effective_credential_helpers(listing.stdout or "", scheme, netloc)
+    raw = listing.stdout or ""
+    username, path = origin_identity(raw, remote)
+    helpers = effective_credential_helpers(raw, scheme, netloc, path=path)
     if not helpers:
-        return None if failed else ("", "")
+        return "", ""
     overrides = ["-c", "credential.helper="]
     for helper in helpers:
         overrides += ["-c", f"credential.helper={helper}"]
     filled = _run_sign_in(
         [*route.argv, *overrides, "credential", "fill"],
         env=env,
-        stdin=f"protocol={scheme}\nhost={netloc}\n\n",
+        stdin=credential_request(scheme, netloc, username=username, path=path),
     )
     if _launcher_failed(filled):
         return None
@@ -797,7 +840,38 @@ def _sign_in_lookup(remote: ForgeRemote, root: Path | str) -> tuple[str, str] | 
         for line in (filled.stdout or "").splitlines():
             if line.startswith("password=") and line[len("password="):].strip():
                 return line[len("password="):].strip(), "git"
-    return None if failed else ("", "")
+    return "", ""
+
+
+def _sign_in_lookup(remote: ForgeRemote, root: Path | str) -> tuple[str, str] | None:
+    """``(token, source)``; ``("", "")`` when nothing is stored, None when the
+    lookup itself failed (timeout, git missing) and says nothing.
+
+    The project's credential helper comes first: it is what ``git push`` runs
+    there, with the account its origin names. ``gh`` inside the distribution
+    is the fallback for a WSL project whose git has no helper for the host.
+    """
+    from navin.utils import git_credentials, wsl
+    from navin.utils.git_argv import git_route
+
+    route = git_route(root)
+    if route is None:
+        return None
+    env = git_credentials.git_env((), wsl=bool(route.distro))
+    found = _helper_sign_in(route, env, remote)
+    if found is not None and found[0]:
+        return found
+    if remote.kind == GITHUB and route.distro:
+        # The engine's own gh comes after this lookup; this is the distribution's.
+        result = _run_sign_in(
+            [*wsl.command_prefix(route.distro), "sh", "-lc", _GH_IN_DISTRO, "sh", remote.netloc],
+            env=env,
+        )
+        if _launcher_failed(result):
+            return None
+        if result is not None and result.returncode == 0 and (result.stdout or "").strip():
+            return (result.stdout or "").strip(), "gh"
+    return found
 
 
 def repo_sign_in_token(remote: ForgeRemote, root: Path | str) -> tuple[str, str]:

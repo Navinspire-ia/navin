@@ -158,8 +158,11 @@ class ForgeTool(_QualityTool):
             "returns a JSON repair plan; fix=true lets an agent repair it there; "
             "open_pr=true (asks approval) commits on navin/heal-<sha>, pushes and "
             "opens a draft PR only when the command passes after the fix. The "
-            "user's working tree is never modified. Needs a forge token "
-            "(Settings > Git & GitHub) or a signed-in gh on github.com."
+            "user's working tree is never modified. path= targets another local "
+            "repository (its own origin and its own git sign-in), e.g. after a "
+            "push made with exec from another folder; without it the project's "
+            "origin is used. Needs a forge token (Settings > Git & GitHub), the "
+            "repository's own git sign-in, or a signed-in gh on github.com."
         )
 
     @property
@@ -265,6 +268,14 @@ class ForgeTool(_QualityTool):
                     "description": "issue_triage_plan / issue_triage_apply / issue_labels: owner/name or URL (default: origin).",
                 },
                 "branch": {"type": "string", "description": "ci_status / ci_heal branch or ref (default: current branch)."},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Local folder of another git repository to act on (default: this project). "
+                        "Its origin and its own credentials are used: check the CI of a push made in "
+                        "another folder with path=<that folder>."
+                    ),
+                },
                 "fix": {"type": "boolean", "description": "ci_heal: let an agent apply the fix in the worktree (default false, plan only)."},
                 "open_pr": {"type": "boolean", "description": "ci_heal: open a draft PR after a verified fix (default false; asks approval)."},
             },
@@ -283,9 +294,14 @@ class ForgeTool(_QualityTool):
             return await self._ci_heal(kwargs)
         if act not in _READ_ACTIONS and act not in _WRITE_ACTIONS:
             return ToolResult.error(f"Error: action must be one of {', '.join(_ACTIONS)}")
+        path = str(kwargs.pop("path", "") or "").strip()
         root, error = self._root_or_error()
         if root is None:
             return error
+        if path:
+            root, error = self._repository_at(path, root)
+            if root is None:
+                return error
         if act == "pr_merge" and str(kwargs.get("method") or "").strip().lower() not in (
             "merge",
             "squash",
@@ -335,7 +351,31 @@ class ForgeTool(_QualityTool):
         except (TypeError, ValueError) as exc:
             return ToolResult.error(f"Error: {exc}")
         payload = {"forge": remote.kind, "repo": remote.slug, "host": remote.host, **result}
+        if path:
+            # Say which folder was read: its origin, not this project's.
+            payload = {"path": str(root), **payload}
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+    @staticmethod
+    def _repository_at(raw: str, workspace: Path) -> tuple[Path | None, Any]:
+        """The top of the git repository holding ``raw`` (relative to the project), or why not.
+
+        A push made with exec in another folder went to that folder's origin;
+        reading this project's origin instead found no run and the agent kept
+        sleeping and polling. ``path`` names the repository to read.
+        """
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        candidate = candidate.resolve(strict=False)
+        if not candidate.is_dir():
+            return None, ToolResult.error(f"Error: path {raw} is not a folder on this machine.")
+        for folder in (candidate, *candidate.parents):
+            if (folder / ".git").exists():
+                return folder, ""
+        return None, ToolResult.error(
+            f"Error: {candidate} is not inside a git repository. Pass the folder the push was made from."
+        )
 
     # -- repo_create -------------------------------------------------------
 
@@ -687,4 +727,15 @@ class ForgeTool(_QualityTool):
                     max_chars=int(args.get("max_chars") or 6000),
                 ),
             }
-        return {"branch": branch, "checks": forge_api.check_summary(remote, token, branch=branch)}
+        checks = forge_api.check_summary(remote, token, branch=branch)
+        result: dict[str, Any] = {"branch": branch, "checks": checks}
+        if not checks.get("total"):
+            # An agent slept and polled this for half an hour: the push had
+            # gone to another repository, so no run could ever show up here.
+            result["note"] = (
+                f"No CI run or check exists for branch {branch} on {remote.slug}. "
+                "Waiting will not create one. If the push was made from another folder, "
+                "call ci_status with path=<that folder>; otherwise check that a workflow "
+                "triggers on this branch, then tell the user instead of polling again."
+            )
+        return result

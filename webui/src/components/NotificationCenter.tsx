@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -26,6 +26,7 @@ import {
   type NotificationLevel,
 } from "@/lib/notifications";
 import { useNotifications } from "@/providers/NotificationProvider";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 /**
  * Legacy gutter kept so call sites that still import it compile; the bell now
@@ -211,7 +212,7 @@ export default function NotificationCenter({
     setCoords(computePanelCoords(anchor));
   };
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!open) {
       setCoords(null);
       return;

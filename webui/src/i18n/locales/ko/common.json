@@ -3134,7 +3134,13 @@
     "fileEditUnifiedView": "통합 보기",
     "activityModeEssential": "핵심",
     "activityModeStandard": "표준",
-    "activityModeDebug": "디버그"
+    "activityModeDebug": "디버그",
+    "journalCommandQuick": "빠른 명령",
+    "journalCommandLong": "긴 명령",
+    "journalTestQuick": "빠른 테스트",
+    "journalTestLong": "긴 테스트",
+    "journalTestEstimate_one": "약 {{count}}분",
+    "journalTestEstimate_other": "약 {{count}}분"
   },
   "montage": {
     "actions": {

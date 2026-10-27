@@ -7,7 +7,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { CheckpointNotice, ContextCompactionNotice } from "@/hooks/useNavinStream";
 import type { CliAppInfo, McpPresetInfo, SlashCommand, UIMessage } from "@/lib/types";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 /**
  * Move an anchor from the full history into the rendered window.
@@ -564,7 +564,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
   // A hydrate swaps the whole transcript; the reader who was following the
   // tail stays on it once the new rows are laid out.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!followAfterHydrateRef.current) return;
     followAfterHydrateRef.current = false;
     if (!hasMessages || userReadingHistoryRef.current) return;
@@ -580,7 +580,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     );
   }, []);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const updateKeyboardInset = () => {
       const scrollEl = scrollRef.current;
       const next = readSoftKeyboardInsetBottom(scrollEl);
@@ -608,7 +608,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     };
   }, [hasMessages, scrollToBottom]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (keyboardInsetBottom > 0) {
       userReadingHistoryRef.current = false;
       scrollToBottom(false, KEYBOARD_SCROLL_FRAMES, { force: true });
@@ -642,7 +642,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     scrollToBottom(false, 8);
   }, [scrollToBottomSignal, scrollToBottom]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (scrollToLatestUserPromptSignal <= handledLatestPromptSignalRef.current) return;
     const latest = messages[messages.length - 1];
     if (!latest || latest.role !== "user") return;
@@ -664,7 +664,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     scrollToPromptTopNow,
   ]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (lastConversationKeyRef.current === conversationKey) return;
     lastConversationKeyRef.current = conversationKey;
     pendingConversationScrollRef.current = true;
@@ -682,7 +682,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   // mid-stream. The only thing that stops it is the reader scrolling up
   // (userReadingHistoryRef, maintained by the scroll listener), and the only
   // thing that resumes it is the reader coming back down, or a send.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!hasMessages || userReadingHistoryRef.current) return;
     if (activeTurnPromptRef.current) {
       const promptId = activeTurnPromptRef.current;
@@ -705,7 +705,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     scrollToBottom(false, isStreaming ? 3 : 1);
   }, [hasMessages, isStreaming, messages, scrollToBottom]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const pending = restoreScrollAfterPrependRef.current;
     if (!pending) return;
     const el = scrollRef.current;
@@ -724,7 +724,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     }
   }, [visibleMessages.length, messages.length]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const promptId = pendingPromptJumpRef.current;
     const scrollEl = scrollRef.current;
     if (!promptId || !scrollEl || !findPromptElement(scrollEl, promptId)) return;
@@ -736,7 +736,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     return () => window.cancelAnimationFrame(frame);
   }, [revealPromptId, visibleMessages.length]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!pendingConversationScrollRef.current) return;
     if (!conversationKey) {
       pendingConversationScrollRef.current = false;
@@ -752,11 +752,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   // `composer` element (each parent render, i.e. every streamed frame) forced a
   // layout read per frame. Without ResizeObserver, keep the old trigger.
   const composerMeasureKey = typeof ResizeObserver === "undefined" ? composer : null;
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     measureComposerDock();
   }, [composerMeasureKey, hasMessages, measureComposerDock]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!hasMessages || userReadingHistoryRef.current) return;
     const promptId = activeTurnPromptRef.current;
     if (promptId && scrollToPromptTopNow(promptId)) return;

@@ -23,6 +23,7 @@ from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.geometry import Offset
 from textual.notifications import SeverityLevel
 from textual.screen import Screen
@@ -125,6 +126,7 @@ from navin.tui.widgets import (
     FindBar,
     JumpToBottom,
     LivePresenceLine,
+    ProjectsSidebar,
     PromptEcho,
     PromptQueue,
     QueuedPromptRow,
@@ -279,7 +281,7 @@ WidgetT = TypeVar("WidgetT")
 
 
 class NavinActions(Provider):
-    """App actions exposed in the palette (ctrl+p)."""
+    """App actions exposed in the palette (ctrl+shift+p)."""
 
     def _entries(self) -> list[tuple[str, str, str]]:
         app = self.app
@@ -298,7 +300,8 @@ class NavinActions(Provider):
             ("Reasoning effort", "Choose native reasoning effort (ctrl+shift+r)", "pick_reasoning"),
             ("Model routing", "Choose model configurations by task", "open_settings('routing')"),
             ("Mode", "chat / ask / plan / agent / review / security / debug / reverse (ctrl+t)", "pick_mode"),
-            ("Sessions", "Open or resume another session (ctrl+s)", "pick_session"),
+            ("Sessions", "Show or hide the projects and sessions on the right (ctrl+s)", "toggle_projects"),
+            ("Switch session", "Pick another session of this project from a list", "pick_session"),
             ("Import chats", "Recover Claude Code, Codex, OpenCode, OMP and Cursor chats", "import_sessions"),
             ("Rename chat", "Change the name of this conversation (/title)", "rename_chat"),
             ("Project folder", "Change the project analysed by Graph and Evolve (ctrl+w)", "pick_project"),
@@ -316,7 +319,7 @@ class NavinActions(Provider):
             ("Evolve", "navin-engine proofs, diagnoses, optimizations, promotions", "open_evolve"),
             ("AGI", "Skills evolution, world model, policy, transfer, memory (F4)", "open_agi"),
             ("Theme", "Change the color theme", "pick_theme"),
-            ("Toggle panel", "Show or hide the right panel (ctrl+b)", "toggle_sidebar"),
+            ("Toggle panel", "Show or hide the AGI and settings panel on the right (ctrl+p)", "toggle_sidebar"),
             ("Toggle reasoning", "Show or hide model reasoning", "toggle_reasoning"),
             ("Toggle tool details", "Show or hide tool call lines", "toggle_tools"),
             ("Status", "Runtime, provider and channel status (/status)", "engine_status"),
@@ -584,6 +587,9 @@ def _clip_note(text: str, limit: int = 160) -> str:
 class NavinApp(App[None]):
     """Textual app hosting the chat transcript and the agent runtime."""
 
+    # ctrl+p shows the panel, as ctrl+s shows the sessions; the palette moves.
+    COMMAND_PALETTE_BINDING = "ctrl+shift+p"
+
     async def _process_messages(self, *args, **kwargs) -> None:
         with terminal_gc_policy():
             await super()._process_messages(*args, **kwargs)
@@ -668,9 +674,10 @@ class NavinApp(App[None]):
         Binding("ctrl+o", "pick_model", "Model"),
         Binding("ctrl+shift+r", "pick_reasoning", "Reasoning effort", show=False),
         Binding("ctrl+t", "pick_mode", "Mode"),
-        Binding("ctrl+s", "pick_session", "Sessions"),
+        Binding("ctrl+s", "toggle_projects", "Sessions"),
         Binding("ctrl+w", "pick_project", "Workspace", priority=True),
-        Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+p", "toggle_sidebar", "Panel"),
+        Binding("ctrl+b", "toggle_sidebar", "Panel", show=False),
         Binding("ctrl+r", "toggle_reasoning", "Reasoning", show=False),
         Binding("ctrl+l", "clear_transcript", "Clear", show=False),
         Binding("ctrl+g", "open_settings", "Settings"),
@@ -818,6 +825,10 @@ class NavinApp(App[None]):
         return popped
 
     def compose(self) -> ComposeResult:
+        # Hiding the sessions or opening the panel lasts for one run only: a
+        # reopened CLI always shows the sessions, so the panel starts closed.
+        self.prefs.sidebar = False
+        self.prefs.projects_panel = True
         with Horizontal(id="main"):
             with ChatColumn(id="column"):
                 yield Transcript(id="transcript")
@@ -840,6 +851,13 @@ class NavinApp(App[None]):
                     yield DockBar(id="dock")
                 self._composer_spacer = Static("", id="composer-spacer")
                 yield self._composer_spacer
+            # One right column at a time: the sessions (ctrl+s) or the panel (ctrl+p).
+            # Every start opens on the sessions, from the first frame, when the
+            # chat keeps room for its controls next to them.
+            yield ProjectsSidebar(
+                id="projects-side",
+                classes="-visible" if self._sessions_fit(self.size.width) else "",
+            )
             yield Sidebar(id="sidebar")
             # Last in the row: the thin bar stays on the terminal's edge.
             yield EdgeScrollbar(id="edge-scroll")
@@ -849,6 +867,7 @@ class NavinApp(App[None]):
             self.theme = self.prefs.theme
         self.watch(self, "theme", self._sync_terminal_background)
         self._one(Sidebar).set_class(self.prefs.sidebar, "-visible")
+        self._paint_sessions_bar()
         self._render_mode()
         self._set_status("starting engine…")
         self._one(Composer).focus()
@@ -920,6 +939,11 @@ class NavinApp(App[None]):
                 self._live_frame += 1
                 self._refresh_live_presence()
         key = self.runtime.session_key
+        projects_panel = self._projects_panel() if visible and self._projects_shown() else None
+        if projects_panel is not None:
+            projects_panel.set_current(str(self.runtime.workspace), key)
+            projects_panel.set_running({key} if busy else set())
+            projects_panel.tick()
         if self._queue_visible_session != key:
             self._save_unsent_work()
             self._queue_visible_session = key
@@ -1314,9 +1338,7 @@ class NavinApp(App[None]):
             await self._note(f"[$error]Engine failed to start:[/] {escape(str(exc))}", "error")
             self._set_status("[$error]engine offline[/]")
             return
-        engine_rows = self.runtime.slash_commands()
-        taken = {str(r["command"]) for r in engine_rows}
-        self.slash_rows = [dict(r) for r in _tui_slash() if r["command"] not in taken] + engine_rows
+        self._load_engine_commands()
         self._engine_ready = True
         await self._refresh_queue()
         await self._render_history()
@@ -1327,6 +1349,12 @@ class NavinApp(App[None]):
         self.run_worker(self._check_updates, thread=True, name="update-notice", group="update-notice")
         # Every hour while open: a pending update is offered again until installed.
         self.set_interval(UPDATE_CHECK_INTERVAL_S, self._recheck_updates)
+
+    def _load_engine_commands(self) -> None:
+        """Slash commands of this engine (a project can add its own)."""
+        engine_rows = self.runtime.slash_commands()
+        taken = {str(r["command"]) for r in engine_rows}
+        self.slash_rows = [dict(r) for r in _tui_slash() if r["command"] not in taken] + engine_rows
 
     def _recheck_updates(self) -> None:
         self.run_worker(
@@ -1360,6 +1388,7 @@ class NavinApp(App[None]):
         # The panel and the offer row below carry it; no toast over the prompt.
         with contextlib.suppress(Exception):
             self._one(Sidebar).set_update_available(latest)
+            self._one(ProjectsSidebar).set_update_available(latest)
         self.call_later(self._mount_update_offer, latest, text)
 
     async def _mount_update_offer(self, latest: str, detail: str) -> None:
@@ -1505,6 +1534,8 @@ class NavinApp(App[None]):
             version = "dev"
         ver = str(version or "dev")
         side.set_version(ver)
+        with contextlib.suppress(NoMatches):
+            self._one(ProjectsSidebar).set_version(ver)
         st = self.runtime.status
         mode = get_mode(self.prefs.mode)
         name, provider = split_model_slug(st.model)
@@ -1534,6 +1565,7 @@ class NavinApp(App[None]):
         side.set_activity(self._activity)
         self._load_agi_side()
         self._load_git()
+        self._reload_projects()
         self._set_status()
 
     @work(thread=True, exclusive=True, group="agi-side")
@@ -1604,6 +1636,7 @@ class NavinApp(App[None]):
     def _apply_account(self, detail: str = "") -> None:
         with contextlib.suppress(Exception):
             self._one(Sidebar).set_account(detail)
+            self._one(ProjectsSidebar).set_account(detail)
 
     def _on_account_payload(self, payload: dict[str, Any]) -> None:
         """Handoff / Refresh: apply navin on the live loop, then redraw chat."""
@@ -2381,6 +2414,7 @@ class NavinApp(App[None]):
                 event.output,
                 visible=self.prefs.show_tools,
                 percent=event.percent,
+                expected_s=event.expected_s,
                 output_mode=event.output_mode,
             )
             self._track_step(event)
@@ -2792,12 +2826,328 @@ class NavinApp(App[None]):
             token = self._invalidate_history()
             await self._paint_history(token)
 
+    def _side_shown(self) -> bool:
+        try:
+            return self._one(Sidebar).has_class("-visible")
+        except NoMatches:
+            return False
+
+    def _focus_composer_if_hidden(self) -> None:
+        """Typing goes back to the prompt when the focused column just closed."""
+        focused = self.focused
+        if focused is None:
+            return
+        for node in focused.ancestors:
+            if isinstance(node, (ProjectsSidebar, Sidebar)) and not node.has_class("-visible"):
+                with contextlib.suppress(NoMatches):
+                    self._one(Composer).focus()
+                return
+
     def action_toggle_sidebar(self) -> None:
-        self.prefs.sidebar = not self.prefs.sidebar
+        """ctrl+p (or ctrl+b): the AGI and settings panel, in the sessions' place."""
+        self._right_side_chosen = True
+        opened = not self._side_shown()
+        self.prefs.sidebar = opened
         self.prefs.sidebar_explicit = True
+        if opened and self._projects_shown():
+            self.prefs.projects_panel = False
+            self.prefs.projects_panel_explicit = True
+            self._one(ProjectsSidebar).remove_class("-visible")
         self._save_prefs_in_background()
-        self._one(Sidebar).set_class(self.prefs.sidebar, "-visible")
+        self._one(Sidebar).set_class(opened, "-visible")
+        self._paint_sessions_bar()
         self._set_status()
+        self._focus_composer_if_hidden()
+
+    # -- projects and sessions in the right column --------------------------
+
+    def _projects_shown(self) -> bool:
+        try:
+            return self._one(ProjectsSidebar).has_class("-visible")
+        except NoMatches:
+            return False
+
+    def _paint_sessions_bar(self) -> None:
+        with contextlib.suppress(NoMatches):
+            self.query_one("#dock", DockBar).set_sessions(self._projects_shown())
+
+    # The sessions column is 36 wide; next to it the chat keeps at least 50
+    # columns (and the edge bar one), else its buttons fall off the screen.
+    _SESSIONS_MIN_WIDTH = 88
+    _right_side_chosen = False
+
+    def _sessions_fit(self, width: int) -> bool:
+        return width <= 0 or width >= self._SESSIONS_MIN_WIDTH
+
+    def on_resize(self, event: events.Resize) -> None:
+        # Until the user picks a column in this run, the sessions follow the
+        # terminal: shown when the chat still fits beside them.
+        if self._right_side_chosen or self._side_shown():
+            return
+        with contextlib.suppress(NoMatches):
+            self._one(ProjectsSidebar).set_class(self._sessions_fit(event.size.width), "-visible")
+            self._paint_sessions_bar()
+
+    def action_toggle_projects(self) -> None:
+        """ctrl+s or Sessions under the chat: the sessions, in the panel's place."""
+        self._right_side_chosen = True
+        opened = not self._projects_shown()
+        self.prefs.projects_panel = opened
+        self.prefs.projects_panel_explicit = True
+        if opened and self._side_shown():
+            self.prefs.sidebar = False
+            self.prefs.sidebar_explicit = True
+            self._one(Sidebar).remove_class("-visible")
+        self._save_prefs_in_background()
+        self._one(ProjectsSidebar).set_class(opened, "-visible")
+        self._paint_sessions_bar()
+        self._set_status()
+        self._focus_composer_if_hidden()
+        if opened:
+            self._reload_projects(force=True)
+
+    _projects_loaded_at = 0.0
+    _project_registered = False
+
+    def _projects_panel(self) -> Any:
+        from navin.tui.projects_panel import ProjectsPanel
+
+        cached = getattr(self, "_projects_panel_cache", None)
+        if cached is not None and cached.is_attached:
+            return cached
+        try:
+            self._projects_panel_cache = self._one(ProjectsSidebar).query_one("#side-projects", ProjectsPanel)
+        except NoMatches:  # sidebar not composed yet
+            return None
+        return self._projects_panel_cache
+
+    def _reload_projects(self, *, force: bool = False) -> None:
+        """Re-read projects and sessions off the UI thread, at most every 3 s."""
+        now = time.monotonic()
+        if not force and now - self._projects_loaded_at < 3.0:
+            return
+        self._projects_loaded_at = now
+        self.run_worker(self._load_projects, exclusive=True, group="projects-load")
+
+    async def _load_projects(self) -> None:
+        from loguru import logger
+
+        from navin.tui import projects
+
+        current = str(self.runtime.workspace)
+        try:
+            if not self._project_registered:
+                # Every folder the CLI runs in joins the list, once per launch.
+                self._project_registered = True
+                await asyncio.to_thread(projects.register_project, current)
+            entries = await asyncio.to_thread(projects.load_projects, current)
+        except (OSError, ValueError):
+            # An unreadable state file keeps the list as it was; say so in the log.
+            logger.warning("sidebar projects not reloaded", exc_info=True)
+            return
+        panel = self._projects_panel()
+        if panel is not None:
+            panel.set_data(entries, current, self.runtime.session_key)
+
+    def on_projects_panel_hit(self, event: Any) -> None:
+        event.stop()
+        if not self._engine_ready:
+            return
+        kind, path, key = event.kind, event.path, event.key
+        if kind == "add":
+            self._spawn(self._add_project())
+        elif kind == "new":
+            self._spawn(self._new_agent(path))
+        elif kind == "open":
+            self._spawn(self._open_project_session(path, key))
+        elif kind == "menu":
+            self._spawn(self._session_menu(path, key))
+
+    async def _confirm(self, title: str, yes: str, hint: str = "") -> bool:
+        answer = await self.push_screen_wait(
+            PickerScreen(
+                title,
+                [PickItem("yes", yes), PickItem("no", "Cancel")],
+                hint=hint,
+            )
+        )
+        return answer == "yes"
+
+    async def _add_project(self) -> None:
+        from navin.tui import projects
+
+        values = await self.push_screen_wait(
+            FormScreen(
+                "Add a project",
+                [FormField("path", "Folder path", placeholder=str(Path.cwd()))],
+                hint="Type or paste a folder path. A missing folder can be created. It also shows in the desktop.",
+                submit_label="Add",
+            )
+        )
+        if not values:
+            return
+        raw = values.get("path") or ""
+        try:
+            path = projects.resolve_project_dir(raw)
+        except ValueError as exc:
+            if not Path(raw.strip().strip("\"'") or ".").expanduser().exists() and raw.strip():
+                if not await self._confirm("Create this folder?", "Create it", raw.strip()):
+                    return
+                try:
+                    path = projects.resolve_project_dir(raw, create=True)
+                except ValueError as err:
+                    self.notify(str(err), severity="error")
+                    return
+            else:
+                self.notify(str(exc), severity="error")
+                return
+        await asyncio.to_thread(projects.remember_project, str(path))
+        self._reload_projects(force=True)
+        await self._flash(f"project added: [b]{escape(path.name)}[/b]", "success")
+
+    async def _open_project(self, path: str, key: str) -> None:
+        """Open a session of another project here: the engine moves, the CLI stays open."""
+        from loguru import logger
+
+        from navin.tui import projects
+        from navin.tui.runtime import WorkspaceSwitchError
+
+        name = Path(path).name or path
+        running = self.runtime.running_work()
+        if running and not await self._confirm(
+            "Work is still running in this project",
+            "Stop it and switch",
+            f"{running} running task(s) stop when the engine moves to {name}.",
+        ):
+            return
+        self._engine_ready = False
+        self._set_status(f"opening {escape(name)}…")
+        try:
+            await self.runtime.switch_workspace(path, key)
+        except WorkspaceSwitchError as exc:
+            self._engine_ready = self.runtime.agent_loop is not None
+            self._set_status()
+            await self._note(f"[$error]{escape(str(exc))}[/]", "error")
+            return
+        self.project_root = Path(self.runtime.workspace)
+        self.prefs.project_root = str(self.project_root)
+        self._load_engine_commands()
+        self._engine_ready = True
+        try:
+            # Listed once, where it already was: the list never jumps on a switch.
+            await asyncio.to_thread(projects.register_project, str(self.project_root))
+        except OSError:
+            logger.warning("sidebar: project not remembered", exc_info=True)
+        await self._switch_session(key)
+        self._reload_projects(force=True)
+        self._set_status()
+
+    async def _open_project_session(self, path: str, key: str) -> None:
+        from navin.tui.projects import same_path
+
+        if not same_path(path, self.runtime.workspace):
+            await self._open_project(path, key)
+            return
+        if key != self.runtime.session_key:
+            await self._switch_session(key)
+        self._reload_projects(force=True)
+
+    async def _new_agent(self, path: str) -> None:
+        from navin.tui.projects import new_session_key, same_path
+
+        key = new_session_key()
+        if not same_path(path, self.runtime.workspace):
+            await self._open_project(path, key)
+            return
+        await self._switch_session(key)
+        self._reload_projects(force=True)
+
+    async def _session_menu(self, path: str, key: str) -> None:
+        from navin.tui import projects
+        from navin.tui.projects import same_path
+
+        panel = self._projects_panel()
+        pinned = panel.is_pinned(path, key) if panel is not None else False
+        title = panel.title_of(path, key) if panel is not None else ""
+        choice = await self.push_screen_wait(
+            PickerScreen(
+                title or "Session",
+                [
+                    PickItem("open", "Open"),
+                    PickItem("rename", "Rename"),
+                    PickItem("pin", "Unpin" if pinned else "Pin"),
+                    PickItem("download", "Download", "a .navin-session file for the desktop or another CLI"),
+                    PickItem("share", "Share live", "a navin.live link through the relay"),
+                    PickItem("delete", "Delete"),
+                ],
+                hint="Enter picks an action.",
+            )
+        )
+        here = same_path(path, self.runtime.workspace)
+        live = getattr(self.runtime.agent_loop, "sessions", None) if here else None
+        if choice == "open":
+            await self._open_project_session(path, key)
+        elif choice == "rename":
+            values = await self.push_screen_wait(
+                FormScreen(
+                    "Rename session",
+                    [FormField("title", "Name", value=title, placeholder="Session name")],
+                    hint="This name stays until you change it again.",
+                    submit_label="Save",
+                )
+            )
+            name = (values or {}).get("title", "").strip()
+            if not name:
+                return
+            try:
+                await asyncio.to_thread(projects.rename_session, path, key, name, live)
+            except (OSError, ValueError) as exc:
+                await self._note(f"[$error]{escape(str(exc))}[/]", "error")
+                return
+            self._reload_projects(force=True)
+        elif choice == "pin":
+            await asyncio.to_thread(projects.toggle_pin, key)
+            self._reload_projects(force=True)
+        elif choice == "download":
+            await self._download_session(path, key, title)
+        elif choice == "share":
+            if not here:
+                await self._flash("open this session first, then share it", "info")
+                return
+            if key != self.runtime.session_key:
+                await self._switch_session(key)
+            await self._share_live()
+        elif choice == "delete":
+            if not await self._confirm("Delete this session?", "Delete it", title or key):
+                return
+            try:
+                await asyncio.to_thread(projects.delete_session, path, key, live)
+            except OSError as exc:
+                await self._note(f"[$error]{escape(str(exc))}[/]", "error")
+                return
+            if here and key == self.runtime.session_key:
+                await self._switch_session(projects.new_session_key())
+            self._reload_projects(force=True)
+            await self._flash("session deleted", "success")
+
+    async def _download_session(self, path: str, key: str, title: str) -> None:
+        from navin.tui.session_bundle import (
+            default_export_dir,
+            default_export_path,
+            export_cli_session,
+        )
+
+        root = Path(path)
+        target = default_export_path(default_export_dir(root), title)
+        try:
+            result = await asyncio.to_thread(
+                export_cli_session, root, key, project_root=root, title=title, output=target,
+            )
+        except (OSError, ValueError, KeyError) as exc:  # shown to the user, nothing written
+            await self._note(escape(f"Download failed: {exc}"), "error")
+            return
+        self.copy_to_clipboard(str(result.path), quiet=True)
+        await self._flash(f"saved (path copied): [b]{escape(str(result.path))}[/b]", "success")
 
     def action_toggle_reasoning(self) -> None:
         self.prefs.show_reasoning = not self.prefs.show_reasoning

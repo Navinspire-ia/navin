@@ -557,6 +557,10 @@ export interface ToolProgressEvent {
   indeterminate?: boolean;
   /** Estimated seconds remaining, when known. */
   eta_s?: number;
+  /** Test runs and commands: usual duration in seconds, from earlier runs. */
+  test_expected_s?: number;
+  /** Test runs and commands: "quick" or "long", from that usual duration. */
+  test_kind?: "quick" | "long";
   /** Short human label for the current phase (Downloading…, Building…). */
   label?: string;
   /** Client-side arrival time of the "start" phase (live duration display). */
@@ -1310,7 +1314,8 @@ export interface GitMachineRemote {
   url: string;
   protocol: "https" | "ssh" | "local" | string;
   host: string;
-  auth: "token" | "ssh_key" | "embedded" | "local" | "none" | string;
+  /** token: a Navin token; git / gh: the sign-in the project's own git already uses. */
+  auth: "token" | "git" | "gh" | "ssh_key" | "embedded" | "local" | "none" | string;
   https_url: string | null;
 }
 

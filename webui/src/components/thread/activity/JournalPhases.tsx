@@ -581,6 +581,7 @@ function PhaseSection({
         <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-foreground/85">
           {t(titleKey, { defaultValue: titleFallback })}
         </span>
+        {phase.key === "test" || phase.key === "command" ? <RunProgress phase={phase} /> : null}
         <span className="inline-flex shrink-0 items-center gap-2 text-[13.5px] tabular-nums text-muted-foreground">
           <span>{meta}</span>
           {phase.errors > 0 && phase.key !== "attention" && phase.key !== "edit" ? (
@@ -617,6 +618,79 @@ function PhaseSection({
         ) : null}
       </AnimatePresence>
     </section>
+  );
+}
+
+/**
+ * On the Tests line: quick or long (with the usual minutes), a thin bar and the
+ * real percent the runner reports, so a long run never looks frozen.
+ */
+type RunFacts = { running: boolean; percent?: number; expectedS?: number; kind?: "quick" | "long" };
+
+/** What a test run or a command says about its progress and usual duration. */
+function runFacts(entry: ActivityJournalEntry): RunFacts | null {
+  const running = entry.status === "running";
+  if (entry.kind === "shell" || entry.kind === "cli") {
+    const run = entry.shellRun;
+    return { running, percent: run?.percent, expectedS: run?.expectedS, kind: run?.runKind };
+  }
+  if (entry.tool === "test_run" || entry.tool === "verify") {
+    return { running, percent: entry.percent, expectedS: entry.expectedS, kind: entry.testKind };
+  }
+  return null;
+}
+
+/**
+ * On the Tests and Commands lines: quick or long (with the usual minutes), a
+ * thin bar and the percent (the runner's own, else estimated from earlier
+ * runs), so a long run never looks frozen, even with its output piped to tail.
+ */
+function RunProgress({ phase }: { phase: JournalPhase }) {
+  const { t } = useTranslation();
+  const runs = phase.entries.map(runFacts).filter((facts): facts is RunFacts => facts !== null);
+  const current = [...runs].reverse().find((facts) => facts.running) ?? runs[runs.length - 1];
+  if (!current) return null;
+  const isTest = phase.key === "test";
+  // A finished command already shows its duration; the bar is for the wait.
+  if (!current.running && !isTest) return null;
+  const running = current.running;
+  const percent = running
+    ? typeof current.percent === "number" ? Math.max(0, Math.min(100, current.percent)) : undefined
+    : 100;
+  const minutes = current.expectedS ? Math.max(1, Math.round(current.expectedS / 60)) : null;
+  const kind = current.kind;
+  const kindLabel = kind === "long"
+    ? isTest
+      ? t("message.journalTestLong", { defaultValue: "Long tests" })
+      : t("message.journalCommandLong", { defaultValue: "Long command" })
+    : kind === "quick"
+      ? isTest
+        ? t("message.journalTestQuick", { defaultValue: "Quick tests" })
+        : t("message.journalCommandQuick", { defaultValue: "Quick command" })
+      : null;
+  return (
+    <span className="inline-flex min-w-0 shrink items-center gap-2 text-[12.5px] text-muted-foreground" data-testid="journal-test-progress">
+      {kindLabel ? (
+        <span className="shrink-0">
+          {kindLabel}
+          {kind === "long" && minutes
+            ? ` ${t("message.journalTestEstimate", { count: minutes, defaultValue: "~{{count}} min" })}`
+            : ""}
+        </span>
+      ) : null}
+      {running || percent === 100 ? (
+        <span className="relative h-1 w-16 shrink-0 overflow-hidden rounded-full bg-muted/60" aria-hidden>
+          {percent === undefined ? (
+            <span className="absolute inset-y-0 w-1/3 animate-[task-progress-slide_1.2s_ease-in-out_infinite] rounded-full bg-sky-500/80 motion-reduce:animate-none" />
+          ) : (
+            <span className="block h-full rounded-full bg-sky-500/85 transition-[width] duration-300" style={{ width: `${percent}%` }} />
+          )}
+        </span>
+      ) : null}
+      {percent !== undefined && (running || percent === 100) ? (
+        <span className="shrink-0 tabular-nums" data-testid="journal-test-percent">{Math.round(percent)}%</span>
+      ) : null}
+    </span>
   );
 }
 

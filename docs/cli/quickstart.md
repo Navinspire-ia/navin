@@ -38,4 +38,4 @@ From a `navin` source checkout:
 
 ## 4. First turn
 
-Type a request and press Enter. `/` lists commands. **Ctrl+P** is the palette. **?** is help.
+Type a request and press Enter. `/` lists commands. **Ctrl+Shift+P** is the palette. **?** is help.

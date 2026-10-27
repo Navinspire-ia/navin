@@ -3445,7 +3445,17 @@
     "journalExploreSearches": "عمليات البحث",
     "journalExploreListings": "محتويات المجلدات",
     "journalExploreIndex": "فهرس الشيفرة",
-    "journalExploreOther": "أخرى"
+    "journalExploreOther": "أخرى",
+    "journalCommandQuick": "أمر سريع",
+    "journalCommandLong": "أمر طويل",
+    "journalTestQuick": "اختبارات سريعة",
+    "journalTestLong": "اختبارات طويلة",
+    "journalTestEstimate_one": "~{{count}} د",
+    "journalTestEstimate_other": "~{{count}} د",
+    "journalTestEstimate_two": "~{{count}} د",
+    "journalTestEstimate_few": "~{{count}} د",
+    "journalTestEstimate_many": "~{{count}} د",
+    "journalTestEstimate_zero": "~{{count}} د"
   },
   "montage": {
     "actions": {
@@ -6085,6 +6095,7 @@
         "remoteNoToken": "المستودع البعيد {{remote}} ({{host}}) ليس له رمز بعد.",
         "remoteSshNoKey": "المستودع البعيد {{remote}} يستخدم SSH لكن لم يُعثر على مفتاح SSH على هذا الجهاز.",
         "remoteOkSsh": "المستودع البعيد {{remote}} ({{host}}) يستخدم مفتاح SSH الخاص بك",
+        "remoteOkGit": "المستودع البعيد {{remote}} ({{host}}) يستخدم تسجيل دخول git الخاص بهذا المشروع",
         "remoteOk": "المستودع البعيد {{remote}} ({{host}}) مغطى برمزك",
         "didIdentity": "تم ضبط هوية الإيداع على {{name}} <{{email}}>.",
         "needIdentity": "تعذر على Navin تخمين هوية الإيداع. أدخلها أدناه.",

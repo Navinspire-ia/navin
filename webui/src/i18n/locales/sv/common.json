@@ -3134,7 +3134,13 @@
     "fileEditUnifiedView": "Enhetlig vy",
     "activityModeEssential": "Väsentligt",
     "activityModeStandard": "Standard",
-    "activityModeDebug": "Felsökning"
+    "activityModeDebug": "Felsökning",
+    "journalCommandQuick": "Snabbt kommando",
+    "journalCommandLong": "Långt kommando",
+    "journalTestQuick": "Snabba tester",
+    "journalTestLong": "Långa tester",
+    "journalTestEstimate_one": "~{{count}} min",
+    "journalTestEstimate_other": "~{{count}} min"
   },
   "montage": {
     "actions": {

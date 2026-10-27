@@ -4,7 +4,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -133,8 +132,10 @@ import {
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
 import {
   loadLastModelPick,
+  loadThreadEffort,
   loadThreadModelPreset,
   saveLastModelPick,
+  saveThreadEffort,
   saveThreadModelPreset,
 } from "@/lib/thread-model-preset";
 import {
@@ -168,6 +169,7 @@ import { useNotifications } from "@/providers/NotificationProvider";
 import { useAccount } from "@/hooks/useAccount";
 import { TeamRoom } from "@/components/team/TeamRoom";
 import { mergeTeamFeed, parseTeamEntry, parseTeamIdentity, type TeamFeedEntry, type TeamIdentity } from "@/lib/team";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 function projectWebuiThreadMessages(messages: UIMessage[]): UIMessage[] {
   return scrubSubagentUiMessages(normalizeLegacyLongTaskMessages(messages));
@@ -1436,6 +1438,9 @@ export function ThreadShell({
     async (effort: string) => {
       const presetName = activeEffortPreset?.name;
       if (!presetName || !token) return;
+      // Remember the effort for this chat (and as the last pick) so closing
+      // and reopening the session restores it with the model.
+      saveThreadEffort(chatId, presetName, effort);
       setEffortBusy(true);
       try {
         // Prefer /settings/update for the active chat model: it updates both
@@ -1457,8 +1462,23 @@ export function ThreadShell({
         setEffortBusy(false);
       }
     },
-    [activeEffortPreset?.name, onSettingsChange, settings?.agent.model_preset, token],
+    [activeEffortPreset?.name, chatId, onSettingsChange, settings?.agent.model_preset, token],
   );
+
+  // Reopening a chat: re-apply the effort the user left it on for this model,
+  // once per chat + model, when the stored value differs from the live one.
+  const restoredEffortKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const presetName = activeEffortPreset?.name;
+    if (!presetName || !settings || !token || effortBusy) return;
+    const key = `${chatId ?? ""}::${presetName}`;
+    if (restoredEffortKeyRef.current === key) return;
+    restoredEffortKeyRef.current = key;
+    const stored = loadThreadEffort(chatId, presetName);
+    if (stored === null || stored === effortValue) return;
+    if (!effortOptions.includes(stored)) return;
+    void handleEffortSelect(stored);
+  }, [activeEffortPreset?.name, chatId, effortBusy, effortOptions, effortValue, handleEffortSelect, settings, token]);
 
   const contextWindowValue =
     activeEffortPreset?.context_window_tokens ?? settings?.agent.context_window_tokens ?? null;
@@ -1671,7 +1691,7 @@ export function ThreadShell({
     setMessages(projectWebuiThreadMessages(historical));
   }, [chatId, historical, setMessages]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (chatId) {
       const prev = prevChatIdForCacheRef.current;
       if (prev && prev !== chatId) {

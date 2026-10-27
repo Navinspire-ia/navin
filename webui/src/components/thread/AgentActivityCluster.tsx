@@ -1358,6 +1358,9 @@ export function collectJournalSteps(messages: UIMessage[], streaming: boolean): 
         output: outputText || undefined,
         error: event ? cliRunError(event) : undefined,
         evidence: callKey ? derived.evidence.get(callKey) : undefined,
+        percent: typeof event?.percent === "number" ? event.percent : undefined,
+        expectedS: typeof event?.test_expected_s === "number" ? event.test_expected_s : undefined,
+        testKind: event?.test_kind,
       });
     };
 
@@ -1877,6 +1880,8 @@ function shellRunFromEvent(event: ToolProgressEvent, callKey?: string): ShellRun
     // (end/error) never erases what the start-of-run meta frame said.
     ...(typeof event.sandbox === "string" && event.sandbox ? { sandbox: event.sandbox } : {}),
     ...(event.sandbox_lifted === true ? { sandboxLifted: true } : {}),
+    ...(typeof event.test_expected_s === "number" ? { expectedS: event.test_expected_s } : {}),
+    ...(event.test_kind === "quick" || event.test_kind === "long" ? { runKind: event.test_kind } : {}),
   };
 }
 
@@ -1900,6 +1905,8 @@ function mergeShellRun(existing: ShellRunSummary | undefined, incoming: ShellRun
       output: incoming.output || existing.output,
       sandbox: existing.sandbox ?? incoming.sandbox,
       sandboxLifted: existing.sandboxLifted ?? incoming.sandboxLifted,
+      expectedS: existing.expectedS ?? incoming.expectedS,
+      runKind: existing.runKind ?? incoming.runKind,
     };
   }
   return {

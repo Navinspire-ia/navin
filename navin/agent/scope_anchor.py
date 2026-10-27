@@ -23,6 +23,7 @@ Two pieces, both cheap:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -365,7 +366,11 @@ async def scope_anchor_context_provider(
     request: RequestContext,
 ) -> RuntimeContextBlock | None:
     """One runtime line per turn naming where the user pointed."""
-    targets = named_targets(request.original_user_text, getattr(request, "workspace", None))
+    # Scans the workspace and reads git branches: 1 to 2 s on the loop for a
+    # WSL project (desktop and CLI logs, 2026-10-26).
+    targets = await asyncio.to_thread(
+        named_targets, request.original_user_text, getattr(request, "workspace", None)
+    )
     content = wrap_runtime_context_lines(scope_anchor_lines(targets))
     if not content:
         return None

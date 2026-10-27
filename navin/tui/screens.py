@@ -817,16 +817,16 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Enter` | Send message |
 | `Shift+Enter` / `Ctrl+J` | New line |
 | `Esc` | Stop the running turn (shown as ``esc to interrupt`` while Working) |
-| `Ctrl+P` | Command palette (all actions + slash commands) |
+| `Ctrl+Shift+P` | Command palette (all actions + slash commands) |
 | `Ctrl+N` | New chat (`/new`) |
 | `Ctrl+I` | Provider settings |
 | `Ctrl+O` | Model list |
 | `Ctrl+T` | Mode list (default: agent) |
-| `Ctrl+S` | Sessions (F2 renames, type to search) |
+| `Ctrl+S` / **Sessions** under the chat | Show / hide the projects and sessions on the right |
 | `/import` | Import chats from Claude Code, Codex, OpenCode, OMP and Cursor |
 | `Ctrl+W` | Workspace / project folder |
 | `Ctrl+D` | Account (navin.live) |
-| `Ctrl+B` | Show / hide the right panel |
+| `Ctrl+P` / `Ctrl+B` / **panel** under the chat | Show / hide the AGI and settings panel on the right |
 | `Ctrl+G` | Settings |
 | `F2` / `F3` / `F4` | Graph / Evolve / AGI |
 | `Ctrl+R` | Toggle reasoning visibility |
@@ -853,11 +853,13 @@ memory, MCP servers and slash commands as Navin Desktop.
 | Zoom | Terminal zoom: `Ctrl++` / `Ctrl+-` (Windows Terminal / the host) |
 | `Ctrl+Q` | Quit |
 
-## Panel (Ctrl+B)
+## Panel (Ctrl+P) and sessions (Ctrl+S)
 
-The right panel is the control board: every row is a shortcut you can click.
-Provider, Model, Mode, Session and Workspace open their list; Settings, Commands, New chat, Graph,
-Evolve and Help run directly; the Hide panel button (or Ctrl+B) closes the panel. While it is
+The right side shows one column at a time: the sessions (Ctrl+S) or the panel (Ctrl+P);
+opening one closes the other, and every start opens on the sessions. The sessions column lists every folder the CLI was used in,
+with its latest sessions. The panel is the control board: every row is a shortcut you can click.
+Provider, Model, Mode, Sessions and Workspace open their list; Settings, Commands, New chat, Graph,
+Evolve and Help run directly; the Hide panel button (or Ctrl+P) closes the panel. While it is
 hidden, mode and model stay on the last row of the chat field; shortcuts stay in this panel.
 
 ## Modes
@@ -893,7 +895,7 @@ Account (navin.live) and About. Enter toggles a switch, cycles auto / on /
 off, opens a picker or edits inline; `Ctrl+S` saves through the config
 schema. Every key of `config.json` stays reachable from About > Advanced.
 
-Ctrl+P > "Configure" still opens the remaining hubs: Tools, Agent loop,
+Ctrl+Shift+P > "Configure" still opens the remaining hubs: Tools, Agent loop,
 Memory, Automation & tasks, Packs.
 
 ## Graph (F2) and Evolve (F3)

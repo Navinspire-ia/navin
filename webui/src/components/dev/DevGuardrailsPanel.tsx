@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   BrainCircuit,
@@ -36,6 +36,7 @@ import { useLatestTokenRef } from "@/hooks/useLatestToken";
 import { useClient } from "@/providers/ClientProvider";
 
 import { DevGuardrailsSecurity } from "./DevGuardrailsSecurity";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 /** Machine-wide kill-switches; they can only subtract from project consent. */
 type GlobalFlags = { auto_branch_enabled: boolean; open_pr_enabled: boolean };
@@ -293,7 +294,7 @@ export function DevGuardrailsPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const flags = globalFlagsFrom(settings);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = scrollRef.current;
     return node ? bindMenuListWheel(node) : undefined;
   });

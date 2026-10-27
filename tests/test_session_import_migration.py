@@ -88,7 +88,7 @@ def test_opencode_keeps_its_project_directory(tmp_path):
 def test_titles_skip_pasted_and_injected_blocks():
     assert _title_from_messages([
         {"role": "user", "content": '<pasted_content id="a">[2026-10-04] 500 errors...</pasted_content> why does it crash?'},
-    ]) == "why does it crash?"
+    ]) == "why does it"
 
 
 def test_origin_project_rules():

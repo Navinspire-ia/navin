@@ -9,6 +9,7 @@ import { isOpeningGesture, noteMenuOpened } from "@/components/thread/menuChoice
 import { bindMenuListWheel } from "@/lib/model-picker-scroll";
 import { cn } from "@/lib/utils";
 import { mergeRefs, useCssZoomFloatingLayer } from "./use-css-zoom-floating-layer";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 /**
  * Non-modal by default. WKWebView (macOS) and WebKitGTK mis-hit the
@@ -82,7 +83,7 @@ const DropdownMenuSubContent = React.forwardRef<
 >(({ className, ...props }, ref) => {
   const layerRef = React.useRef<React.ElementRef<typeof DropdownMenuPrimitive.SubContent>>(null);
   useCssZoomFloatingLayer(layerRef);
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = layerRef.current;
     return node ? bindMenuListWheel(node) : undefined;
   });
@@ -112,7 +113,7 @@ const DropdownMenuContent = React.forwardRef<
 >(({ className, sideOffset = 4, portalContainer, onCloseAutoFocus, onInteractOutside, style, ...props }, ref) => {
   const layerRef = React.useRef<React.ElementRef<typeof DropdownMenuPrimitive.Content>>(null);
   useCssZoomFloatingLayer(layerRef);
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = layerRef.current;
     return node ? bindMenuListWheel(node) : undefined;
   });

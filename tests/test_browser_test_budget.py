@@ -107,6 +107,34 @@ def test_the_fourth_browser_run_is_refused_but_other_commands_still_work(shared_
     asyncio.run(check())
 
 
+def test_a_run_that_never_started_does_not_spend_the_budget() -> None:
+    class BrokenExec(FakeExec):
+        async def execute(self, **kwargs):
+            self.commands.append(kwargs["command"])
+            return "sh: 1: playwright: command not found\nExit code: 127"
+
+    async def check() -> None:
+        tool = BrokenExec()
+        registry = ToolRegistry()
+        registry.register(tool)
+        spec = AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "run the e2e playwright tests"}],
+            tools=registry, runtime=SimpleNamespace(),
+            max_iterations=20, max_tool_result_chars=2000,
+            loop_guard=AgentLoopGuard(),
+        )
+        runner = AgentRunner()
+        for n in range(5):
+            result, _, _ = await runner._dispatch_tool_call(
+                spec, ToolCallRequest(id=f"c{n}", name="exec",
+                                      arguments={"command": "npx playwright test"}), {}, {},
+            )
+            assert "browser test budget" not in result
+        assert spec.loop_guard.browser_test_runs == 0
+
+    asyncio.run(check())
+
+
 def test_no_browser_run_unless_the_request_asks_for_one() -> None:
     async def check() -> None:
         tool = FakeExec()
@@ -209,3 +237,68 @@ def test_continue_after_a_handoff_keeps_the_open_page() -> None:
         assert event["status"] == "ok"
 
     asyncio.run(check())
+
+
+def test_a_unit_test_that_only_mentions_a_driver_is_no_browser_run(tmp_path) -> None:
+    # The unit tests of this guard write "from playwright..." into a string:
+    # running them with pytest was refused as a browser run.
+    unit = tmp_path / "test_guard.py"
+    unit.write_text('SCRIPT = "import asyncio\\nfrom playwright.async_api import x\\n"\n')
+    assert not is_browser_test_command(f"python -m pytest -q {unit}", tmp_path)
+    real = tmp_path / "test_ui.py"
+    real.write_text("import pytest\nfrom playwright.sync_api import Page\n")
+    assert is_browser_test_command(f"python -m pytest -q {real}", tmp_path)
+    js = tmp_path / "check.mjs"
+    js.write_text("import { chromium } from 'playwright';\n")
+    assert is_browser_test_command(f"node {js}", tmp_path)
+
+
+# The same per-request budget idea for waits: a sleep-and-poll loop ends.
+
+
+@pytest.mark.parametrize(("command", "seconds"), [
+    ("sleep 240", 240.0),
+    ("sleep 3m && gh run list", 180.0),
+    ("  sleep 1.5; curl localhost", 1.5),
+    ("Start-Sleep -Seconds 90", 90.0),
+    ("echo sleep 300", 0.0),
+    ("timeout 600 gh run watch 1 --exit-status", 0.0),
+])
+def test_what_counts_as_a_bare_wait(command: str, seconds: float) -> None:
+    from navin.agent.runner import leading_sleep_seconds
+
+    assert leading_sleep_seconds(command) == seconds
+
+
+def test_sleeping_past_the_wait_budget_is_refused_and_says_what_to_do() -> None:
+    from navin.agent.runner import SLEEP_BUDGET_S
+
+    shell = FakeExec()
+    registry = ToolRegistry()
+    registry.register(shell)
+    spec = AgentRunSpec(
+        initial_messages=[{"role": "user", "content": "push and check the CI"}],
+        tools=registry, runtime=SimpleNamespace(),
+        max_iterations=20, max_tool_result_chars=2000, loop_guard=AgentLoopGuard(),
+    )
+
+    async def run(command: str, n: int):
+        return await AgentRunner()._dispatch_tool_call(
+            spec, ToolCallRequest(id=f"s{n}", name="exec", arguments={"command": command}), {}, {},
+        )
+
+    async def scenario():
+        first = await run("sleep 240", 1)
+        second = await run("sleep 300", 2)
+        refused = await run("sleep 180", 3)
+        other = await run("gh run list --limit 3", 4)
+        return first, second, refused, other
+
+    first, second, refused, other = asyncio.run(scenario())
+    assert "Error" not in str(first[0]) and "Error" not in str(second[0])
+    assert spec.loop_guard.slept_s == 540.0 < SLEEP_BUDGET_S
+    assert str(refused[0]).startswith("Error: this request already waited 540s")
+    assert "tell the user what is still pending" in str(refused[0])
+    assert refused[1]["detail"] == "wait budget used"
+    assert shell.commands == ["sleep 240", "sleep 300", "gh run list --limit 3"], "other commands still run"
+    assert "Error" not in str(other[0])

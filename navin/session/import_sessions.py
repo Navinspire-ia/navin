@@ -118,7 +118,9 @@ _TITLE_NOISE = re.compile(
 def _title_from_text(text: str) -> str:
     """One-line, bounded title taken from the first user message."""
     cleaned = _TITLE_NOISE.sub(" ", text)
-    line = " ".join((cleaned if cleaned.strip() else text).split())
+    from navin.session.webui_turns import limit_title_words
+
+    line = limit_title_words(" ".join((cleaned if cleaned.strip() else text).split()))
     if len(line) > _MAX_TITLE_CHARS:
         line = line[: _MAX_TITLE_CHARS - 1].rstrip() + "..."
     return line

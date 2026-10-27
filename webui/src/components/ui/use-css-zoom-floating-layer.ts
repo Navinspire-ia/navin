@@ -4,6 +4,7 @@
 import * as React from "react";
 
 import { applyCssZoomToRadixPopper } from "@/lib/ui-zoom";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 export function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallback<T> {
   return (node) => {
@@ -23,7 +24,7 @@ export function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.Re
  * menu appearing far down-right of its trigger.
  */
 export function useCssZoomFloatingLayer(ref: { current: HTMLElement | null }): void {
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
     const wrapper = node.closest("[data-radix-popper-content-wrapper]");

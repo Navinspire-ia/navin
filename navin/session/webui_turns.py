@@ -52,6 +52,9 @@ WEBUI_TITLE_METADATA_KEY = "title"
 WEBUI_TITLE_USER_EDITED_METADATA_KEY = "title_user_edited"
 WEBUI_TITLE_PROVISIONAL_METADATA_KEY = "title_provisional"
 TITLE_MAX_CHARS = 60
+# A chat name is a label, not a sentence: at most this many words everywhere
+# (sidebar, CLI and desktop), whatever produced it.
+TITLE_MAX_WORDS = 3
 TITLE_GENERATION_MAX_TOKENS = 96
 TITLE_GENERATION_REASONING_EFFORT = "none"
 
@@ -228,6 +231,14 @@ def mark_webui_session(session: Session, metadata: dict[str, Any]) -> bool:
     return True
 
 
+def limit_title_words(text: str | None, max_words: int = TITLE_MAX_WORDS) -> str:
+    """Keep the first ``max_words`` words of a title ('' stays '')."""
+    words = (text or "").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(" ,;:-")
+
+
 def clean_generated_title(raw: str | None) -> str:
     text = (raw or "").strip()
     if not text:
@@ -237,6 +248,7 @@ def clean_generated_title(raw: str | None) -> str:
     text = strip_think(text)
     text = re.sub(r"\s+", " ", text).strip()
     text = text.rstrip("。.!！?？,，;；:")
+    text = limit_title_words(text)
     if len(text) > TITLE_MAX_CHARS:
         text = text[: TITLE_MAX_CHARS - 1].rstrip() + "…"
     return text

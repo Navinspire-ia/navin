@@ -53,10 +53,10 @@ from navin.agent.tools.schema import (
     tool_parameters_schema,
 )
 from navin.bus.outbound_events import AgentBrowserEvent, outbound_message_for_event
-from navin.utils.proc import no_window_kwargs
 from navin.config_base import Base
 from navin.utils.artifacts import ArtifactError, artifact_directory
 from navin.utils.helpers import build_image_content_blocks
+from navin.utils.proc import no_window_kwargs
 
 _INSTALL_HINT = (
     "Error: playwright is not installed. Install it with: "

@@ -148,7 +148,7 @@ class TestCustomCommands:
         handler.check_api_token = MethodType(lambda self, request: True, handler)
 
         def names(path: str) -> set[str]:
-            response = handler._handle_commands(Request(path, Headers()))
+            response = asyncio.run(handler._handle_commands(Request(path, Headers())))
             return {row["command"] for row in json.loads(response.body)["commands"]}
 
         assert "/ship-it" in names(f"/api/commands?module=code&workspace={ws}")

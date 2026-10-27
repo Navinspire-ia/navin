@@ -54,6 +54,7 @@ class BoardBatchingTest(unittest.IsolatedAsyncioTestCase):
             {"title": "Invoice UI", "depends_on": ["Invoice API"], "acceptance": "list renders"},
         ])
         self.assertIn("3 tasks created", out)
+        self.assertNotIn("PARALLEL", out)  # a strict chain has one ready task
         tasks = {t["title"]: t for t in ProjectBoardStore(self.project).read_tasks()}
         self.assertEqual(tasks["Invoice API"]["depends_on"], [tasks["Scaffold app"]["id"]])
         self.assertEqual(tasks["Invoice UI"]["depends_on"], [tasks["Invoice API"]["id"]])

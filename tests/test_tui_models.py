@@ -116,6 +116,31 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.reasoning_details()[0], "")
         self.assertEqual(adaptive_reasoning_effort("high", override=""), "medium")
 
+    async def test_the_picked_model_survives_a_session_switch_and_a_reopen(self):
+        runtime = self.runtime
+        runtime.set_model_preset("minimax")
+        await runtime.switch_session("cli:another")
+        self.assertEqual(runtime.status.model_preset, "minimax", "a chat without its own pick keeps the model")
+        await runtime.switch_session("cli:direct")
+        self.assertEqual(runtime.status.model_preset, "minimax")
+        reopened = runtime_for(self.config)
+        reopened._adopt_session_model_pin()
+        reopened._refresh_status()
+        self.assertEqual(reopened.status.model_preset, "minimax", "closing and reopening the CLI keeps it")
+
+    async def test_back_to_default_drops_the_chat_pin_and_a_stale_pin_is_ignored(self):
+        from navin.agent.loop import SESSION_MODEL_PIN_KEY
+
+        runtime = self.runtime
+        runtime.set_model_preset("minimax")
+        runtime.set_model_preset("default")
+        session = runtime.agent_loop.sessions.get_or_create(runtime.session_key)
+        self.assertNotIn(SESSION_MODEL_PIN_KEY, session.metadata)
+        session.metadata[SESSION_MODEL_PIN_KEY] = "image"  # a media model cannot drive the chat
+        runtime._adopt_session_model_pin()
+        runtime._refresh_status()
+        self.assertEqual(runtime.status.model_preset, "default")
+
     async def test_media_and_hidden_models_cannot_replace_chat(self):
         for name in ("image", "video", "audio", "hidden", "missing"):
             with self.assertRaises(ValueError):
@@ -240,3 +265,294 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, SettingsHub)
             self.assertEqual(app.screen._section.id, "routing")
+
+    async def test_ctrl_s_and_the_sessions_bar_open_and_close_the_projects_column(self):
+        from navin.tui.widgets import ProjectsSidebar
+
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None  # no disk scan in this test
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            column = app.query_one(ProjectsSidebar)
+            # wide enough for two columns and never chosen: open by default
+            self.assertTrue(column.has_class("-visible"))
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            self.assertFalse(column.has_class("-visible"))
+            self.assertTrue(prefs.projects_panel_explicit)
+            self.assertFalse(prefs.projects_panel)
+            # the button sits in the bottom line next to the path, not above the chat
+            self.assertFalse(app.query("#sessions-bar"))
+            button = app.query_one("#dock #dock-sessions")
+            self.assertIn("Sessions", str(button.content))
+            await pilot.click("#dock-sessions")
+            await pilot.pause()
+            self.assertTrue(column.has_class("-visible"))
+            self.assertTrue(prefs.projects_panel)
+            self.assertIn("hide sessions", str(button.content))
+            # once chosen, a resize no longer overrides the user's choice
+            await pilot.resize_terminal(90, 36)
+            await pilot.pause()
+            self.assertTrue(column.has_class("-visible"))
+
+    async def test_ctrl_s_and_ctrl_p_share_the_right_side_one_column_at_a_time(self):
+        from navin.tui.widgets import ProjectsSidebar, Sidebar
+
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None
+        self.assertEqual(app.COMMAND_PALETTE_BINDING, "ctrl+shift+p")
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            sessions = app.query_one(ProjectsSidebar)
+            panel = app.query_one(Sidebar)
+            # sessions open by default, on the right of the chat
+            row = list(app.query_one("#main").children)
+            self.assertLess(row.index(app.query_one("#column")), row.index(sessions))
+            self.assertTrue(sessions.has_class("-visible"))
+            self.assertFalse(panel.has_class("-visible"))
+            # ctrl+p: the panel takes the sessions' place
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            self.assertTrue(panel.has_class("-visible"))
+            self.assertFalse(sessions.has_class("-visible"))
+            self.assertTrue(prefs.sidebar)
+            self.assertFalse(prefs.projects_panel)
+            # ctrl+s: back to the sessions, the panel closes
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            self.assertTrue(sessions.has_class("-visible"))
+            self.assertFalse(panel.has_class("-visible"))
+            self.assertFalse(prefs.sidebar)
+            # the hide button of the sessions column hides it
+            await pilot.click("#projects-hide")
+            await pilot.pause()
+            self.assertFalse(sessions.has_class("-visible"))
+            self.assertFalse(panel.has_class("-visible"))
+            # ctrl+b still opens the panel, and ctrl+p hides it again
+            await pilot.press("ctrl+b")
+            await pilot.pause()
+            self.assertTrue(panel.has_class("-visible"))
+            await pilot.press("ctrl+p")
+            await pilot.pause()
+            self.assertFalse(panel.has_class("-visible"))
+            self.assertFalse(sessions.has_class("-visible"))
+
+    async def _reopen(self, prefs):
+        from navin.tui.widgets import ProjectsSidebar, Sidebar
+
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None
+        async with app.run_test(size=(90, 36)) as pilot:
+            await pilot.pause()
+            return app.query_one(ProjectsSidebar).has_class("-visible"), app.query_one(Sidebar).has_class("-visible")
+
+    async def test_a_reopened_cli_always_shows_the_sessions(self):
+        # Closed with the sessions hidden, or with the panel open: the next
+        # start shows the sessions again, and the panel waits for ctrl+p.
+        for saved in (
+            TuiPrefs(sidebar=False, projects_panel=False, projects_panel_explicit=True),
+            TuiPrefs(sidebar=True, sidebar_explicit=True, projects_panel=False, projects_panel_explicit=True),
+        ):
+            saved.save = lambda: None
+            with self.subTest(sidebar=saved.sidebar):
+                self.assertEqual(await self._reopen(saved), (True, False))
+                self.assertTrue(saved.projects_panel)
+                self.assertFalse(saved.sidebar)
+
+    async def test_a_terminal_too_narrow_for_two_columns_keeps_the_chat_whole(self):
+        from navin.tui.widgets import ProjectsSidebar
+
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None
+        async with app.run_test(size=(72, 30)) as pilot:
+            await pilot.pause()
+            column = app.query_one(ProjectsSidebar)
+            # 72 columns: the sessions would leave the chat 35 and push its buttons off
+            self.assertFalse(column.has_class("-visible"))
+            await pilot.resize_terminal(120, 30)
+            await pilot.pause()
+            self.assertTrue(column.has_class("-visible"))
+            await pilot.resize_terminal(72, 30)
+            await pilot.pause()
+            self.assertFalse(column.has_class("-visible"))
+            # ctrl+s still opens them on demand, and a resize then leaves them
+            await pilot.press("ctrl+s")
+            await pilot.resize_terminal(80, 30)
+            await pilot.pause()
+            self.assertTrue(column.has_class("-visible"))
+
+    async def test_sessions_show_by_default_even_on_a_narrow_terminal(self):
+        from navin.tui.widgets import ProjectsSidebar
+
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None
+        async with app.run_test(size=(90, 36)) as pilot:
+            await pilot.pause()
+            column = app.query_one(ProjectsSidebar)
+            self.assertTrue(column.has_class("-visible"))
+            # hidden by the user: it stays hidden for this run, whatever the width
+            await pilot.press("ctrl+s")
+            await pilot.resize_terminal(130, 36)
+            await pilot.pause()
+            self.assertFalse(column.has_class("-visible"))
+
+    async def _project_host(self):
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        app._reload_projects = lambda *args, **kwargs: None
+        app._load_engine_commands = lambda: None
+        switched: list[str] = []
+
+        async def switch_session(key):
+            switched.append(key)
+
+        app._switch_session = switch_session
+        return app, switched
+
+    async def test_opening_a_session_of_another_project_keeps_the_cli_open(self):
+        from unittest.mock import patch
+
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        app, switched = await self._project_host()
+        moved: list[tuple[str, str]] = []
+
+        async def switch_workspace(path, key):
+            moved.append((str(path), key))
+            app.runtime.config.agents.defaults.workspace = str(path)
+
+        app.runtime.switch_workspace = switch_workspace
+        with patch("navin.tui.projects.register_project") as register:
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await app._open_project_session(other.name, "cli:42")
+                await pilot.pause()
+                # the engine moved, the CLI never exited
+                self.assertEqual(moved, [(other.name, "cli:42")])
+                self.assertEqual(switched, ["cli:42"])
+                self.assertTrue(app.is_running)
+                self.assertTrue(app._engine_ready)
+                self.assertEqual(Path(app.project_root), Path(other.name))
+                self.assertEqual(app.prefs.project_root, str(app.project_root))
+                register.assert_called_once_with(str(app.project_root))
+                # another session of the same project: no engine move at all
+                await app._open_project_session(other.name, "cli:43")
+                self.assertEqual(len(moved), 1)
+                self.assertEqual(switched, ["cli:42", "cli:43"])
+
+    async def test_a_project_that_fails_to_open_leaves_the_cli_on_the_current_one(self):
+        from navin.tui.runtime import WorkspaceSwitchError
+        from navin.tui.widgets import SystemNote
+
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        app, switched = await self._project_host()
+
+        async def switch_workspace(path, key):
+            raise WorkspaceSwitchError(f"Could not open {path}: boom")
+
+        app.runtime.switch_workspace = switch_workspace
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            before = Path(app.project_root)
+            await app._open_project_session(other.name, "cli:42")
+            await pilot.pause()
+            self.assertTrue(app.is_running)
+            self.assertTrue(app._engine_ready)
+            self.assertEqual(Path(app.project_root), before)
+            self.assertEqual(switched, [])
+            notes = " ".join(str(note.content) for note in app.query(SystemNote))
+            self.assertIn("boom", notes)
+
+
+class WorkspaceSwitchTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import os
+
+        self.home = tempfile.TemporaryDirectory()
+        self.other = tempfile.TemporaryDirectory()
+        self.addCleanup(self.home.cleanup)
+        self.addCleanup(self.other.cleanup)
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        self.config = model_config(Path(self.home.name))
+        self.runtime = runtime_for(self.config)
+        self.runtime.agent_loop.model_preset = "claude"
+        self.runtime.close = AsyncMock()
+        self.runtime._refresh_status = lambda: None
+        self.starts: list[str] = []
+
+    def _start(self, fail_on: str | None = None):
+        async def start():
+            folder = str(self.runtime.config.agents.defaults.workspace)
+            self.starts.append(folder)
+            if fail_on and Path(folder) == Path(fail_on).resolve():
+                raise ImportError("engine build failed")
+            self.runtime.agent_loop = SimpleNamespace(model_preset=None)
+
+        return start
+
+    async def test_the_engine_is_rebuilt_on_the_new_folder_in_this_process(self):
+        import os
+
+        self.runtime.start = self._start()
+        await self.runtime.switch_workspace(self.other.name, "cli:7")
+        target = Path(self.other.name).resolve()
+        self.assertEqual(self.starts, [str(target)])
+        self.runtime.close.assert_awaited_once()
+        self.assertEqual(Path(self.runtime.workspace), target)
+        self.assertEqual(Path(os.getcwd()), target)
+        self.assertEqual(self.runtime.session_key, "cli:7")
+        self.assertEqual(self.runtime.status.session_key, "cli:7")
+        self.assertEqual(self.runtime.agent_loop.model_preset, "claude")  # the chosen model follows
+
+    async def test_a_failing_folder_brings_the_engine_back_on_the_previous_one(self):
+        import os
+
+        from navin.tui.runtime import WorkspaceSwitchError
+
+        self.runtime.start = self._start(fail_on=self.other.name)
+        before = self.runtime.session_key
+        with self.assertRaises(WorkspaceSwitchError) as caught:
+            await self.runtime.switch_workspace(self.other.name, "cli:7")
+        self.assertIn("engine build failed", str(caught.exception))
+        self.assertEqual(Path(self.starts[-1]), Path(self.home.name))
+        self.assertEqual(Path(self.runtime.workspace).resolve(), Path(self.home.name).resolve())
+        self.assertEqual(Path(os.getcwd()).resolve(), Path(self.home.name).resolve())
+        self.assertEqual(self.runtime.session_key, before)
+        self.assertIsNotNone(self.runtime.agent_loop)
+
+    async def test_a_missing_folder_is_refused_before_the_engine_stops(self):
+        from navin.tui.runtime import WorkspaceSwitchError
+
+        self.runtime.start = self._start()
+        with self.assertRaises(WorkspaceSwitchError):
+            await self.runtime.switch_workspace(Path(self.other.name) / "gone", "cli:7")
+        self.runtime.close.assert_not_awaited()
+        self.assertEqual(self.starts, [])
+
+    def test_running_work_counts_turns_and_subagents(self):
+        done, live = Mock(), Mock()
+        done.done.return_value, live.done.return_value = True, False
+        self.runtime.agent_loop = SimpleNamespace(
+            _active_tasks={"cli:1": [live, done]},
+            subagents=SimpleNamespace(_running_tasks={"a": live, "b": done}),
+        )
+        self.assertEqual(self.runtime.running_work(), 2)
+        self.runtime.agent_loop = SimpleNamespace()
+        self.assertEqual(self.runtime.running_work(), 0)

@@ -60,7 +60,7 @@ class SessionTitleTests(unittest.TestCase):
         preview = f"Salut ! On part sur quoi ?\n\n{RUNTIME_CONTEXT_TAG}\nproject: x"
         self.assertEqual(
             session_display_title({"title": "", "preview": preview, "key": "cli:direct"}),
-            "Salut ! On part sur quoi ?",
+            "Salut ! On",
         )
 
     def test_sdk_and_app_keys_stay_short(self) -> None:

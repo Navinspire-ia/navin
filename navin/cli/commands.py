@@ -481,6 +481,10 @@ def _init_prompt_session() -> None:
         # bindings, while Alt+Enter adds a newline.
         multiline=True,
         key_bindings=_build_cli_key_bindings(),
+        # prompt_toolkit reserves 8 blank lines below the prompt for a
+        # completion menu by default; there is no completer here, so that
+        # reserve only leaves an empty gap at the bottom of the terminal.
+        reserve_space_for_menu=0,
     )
 
 

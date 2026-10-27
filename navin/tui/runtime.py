@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -129,6 +130,8 @@ class UiToolEvent(UiEvent):
     output: str | None = None
     label: str | None = None
     percent: float | None = None
+    #: Usual duration of this run or command from earlier runs, in seconds.
+    expected_s: float | None = None
     output_mode: str = "delta"
 
 
@@ -403,6 +406,10 @@ MAX_SESSION_TITLE_FIXUPS = 10
 # ---------------------------------------------------------------------------
 
 
+class WorkspaceSwitchError(RuntimeError):
+    """The engine could not open the other project folder; it stays on the previous one."""
+
+
 class TuiRuntime:
     """Own the engine for one TUI process.
 
@@ -606,6 +613,7 @@ class TuiRuntime:
         # first frame and typing never wait for the engine.
         await self._build_engine_off_loop()
         self._enable_interaction()
+        await asyncio.to_thread(self._adopt_session_model_pin)
         await asyncio.to_thread(self._refresh_status)
         self._subscribe_runtime_events()
         from navin.optional_live import live_modules_available
@@ -716,10 +724,13 @@ class TuiRuntime:
             from navin.config.paths import get_logs_dir
             from navin.webui.stall_watch import LoopLagMonitor
 
-            path = get_logs_dir() / "cli-freeze.log"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._freeze_file = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
-            faulthandler.enable(self._freeze_file, all_threads=True)
+            existing = getattr(self, "_freeze_file", None)
+            if existing is None or existing.closed:
+                # Opened once per process: a project switch restarts the watch only.
+                path = get_logs_dir() / "cli-freeze.log"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._freeze_file = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+                faulthandler.enable(self._freeze_file, all_threads=True)
             # No gc.freeze() after a slow full collection: it also froze the
             # widgets alive at that moment, and once windowed out of the chat
             # they could never be collected (2.2 M objects and +240 MB after
@@ -836,6 +847,67 @@ class TuiRuntime:
                     await asyncio.to_thread(sessions.flush_saved)
                 except OSError as exc:
                     self.shutdown_warnings.append(f"Could not sync saved history to disk: {exc}")
+
+    # -- project switch ---------------------------------------------------
+
+    def running_work(self) -> int:
+        """Turns and subagents still running in this engine."""
+        loop = self.agent_loop
+        active = getattr(loop, "_active_tasks", None) or {}
+        turns = sum(1 for tasks in active.values() for task in tasks if not task.done())
+        subagents = getattr(getattr(loop, "subagents", None), "_running_tasks", None) or {}
+        return turns + sum(1 for task in subagents.values() if not task.done())
+
+    async def _stop_engine(self) -> None:
+        """Close this engine and leave the runtime ready to :meth:`start` again."""
+        await self.close()
+        self._closed = False
+        self.bus = None
+        self.agent_loop = None
+        self._loop_task = None
+        self._consumer_task = None
+        self._unsubscribe_runtime = None
+        self.status.turn_active = False
+
+    async def _start_on(self, workspace: str, session_id: str, preset: str | None) -> None:
+        self.config.agents.defaults.workspace = workspace
+        os.chdir(self.config.workspace_path)
+        self.channel, self.chat_id = split_session_id(session_id)
+        self.status.workspace = str(self.config.workspace_path)
+        self.status.session_key = self.session_key
+        await self.start()
+        if preset and self.agent_loop is not None:
+            self.agent_loop.model_preset = preset
+        await asyncio.to_thread(self._refresh_status)
+
+    async def switch_workspace(self, workspace: str | Path, session_id: str) -> None:
+        """Move the engine to another project folder without restarting the CLI.
+
+        Reopening the CLI there took seconds: the process exit, every import
+        again and a new screen. The modules are loaded already, so only the
+        engine (sessions, tools, cron, index) is rebuilt on the new folder, and
+        the working directory follows it, as ``navin-cli <folder>`` does. If
+        the new folder fails, the engine comes back on the previous one and
+        :class:`WorkspaceSwitchError` says why.
+        """
+        target = Path(workspace).expanduser()
+        if not target.is_dir():
+            raise WorkspaceSwitchError(f"Not a folder: {target}")
+        previous = str(self.config.agents.defaults.workspace)
+        previous_session = self.session_key
+        preset = getattr(self.agent_loop, "model_preset", None)
+        await self._stop_engine()
+        try:
+            await self._start_on(str(target.resolve()), session_id, preset)
+        except Exception as exc:
+            await self._stop_engine()
+            try:
+                await self._start_on(previous, previous_session, preset)
+            except Exception as again:
+                raise WorkspaceSwitchError(
+                    f"Could not open {target}: {exc}. The engine did not restart on {previous} either: {again}"
+                ) from again
+            raise WorkspaceSwitchError(f"Could not open {target}: {exc}") from exc
 
     # -- outbound ---------------------------------------------------------
 
@@ -1087,6 +1159,11 @@ class TuiRuntime:
                         output=payload.get("output") if isinstance(payload.get("output"), str) else None,
                         label=payload.get("label") if isinstance(payload.get("label"), str) else None,
                         percent=payload.get("percent") if isinstance(payload.get("percent"), (int, float)) else None,
+                        expected_s=(
+                            payload.get("test_expected_s")
+                            if isinstance(payload.get("test_expected_s"), (int, float))
+                            else None
+                        ),
                         output_mode=str(payload.get("output_mode") or "delta"),
                     )
                 )
@@ -1406,6 +1483,7 @@ class TuiRuntime:
         self._enable_interaction()
         self.status.turn_active = False
         self._turn_started_at = None
+        await asyncio.to_thread(self._adopt_session_model_pin)
         await asyncio.to_thread(self._refresh_status)
         # Opening a chat whose turn was interrupted picks that work up again.
         await self._resume_interrupted_turn()
@@ -1557,14 +1635,65 @@ class TuiRuntime:
         )
 
     def set_model_preset(self, name: str | None) -> None:
-        """Switch the runtime preset for future turns (same as ``/model``)."""
+        """Switch the runtime preset for future turns (same as ``/model``).
+
+        The pick is remembered on this chat, so going to another session and
+        back, or closing and reopening the CLI, keeps it.
+        """
         if self.agent_loop is None:
             return
+        self._apply_model_preset(name)
+        self._remember_model_pin(name)
+        self._refresh_status()
+
+    def _apply_model_preset(self, name: str | None) -> None:
         row = next((row for row in self.preset_details() if row["name"] == (name or "default")), None)
         if row is None or not row.get("enabled", True) or row.get("modality", "text") != "text":
             raise ValueError("Choose an enabled chat model; media models are configured in Settings")
         self.agent_loop.model_preset = None if name in (None, "", "default") else name
-        self._refresh_status()
+
+    def _remember_model_pin(self, name: str | None) -> None:
+        """Store the pick as this chat's sticky pin (the one the engine honours)."""
+        sessions = getattr(self.agent_loop, "sessions", None)
+        if sessions is None:
+            return
+        from navin.agent.loop import SESSION_MODEL_PIN_KEY
+
+        session = sessions.get_or_create(self.session_key)
+        if name in (None, "", "default"):
+            # Back to the default: no pin, so task routing applies again.
+            if session.metadata.pop(SESSION_MODEL_PIN_KEY, None) is None:
+                return
+        elif session.metadata.get(SESSION_MODEL_PIN_KEY) == name:
+            return
+        else:
+            session.metadata[SESSION_MODEL_PIN_KEY] = name
+        sessions.save(session)
+
+    def _adopt_session_model_pin(self) -> None:
+        """Put back the model picked for this chat.
+
+        A chat without its own pick keeps the model in use, so moving to a
+        fresh session does not drop the user's choice either.
+        """
+        sessions = getattr(self.agent_loop, "sessions", None)
+        if sessions is None:
+            return
+        from navin.agent.loop import AUTO_MODEL_PIN, SESSION_MODEL_PIN_KEY
+
+        pin = sessions.get_or_create(self.session_key).metadata.get(SESSION_MODEL_PIN_KEY)
+        if not isinstance(pin, str) or not pin.strip():
+            return
+        pin = pin.strip()
+        try:
+            self._apply_model_preset("default" if pin.lower() == AUTO_MODEL_PIN else pin)
+        except ValueError:
+            logger.info(
+                "chat {} pins model {}, no longer an enabled chat model; keeping {}",
+                self.session_key,
+                pin,
+                self.agent_loop.model_preset or "default",
+            )
 
     def reload_from_disk(self, config_path: Path | None = None) -> None:
         """Pick up provider / model / account edits without restarting the TUI."""

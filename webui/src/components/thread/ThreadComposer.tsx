@@ -5,7 +5,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -219,6 +218,7 @@ import {
 } from "@/lib/model-modality";
 import { bindMenuListWheel, modelPickerListMaxPx } from "@/lib/model-picker-scroll";
 import { AUTO_MODEL_PRESET } from "@/lib/model-routing-summary";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 const VOICE_SHORTCUT_CODE = "KeyD";
 const VOICE_SHORTCUT_ARIA = "Control+Shift+D";
@@ -781,7 +781,7 @@ function GoalStatusStrip({
       ? buildGoalMarkdownBody(summaryFull, objectiveFull)
       : "";
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!goalPanelOpen) return;
 
     function relayout(): void {
@@ -1562,7 +1562,7 @@ function ThreadComposerImpl({
     };
   }, [showAnyPalette]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!showAnyPalette) return;
 
     const updateLayout = () => {
@@ -1615,7 +1615,7 @@ function ThreadComposerImpl({
   // above measure inside a rAF that can run before React commits the new text
   // (seeded ops actions landed in a tiny scrolling box); measuring after the
   // DOM update in a layout effect makes the growth deterministic.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     fitTextareaHeight(textareaRef.current);
   }, [value]);
 
@@ -1687,7 +1687,7 @@ function ThreadComposerImpl({
 
   // Runs before paint so switching sessions never flashes the previous chat's
   // draft. Restore any saved draft for the chat we just opened.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (previousPendingQueueKeyRef.current === pendingQueueKey) return;
     previousPendingQueueKeyRef.current = pendingQueueKey;
     secondEnterPromptIdRef.current = null;
@@ -4486,7 +4486,7 @@ interface CliAppMentionPaletteProps {
 function useSelectedOptionScroll(selectedIndex: number) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const option = container.querySelector<HTMLElement>(

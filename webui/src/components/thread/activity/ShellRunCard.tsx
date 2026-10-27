@@ -38,6 +38,10 @@ export interface ShellRunSummary {
   sandbox?: string;
   /** The user approved running this one command outside the sandbox. */
   sandboxLifted?: boolean;
+  /** Usual duration of this command from its earlier runs, in seconds. */
+  expectedS?: number;
+  /** "quick" or "long", from that usual duration. */
+  runKind?: "quick" | "long";
 }
 
 /**

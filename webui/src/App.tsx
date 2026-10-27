@@ -15,7 +15,9 @@ import {
 import {
   Brain,
   LayoutTemplate,
+  Loader2,
   Moon,
+  PanelLeft,
   Repeat,
   Search,
   ShieldCheck,
@@ -248,7 +250,9 @@ const SIDEBAR_STORAGE_KEY = "navin-webui.sidebar";
 // Code / Notes / Meeting used to force the sidebar closed, and that value was
 // persisted like a real preference, so the rail stayed collapsed on every later
 // launch. Installs carrying that value are reset once.
-const SIDEBAR_AUTOCOLLAPSE_RESET_KEY = "navin-webui.sidebar.autocollapse-reset";
+// v2: the sessions sidebar (left) opens by default once for
+// everyone; afterwards the user's own choice (Ctrl+S / the toggle) persists.
+const SIDEBAR_AUTOCOLLAPSE_RESET_KEY = "navin-webui.sidebar.autocollapse-reset.v2";
 const SESSION_UPDATES_STORAGE_KEY = "navin-webui.sidebar.session-updates.v1";
 const LEGACY_COMPLETED_RUNS_STORAGE_KEY = "navin-webui.sidebar.completed-runs.v1";
 const RESTART_STARTED_KEY = "navin-webui.restartStartedAt";
@@ -2698,6 +2702,25 @@ function Shell({
     }
   }, []);
 
+  // Ctrl+S / Cmd+S shows or hides the sessions panel. Code editors and Notes
+  // keep Ctrl+S for saving (they handle it first and prevent the default).
+  const sidebarShortcutViewRef = useRef(view);
+  sidebarShortcutViewRef.current = view;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "s") return;
+      if (sidebarShortcutViewRef.current === "notes") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.(".cm-editor, .monaco-editor, [data-navin-editor]")) return;
+      event.preventDefault();
+      toggleSidebar();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggleSidebar]);
+
   const applyWorkspaceScope = useCallback(
     (scope: WorkspaceScopePayload) => {
       const next = normalizeWorkspaceScope(scope);
@@ -4621,6 +4644,7 @@ function Shell({
             <aside
               data-testid="host-sidebar-flow"
               className={cn(
+                // Sessions live on the left edge, before the thread.
                 "relative z-20 hidden shrink-0 overflow-hidden lg:block",
                 "transition-[width] duration-300 ease-out",
               )}
@@ -4682,6 +4706,32 @@ function Shell({
           ref={shellMainRef}
           className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background"
         >
+            {/* Sessions panel hidden: a "Sessions" pill above the chat brings it
+                back (Ctrl+S too) and spins while any agent is working. */}
+            {!hostSidebarOpen && view === "chat" ? (
+              <div className="pointer-events-none absolute inset-x-0 top-2 z-30 hidden justify-center lg:flex">
+                <button
+                  type="button"
+                  data-testid="show-sessions-pill"
+                  onClick={openHostSidebar}
+                  title={t("sidebar.showSessions", { defaultValue: "Show sessions (Ctrl+S)" })}
+                  className="pointer-events-auto flex h-7 items-center gap-1.5 rounded-full border border-border/60 bg-background/90 px-3 text-[12px] text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  {runningChatIds.size > 0 ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin text-sky-500 motion-reduce:animate-none"
+                      aria-label={t("chat.activity.running")}
+                    />
+                  ) : (
+                    <PanelLeft className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  <span>{t("sidebar.sessions", { defaultValue: "Sessions" })}</span>
+                  {runningChatIds.size > 1 ? (
+                    <span className="tabular-nums text-sky-600 dark:text-sky-400">{runningChatIds.size}</span>
+                  ) : null}
+                </button>
+              </div>
+            ) : null}
             {/* Workbench views have their own toolbar at the top and already
                 surface "Model not configured" in the composer badge. */}
             {providerSetupNeeded && !showFirstRunWizard && (view === "chat" || view === "dev") ? (

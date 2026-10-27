@@ -330,7 +330,31 @@ _HOST_BROWSER_TAILS = (
 )
 
 
+_WINDOWS_ENV_CACHE: dict[str, tuple[float, str | None]] = {}
+_WINDOWS_ENV_OK_TTL_S = 3600.0
+_WINDOWS_ENV_MISS_TTL_S = 60.0
+
+
 def windows_env(name: str) -> str | None:
+    """Read one environment variable from the Windows host (cached).
+
+    Starting cmd.exe from WSL costs 0.3 to 3 s, and the folder picker asked
+    for it on every open (about 25 loop stalls in the gateway log). A value
+    is kept for an hour, a miss for a minute so a host that was unreachable
+    is retried soon.
+    """
+    now = time.monotonic()
+    hit = _WINDOWS_ENV_CACHE.get(name)
+    if hit is not None:
+        ttl = _WINDOWS_ENV_OK_TTL_S if hit[1] is not None else _WINDOWS_ENV_MISS_TTL_S
+        if now - hit[0] < ttl:
+            return hit[1]
+    value = _read_windows_env(name)
+    _WINDOWS_ENV_CACHE[name] = (now, value)
+    return value
+
+
+def _read_windows_env(name: str) -> str | None:
     """Read one environment variable from the Windows host.
 
     WSL does not mirror the Windows environment, so anything below a per-user

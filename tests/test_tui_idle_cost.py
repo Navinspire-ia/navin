@@ -202,22 +202,95 @@ def test_the_deep_pass_waits_for_the_user_to_be_away(monkeypatch):
     assert thawed == ["unfreeze"] and calls == [2]
 
 
-def test_a_frozen_set_that_keeps_growing_is_reclaimed_at_the_next_quiet_moment(monkeypatch):
+def test_a_frozen_set_that_keeps_growing_is_reclaimed_once_the_user_steps_away(monkeypatch):
+    """The deep pass walks the whole heap (2 to 6 s measured): on a 2 s typing
+    pause it froze the screen under the user's next keys."""
     clock = _Clock()
-    count = {"frozen": 0}
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: count["frozen"])
+    count = {"objects": 0}
+    monkeypatch.setattr(frames, "_frozen_count", 0)
+    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: 0)
+    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: count["objects"])
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
-    # Each ordinary pass freezes its survivors: here a large batch of them.
-    monkeypatch.setattr(frames.gc, "freeze", lambda: count.update(frozen=count["frozen"] + frames.DEEP_GC_GROWTH))
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
     with terminal_gc_policy():
+        # Each ordinary pass freezes its survivors: here a large batch of them.
+        count["objects"] = frames.DEEP_GC_GROWTH
         _with_pending(monkeypatch, frames.FULL_GC_DUE)
         clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert collector.tick() and collector.deep_collections == 0
         _with_pending(monkeypatch, 0)
+        collector.note_input()
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
+        assert not collector.tick(), "a typing pause is no time for a whole-heap walk"
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert collector.tick(), "reclaimed as soon as the user is away"
+    assert collector.deep_collections == 1 and calls == [2, 2]
+
+
+def test_a_runaway_frozen_set_is_reclaimed_at_the_next_quiet_moment(monkeypatch):
+    clock = _Clock()
+    count = {"objects": 0}
+    monkeypatch.setattr(frames, "_frozen_count", 0)
+    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: 0)
+    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: count["objects"])
+    collector = IdleCollector(clock)
+    calls = _collections(monkeypatch)
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
+    with terminal_gc_policy():
+        count["objects"] = frames.DEEP_GC_GROWTH_FORCED
+        _with_pending(monkeypatch, frames.FULL_GC_DUE)
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
+        assert collector.tick() and collector.deep_collections == 0
+        _with_pending(monkeypatch, 0)
+        collector.note_input()
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert collector.tick(), "bounded memory beats waiting for the user to leave"
     assert collector.deep_collections == 1 and calls == [2, 2]
+
+
+def test_collections_never_walk_the_frozen_heap_to_count_it(monkeypatch):
+    """``gc.get_freeze_count()`` after each pass took 2 to 4.5 s in the CLI log."""
+    clock = _Clock()
+    walks: list[int] = []
+    monkeypatch.setattr(frames, "_frozen_count", 7)
+    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: walks.append(1) or 7)
+    collector = IdleCollector(clock)
+    _collections(monkeypatch)
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
+    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: 5)
+    walks.clear()
+    with terminal_gc_policy():
+        _with_pending(monkeypatch, frames.FULL_GC_DUE)
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
+        assert collector.tick()
+        assert frames.frozen_count() == 12, "the survivors are added to the count"
+        frames.freeze_heap()
+        assert frames.frozen_count() == 17
+    assert walks == []
+
+
+def test_a_slow_pass_is_logged_with_its_kind(monkeypatch):
+    from loguru import logger
+
+    clock = _Clock()
+    collector = IdleCollector(clock)
+    ticks = iter([0.0, 1.2])
+    monkeypatch.setattr(frames.time, "perf_counter", lambda: next(ticks))
+    monkeypatch.setattr(frames.gc, "collect", lambda generation=2: 0)
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: 3)
+    seen: list[str] = []
+    sink = logger.add(lambda message: seen.append(str(message)), level="WARNING")
+    try:
+        collector._collect()
+    finally:
+        logger.remove(sink)
+    assert collector.last_pass_s == 1.2
+    assert any("full garbage collection took 1.2s" in line for line in seen)
 
 
 def test_the_idle_tick_never_walks_the_frozen_heap(monkeypatch):

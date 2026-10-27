@@ -443,6 +443,15 @@ def test_document_edits_do_not_require_boilerplate_tests(path):
     assert not state.pending
 
 
+def test_ops_script_edit_needs_a_check_but_no_test_run():
+    state = CodeValidationState()
+    observe(state, "write_file", {"path": "scripts/cloudflare-expose.sh"}, "Written")
+    assert not state.needs_tests
+    assert state.pending
+    observe(state, "verify", {"action": "check"}, "PASS - no lint errors, tests not run")
+    assert not state.pending
+
+
 def test_patch_preview_is_not_a_code_edit():
     state = CodeValidationState()
     observe(state, "apply_patch", {"dry_run": True, "edits": [{"path": "main.py"}]}, "Dry-run succeeded")

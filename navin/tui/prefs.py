@@ -29,6 +29,8 @@ class TuiPrefs:
     mode_explicit: bool = False  # True once the user switched modes themselves
     sidebar: bool = False
     sidebar_explicit: bool = False  # True once the user hid or showed the panel
+    projects_panel: bool = True  # left column with every project and its sessions
+    projects_panel_explicit: bool = False  # True once the user hid or showed it
     show_reasoning: bool = True
     show_tools: bool = True
     compact_tools: bool = False

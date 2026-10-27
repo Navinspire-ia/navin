@@ -196,7 +196,7 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             side.set_version("2.0.1")
             await pilot.pause()
             hide = side.query_one("#side-panel", Button)
-            self.assertEqual(str(hide.label), "Hide panel  ctrl+b")
+            self.assertEqual(str(hide.label), "Hide panel  ctrl+p")
             version = side.query_one("#side-version", Static)
             self.assertGreaterEqual(version.size.height, 1)
             self.assertGreaterEqual(side.query_one("#side-foot").size.height, 1)
@@ -279,9 +279,10 @@ class DockBarTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dock.size.height, 1)
             self.assertIn("navin-ai-v2", path.content)
             self.assertNotIn("ctrl+p", path.content)
-            # Only Settings and the panel toggle; the rest lives in Settings.
+            # Sessions right of the path (the user asked for it there), then
+            # Settings and the panel toggle; the rest lives in Settings.
             hints = list(dock.query(DockHint))
-            self.assertEqual([h.key for h in hints], ["ctrl+g", "ctrl+b"])
+            self.assertEqual([h.key for h in hints], ["ctrl+s", "ctrl+g", "ctrl+p"])
             settings = dock.query_one("#dock-settings", DockHint)
             self.assertIn("^g", str(settings.content))
             self.assertNotIn("ctrl+g", str(settings.content))
@@ -293,6 +294,12 @@ class DockBarTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(panel.label, "hide panel")
             dock.set_panel(False)
             self.assertEqual(panel.label, "panel")
+            sessions = dock.query_one("#dock-sessions", DockHint)
+            self.assertEqual(sessions.label, "Sessions")
+            dock.set_sessions(True)
+            self.assertEqual(sessions.label, "hide sessions")
+            dock.set_sessions(False)
+            self.assertEqual(sessions.label, "Sessions")
 
 
 if __name__ == "__main__":

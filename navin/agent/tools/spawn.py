@@ -97,11 +97,7 @@ def _split(raw: str | None, sep: str) -> list[str]:
             maximum=2.0,
         ),
         model_preset=StringSchema(
-            "Optional name of a configured model preset to run this subagent "
-            "on, instead of inheriting the parent's model. Lets one turn mix "
-            "roles: e.g. the architect thinks on a deep model while "
-            "implementer subagents run on a fast one. Unknown preset names "
-            "are refused with the available options."
+            "Ignored: subagents always run on the session's model."
         ),
     )
 )
@@ -218,8 +214,12 @@ class SpawnTool(Tool):
         # runtime; everything else about the spawn (policy, scope, context)
         # still inherits from the parent.
         runtime = request_ctx.runtime
-        preset_name = (model_preset or "").strip()
-        if not preset_name and agent:
+        # Subagents run on the session's model (the one picked in the desktop
+        # composer or the CLI). A preset the model names on its own is
+        # ignored: it silently moved delegated work onto another model.
+        del model_preset
+        preset_name = ""
+        if agent:
             preset_name = self._agent_model_preset(agent)
             if preset_name:
                 try:

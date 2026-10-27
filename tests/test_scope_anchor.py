@@ -180,6 +180,25 @@ class RuntimeLineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(block.source, "scope_anchor")
         self.assertIn("forgejo/lynara", block.content)
 
+    async def test_the_workspace_scan_runs_off_the_event_loop(self) -> None:
+        # 1 to 2 s per turn on the loop for a WSL project (desktop and CLI logs).
+        import threading
+        from unittest.mock import patch
+
+        loop_thread = threading.get_ident()
+        seen: list[int] = []
+
+        def scan(text, root):
+            seen.append(threading.get_ident())
+            return ["crm"]
+
+        with patch("navin.agent.scope_anchor.named_targets", scan):
+            request = SimpleNamespace(original_user_text="crm")
+            block = await scope_anchor_context_provider(request)  # type: ignore[arg-type]
+        assert block is not None
+        self.assertEqual(len(seen), 1)
+        self.assertNotEqual(seen[0], loop_thread)
+
 
 class TouchTest(unittest.TestCase):
     def test_any_argument_string_counts(self) -> None:

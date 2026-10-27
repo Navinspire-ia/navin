@@ -990,6 +990,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         self._pending_output: list[str] = []
         self._pending_output_chars = 0
         self.percent: float | None = None
+        self.expected_s: float | None = None
         self.added = 0
         self.removed = 0
         self.edit_count = 1
@@ -1199,6 +1200,10 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             from navin.utils.task_progress import progress_bar
 
             label += "  " + progress_bar(self.percent)
+        if self.expected_s and self.phase in {"start", "output"}:
+            from navin.quality.test_timing import duration_hint
+
+            label += "  " + duration_hint(self.expected_s)
         glyph = self._status_glyph()
         if self.cluster_kind:
             mark = self.tree_mark
@@ -2290,6 +2295,10 @@ class AgentsPanel(Static):
             finished = "done_at" in row
             elapsed = row["elapsed"] if finished else now - row["started"]
             meta = format_elapsed(elapsed) + (f" · ↓ {self._tokens(row['tokens'])} tokens" if row["tokens"] else "")
+            model_name = str(row.get("model") or "").strip()
+            if model_name:
+                # Short name: "openrouter/anthropic/claude-x" reads as "claude-x".
+                meta = f"{model_name.rsplit('/', 1)[-1][:32]} · {meta}"
             # Finished agents: green check, or red cross and a short reason.
             if finished:
                 glyph, ink = ("×", palette["coral"]) if row["error"] else ("✓", palette["green"])
@@ -3082,6 +3091,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         visible: bool = True,
         percent: float | None = None,
         output_mode: str = "delta",
+        expected_s: float | None = None,
     ) -> None:
         if not visible:
             return
@@ -3118,6 +3128,9 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             await self._mount_tool(key, widget)
             widgets = [widget]
         for widget in widgets:
+            if expected_s is not None and widget.expected_s != expected_s:
+                widget.expected_s = expected_s
+                widget._refresh_head()
             if phase == "start":
                 if percent is not None:
                     widget.percent = percent
@@ -5650,13 +5663,20 @@ class DockBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield ComposerMeta(id="composer-meta")
         yield DockPath("", id="dock-path")
+        # Right of the path, which already names the project.
+        yield DockHint("ctrl+s", "Sessions", "toggle_projects", id="dock-sessions")
         yield DockHint("ctrl+g", "Settings", "open_settings", id="dock-settings")
-        yield DockHint("ctrl+b", "panel", "toggle_sidebar", id="dock-hide")
+        yield DockHint("ctrl+p", "panel", "toggle_sidebar", id="dock-hide")
 
     def set_panel(self, visible: bool) -> None:
         # The line stays: it carries the model and context in both layouts.
         with contextlib.suppress(NoMatches):
             self.query_one("#dock-hide", DockHint).set_label("hide panel" if visible else "panel")
+
+    def set_sessions(self, opened: bool) -> None:
+        """Label of the Sessions button: what a click on it will do."""
+        with contextlib.suppress(NoMatches):
+            self.query_one("#dock-sessions", DockHint).set_label("hide sessions" if opened else "Sessions")
 
     def set_path(self, path: str) -> None:
         self._path = short_path((path or "").strip())
@@ -5951,6 +5971,124 @@ class SideCard(Vertical):
         self.app.call_later(self.app.run_action, self.action)
 
 
+def _version_markup(version: str, latest: str) -> str:
+    """``navin  v2.3.7`` and, when newer, the version to update to."""
+    label = f"navin  v{version}" if version else "navin"
+    text = f"[$text-muted]{escape(label)}[/]"
+    if latest and latest != version:
+        text += f"  [$warning]v{escape(latest)} · /update[/]"
+    return text
+
+
+def _account_markup(text: str) -> str:
+    """The account line of the panel and the sessions column; empty when not signed in."""
+    body = "" if text in {"", "Account", "not connected"} else escape(text)
+    return f"[$primary]{body}[/]" if body else ""
+
+
+class ProjectsSidebar(Vertical):
+    """Right column: every folder the CLI was used in, with its latest sessions.
+
+    Opened by ctrl+s or the Sessions button under the chat, in the place of the
+    panel (ctrl+p): one right column at a time, same width, so the chat never
+    jumps. The list itself is :class:`ProjectsPanel`.
+    """
+
+    DEFAULT_CSS = """
+    ProjectsSidebar {
+        width: 36;
+        min-width: 32;
+        height: 1fr;
+        border-left: vkey $border;
+        padding: 1 1 0 2;
+        display: none;
+        background: $background;
+        overflow: hidden;
+    }
+    ProjectsSidebar.-visible { display: block; }
+    ProjectsSidebar > #projects-hide {
+        width: auto;
+        height: 1;
+        min-height: 1;
+        min-width: 0;
+        margin: 0 0 1 0;
+    }
+    ProjectsSidebar > #projects-head { height: 1; margin: 0 0 1 0; }
+    ProjectsSidebar #projects-title { width: 1fr; height: 1; }
+    ProjectsSidebar .side-add {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        color: $text-muted 80%;
+    }
+    ProjectsSidebar .side-add:hover { color: $foreground; background: $boost; }
+    ProjectsSidebar > #side-projects { height: 1fr; }
+    ProjectsSidebar > #projects-foot { height: auto; padding: 0; background: $background; }
+    ProjectsSidebar > #projects-foot > #projects-split {
+        height: 1;
+        margin: 1 0 1 0;
+        border-top: solid $foreground 40%;
+    }
+    ProjectsSidebar > #projects-foot > #projects-version {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        margin: 1 0 0 0;
+        padding: 0;
+        color: $text-muted;
+        overflow: hidden;
+    }
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._version = ""
+        self._latest = ""
+
+    def compose(self) -> ComposeResult:
+        from navin.optional_live import live_modules_available
+        from navin.tui.projects_panel import ProjectsPanel, _Hit
+
+        yield Button("Hide sessions  ctrl+s", id="projects-hide", compact=True)
+        with Horizontal(id="projects-head"):
+            yield Static("[b]Projects[/]", id="projects-title", markup=True)
+            yield _Hit("[$text-muted]+[/] Add", "add", classes="side-add")
+        yield ProjectsPanel(id="side-projects")
+        # Same foot as the panel: a line, the account, the version. No path:
+        # the dock line under the chat shows it already.
+        with Vertical(id="projects-foot"):
+            yield Static("", id="projects-split")
+            if live_modules_available():
+                yield SideCard("ctrl+d", "Account", "open_account", id="projects-account", accent=True)
+            yield Static("[$text-muted]navin[/]", id="projects-version", markup=True)
+
+    @on(Button.Pressed, "#projects-hide")
+    def _hide_sessions(self) -> None:
+        self.app.call_later(self.app.run_action, "toggle_projects")
+
+    def set_version(self, version: str) -> None:
+        self._version = version
+        self._render_version()
+
+    def set_update_available(self, latest: str) -> None:
+        self._latest = latest
+        self._render_version()
+
+    def _render_version(self) -> None:
+        with contextlib.suppress(NoMatches):
+            self.query_one("#projects-version", Static).update(_version_markup(self._version, self._latest))
+
+    def set_account(self, text: str) -> None:
+        with contextlib.suppress(NoMatches):
+            self.query_one("#projects-account", SideCard).set_body(_account_markup(text))
+
+    def on_click(self, event: events.Click) -> None:
+        target = event.widget
+        if target is not None and getattr(target, "id", None) == "projects-version" and self._latest:
+            self.app.call_later(self.app.run_action, "update")
+            event.stop()
+
+
 class Sidebar(Vertical):
     """Right column: AGI, actions, activity. Footer shortcuts live on the dock."""
 
@@ -6016,7 +6154,7 @@ class Sidebar(Vertical):
         ("ctrl+e", "Security", "open_settings('security')"),
         ("ctrl+u", "Tools & MCP", "open_settings('mcp')"),
         ("ctrl+g", "Settings", "open_settings"),
-        ("ctrl+p", "Commands", "command_palette"),
+        ("ctrl+⇧p", "Commands", "command_palette"),
         ("ctrl+n", "New chat", "new_chat"),
         ("F2", "Graph", "open_graph"),
         ("F3", "Evolve", "open_evolve"),
@@ -6025,14 +6163,14 @@ class Sidebar(Vertical):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="side-scroll"):
-            yield Button("Hide panel  ctrl+b", id="side-panel", compact=True)
+            yield Button("Hide panel  ctrl+p", id="side-panel", compact=True)
             with Vertical(id="side-controls"):
                 for key, label, action, widget_id in self.CONTROLS:
                     yield SideAction(key, label, action, id=widget_id)
             yield SideCard("ctrl+o", "Model", "pick_model", id="side-model")
             with Vertical(id="side-session-rows"):
                 yield SideAction("ctrl+t", "Mode", "pick_mode", id="side-mode")
-                yield SideAction("ctrl+s", "Session", "pick_session", id="side-session")
+                yield SideAction("ctrl+s", "Sessions", "toggle_projects", id="side-session")
             yield SideCard("F4", "AGI", "open_agi", id="side-agi")
             with Vertical(id="side-actions"):
                 for key, label, action in self.ACTIONS:
@@ -6064,7 +6202,7 @@ class Sidebar(Vertical):
 
     def set_panel_label(self, visible: bool) -> None:
         self.query_one("#side-panel", Button).label = (
-            "Hide panel  ctrl+b" if visible else "Show panel  ctrl+b"
+            "Hide panel  ctrl+p" if visible else "Show panel  ctrl+p"
         )
 
     @on(Button.Pressed, "#side-panel")
@@ -6081,11 +6219,7 @@ class Sidebar(Vertical):
         self._render_version()
 
     def _render_version(self) -> None:
-        label = f"navin  v{self._version}" if self._version else "navin"
-        text = f"[$text-muted]{escape(label)}[/]"
-        if self._latest and self._latest != self._version:
-            text += f"  [$warning]v{escape(self._latest)} · /update[/]"
-        self.query_one("#side-version", Static).update(text)
+        self.query_one("#side-version", Static).update(_version_markup(self._version, self._latest))
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
@@ -6181,7 +6315,4 @@ class Sidebar(Vertical):
 
     def set_account(self, text: str) -> None:
         with contextlib.suppress(Exception):
-            body = "" if text in {"", "Account", "not connected"} else escape(text)
-            if body:
-                body = f"[$primary]{body}[/]"
-            self.query_one("#side-account", SideCard).set_body(body)
+            self.query_one("#side-account", SideCard).set_body(_account_markup(text))

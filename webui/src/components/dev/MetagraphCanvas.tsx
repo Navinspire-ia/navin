@@ -1,12 +1,13 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
 
 import { labelSeparation } from "@/lib/force-layout";
 import type { MetagraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 export interface PlacedNode extends MetagraphNode {
   x: number;
@@ -109,7 +110,7 @@ export function MetagraphCanvas({
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [view, setView] = useState<View>({ x: 0, y: 0, width: 1, height: 1 });
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const element = frameRef.current;
     if (!element) return;
     const measure = () => {

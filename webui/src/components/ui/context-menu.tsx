@@ -4,7 +4,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -18,6 +17,7 @@ import {
   viewportPointerToFixed,
 } from "@/lib/ui-zoom";
 import { cn } from "@/lib/utils";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 function pointerFixedLayer() {
   return {
@@ -64,7 +64,7 @@ export function ContextMenu({
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [ready, setReady] = useState(false);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!state) {
       setReady(false);
       return;

@@ -372,7 +372,33 @@ def remote_protocol(url: str) -> str:
     return "local"
 
 
-def _remotes(target: GitTarget, *, config: Any | None, ssh_keys: list[str]) -> list[dict[str, Any]]:
+def _project_sign_in(url: str, root: Path | str | None, config: Any | None) -> str:
+    """``git`` or ``gh`` when the project's own git is already signed in for ``url``.
+
+    A WSL project pushed for months with ``store`` or ``gh`` showed "no token
+    yet" and a Connect button: only Navin's own tokens were looked at. The
+    lookup is the one the forge API uses (cached per project), so the panel
+    and the agent agree on what this project can reach.
+    """
+    from navin.webui import forge_api
+
+    if root is None:
+        return ""
+    remote = forge_api.parse_remote_url(url)
+    if remote is None:
+        return ""
+    remote = forge_api.resolve_kind(remote, config=config, allow_probe=False)
+    token, source = forge_api.repo_sign_in_token(remote, root)
+    return source if token else ""
+
+
+def _remotes(
+    target: GitTarget,
+    *,
+    config: Any | None,
+    ssh_keys: list[str],
+    root: Path | str | None = None,
+) -> list[dict[str, Any]]:
     from navin.webui.forge_api import redact_url_credentials
 
     if target.argv is None or target.root is None:
@@ -394,7 +420,10 @@ def _remotes(target: GitTarget, *, config: Any | None, ssh_keys: list[str]) -> l
                 auth = "embedded"
             else:
                 credential = git_credentials.credential_for_url(url, config=config, tokens=None if config else {})
-                auth = "token" if credential is not None else "none"
+                if credential is not None:
+                    auth = "token"
+                else:
+                    auth = _project_sign_in(url, root, config) or "none"
         elif protocol == "ssh":
             auth = "ssh_key" if ssh_keys else "none"
         else:
@@ -535,7 +564,7 @@ def machine_report(root: Path | str | None = None, *, config: Any | None = None)
 
     cfg = _load_config(config)
     keys = _ssh_keys(target)
-    remotes = _remotes(target, config=cfg, ssh_keys=keys)
+    remotes = _remotes(target, config=cfg, ssh_keys=keys, root=root)
     for remote in remotes:
         params = {"remote": remote["name"], "host": remote["host"], "auth": remote["auth"]}
         if remote["protocol"] == "https" and remote["auth"] == "none":

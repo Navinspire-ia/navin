@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -66,6 +66,7 @@ import type {
   GitStashEntry,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 const STATUS_LETTER: Record<string, string> = {
   modified: "M",
@@ -212,7 +213,7 @@ export function DevGitPanel({
     return () => window.clearInterval(timer);
   }, [refresh, refreshChanges, refreshForge]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const el = messageBoxRef.current;
     if (!el) return;
     el.style.height = "0px";

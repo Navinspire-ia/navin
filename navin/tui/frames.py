@@ -29,9 +29,33 @@ _frozen_count: int | None = None
 
 
 def _note_frozen() -> int:
-    """Count the frozen objects once, right after a freeze or a thaw."""
+    """Count the frozen objects by walking them: only where that walk is free.
+
+    Measured in the CLI log: 2 to 4.5 s per call on a long session, after
+    every collection. Collections use :func:`_freeze_counted` instead.
+    """
     global _frozen_count
     _frozen_count = gc.get_freeze_count()
+    return _frozen_count
+
+
+def _unfrozen_objects() -> int:
+    """Tracked objects not frozen yet: what the next ``gc.freeze()`` moves."""
+    return sum(len(gc.get_objects(generation)) for generation in range(3))
+
+
+def _freeze_counted(*, thawed: bool = False) -> int:
+    """``gc.freeze()`` and keep the frozen count up to date without a heap walk.
+
+    Right after a collection the young generations hold only what survived
+    since the last freeze, so counting them costs what the collection itself
+    walked. ``thawed`` means everything was unfrozen first (the deep pass).
+    """
+    global _frozen_count
+    moved = _unfrozen_objects()
+    before = 0 if thawed or _frozen_count is None else _frozen_count
+    gc.freeze()
+    _frozen_count = before + moved
     return _frozen_count
 
 
@@ -74,6 +98,12 @@ DEEP_GC_QUIET_EVENTS_S = 10.0
 # a bound). When the frozen set grows this much past the last deep pass, the
 # deep pass runs at the next quiet moment, away from the keyboard or not.
 DEEP_GC_GROWTH = 500_000
+# Past this growth the deep pass no longer waits for the user to be away: one
+# quiet moment is enough, so memory stays bounded on a session never left.
+DEEP_GC_GROWTH_FORCED = DEEP_GC_GROWTH * 4
+# A pass at least this long is written to the freeze log with its kind, so the
+# next audit knows which pass froze the screen.
+SLOW_GC_PASS_S = 0.5
 # Automatic full collections never start on their own while the policy holds:
 # ``IdleCollector`` runs them.
 _NO_AUTOMATIC_FULL_GC = 1_000_000_000
@@ -129,7 +159,8 @@ class IdleCollector:
         self.collections = 0
         self.deep_collections = 0
         self.deep_at = self._clock()
-        self.frozen_after_deep = _note_frozen()
+        self.frozen_after_deep = frozen_count()
+        self.last_pass_s = 0.0
 
     def note_input(self) -> None:
         self.input_at = self._clock()
@@ -147,13 +178,17 @@ class IdleCollector:
         frozen = frozen_count()
         away = (now - self.input_at >= DEEP_GC_QUIET_INPUT_S
                 and now - self.event_at >= DEEP_GC_QUIET_EVENTS_S)
-        overgrown = frozen - self.frozen_after_deep >= DEEP_GC_GROWTH
+        growth = frozen - self.frozen_after_deep
         if self._is_busy():
             quiet = away = False
-        if frozen and ((away and now - self.deep_at >= DEEP_GC_INTERVAL_S) or (quiet and overgrown)):
+        # The deep pass walks the whole heap: 2 to 6 s on a long session, so
+        # it waits for the user to be away. Only a runaway growth makes a
+        # short quiet moment enough.
+        due = now - self.deep_at >= DEEP_GC_INTERVAL_S or growth >= DEEP_GC_GROWTH
+        if frozen and ((away and due) or (quiet and growth >= DEEP_GC_GROWTH_FORCED)):
             # The one long pass: it gives back what left the chat since.
             gc.unfreeze()
-            self._collect()
+            self._collect(deep=True)
             self.deep_at = now
             self.frozen_after_deep = frozen_count()
             self.deep_collections += 1
@@ -175,17 +210,25 @@ class IdleCollector:
         except Exception:  # noqa: BLE001 - unknown state: behave as before
             return False
 
-    def _collect(self) -> None:
+    def _collect(self, *, deep: bool = False) -> None:
         if self._before_collect is not None:
             try:
                 self._before_collect()
             except Exception:  # noqa: BLE001 - never skip the collection for it
                 pass
+        started = time.perf_counter()
         gc.collect(2)
         # Everything still alive now is long-lived (the chat, the widgets, the
         # index): out of the next passes, which then cost only the new objects.
-        gc.freeze()
-        _note_frozen()
+        frozen = _freeze_counted(thawed=deep)
+        self.last_pass_s = time.perf_counter() - started
+        if self.last_pass_s >= SLOW_GC_PASS_S:
+            from loguru import logger
+
+            logger.warning(
+                "CLI {} garbage collection took {:.1f}s ({} objects kept)",
+                "deep" if deep else "full", self.last_pass_s, frozen,
+            )
 
 
 def release_offscreen_lines(root: Widget) -> int:
@@ -227,8 +270,7 @@ def freeze_heap() -> None:
         if not gc.isenabled():
             return
         gc.collect(1)
-        gc.freeze()
-        _note_frozen()
+        _freeze_counted()
 
 
 def thaw_heap() -> None:

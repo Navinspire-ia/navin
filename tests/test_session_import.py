@@ -144,7 +144,7 @@ def test_claude_code_title_skips_injected_context(tmp_path: Path) -> None:
     sessions = import_sessions._parse_claude_code(tmp_path)
     assert len(sessions) == 1
     session = sessions[0]
-    assert session.title == "correction du titre de la sidebar"
+    assert session.title == "correction du titre"
     contents = [m["content"] for m in session.messages]
     assert not any(c.startswith("#Agents.md") for c in contents)
     assert not any(c.startswith("<command-name>") for c in contents)
@@ -365,14 +365,14 @@ def test_title_skips_throwaway_first_messages() -> None:
         {"role": "assistant", "content": "bonjour, que puis-je faire ?"},
     ]
     assert import_sessions._title_from_messages(messages) == (
-        "bonjour, que puis-je faire ?"
+        "bonjour, que puis-je"
     )
     messages = [
         {"role": "user", "content": "."},
         {"role": "user", "content": "vraie question sur le projet"},
     ]
     assert import_sessions._title_from_messages(messages) == (
-        "vraie question sur le projet"
+        "vraie question sur"
     )
 
 

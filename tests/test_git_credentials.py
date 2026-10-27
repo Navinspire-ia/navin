@@ -692,6 +692,66 @@ def test_forge_tool_read_dispatch(tmp_path, monkeypatch, _forge_remote, action, 
     assert tool.call_read_only({"action": action})
 
 
+def test_forge_ci_status_with_no_run_says_waiting_will_not_help(tmp_path, monkeypatch) -> None:
+    # The agent slept 240 s, polled, slept 180 s, polled: 0 runs, because the
+    # push had gone to another repository. The answer now says so.
+    from navin.agent.tools import forge as forge_tool
+
+    remote = _remote(GITHUB, "github.com")
+    monkeypatch.setattr(forge_tool.ForgeTool, "_resolve", lambda self, root: (remote, "tok"))
+    tool = _forge_tool(tmp_path)
+    empty = {"state": "none", "total": 0, "passing": 0, "failing": 0, "pending": 0, "items": []}
+    with patch.object(forge_api, "check_summary", return_value=empty):
+        payload = json.loads(asyncio.run(tool.execute(action="ci_status", branch="main")))
+    assert "Waiting will not create one" in payload["note"]
+    assert "path=" in payload["note"] and remote.slug in payload["note"]
+    found = {**empty, "total": 1, "passing": 1}
+    with patch.object(forge_api, "check_summary", return_value=found):
+        payload = json.loads(asyncio.run(tool.execute(action="ci_status", branch="main")))
+    assert "note" not in payload
+
+
+def test_forge_tool_path_reads_the_other_repository_not_this_project(tmp_path, monkeypatch) -> None:
+    # The reported loop: a push from ~/bbac, CI read on this project's origin,
+    # 0 runs found, sleep and poll forever. path= reads the other repository.
+    from navin.agent.tools import forge as forge_tool
+
+    other = tmp_path / "bbac"
+    (other / ".git").mkdir(parents=True)
+    (other / "frontend").mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    seen: list[Path] = []
+    remote = _remote(GITHUB, "github.com")
+
+    def resolve(self, root):
+        seen.append(root)
+        return remote, "tok"
+
+    monkeypatch.setattr(forge_tool.ForgeTool, "_resolve", resolve)
+    tool = _forge_tool(project)
+    with patch.object(forge_api, "list_requests", return_value=[]) as listed:
+        out = asyncio.run(tool.execute(action="pr_list", path=str(other / "frontend")))
+    payload = json.loads(out)
+    assert seen == [other.resolve()], "the repository top, found from a subfolder"
+    assert payload["path"] == str(other.resolve())
+    assert listed.called
+    # without path= the project's own origin is read, and no path is reported
+    with patch.object(forge_api, "list_requests", return_value=[]):
+        out = asyncio.run(tool.execute(action="pr_list"))
+    assert seen[-1] == project and "path" not in json.loads(out)
+
+
+def test_forge_tool_path_refuses_what_is_not_a_repository(tmp_path, monkeypatch, _forge_remote) -> None:
+    tool = _forge_tool(tmp_path)
+    out = asyncio.run(tool.execute(action="ci_status", path=str(tmp_path / "gone")))
+    assert "not a folder" in str(out)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    out = asyncio.run(tool.execute(action="ci_status", path=str(plain)))
+    assert "not inside a git repository" in str(out)
+
+
 def test_forge_tool_merge_asks_and_dispatches(tmp_path, monkeypatch, _forge_remote) -> None:
     asked = _allow(monkeypatch)
     tool = _forge_tool(tmp_path)

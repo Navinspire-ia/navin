@@ -1198,6 +1198,11 @@ class SubagentManager:
 
     def _stored_metadata(self, record: dict, *, alive: bool | None = None) -> dict:
         metadata = dict(record["metadata"])
+        if metadata.get("task_id") in (getattr(self, "_task_statuses", None) or {}):
+            # Running in this very process: no OS probe can know better, and a
+            # wrong "owner gone" turned a working agent into "interrupted",
+            # which closed its card in the journal while it still worked.
+            alive = True
         if alive is None:
             alive = owner_alive(record["owner_pid"], record.get("owner_identity", ""))
         abandoned = not metadata.get("done") and not alive

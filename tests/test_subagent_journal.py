@@ -680,3 +680,21 @@ def test_owner_alive_treats_unexpected_oserror_as_dead(monkeypatch):
 
     monkeypatch.setattr(journal.os, "kill", boom)
     assert journal.owner_alive(1234) is False
+
+
+def test_an_agent_running_in_this_process_is_never_shown_as_interrupted():
+    # A wrong "owner gone" (pid probe failing, pid reused) made a working agent
+    # "interrupted": the desktop closed its card while it still worked.
+    manager = SubagentManager.__new__(SubagentManager)
+    manager._task_statuses = {"live": object()}
+    record = {
+        "metadata": {"task_id": "live", "phase": "tools_completed", "done": False},
+        "owner_pid": 999_999_999,
+        "owner_identity": "gone",
+        "descriptor": {"isolate": False},
+        "checkpoint": None,
+    }
+    shown = manager._stored_metadata(record, alive=False)
+    assert shown["phase"] == "tools_completed" and shown["done"] is False
+    gone = {**record, "metadata": {**record["metadata"], "task_id": "other"}}
+    assert manager._stored_metadata(gone, alive=False)["phase"] == "interrupted"

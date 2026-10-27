@@ -3,6 +3,7 @@
 
 """Skills loader for agent capabilities."""
 
+import asyncio
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import unicodedata
 from pathlib import Path
 
 import yaml
+from loguru import logger
 
 from navin.agent.project_agents import HARNESS_DIRS, harness_dirs, home_harness_dirs
 
@@ -304,6 +306,15 @@ def is_owned_skill_source(source: str | None) -> bool:
     return value in {"workspace", "user"} or value.startswith("plugin:")
 
 
+def _on_event_loop_thread() -> bool:
+    """True on a thread that runs an asyncio loop (the engine or the CLI UI)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def clear_skills_index_cache() -> None:
     """Drop the compact skills index (tests that rewrite skill trees)."""
     global _PLUGIN_SKILL_DIRS_CACHE, _SCAN_GENERATION
@@ -460,6 +471,7 @@ class SkillsLoader:
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
         self._scan_cache: tuple[float, int, list[dict[str, str]], dict[str, Path]] | None = None
+        self._scan_refreshing = threading.Lock()
 
     def _gate_workspace_roots(self, paths: list[Path]) -> list[Path]:
         """Drop workspace dot-folder libraries other than the owned .navin one.
@@ -487,16 +499,37 @@ class SkillsLoader:
 
         Cached for :data:`_SCAN_TTL_S`: a prompt build asks for the catalog
         four or five times, and a skill dropped into a folder still shows up
-        within two seconds without a restart.
+        within two seconds without a restart. On the event loop thread an
+        expired scan is served as it was while a background thread rescans:
+        a rescan stats every skill folder, 1.4 to 9.5 s measured on the loop
+        for a WSL project (CLI and desktop logs, 2026-10-26).
         """
         now = time.monotonic()
         cached = self._scan_cache
-        if (
-            cached is not None
-            and cached[1] == _SCAN_GENERATION
-            and now - cached[0] < _SCAN_TTL_S
-        ):
-            return cached[2], cached[3]
+        if cached is not None and cached[1] == _SCAN_GENERATION:
+            if now - cached[0] < _SCAN_TTL_S:
+                return cached[2], cached[3]
+            if _on_event_loop_thread():
+                self._refresh_scan_in_background()
+                return cached[2], cached[3]
+        return self._scan_now(now)
+
+    def _refresh_scan_in_background(self) -> None:
+        if not self._scan_refreshing.acquire(blocking=False):
+            return  # one rescan at a time; it serves every caller
+
+        def refresh() -> None:
+            try:
+                self._scan_now(time.monotonic())
+            except Exception:
+                logger.opt(exception=True).warning("background skills rescan failed")
+            finally:
+                self._scan_refreshing.release()
+
+        threading.Thread(target=refresh, name="navin-skills-scan", daemon=True).start()
+
+    def _scan_now(self, now: float) -> tuple[list[dict[str, str]], dict[str, Path]]:
+        """Every skill under every root, read now (the body of :meth:`_scan`)."""
         # A harness folder can be added while the agent is running. Refresh
         # roots at the bounded scan cadence, not only on process startup.
         from navin import workspace_layout

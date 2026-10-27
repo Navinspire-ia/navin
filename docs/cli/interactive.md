@@ -10,7 +10,7 @@ navin-cli ~/code/app
 
 From a `navin` clone: `.venv/bin/navin-cli`.
 
-Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash commands. **Ctrl+P** is the command palette.
+Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash commands. **Ctrl+Shift+P** is the command palette.
 
 ## Keys
 
@@ -19,7 +19,7 @@ Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash com
 | Enter | Send |
 | Shift+Enter | New line |
 | Esc | Stop the running turn |
-| Ctrl+P | Command palette |
+| Ctrl+Shift+P | Command palette |
 | Ctrl+G | Settings |
 | Ctrl+Y | Guardrails |
 | Ctrl+K | Skills |
@@ -27,8 +27,8 @@ Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash com
 | Ctrl+U | Tools & MCP |
 | Ctrl+O | Model list |
 | Ctrl+T | Mode list (default: agent) |
-| Ctrl+S | Sessions |
-| Ctrl+B | Show or hide the right panel |
+| Ctrl+P / Ctrl+B | Show or hide the AGI and settings panel on the right |
+| Ctrl+S | Show or hide the projects and sessions on the right |
 | Ctrl+N | New chat |
 | F2 / F3 | Graph / Evolve |
 | F1 | Help |

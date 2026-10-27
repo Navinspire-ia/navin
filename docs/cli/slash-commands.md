@@ -1,6 +1,6 @@
 # Slash commands
 
-Type `/` in `navin-cli`. **Ctrl+P** lists the same commands.
+Type `/` in `navin-cli`. **Ctrl+Shift+P** lists the same commands.
 
 | Command | What it does |
 |---|---|

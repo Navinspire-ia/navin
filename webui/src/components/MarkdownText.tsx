@@ -9,13 +9,13 @@ import {
   startTransition,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 
 import { cn } from "@/lib/utils";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 interface MarkdownTextProps {
   children: string;
@@ -152,7 +152,7 @@ function useStreamingMarkdownSource(source: string, streaming: boolean): string 
 
   latestSourceRef.current = source;
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     latestSourceRef.current = source;
     if (!streaming) {
       clearPendingCommit();

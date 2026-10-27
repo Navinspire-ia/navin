@@ -67,7 +67,7 @@ class ProvisionalTitleTest(unittest.TestCase):
         titled immediately from the prompt, not stay 'New chat'."""
         self.assertEqual(
             provisional_title_from_user_text("/forge Build a landing page for Acme"),
-            "Build a landing page for Acme",
+            "Build a landing",
         )
 
     def test_a_bare_command_gives_no_title(self):

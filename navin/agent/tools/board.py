@@ -64,6 +64,24 @@ def _board_dispatch_lock(store: Any) -> asyncio.Lock:
 
 _LIST_LIMIT = 60
 _NEXT_LIMIT = 12
+_PARALLEL_FROM = 3
+
+
+def _parallel_hint(ready: int) -> str:
+    """Tell the main agent to fan out when three or more tasks are ready.
+
+    Working a ready queue of 14 one task after another was ultra slow; the
+    rule is two subagents as soon as three tasks can run independently.
+    """
+    if ready < _PARALLEL_FROM:
+        return ""
+    return (
+        f"\nPARALLEL: {ready} tasks are ready at once. Do not work them one after "
+        "another: in your next reply start two subagents with spawn (disjoint "
+        "files, or isolate=true), each given a share of the ready task ids and "
+        "told to close them on the board, and keep a share for yourself. Keep "
+        "only tasks that depend on each other sequential."
+    )
 def _with_note(result: Any, note: str) -> Any:
     """Append *note* to a tool result, keeping a ToolResult's flags."""
     if isinstance(result, ToolResult):
@@ -822,6 +840,8 @@ class BoardTool(Tool):
                     f"Already in flight ({len(active)}): {', '.join(active[:10])}. "
                     "Finish or hand these off before claiming more."
                 )
+            if who_type != "subagent":
+                lines.append(_parallel_hint(len(queue)).lstrip("\n"))
             return "\n".join(lines)
 
         if action == "plan":
@@ -917,9 +937,13 @@ class BoardTool(Tool):
                 by_title[str(item["title"]).strip().lower()] = task["id"]
                 touched.append(task["id"])
                 created.append(task)
-            return f"{len(created)} tasks created:\n" + "\n".join(
+            report = f"{len(created)} tasks created:\n" + "\n".join(
                 f"  {_fmt_task(task)}" for task in created
             )
+            if who_type != "subagent":
+                ready = plan_summary(store.read_tasks())["ready_queue"]
+                report += _parallel_hint(len(ready))
+            return report
 
         if action == "create":
             if not title:

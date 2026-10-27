@@ -806,8 +806,8 @@ class SpawnToolLimitTest(unittest.IsolatedAsyncioTestCase):
         out = await self.tool.execute(action="results")
         self.assertIn("No subagent", out)
 
-    async def test_an_unknown_model_preset_is_refused_clearly(self) -> None:
-        """P2-3: a bad preset name fails the call, not the subagent later."""
+    async def test_a_model_chosen_preset_is_ignored(self) -> None:
+        """Subagents stay on the session model, whatever preset the model names."""
         self._bind()
         self.manager.get_running_count_by_session.return_value = 0
 
@@ -816,16 +816,8 @@ class SpawnToolLimitTest(unittest.IsolatedAsyncioTestCase):
 
         tool = SpawnTool(manager=self.manager, resolve_model_preset=_resolve)
         out = await tool.execute(task="do a thing", model_preset="nope")
-        self.assertIn("could not be resolved", out)
-        self.manager.spawn.assert_not_awaited()
-
-    async def test_model_preset_without_resolver_is_refused(self) -> None:
-        self._bind()
-        self.manager.get_running_count_by_session.return_value = 0
-        tool = SpawnTool(manager=self.manager, resolve_model_preset=None)
-        out = await tool.execute(task="do a thing", model_preset="fast")
-        self.assertIn("not available", out)
-        self.manager.spawn.assert_not_awaited()
+        self.assertNotIn("could not be resolved", out)
+        self.manager.spawn.assert_awaited()
 
     async def test_results_lists_a_wide_fanout_in_full(self) -> None:
         """P2-2 acceptance: 25 finished subagents all show up, none dropped."""
@@ -856,7 +848,7 @@ class SpawnModelPresetTest(unittest.IsolatedAsyncioTestCase):
         self.runner = _GatedRunner()
         self.manager = _manager(Path(self._tmp.name), self.bus, self.runner)
 
-    async def test_preset_subagent_uses_a_different_model_than_the_parent(self) -> None:
+    async def test_preset_subagent_keeps_the_session_model(self) -> None:
         parent_runtime = mock.Mock(
             model="parent-deep-model",
             with_generation_overrides=lambda **_: mock.Mock(),
@@ -881,8 +873,7 @@ class SpawnModelPresetTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("started", out)
         statuses = list(self.manager._task_statuses.values())
         self.assertEqual(len(statuses), 1)
-        self.assertEqual(statuses[0].model, "fast-model")
-        self.assertNotEqual(statuses[0].model, parent_runtime.model)
+        self.assertEqual(statuses[0].model, "parent-deep-model")
         self.runner.gate.set()
         await asyncio.gather(*list(self.manager._running_tasks.values()))
 

@@ -115,6 +115,10 @@ export type JournalStep =
       output?: string;
       error?: string;
       evidence?: ActivityEvidence[];
+      /** Test runs: real percent from the runner, usual duration, quick or long. */
+      percent?: number;
+      expectedS?: number;
+      testKind?: "quick" | "long";
       /** Plain progress text that was not a tool call. */
       text?: string;
       /** ask_user: the settled card, the authoritative answer. */
@@ -194,6 +198,9 @@ export type ActivityJournalEntry = {
   facts?: ActivityJournalFact[];
   occurrences?: string[];
   evidence?: ActivityEvidence[];
+  percent?: number;
+  expectedS?: number;
+  testKind?: "quick" | "long";
   // ask_user
   answer?: AskUserAnswer;
   // approval
@@ -952,6 +959,9 @@ export function buildJournalTimeline(
       output: step.output,
       error: step.error,
       evidence: step.evidence,
+      percent: step.percent,
+      expectedS: step.expectedS,
+      testKind: step.testKind,
       ...(spawn && spawnName && spawnTask ? { detail: clipJournalText(spawnTask, 200) } : {}),
       ...(answer ? { answer } : {}),
     });

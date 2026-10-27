@@ -210,6 +210,19 @@ def effective_ping_timeout_s(configured: float) -> float:
     return max(float(configured), _MIN_WEBUI_PING_TIMEOUT_S)
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+
+def websocket_compression(host: str) -> str | None:
+    """No per-message deflate for a loopback server.
+
+    Every frame to the desktop window was compressed on the engine's loop
+    (4.5 s once for a presence sync, desktop log 2026-10-26) to save bytes
+    that never leave the machine. A server reachable from the network keeps it.
+    """
+    return None if str(host or "").strip().lower() in _LOOPBACK_HOSTS else "deflate"
+
+
 class WebSocketConfig(Base):
     """WebSocket server channel configuration.
 
@@ -1234,6 +1247,7 @@ class WebSocketChannel(BaseChannel):
                     max_size=self.config.max_message_bytes,
                     ping_interval=self.config.ping_interval_s,
                     ping_timeout=effective_ping_timeout_s(self.config.ping_timeout_s),
+                    compression=None,  # a local socket gains nothing from deflate
                     logger=ws_logger,
                 )
                 with suppress(OSError):
@@ -1249,6 +1263,7 @@ class WebSocketChannel(BaseChannel):
                     ping_interval=self.config.ping_interval_s,
                     ping_timeout=effective_ping_timeout_s(self.config.ping_timeout_s),
                     ssl=ssl_context,
+                    compression=websocket_compression(self.config.host),
                     logger=ws_logger,
                 )
             try:

@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -88,6 +88,7 @@ import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 import { Card, GuardrailRow, ICON_TONE, PILL_TONE, Section, StatusPill } from "./DevGuardrailsPanel";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 type AgiKey = keyof AgiFields;
 type CognitionKey = keyof CognitionFields;
@@ -457,7 +458,7 @@ export function DevAgiPanel({
   const [confirm, setConfirm] = useState<{ action: AgiAction; name: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = scrollRef.current;
     return node ? bindMenuListWheel(node) : undefined;
   });

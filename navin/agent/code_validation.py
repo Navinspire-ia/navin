@@ -31,12 +31,16 @@ _CODE_SUFFIXES = frozenset({
 # sent a restyle hunting browser suites, installing Playwright and rewriting
 # another feature's test to get a green run. Checks are still required.
 _UI_SUFFIXES = frozenset({".tsx", ".jsx", ".vue", ".svelte", ".astro"})
-_TEST_REQUIRED_SUFFIXES = _CODE_SUFFIXES - _UI_SUFFIXES
+# Ops scripts (deploy, expose, install) have no unit tests: a syntax check is the
+# proof. Requiring a test run stopped finished subagents on an error status.
+_SCRIPT_SUFFIXES = frozenset({".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd"})
+_TEST_REQUIRED_SUFFIXES = _CODE_SUFFIXES - _UI_SUFFIXES - _SCRIPT_SUFFIXES
 _CHECK_SUFFIXES = _CODE_SUFFIXES | {
     ".json", ".yaml", ".yml", ".toml", ".ini", ".xml", ".html", ".css", ".scss",
     ".sass", ".less", ".graphql", ".proto", ".tf", ".hcl",
 }
 _CHECK_FILENAMES = frozenset({"dockerfile", "makefile", "cmakelists.txt", "justfile"})
+_RUNTIME_STATE_FILES = frozenset({"cron/jobs.json"})
 _EDIT_TOOLS = frozenset({"apply_patch", "edit_file", "write_file", "manage_files"})
 _NO_TESTS = re.compile(
     r"no tests (?:were )?(?:ran|found|collected|to run)|(?:collected|ran) 0 (?:items|tests)"
@@ -181,6 +185,9 @@ def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
 
 def _is_development_file(path: str) -> bool:
     """``development_path`` and not under a generated folder, for a "/" path."""
+    if path.lstrip("./").lower() in _RUNTIME_STATE_FILES:
+        # Navin's own scheduler store, rewritten at runtime: not an agent edit.
+        return False
     name = path.rsplit("/", 1)[-1].lower()
     dot = name.rfind(".")
     suffix = name[dot:] if 0 < dot < len(name) - 1 else ""
@@ -257,7 +264,7 @@ def _requires_tests(path: str) -> bool:
     candidate = PurePosixPath(path.lower())
     if candidate.suffix in _TEST_REQUIRED_SUFFIXES:
         return True
-    if candidate.suffix in _UI_SUFFIXES:
+    if candidate.suffix in _UI_SUFFIXES or candidate.suffix in _SCRIPT_SUFFIXES:
         name = candidate.name
         return ".test." in name or ".spec." in name or "__tests__" in candidate.parts
     return False

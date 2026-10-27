@@ -296,6 +296,22 @@ class TokenResolutionTest(unittest.TestCase):
             self.assertEqual(forge_api.resolve_token(_remote()), ("", ""))
         lookup.assert_not_called()
 
+    def test_the_project_sign_in_beats_the_engine_gh_account(self) -> None:
+        # Two projects on github.com pushed with two accounts: the API must act
+        # as the account of the project at hand, not as whoever gh is.
+        github = _remote(kind=GITHUB, host="github.com")
+        with (
+            patch.object(forge_api, "gh_cli_token", return_value="gho_engine") as engine,
+            patch.object(forge_api, "repo_sign_in_token", return_value=("gho_project", "git")),
+        ):
+            self.assertEqual(forge_api.resolve_token(github, root="/p"), ("gho_project", "git"))
+        engine.assert_not_called()
+        with (
+            patch.object(forge_api, "gh_cli_token", return_value="gho_engine"),
+            patch.object(forge_api, "repo_sign_in_token", return_value=("", "")),
+        ):
+            self.assertEqual(forge_api.resolve_token(github, root="/p"), ("gho_engine", "gh"))
+
     def test_no_token_is_not_a_crash(self) -> None:
         token, source = forge_api.resolve_token(_remote())
         self.assertEqual(token, "")
@@ -1747,6 +1763,29 @@ _GITCONFIG = "\0".join([
 
 
 class CredentialHelperTest(unittest.TestCase):
+    def test_a_path_scoped_helper_counts_for_that_project_only(self) -> None:
+        helpers = forge_api.effective_credential_helpers
+        self.assertEqual(helpers(_GITCONFIG, "https", "gitlab.com", path="team/app.git"), ["store", "cache"])
+        self.assertEqual(helpers(_GITCONFIG, "https", "gitlab.com", path="teamwork/app.git"), ["store"])
+        self.assertEqual(helpers(_GITCONFIG, "https", "gitlab.com"), ["store"])
+
+    def test_origin_identity_is_the_account_and_path_git_pushes_with(self) -> None:
+        remote = ForgeRemote(kind=GITHUB, host="github.com", owner="team", repo="app")
+        raw = "remote.origin.url\nhttps://al%40ce@github.com/team/app.git\0"
+        self.assertEqual(forge_api.origin_identity(raw, remote), ("al@ce", "team/app.git"))
+        # origin is another repository (an issues repo), SSH, or absent: nothing
+        other = "remote.origin.url\nhttps://bob@github.com/other/app.git\0"
+        self.assertEqual(forge_api.origin_identity(other, remote), ("", ""))
+        ssh = "remote.origin.url\ngit@github.com:team/app.git\0"
+        self.assertEqual(forge_api.origin_identity(ssh, remote), ("", ""))
+        self.assertEqual(forge_api.origin_identity(_GITCONFIG, remote), ("", ""))
+
+    def test_credential_request_carries_the_account_when_known(self) -> None:
+        self.assertEqual(forge_api.credential_request("https", "gitlab.com"), "protocol=https\nhost=gitlab.com\n\n")
+        self.assertEqual(
+            forge_api.credential_request("https", "github.com", username="alice", path="team/app.git"),
+            "protocol=https\nhost=github.com\npath=team/app.git\nusername=alice\n\n",
+        )
     def test_url_entries_reset_and_replace_the_generic_helpers(self) -> None:
         helpers = forge_api.effective_credential_helpers
         self.assertEqual(
@@ -1810,9 +1849,9 @@ class RepoSignInTokenTest(unittest.TestCase):
         return forge_api.resolve_token(remote, root=r"\\wsl.localhost\Ubuntu\home\u\proj")
 
     def test_the_distribution_gh_login_is_used(self) -> None:
-        self.answers = [self._done(0, "gho_wsl\n")]
+        self.answers = [self._done(1), self._done(0, "gho_wsl\n")]
         self.assertEqual(self._resolve(_remote(kind=GITHUB, host="github.com")), ("gho_wsl", "gh"))
-        argv, _stdin = self.calls[0]
+        argv, _stdin = self.calls[1]
         self.assertEqual(argv[:4], ["wsl.exe", "-d", "Ubuntu", "--exec"])
         self.assertEqual(argv[4:6], ["sh", "-lc"], "login shell: gh lives in ~/.local/bin")
         self.assertEqual(argv[-1], "github.com")
@@ -1825,13 +1864,29 @@ class RepoSignInTokenTest(unittest.TestCase):
         self.assertEqual(self._resolve(_remote()), ("fj_token", "git"))
         self.assertEqual(len(self.calls), 2, "gh is only asked for GitHub")
 
-    def test_a_github_repo_falls_back_to_the_helper_when_gh_is_absent(self) -> None:
+    def test_the_project_helper_comes_before_the_distribution_gh(self) -> None:
         self.answers = [
-            self._done(127),
             self._done(0, _GITCONFIG),
             self._done(0, "username=me\npassword=gho_helper\n"),
         ]
         self.assertEqual(self._resolve(_remote(kind=GITHUB, host="github.com")), ("gho_helper", "git"))
+        self.assertEqual(len(self.calls), 2, "gh is not asked when the project's helper answers")
+
+    def test_the_lookup_asks_for_the_account_of_the_project_origin(self) -> None:
+        # ~/bbac pushes as alice, the user's gh is logged in as bob: alice's token.
+        config = _GITCONFIG + "remote.origin.url\nhttps://alice@github.com/Navinspire/navin-claw.git\0"
+        self.answers = [self._done(0, config), self._done(0, "username=alice\npassword=gho_alice\n")]
+        github = _remote(kind=GITHUB, host="github.com")
+        self.assertEqual(self._resolve(github), ("gho_alice", "git"))
+        listing, _ = self.calls[0]
+        self.assertIn(r"^(credential\..*helper|remote\.origin\.url)$", listing)
+        _argv, stdin = self.calls[1]
+        self.assertEqual(stdin, "protocol=https\nhost=github.com\npath=Navinspire/navin-claw.git\nusername=alice\n\n")
+
+    def test_a_github_repo_without_a_helper_falls_back_to_the_distribution_gh(self) -> None:
+        self.answers = [self._done(1), self._done(127)]
+        self.assertEqual(self._resolve(_remote(kind=GITHUB, host="github.com")), ("", ""))
+        self.assertEqual(len(self.calls), 2)
 
     def test_the_fill_runs_only_non_interactive_helpers_inside_the_distribution(self) -> None:
         self.answers = [
@@ -1854,11 +1909,11 @@ class RepoSignInTokenTest(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_a_token_is_cached_and_survives_a_failed_lookup(self) -> None:
-        self.answers = [self._done(0, "gho_wsl\n")]
+        self.answers = [self._done(1), self._done(0, "gho_wsl\n")]
         github = _remote(kind=GITHUB, host="github.com")
         self.assertEqual(self._resolve(github), ("gho_wsl", "gh"))
         self.assertEqual(self._resolve(github), ("gho_wsl", "gh"))
-        self.assertEqual(len(self.calls), 1, "cached for the next panel refresh")
+        self.assertEqual(len(self.calls), 2, "cached for the next panel refresh")
         with forge_api._SIGN_IN_LOCK:
             for key, (_expires, token, source) in list(forge_api._SIGN_IN_TOKENS.items()):
                 forge_api._SIGN_IN_TOKENS[key] = (0.0, token, source)

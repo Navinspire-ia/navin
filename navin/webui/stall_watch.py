@@ -46,6 +46,10 @@ LOOP_LAG_WARN_S = 1.0
 LOOP_LAG_POLL_S = 0.25
 # One stack per freeze episode: at 30 s, 227 s of freezes in a day had none.
 LOOP_LAG_MIN_INTERVAL_S = 5.0
+# A gap at least this long that the side thread never reported was a paused
+# process (computer asleep, WSL or the host not scheduling it), not a block:
+# 2 520 s of "blocked" in one day of the desktop log were laptop sleeps.
+LOOP_PAUSE_MIN_S = 30.0
 # A full garbage collection at least this long gets the caller's reaction.
 SLOW_FULL_GC_S = 0.5
 # At most one reaction per interval, whatever the collector does meanwhile.
@@ -236,15 +240,25 @@ class LoopLagMonitor:
             thread.join(timeout=1.0)
 
     async def _heartbeat(self) -> None:
+        reported = self.reports
         while True:
             now = time.monotonic()
             gap = now - self._beat
             self._beat = now
             if gap >= self._warn_after_s + self._poll_s:
-                self._log.warning(
-                    "event loop was blocked for {:.1f}s; every request waited that long",
-                    gap - self._poll_s,
-                )
+                held = gap - self._poll_s
+                if paused_not_blocked(held, reported_meanwhile=self.reports != reported):
+                    self._log.info(
+                        "engine was paused for {:.1f}s with nothing running on its loop "
+                        "(computer asleep, or the process was not scheduled)",
+                        held,
+                    )
+                else:
+                    self._log.warning(
+                        "event loop was blocked for {:.1f}s; every request waited that long",
+                        held,
+                    )
+            reported = self.reports
             await asyncio.sleep(self._poll_s)
 
     def _slow_full_gc_seen(self, _seconds: float) -> None:
@@ -294,6 +308,17 @@ class LoopLagMonitor:
                 where,
                 f"\n  {gc_note}" if gc_note else "",
             )
+
+
+def paused_not_blocked(held_s: float, *, reported_meanwhile: bool) -> bool:
+    """A long gap with no side report: the whole process was paused.
+
+    Any real block of that length is seen by the side thread, which reports
+    the stack after one second. When it never did, it was frozen too (sleep,
+    hibernation) or saw the loop idle in its selector (host not scheduling
+    the process): no Navin code held the loop.
+    """
+    return held_s >= LOOP_PAUSE_MIN_S and not reported_meanwhile
 
 
 def idle_in_selector(frame: Any) -> bool:

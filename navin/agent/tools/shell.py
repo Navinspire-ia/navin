@@ -968,6 +968,25 @@ class _PreparedCommand:
     sandbox_lifted: bool = False
 
 
+@dataclass(slots=True)
+class _RunTiming:
+    """Usual duration of one command, so a silent run still shows how far it is."""
+
+    key: str
+    expected_s: float | None
+    started: float
+
+    def estimate(self) -> tuple[float | None, float | None]:
+        """Estimated percent and seconds left, both None without a history."""
+        from navin.quality.test_timing import estimated_percent
+
+        elapsed = time.monotonic() - self.started
+        percent = estimated_percent(elapsed, self.expected_s)
+        if percent is None or self.expected_s is None:
+            return None, None
+        return round(percent, 1), max(0.0, round(self.expected_s - elapsed))
+
+
 class _AgentExecStream:
     """Throttled live feed of one exec command to the editor terminal panel.
 
@@ -1568,6 +1587,7 @@ class ExecTool(Tool):
             sandbox=prepared.sandbox,
             sandbox_lifted=prepared.sandbox_lifted,
         )
+        timing = await self._announce_expected_duration(command, prepared.cwd)
         try:
             process = await self._spawn(
                 prepared.command,
@@ -1584,7 +1604,11 @@ class ExecTool(Tool):
             try:
                 stdout, stderr = await asyncio.wait_for(
                     self._communicate_streaming(
-                        process, agent_stream, stdout_buf=stdout_buf, stderr_buf=stderr_buf
+                        process,
+                        agent_stream,
+                        stdout_buf=stdout_buf,
+                        stderr_buf=stderr_buf,
+                        timing=timing,
                     ),
                     timeout=prepared.timeout,
                 )
@@ -1617,6 +1641,7 @@ class ExecTool(Tool):
             # misses it, leaving a zombie.
             _reap_pid(process.pid)
             await emit_tool_meta(percent=100, label="Command finished", indeterminate=False)
+            await self._remember_duration(timing)
 
             output_parts = []
 
@@ -1792,6 +1817,39 @@ class ExecTool(Tool):
     # Live output streaming to the chat activity card (Cursor-style).
     _STREAM_INTERVAL_S = 0.08
     _STREAM_TAIL_CHARS = 8000
+    # A silent command (output piped into tail, a quiet build) moves its
+    # estimated bar this often.
+    _ESTIMATE_INTERVAL_S = 1.0
+
+    async def _announce_expected_duration(self, command: str, cwd: str | None) -> _RunTiming:
+        """Tell the journal how long this command usually takes, before it starts."""
+        from navin.quality.test_timing import command_key, expected_command_seconds, run_kind
+
+        key = command_key(command, cwd)
+        expected = await asyncio.to_thread(expected_command_seconds, key)
+        await emit_tool_meta(test_expected_s=expected, test_kind=run_kind(expected))
+        return _RunTiming(key, expected, time.monotonic())
+
+    async def _remember_duration(self, timing: _RunTiming | None) -> None:
+        """Keep the duration of a command that ran to its end, for the next estimate."""
+        from navin.quality.test_timing import record_command_run
+
+        if timing is not None:
+            await asyncio.to_thread(record_command_run, timing.key, time.monotonic() - timing.started)
+
+    async def _emit_estimate(self, timing: _RunTiming) -> None:
+        """Progress from the usual duration alone, when the command prints nothing."""
+        percent, remaining = timing.estimate()
+        if percent is None:
+            return
+        await emit_tool_meta(percent=percent, eta_s=remaining, indeterminate=False)
+        await emit_task_progress(
+            label="Running…",
+            percent=percent,
+            eta_s=remaining,
+            indeterminate=False,
+            call_id=current_tool_call_id(),
+        )
 
     async def _communicate_streaming(
         self,
@@ -1800,6 +1858,7 @@ class ExecTool(Tool):
         *,
         stdout_buf: bytearray | None = None,
         stderr_buf: bytearray | None = None,
+        timing: _RunTiming | None = None,
     ) -> tuple[bytes, bytes]:
         """``communicate()`` with periodic live-output emission.
 
@@ -1837,12 +1896,20 @@ class ExecTool(Tool):
 
         async def broadcaster() -> None:
             nonlocal dirty
+            last_estimate = time.monotonic()
             while True:
                 await asyncio.sleep(self._STREAM_INTERVAL_S)
-                if not dirty:
-                    continue
-                dirty = False
-                await self._emit_output_tail(stdout_buf, stderr_buf)
+                if dirty:
+                    dirty = False
+                    last_estimate = time.monotonic()
+                    await self._emit_output_tail(stdout_buf, stderr_buf, timing)
+                elif (
+                    timing is not None
+                    and timing.expected_s
+                    and time.monotonic() - last_estimate >= self._ESTIMATE_INTERVAL_S
+                ):
+                    last_estimate = time.monotonic()
+                    await self._emit_estimate(timing)
 
         emit_task = (
             asyncio.create_task(broadcaster())
@@ -1862,7 +1929,9 @@ class ExecTool(Tool):
                     await emit_task
         return bytes(stdout_buf), bytes(stderr_buf)
 
-    async def _emit_output_tail(self, stdout_buf: bytearray, stderr_buf: bytearray) -> None:
+    async def _emit_output_tail(
+        self, stdout_buf: bytearray, stderr_buf: bytearray, timing: _RunTiming | None = None,
+    ) -> None:
         parts: list[str] = []
         if stdout_buf:
             parts.append(bytes(stdout_buf).decode("utf-8", errors="replace"))
@@ -1874,23 +1943,34 @@ class ExecTool(Tool):
         if len(output) > self._STREAM_TAIL_CHARS:
             output = "…" + output[-self._STREAM_TAIL_CHARS:]
         if output:
-            await self._emit_progressing_output(output)
+            await self._emit_progressing_output(output, timing=timing)
 
-    async def _emit_progressing_output(self, output: str, *, output_mode: str = "snapshot") -> None:
+    async def _emit_progressing_output(
+        self, output: str, *, output_mode: str = "snapshot", timing: _RunTiming | None = None,
+    ) -> None:
         parsed = parse_progress_from_output(output)
+        percent = parsed.get("percent")
+        eta_s = parsed.get("eta_s")
+        indeterminate = parsed.get("indeterminate")
+        if percent is None and timing is not None:
+            # The command prints no percent of its own: the usual duration gives one.
+            estimate, remaining = timing.estimate()
+            if estimate is not None:
+                percent, indeterminate = estimate, False
+                eta_s = remaining if eta_s is None else eta_s
         await emit_tool_output(
             output,
-            percent=parsed.get("percent"),
-            eta_s=parsed.get("eta_s"),
+            percent=percent,
+            eta_s=eta_s,
             label=parsed.get("label"),
-            indeterminate=parsed.get("indeterminate"),
+            indeterminate=indeterminate,
             output_mode=output_mode,
         )
         await emit_task_progress(
             label=str(parsed.get("label") or "Running…"),
-            percent=parsed.get("percent"),
-            eta_s=parsed.get("eta_s"),
-            indeterminate=parsed.get("indeterminate"),
+            percent=percent,
+            eta_s=eta_s,
+            indeterminate=indeterminate,
             call_id=current_tool_call_id(),
         )
 

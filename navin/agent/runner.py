@@ -310,6 +310,13 @@ _MAX_TOTAL_VALIDATION_NUDGES = 8
 # Chromium twice and rewrote another feature's test; three runs is enough to
 # show the change works or to report why it cannot be shown here.
 _MAX_BROWSER_TEST_RUNS = 3
+# Output proving a browser-test command failed before any test executed.
+_BROWSER_RUN_NEVER_STARTED = re.compile(
+    r"command not found|No such file or directory|Cannot find module|ERR_MODULE_NOT_FOUND"
+    r"|Executable doesn't exist|npx playwright install|No tests found"
+    r"|exit(?: code)?[ =:]+12[67]\b",
+    re.IGNORECASE,
+)
 # Browser runs are opt-in: none unless the request itself asks for a browser
 # check. "Change the sidebar style" never needed Chromium.
 _BROWSER_REQUEST_MARKERS = re.compile(
@@ -634,7 +641,14 @@ def _call_read_only(tool: Any, params: Any) -> bool:
 
 _BROWSER_SCRIPT_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".mts")
 _BROWSER_SCRIPT_IMPORT = re.compile(
-    rb"(?:import|require|from)\b[^\n]{0,80}\b(?:playwright|puppeteer|selenium|cypress|webdriverio)\b",
+    # A real import at the start of a line. A test that only mentions the
+    # text (in a string, a docstring) is no browser run: the unit tests of
+    # this very guard were refused as browser tests.
+    rb"(?m)^[ \t]*(?:"
+    rb"(?:from|import)[ \t]+(?:playwright|puppeteer|selenium|cypress|webdriverio)\b"
+    rb"|import\b[^\n]{0,80}\bfrom[ \t]+['\"]@?(?:playwright|puppeteer|selenium-webdriver|cypress|webdriverio)"
+    rb"|(?:const|let|var)\b[^\n]{0,80}\brequire\(['\"]@?(?:playwright|puppeteer|selenium-webdriver|cypress|webdriverio)"
+    rb")",
     re.IGNORECASE,
 )
 
@@ -785,6 +799,43 @@ def is_browser_test_command(command: str, cwd: Path | None = None) -> bool:
     return False
 
 
+# Bare waits for one request. Ten minutes covers a build or a deploy settling;
+# past that, polling again only keeps the user waiting with nothing new.
+SLEEP_BUDGET_S = 600.0
+_LEADING_SLEEP_RE = re.compile(
+    r"^\s*(?:sleep\s+(\d+(?:\.\d+)?)([smh]?)\b|start-sleep\s+(?:-(?:seconds|s)\s+)?(\d+)\b)",
+    re.IGNORECASE,
+)
+_SLEEP_UNITS = {"": 1.0, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def leading_sleep_seconds(command: str) -> float:
+    """Seconds a command spends in a ``sleep`` it starts with (0 when none)."""
+    match = _LEADING_SLEEP_RE.match(command or "")
+    if match is None:
+        return 0.0
+    if match.group(3) is not None:
+        return float(match.group(3))
+    return float(match.group(1)) * _SLEEP_UNITS[match.group(2).lower()]
+
+
+def sleep_budget_error(guard: AgentLoopGuard, params: dict[str, Any]) -> str | None:
+    """Refuse a ``sleep`` that would take the request past its wait budget."""
+    seconds = leading_sleep_seconds(str(params.get("command") or params.get("cmd") or ""))
+    if seconds <= 0:
+        return None
+    if guard.slept_s + seconds > SLEEP_BUDGET_S:
+        return (
+            f"Error: this request already waited {guard.slept_s:.0f}s in sleep commands "
+            f"(budget {SLEEP_BUDGET_S:.0f}s). Sleeping and checking again will not make "
+            "the result come sooner. Wait on the event itself with a timeout (for CI: "
+            "gh run watch <id> --exit-status under timeout, or one forge ci_status), or "
+            "tell the user what is still pending and stop."
+        )
+    guard.slept_s += seconds
+    return None
+
+
 @dataclass(slots=True)
 class AgentLoopGuard:
     """Loop protection and validation shared by one accepted request's slices."""
@@ -792,6 +843,10 @@ class AgentLoopGuard:
     browser_test_runs: int = 0
     browser_tests_requested: bool | None = None
     browser_scraping: bool | None = None
+    # Seconds spent in bare ``sleep`` commands for this request: a capped
+    # budget, so a wait-and-poll loop ends with an answer, not with the user
+    # stopping it (an agent slept 240 s, polled CI, slept 180 s, polled...).
+    slept_s: float = 0.0
 
     external_lookups: dict[str, int] = field(default_factory=dict)
     workspace_violations: dict[str, int] = field(default_factory=dict)
@@ -3269,6 +3324,11 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return blocked + hint, event, RuntimeError(blocked)
             return blocked + hint, event, None
+        if tool_call.name == "exec" and isinstance(params, dict) and spec.loop_guard is not None:
+            wait_error = sleep_budget_error(spec.loop_guard, params)
+            if wait_error:
+                event = {"name": tool_call.name, "status": "error", "detail": "wait budget used"}
+                return wait_error, event, None
         if tool_call.name in {"scrape", "browser"} and isinstance(params, dict) and not opens_local_app(params):
             budget = spec.loop_guard if spec.loop_guard is not None else spec
             if tool_call.name == "scrape":
@@ -3298,6 +3358,7 @@ class AgentRunner:
                         "status": "error",
                         "detail": "browser not requested",
                     }, None
+        browser_budget = None
         if isinstance(params, dict) and (
             (
                 tool_call.name == "exec"
@@ -3340,6 +3401,7 @@ class AgentRunner:
                     "detail": "browser test budget exhausted",
                 }, None
             budget.browser_test_runs += 1
+            browser_budget = budget
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
             tool_call.arguments,
@@ -3631,6 +3693,11 @@ class AgentRunner:
             )
             return payload + (escalation or ""), event, None
 
+        # A run that never reached the test runner (missing binary/module,
+        # bad path, missing browser) tested nothing: give the run back so a
+        # setup slip does not exhaust the budget before any real test ran.
+        if browser_budget is not None and _BROWSER_RUN_NEVER_STARTED.search(str(result)[:20000]):
+            browser_budget.browser_test_runs = max(0, browser_budget.browser_test_runs - 1)
         if is_tool_error_result(tool_call.name, result):
             from navin.utils.tool_hints import is_validation_pending
 

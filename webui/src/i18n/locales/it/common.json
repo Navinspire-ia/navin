@@ -3134,7 +3134,13 @@
     "fileEditUnifiedView": "Vista unificata",
     "activityModeEssential": "Essenziale",
     "activityModeStandard": "Standard",
-    "activityModeDebug": "Debug"
+    "activityModeDebug": "Debug",
+    "journalCommandQuick": "Comando rapido",
+    "journalCommandLong": "Comando lungo",
+    "journalTestQuick": "Test rapidi",
+    "journalTestLong": "Test lunghi",
+    "journalTestEstimate_one": "~{{count}} min",
+    "journalTestEstimate_other": "~{{count}} min"
   },
   "montage": {
     "actions": {

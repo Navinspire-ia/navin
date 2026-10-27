@@ -7,7 +7,7 @@ These keys apply in `navin-cli`.
 | Enter | Send |
 | Shift+Enter | New line |
 | Esc | Stop the running turn |
-| Ctrl+P | Command palette |
+| Ctrl+Shift+P | Command palette |
 | Ctrl+G | Settings |
 | Ctrl+Y | Guardrails |
 | Ctrl+K | Skills |
@@ -16,9 +16,9 @@ These keys apply in `navin-cli`.
 | Ctrl+I | Provider settings |
 | Ctrl+O | Model list |
 | Ctrl+T | Mode list |
-| Ctrl+S | Sessions |
 | Ctrl+W | Workspace / project folder |
-| Ctrl+B | Right panel |
+| Ctrl+P / Ctrl+B | Right panel (AGI and settings) |
+| Ctrl+S | Projects and sessions (right side, in the panel's place) |
 | Ctrl+N | New chat |
 | Ctrl+C / Cmd+C | Copy the selection (does not quit). Selecting text or right-click also copies it. |
 | Ctrl+V / Cmd+V | Paste from the OS clipboard |

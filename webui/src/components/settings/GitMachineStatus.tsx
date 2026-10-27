@@ -202,15 +202,23 @@ export function GitMachineStatus({
           { remote: str(p.remote) },
         );
       case "remote_ok":
-        return p.auth === "ssh_key"
-          ? tx("settings.git.machine.remoteOkSsh", "Remote {{remote}} ({{host}}) uses your SSH key", {
-              remote: str(p.remote),
-              host: str(p.host),
-            })
-          : tx("settings.git.machine.remoteOk", "Remote {{remote}} ({{host}}) is covered by your token", {
-              remote: str(p.remote),
-              host: str(p.host),
-            });
+        if (p.auth === "ssh_key") {
+          return tx("settings.git.machine.remoteOkSsh", "Remote {{remote}} ({{host}}) uses your SSH key", {
+            remote: str(p.remote),
+            host: str(p.host),
+          });
+        }
+        if (p.auth === "git" || p.auth === "gh") {
+          return tx(
+            "settings.git.machine.remoteOkGit",
+            "Remote {{remote}} ({{host}}) uses the sign-in of this project's git",
+            { remote: str(p.remote), host: str(p.host) },
+          );
+        }
+        return tx("settings.git.machine.remoteOk", "Remote {{remote}} ({{host}}) is covered by your token", {
+          remote: str(p.remote),
+          host: str(p.host),
+        });
       default:
         return check.id;
     }

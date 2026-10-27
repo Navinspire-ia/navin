@@ -30,6 +30,7 @@ import {
   Pin,
   PinOff,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -433,6 +434,7 @@ export const ChatList = memo(function ChatList({
                 path={group.projectPath}
                 tint={folderTints.get(group.projectPath ?? group.label)}
                 collapsed={projectCollapsed}
+                runningCount={group.sessions.reduce((n, s) => n + (running.has(s.chatId) ? 1 : 0), 0)}
                 onToggle={() => onToggleGroup?.(group.id)}
                 onOpen={
                   group.projectPath && onOpenProject
@@ -937,6 +939,7 @@ function ProjectGroupHeader({
   path,
   tint,
   collapsed,
+  runningCount = 0,
   onToggle,
   onOpen,
   onNewChat,
@@ -950,6 +953,8 @@ function ProjectGroupHeader({
   /** Calm color of the folder icon, one per project. */
   tint?: string;
   collapsed: boolean;
+  /** Sessions of this project with an agent at work right now. */
+  runningCount?: number;
   onToggle: () => void;
   onOpen?: () => void;
   onNewChat?: () => void;
@@ -988,6 +993,16 @@ function ProjectGroupHeader({
       >
         {label}
       </button>
+      {runningCount > 0 ? (
+        <span
+          data-testid="project-running"
+          title={t("chat.activity.running")}
+          className="flex shrink-0 items-center gap-1 pe-1 text-[11px] tabular-nums text-sky-600 dark:text-sky-400"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-label={t("chat.activity.running")} />
+          {runningCount > 1 ? runningCount : null}
+        </span>
+      ) : null}
       {onNewChat || hasMenu ? (
         <span className="ms-auto flex shrink-0 items-center gap-px">
           {onNewChat ? (

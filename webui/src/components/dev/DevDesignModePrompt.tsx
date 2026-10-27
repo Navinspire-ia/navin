@@ -3,7 +3,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ArrowUp, FileCode2, MessageSquarePlus, SquareDashedMousePointer, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   popoverPlacement,
   type PickedElement,
 } from "./designMode";
+import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 const POPOVER_WIDTH = 360;
 const POPOVER_ESTIMATED_HEIGHT = 150;
@@ -67,7 +68,7 @@ export function DevDesignModePrompt({
     return () => window.cancelAnimationFrame(id);
   }, [element]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = cardRef.current;
     if (!node) return;
     const measured = node.getBoundingClientRect().height;

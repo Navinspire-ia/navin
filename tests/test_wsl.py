@@ -379,6 +379,9 @@ class HostOpenTest(unittest.TestCase):
 
 
 class WindowsEnvTest(unittest.TestCase):
+    def setUp(self) -> None:
+        wsl._WINDOWS_ENV_CACHE.clear()
+
     def _run_with_stdout(self, stdout: bytes) -> str | None:
         run = mock.Mock(return_value=mock.Mock(stdout=stdout))
         with mock.patch.object(wsl.shutil, "which", return_value="/mnt/c/Windows/System32/cmd.exe"):

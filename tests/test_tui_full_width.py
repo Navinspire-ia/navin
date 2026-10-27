@@ -76,6 +76,9 @@ def test_transcript_and_composer_fill_the_window_and_panel_toggle_releases_width
         prefs.save = lambda: None
         app = LayoutHost(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
         async with app.run_test(size=(100, 35)) as pilot:
+            # The sessions open at start; once hidden, the chat alone fills the window.
+            await pilot.press("ctrl+s")
+            await pilot.pause()
             block = await app._ensure_assistant()
             await block.tool_event("run", "exec", "end", {"command": "check"}, "result " * 90, None, None)
             app.composer.set_text("Conserver mon brouillon")

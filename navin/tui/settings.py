@@ -647,7 +647,7 @@ def build_sections(
                     kind="info",
                     scope="info",
                     text=escape(str(project_root)),
-                    help="Change it from the palette (ctrl+p): Project folder.",
+                    help="Change it from the palette (ctrl+shift+p): Project folder.",
                 ),
                 Field(
                     "Autonomy",

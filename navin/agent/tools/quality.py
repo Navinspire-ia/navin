@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,14 +26,45 @@ _MAX_SHOWN = 40
 _GIT_TIMEOUT_S = 20
 
 
-def _test_output_callback():
-    """Forward synchronous runner progress to the active async tool call."""
+async def _announce_test_run(root: Path, runner: str | None, target: str | None) -> float | None:
+    """Tell the journal how long this run usually takes, before it starts."""
+    from navin.quality.test_timing import expected_seconds, run_kind
+
+    expected = await asyncio.to_thread(expected_seconds, root, runner, target)
+    await emit_tool_meta(test_expected_s=expected, test_kind=run_kind(expected))
+    return expected
+
+
+async def _remember_test_run(
+    root: Path, runner: str | None, target: str | None, started: float, outcomes: list[Any],
+) -> None:
+    """Keep the duration of a run that really ran, for the next estimate."""
+    from navin.quality.test_timing import record_run
+
+    if outcomes and any(outcome.ran for outcome in outcomes):
+        await asyncio.to_thread(record_run, root, runner, target, time.monotonic() - started)
+
+
+def _test_output_callback(expected_s: float | None = None, started: float | None = None):
+    """Forward synchronous runner progress to the active async tool call.
+
+    A runner that prints no percent (vitest, jest) gets one from the usual
+    duration of this run, capped below 100 until it really ends.
+    """
+    from navin.quality.test_timing import estimated_percent
     from navin.utils.task_progress import parse_progress_from_output
 
     loop = asyncio.get_running_loop()
 
     async def publish(output: str) -> None:
         parsed = parse_progress_from_output(output)
+        if parsed.get("percent") is None and expected_s and started is not None:
+            elapsed = time.monotonic() - started
+            estimate = estimated_percent(elapsed, expected_s)
+            if estimate is not None:
+                parsed["percent"] = round(estimate, 1)
+                parsed["indeterminate"] = False
+                parsed.setdefault("eta_s", max(0.0, round(expected_s - elapsed)))
         await emit_tool_output(output, **parsed)
 
     def callback(output: str) -> None:
@@ -442,13 +474,16 @@ class TestRunTool(_QualityTool):
             await emit_tool_output(f"Running tests on {scope}…")
             # A full suite legitimately takes minutes; run it off the event
             # loop so the gateway and its other sessions stay responsive.
+            expected = await _announce_test_run(root, runner, target or None)
+            started = time.monotonic()
             outcomes = await asyncio.to_thread(
                 run_tests,
                 root,
                 runners=[runner] if runner else None,
                 target=(target or None),
-                on_output=_test_output_callback(),
+                on_output=_test_output_callback(expected, started),
             )
+            await _remember_test_run(root, runner, target or None, started, outcomes)
             if outcomes and all(outcome.ran for outcome in outcomes):
                 await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
             _record_test_outcomes(root, outcomes, target=target)
@@ -471,13 +506,16 @@ class TestRunTool(_QualityTool):
         every_outcome: list[Any] = []
         for item in targets:
             await emit_tool_output(f"Running tests on {item}…")
+            expected = await _announce_test_run(root, runner, item)
+            started = time.monotonic()
             outcomes = await asyncio.to_thread(
                 run_tests,
                 root,
                 runners=[runner] if runner else None,
                 target=item,
-                on_output=_test_output_callback(),
+                on_output=_test_output_callback(expected, started),
             )
+            await _remember_test_run(root, runner, item, started, outcomes)
             _record_test_outcomes(root, outcomes, target=item)
             every_outcome.extend(outcomes)
             sections.append(f"=== {item} ===\n" + "\n\n".join(o.render() for o in outcomes))

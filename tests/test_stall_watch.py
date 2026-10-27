@@ -24,9 +24,13 @@ from navin.webui.stall_watch import LoopLagMonitor, StallReporter, thread_snapsh
 class _Log:
     def __init__(self) -> None:
         self.warnings: list[str] = []
+        self.infos: list[str] = []
 
     def warning(self, message: str, *args: object) -> None:
         self.warnings.append(message.format(*args))
+
+    def info(self, message: str, *args: object) -> None:
+        self.infos.append(message.format(*args))
 
 
 def _hold_here(gate: threading.Event, ready: threading.Event) -> None:
@@ -187,6 +191,27 @@ class TestLoopLagMonitor:
         assert side, "the helper thread never noticed the block"
         assert "time.sleep" in side[0] or "test_stall_watch" in side[0]
         assert after, "the resumed loop did not report how long it was gone"
+
+    @pytest.mark.asyncio
+    async def test_a_paused_process_is_not_reported_as_a_blocked_loop(self) -> None:
+        # Nothing ran and the side thread never saw a stack: a laptop sleep.
+        log = _Log()
+        monitor = LoopLagMonitor(log, warn_after_s=0.1, poll_s=0.02, min_interval_s=0)
+        monitor._beat = time.monotonic() - 45
+        task = asyncio.create_task(monitor._heartbeat())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not [w for w in log.warnings if "was blocked" in w]
+        assert any("engine was paused for 45.0s" in line for line in log.infos)
+
+    def test_only_a_long_unreported_gap_counts_as_a_pause(self) -> None:
+        from navin.webui.stall_watch import LOOP_PAUSE_MIN_S, paused_not_blocked
+
+        assert paused_not_blocked(LOOP_PAUSE_MIN_S, reported_meanwhile=False)
+        assert not paused_not_blocked(LOOP_PAUSE_MIN_S * 10, reported_meanwhile=True), "a real block has a stack"
+        assert not paused_not_blocked(5.0, reported_meanwhile=False), "short gaps stay warnings"
 
     @pytest.mark.asyncio
     async def test_a_responsive_loop_stays_quiet(self) -> None:
@@ -413,3 +438,157 @@ def test_settings_route_builds_its_payload_off_the_event_loop() -> None:
         result, loop_thread = asyncio.run(scenario())
     assert result == {"ok": True}
     assert threads and loop_thread not in threads
+
+
+class TestRoutesRunTheirDiskWorkOffTheLoop:
+    """Routes seen holding the desktop loop for seconds on a WSL project."""
+
+    def _handler(self):
+        from types import MethodType, SimpleNamespace
+
+        from navin.webui.ws_http import GatewayHTTPHandler
+
+        handler = object.__new__(GatewayHTTPHandler)
+        handler.check_api_token = MethodType(lambda self, request: True, handler)
+        handler.workspaces = SimpleNamespace(default_scope=lambda: SimpleNamespace(project_path="/p"))
+        return handler
+
+    def _request(self, path: str):
+        from websockets.datastructures import Headers
+        from websockets.http11 import Request
+
+        return Request(path, Headers())
+
+    @pytest.mark.asyncio
+    async def test_folder_picker_roots_list_wsl_off_the_loop(self, monkeypatch) -> None:
+        import json
+
+        import navin.webui.fs_browse as fs_browse
+
+        loop_thread = threading.get_ident()
+        seen: list[int] = []
+
+        def roots(*, default_project_path=None):
+            seen.append(threading.get_ident())
+            return {"roots": [], "default": default_project_path}
+
+        monkeypatch.setattr(fs_browse, "fs_roots_payload", roots)
+        response = await self._handler()._handle_webui_fs_roots(self._request("/api/webui/fs/roots"))
+        assert json.loads(response.body)["default"] == "/p"
+        assert seen and seen[0] != loop_thread
+
+    @pytest.mark.asyncio
+    async def test_command_palette_reads_project_commands_off_the_loop(self, monkeypatch) -> None:
+        import json
+
+        import navin.webui.ws_http as ws_http
+
+        loop_thread = threading.get_ident()
+        seen: list[int] = []
+
+        def palette(module, workspace):
+            seen.append(threading.get_ident())
+            return [{"command": "/x"}]
+
+        monkeypatch.setattr(ws_http, "builtin_command_palette", palette)
+        response = await self._handler()._handle_commands(self._request("/api/commands?module=code"))
+        assert json.loads(response.body)["commands"] == [{"command": "/x"}]
+        assert seen and seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", [
+    "file-download", "file-save", "file-create", "file-delete", "file-rename", "file-paste",
+])
+async def test_file_routes_never_run_on_the_gateway_loop(route: str, monkeypatch) -> None:
+    # They read the session file and the project: seconds on a WSL project.
+    from websockets.datastructures import Headers
+    from websockets.http11 import Request
+
+    from navin.webui.ws_http import GatewayHTTPHandler, _http_json_response
+
+    handler = object.__new__(GatewayHTTPHandler)
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    name = "_handle_" + route.replace("-", "_")
+
+    def fake(request, key):
+        seen.append(threading.get_ident())
+        return _http_json_response({"ok": True})
+
+    monkeypatch.setattr(handler, name, fake, raising=False)
+    path = f"/api/sessions/websocket%3Aabc/{route}"
+    response = await handler._dispatch_session_routes(Request(path, Headers()), path)
+    assert response is not None
+    assert seen and seen[0] != loop_thread
+
+
+class TestSkillsAndSocketStayOffTheLoop:
+    """Two more causes from the 2026-10-26 logs."""
+
+    @pytest.mark.asyncio
+    async def test_an_expired_skills_scan_is_served_while_a_thread_rescans(self, tmp_path, monkeypatch) -> None:
+        import navin.agent.skills as skills
+
+        loader = skills.SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
+        scans: list[int] = []
+        gate = threading.Event()
+
+        def slow_scan(now):
+            scans.append(threading.get_ident())
+            gate.wait(2)
+            result = ([{"name": f"s{len(scans)}", "path": str(tmp_path)}], {})
+            loader._scan_cache = (now, skills._SCAN_GENERATION, *result)
+            return result
+
+        monkeypatch.setattr(loader, "_scan_now", slow_scan)
+        loader._scan_cache = (time.monotonic() - 60, skills._SCAN_GENERATION, [{"name": "old"}], {})
+        started = time.monotonic()
+        first, _ = loader._scan()
+        again, _ = loader._scan()
+        assert time.monotonic() - started < 0.5, "the loop never waits for the rescan"
+        assert first == [{"name": "old"}] and again == [{"name": "old"}]
+        gate.set()
+        for _ in range(100):
+            if loader._scan_cache[2] != [{"name": "old"}]:
+                break
+            await asyncio.sleep(0.01)
+        assert len(scans) == 1 and scans[0] != threading.get_ident(), "one rescan, on a thread"
+        assert loader._scan()[0] == [{"name": "s1", "path": str(tmp_path)}]
+
+    def test_off_the_loop_an_expired_scan_is_read_again_at_once(self, tmp_path, monkeypatch) -> None:
+        import navin.agent.skills as skills
+
+        loader = skills.SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
+        monkeypatch.setattr(loader, "_scan_now", lambda now: ([{"name": "fresh"}], {}))
+        loader._scan_cache = (time.monotonic() - 60, skills._SCAN_GENERATION, [{"name": "old"}], {})
+        assert loader._scan()[0] == [{"name": "fresh"}]
+
+    def test_a_loopback_server_does_not_deflate_every_frame(self) -> None:
+        from navin.channels.websocket import websocket_compression
+
+        assert websocket_compression("127.0.0.1") is None
+        assert websocket_compression("localhost") is None
+        assert websocket_compression("::1") is None
+        assert websocket_compression("0.0.0.0") == "deflate", "reachable from the network"
+        assert websocket_compression("192.168.1.10") == "deflate"
+
+
+def test_windows_env_asks_cmd_once_per_name(monkeypatch) -> None:
+    import navin.utils.wsl as wsl
+
+    calls: list[str] = []
+    monkeypatch.setattr(wsl, "_WINDOWS_ENV_CACHE", {})
+    monkeypatch.setattr(wsl, "_read_windows_env", lambda name: calls.append(name) or "C:\\x")
+    assert wsl.windows_env("USERPROFILE") == "C:\\x"
+    assert wsl.windows_env("USERPROFILE") == "C:\\x"
+    assert calls == ["USERPROFILE"], "cmd.exe is started once, not on every folder picker open"
+
+
+def test_windows_env_retries_a_miss_after_a_minute(monkeypatch) -> None:
+    import navin.utils.wsl as wsl
+
+    calls: list[str] = []
+    monkeypatch.setattr(wsl, "_WINDOWS_ENV_CACHE", {"A": (time.monotonic() - 120, None)})
+    monkeypatch.setattr(wsl, "_read_windows_env", lambda name: calls.append(name) or "v")
+    assert wsl.windows_env("A") == "v" and calls == ["A"]

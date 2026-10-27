@@ -100,6 +100,31 @@ describe("ChatList running indicator", () => {
     expect(html).not.toContain("animate-spin");
   });
 
+  it("spins on the project folder row while its sessions run, with a count past one", () => {
+    const inProject = (key: string, title: string): ChatSummary => ({
+      ...session(key, title),
+      workspaceScope: { project_path: "/work/app" } as ChatSummary["workspaceScope"],
+    });
+    const render = (running: string[]) =>
+      renderToStaticMarkup(
+        createElement(ChatList, {
+          sessions: [inProject("websocket:aaa", "One"), inProject("websocket:bbb", "Two")],
+          activeKey: null,
+          onSelect: noop,
+          onRequestDelete: noop,
+          onTogglePin: noop,
+          onRequestRename: noop,
+          onToggleArchive: noop,
+          runningChatIds: running,
+        }),
+      );
+    expect(render([])).not.toContain('data-testid="project-running"');
+    const one = render(["aaa"]);
+    expect(one).toContain('data-testid="project-running"');
+    expect(one).not.toMatch(/project-running[^]*?<\/svg>1</);
+    expect(render(["aaa", "bbb"])).toMatch(/project-running[^]*?<\/svg>2<\/span>/);
+  });
+
   it("renders four staggered dots that go clockwise and respect reduced motion", () => {
     const html = renderToStaticMarkup(createElement(RunningDots, { label: "Agent running" }));
     const delays = Array.from(html.matchAll(/animation-delay:(\d+)ms/g), (m) => Number(m[1]));

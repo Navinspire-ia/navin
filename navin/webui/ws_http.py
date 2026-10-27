@@ -859,9 +859,11 @@ class GatewayHTTPHandler:
                 self._handle_file_preview, request, m.group(1),
             )
 
+        # Every file route reads the session file and the project on disk:
+        # seconds on a WSL project, so none of them runs on the gateway loop.
         m = re.match(r"^/api/sessions/([^/]+)/file-download$", got)
         if m:
-            return self._handle_file_download(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_download, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-render$", got)
         if m:
@@ -876,7 +878,7 @@ class GatewayHTTPHandler:
 
         m = re.match(r"^/api/sessions/([^/]+)/file-save$", got)
         if m:
-            return self._handle_file_save(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_save, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-format$", got)
         if m:
@@ -884,19 +886,19 @@ class GatewayHTTPHandler:
 
         m = re.match(r"^/api/sessions/([^/]+)/file-create$", got)
         if m:
-            return self._handle_file_create(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_create, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-delete$", got)
         if m:
-            return self._handle_file_delete(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_delete, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-rename$", got)
         if m:
-            return self._handle_file_rename(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_rename, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-paste$", got)
         if m:
-            return self._handle_file_paste(request, m.group(1))
+            return await asyncio.to_thread(self._handle_file_paste, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/metagraph$", got)
         if m:
@@ -1454,7 +1456,7 @@ class GatewayHTTPHandler:
 
         try:
             content = file_body_from_headers(request.headers)
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await asyncio.to_thread(self.workspaces.scope_for_session_key, decoded_key)
             payload = await asyncio.to_thread(format_payload, scope, path=path, content=content)
         except WebUIFilePreviewError as e:
             return _http_error(e.status, e.message)
@@ -3324,7 +3326,8 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            # Reads the session file: 3 to 6 s on the loop for a WSL project.
+            scope = await asyncio.to_thread(self.workspaces.scope_for_session_key, decoded_key)
             payload = await self.route_cache.get(
                 f"git:changes:{scope.project_path}",
                 lambda: asyncio.to_thread(git_changes_payload, scope),
@@ -4345,7 +4348,7 @@ class GatewayHTTPHandler:
         if got == "/api/sessions":
             return await self._handle_sessions_list(request)
         if got == "/api/commands":
-            return self._handle_commands(request)
+            return await self._handle_commands(request)
         if got == "/api/workspaces":
             return self._handle_workspaces(connection, request)
         if got in {"/api/live/realtime/status", "/api/live/docs"}:
@@ -4421,7 +4424,7 @@ class GatewayHTTPHandler:
         if m:
             return self._handle_webui_skill_detail(request, m.group(1))
         if got == "/api/webui/fs/roots":
-            return self._handle_webui_fs_roots(request)
+            return await self._handle_webui_fs_roots(request)
         if got == "/api/webui/fs/list":
             return await self._handle_webui_fs_list(request)
         if got == "/api/webui/fs/mkdir":
@@ -4639,16 +4642,22 @@ class GatewayHTTPHandler:
             extra_headers=[("Cache-Control", "private, max-age=300")],
         )
 
-    def _handle_commands(self, request: WsRequest) -> Response:
+    async def _handle_commands(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         query = _parse_query(request.path)
         module = _query_first(query, "module")
         raw_workspace = _query_first(query, "workspace")
-        workspace = Path(raw_workspace).expanduser() if raw_workspace else None
-        if workspace is not None and not workspace.is_dir():
-            workspace = None
-        return _http_json_response({"commands": builtin_command_palette(module, workspace)})
+
+        def palette() -> list[dict[str, Any]]:
+            # Project commands are files: on a WSL project read through
+            # \\wsl$ this took up to 5 s on the loop (desktop log, 2026-10-26).
+            workspace = Path(raw_workspace).expanduser() if raw_workspace else None
+            if workspace is not None and not workspace.is_dir():
+                workspace = None
+            return builtin_command_palette(module, workspace)
+
+        return _http_json_response({"commands": await asyncio.to_thread(palette)})
 
     def _handle_workspaces(self, connection: Any, request: WsRequest) -> Response:
         if not self.check_api_token(request):
@@ -5440,16 +5449,21 @@ class GatewayHTTPHandler:
         )
         return _http_json_response({"url": url, "source": "discover" if url else None})
 
-    def _handle_webui_fs_roots(self, request: WsRequest) -> Response:
+    async def _handle_webui_fs_roots(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         from navin.webui.fs_browse import fs_roots_payload
 
-        try:
-            default_path = str(self.workspaces.default_scope().project_path)
-        except Exception:
-            default_path = None
-        return _http_json_response(fs_roots_payload(default_project_path=default_path))
+        def roots() -> dict[str, Any]:
+            # Listing the WSL distributions runs wsl.exe: 6 to 10 s on the
+            # loop when WSL was slow to answer (desktop log, 2026-10-26).
+            try:
+                default_path = str(self.workspaces.default_scope().project_path)
+            except Exception:
+                default_path = None
+            return fs_roots_payload(default_project_path=default_path)
+
+        return _http_json_response(await asyncio.to_thread(roots))
 
     async def _handle_webui_fs_list(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
