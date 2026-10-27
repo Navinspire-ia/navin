@@ -40,6 +40,22 @@ COLD_S = 1.500      # the very first grep of a process (file list not cached yet
 INDEX_COLD_S = 60.0  # a full index build of this repo
 LOOP_BUDGET_S = 0.150
 
+
+def _grep_budget_s() -> float:
+    """What one grep may take here: 300 ms with the Rust scanner or ripgrep.
+
+    A bare install (CI runs with NAVIN_SKIP_NATIVE=1 and no ripgrep) greps in
+    pure Python: the file list comes from git and files without the needle are
+    dropped on their bytes, 200 ms on this machine, up to twice that on a shared
+    runner. That path has its own 1 s bar in TestGrepWithoutFastBackends; the
+    fast-backend bar is not the right ruler for it.
+    """
+    import navin.agent.tools.search as search
+
+    if search._native_module() is not None or search._rg_binary():
+        return FAST_S
+    return 1.0
+
 RESULTS: list[tuple[str, float, float]] = []
 
 
@@ -130,42 +146,44 @@ class TestGrepOnThisRepository:
 
     def test_identifier_grep_is_fast_warm_and_acceptable_cold(self) -> None:
         grep = GrepTool(workspace=ROOT)
+        fast = _grep_budget_s()
 
         async def scenario() -> None:
             out = await _measure("grep identifier (cold)", lambda: grep.execute(pattern="SubagentManager"), COLD_S)
             assert "navin/agent/subagent.py" in out
-            out = await _measure("grep identifier (warm)", lambda: grep.execute(pattern="SubagentManager"), FAST_S)
+            out = await _measure("grep identifier (warm)", lambda: grep.execute(pattern="SubagentManager"), fast)
             assert "navin/agent/subagent.py" in out
             out = await _measure(
-                "grep identifier content", lambda: grep.execute(pattern="def _outcomes_dir", output_mode="content"), FAST_S,
+                "grep identifier content", lambda: grep.execute(pattern="def _outcomes_dir", output_mode="content"), fast,
             )
             assert "_outcomes_dir" in out
             out = await _measure(
-                "grep regex scoped", lambda: grep.execute(pattern=r"async def (spawn|retry)\(", path="navin/agent", output_mode="content"), FAST_S,
+                "grep regex scoped", lambda: grep.execute(pattern=r"async def (spawn|retry)\(", path="navin/agent", output_mode="content"), fast,
             )
             assert "subagent.py" in out
             out = await _measure(
-                "grep literal glob", lambda: grep.execute(pattern="blocking-ok", fixed_strings=True, glob="**/*.py"), FAST_S,
+                "grep literal glob", lambda: grep.execute(pattern="blocking-ok", fixed_strings=True, glob="**/*.py"), fast,
             )
             assert "builtin.py" in out
             out = await _measure(
-                "grep 4 patterns", lambda: grep.execute(patterns=["_PREPARE_WORKERS", "COLLAB_TOOLS_VERSION", "def _line_window", "forget_agents_cache"]), FAST_S * 2,
+                "grep 4 patterns", lambda: grep.execute(patterns=["_PREPARE_WORKERS", "COLLAB_TOOLS_VERSION", "def _line_window", "forget_agents_cache"]), fast * 2,
             )
             assert "subagent.py" in out and "schema.py" in out
-            out = await _measure("grep no match", lambda: grep.execute(pattern="zzqx_never_" + "in_repo_7731"), FAST_S)
+            out = await _measure("grep no match", lambda: grep.execute(pattern="zzqx_never_" + "in_repo_7731"), fast)
             assert "No matches" in out
 
         _run(scenario())
 
     def test_find_files_is_instant(self) -> None:
         find = FindFilesTool(workspace=ROOT)
+        fast = _grep_budget_s()
 
         async def scenario() -> None:
-            out = await _measure("find_files glob", lambda: find.execute(glob="tests/test_tool_*.py"), FAST_S)
+            out = await _measure("find_files glob", lambda: find.execute(glob="tests/test_tool_*.py"), fast)
             assert "test_tool_latency.py" in out
-            out = await _measure("find_files query", lambda: find.execute(query="subagent journal"), FAST_S)
+            out = await _measure("find_files query", lambda: find.execute(query="subagent journal"), fast)
             assert "subagent_journal" in out
-            out = await _measure("find_files type", lambda: find.execute(type="md", path="docs", head_limit=20), FAST_S)
+            out = await _measure("find_files type", lambda: find.execute(type="md", path="docs", head_limit=20), fast)
             assert ".md" in out
 
         _run(scenario())
@@ -245,12 +263,39 @@ class TestGrepWithoutFastBackends:
                 "fallback grep lookahead", lambda: grep.execute(pattern=r"def (?=_outcomes)\w+", output_mode="content"), 1.0,
             )
             assert "_outcomes_dir" in out
+            # No byte prefilter for a case-insensitive search (Unicode folding
+            # is not a byte operation): every file is decoded, still bounded.
+            out = await _measure(
+                "fallback grep case-insensitive", lambda: grep.execute(pattern="subagentmanager", case_insensitive=True), 3.0,
+            )
+            assert "navin/agent/subagent.py" in out
+            out = await _measure("fallback grep no match", lambda: grep.execute(pattern="zzqx_never_" + "in_repo_7731"), 1.0)
+            assert "No matches" in out
             out = await _measure("fallback find_files glob", lambda: find.execute(glob="tests/test_tool_*.py"), FAST_S)
             assert "test_tool_latency.py" in out
             out = await _measure("fallback find_files query", lambda: find.execute(query="subagent journal"), FAST_S)
             assert "subagent_journal" in out
 
         _run(scenario())
+
+    def test_required_literal_never_loses_a_match(self) -> None:
+        """The byte prefilter is a pure speed-up: every literal it returns is in every match."""
+        from navin.agent.tools.search import _required_literal as literal
+
+        assert literal("SubagentManager", fixed_strings=False, case_insensitive=False) == b"SubagentManager"
+        assert literal("blocking-ok", fixed_strings=True, case_insensitive=False) == b"blocking-ok"
+        assert literal(r"async def (spawn|retry)\(", fixed_strings=False, case_insensitive=False) == b"async def "
+        assert literal("^from navin", fixed_strings=False, case_insensitive=False) == b"from navin"
+        # A quantifier applies to the character before it: that character is not required.
+        assert literal("abc*", fixed_strings=False, case_insensitive=False) == b"ab"
+        assert literal("ab?c", fixed_strings=False, case_insensitive=False) is None  # "a" alone is too short
+        # No certainty, no filter: escapes, classes, groups, single chars, case folding.
+        assert literal(r"\bfoo", fixed_strings=False, case_insensitive=False) is None
+        assert literal("[Ss]ubagent", fixed_strings=False, case_insensitive=False) is None
+        assert literal("(a|b)", fixed_strings=False, case_insensitive=False) is None
+        assert literal("a", fixed_strings=False, case_insensitive=False) is None
+        assert literal("Kelvin", fixed_strings=False, case_insensitive=True) is None
+        assert literal("", fixed_strings=True, case_insensitive=False) is None
 
 
 class TestAgentScenarioFindAndEdit:

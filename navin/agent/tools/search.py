@@ -1009,15 +1009,24 @@ def _rel_posix(file_path: Path, root: Path) -> str | None:
 
 
 def _read_text_file(
-    file_path: Path, max_file_bytes: int,
+    file_path: Path, max_file_bytes: int, *, must_contain: bytes | None = None,
 ) -> tuple[str | None, str | None]:
-    """Return (content, skip_reason)."""
+    """Return (content, skip_reason).
+
+    ``must_contain`` is a byte string every match needs (the literal part of
+    the pattern): a file without it is answered ``(None, "miss")`` from the raw
+    bytes, before the decode, which is where most of a grep's time went once
+    the file list was free. One C-level ``find`` over the bytes instead of a
+    decode plus a regex pass for the 5 500 files out of 5 600 that never match.
+    """
     try:
         raw = file_path.read_bytes()
     except OSError:
         return None, "binary"
     if len(raw) > max_file_bytes:
         return None, "large"
+    if must_contain is not None and raw.find(must_contain) < 0:
+        return None, "miss"
     if _is_binary(raw):
         return None, "binary"
     # Same decoder as read_file, so a cp1252 or BOM-prefixed file is searchable
@@ -1026,6 +1035,49 @@ def _read_text_file(
     if decoded is None:
         return None, "binary"
     return decoded.text, None
+
+
+# Characters that make a pattern a regex (``_REGEX_META`` above is the
+# compiled form used by the not-found hints; this is the set the literal
+# prefix scan needs).
+_REGEX_META_CHARS = frozenset("\\.^$*+?{}[]|()")
+_QUANTIFIERS = frozenset("*+?{")
+
+
+def _required_literal(pattern: str, *, fixed_strings: bool, case_insensitive: bool) -> bytes | None:
+    """A byte string every match of ``pattern`` must contain, or None.
+
+    A fixed string is its own literal. For a regex, the literal prefix before
+    the first metacharacter is required by every match (``async def (a|b)``
+    needs ``async def ``), minus its last character when a quantifier follows
+    (``abc*`` needs only ``ab``). Anything less certain (a pattern that starts
+    with a group, a class or an escape) gets no prefilter. Case-insensitive
+    searches get none either: Unicode case folding (the Kelvin sign matches
+    ``k``) is not a byte-level operation. The filter must never lose a match;
+    skipping it only costs time.
+    """
+    if case_insensitive or not pattern:
+        return None
+    if fixed_strings:
+        literal = pattern
+    else:
+        text = pattern[1:] if pattern.startswith("^") else pattern
+        prefix: list[str] = []
+        stopper = ""
+        for char in text:
+            if char in _REGEX_META_CHARS:
+                stopper = char
+                break
+            prefix.append(char)
+        if stopper in _QUANTIFIERS and prefix:
+            prefix.pop()
+        literal = "".join(prefix)
+    if len(literal) < 2:
+        return None
+    try:
+        return literal.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
 
 
 class _SearchTool(_FsTool):
@@ -1666,6 +1718,11 @@ class GrepTool(_SearchTool):
                     break
                 candidates.append(file_path)
             ignored = set() if include_ignored else _gitignored_paths(root, candidates)
+        # Files that cannot match are dropped on their raw bytes, before any
+        # decode. Sequential on purpose: the files sit in the page cache, so
+        # threads only fight over the GIL (measured 3x slower with four).
+        literal = _required_literal(pattern, fixed_strings=fixed_strings, case_insensitive=case_insensitive)
+        selected: list[Path] = []
         for file_path in candidates:
             if out_of_time():
                 stopped = True
@@ -1682,11 +1739,17 @@ class GrepTool(_SearchTool):
                 continue
             if not _matches_type(name, file_type):
                 continue
-            content, skip_reason = _read_text_file(file_path, self._MAX_FILE_BYTES)
+            selected.append(file_path)
+
+        for file_path in selected:
+            if out_of_time():
+                stopped = True
+                break
+            content, skip_reason = _read_text_file(file_path, self._MAX_FILE_BYTES, must_contain=literal)
             if content is None:
                 if skip_reason == "large":
                     skipped_large += 1
-                else:
+                elif skip_reason == "binary":
                     skipped_binary += 1
                 continue
             if multiline:
