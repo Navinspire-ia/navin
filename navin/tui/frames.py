@@ -29,10 +29,11 @@ _frozen_count: int | None = None
 
 
 def _note_frozen() -> int:
-    """Count the frozen objects by walking them: only where that walk is free.
+    """Count the frozen objects by walking the permanent generation.
 
-    Measured in the CLI log: 2 to 4.5 s per call on a long session, after
-    every collection. Collections use :func:`_freeze_counted` instead.
+    A tight C loop: 27 ms for 3 million objects here. The 2 to 4.5 s once seen
+    in the CLI log were ``gc.get_objects`` over a thawed heap (a Python list of
+    every object), which this module no longer does; see ``_freeze_counted``.
     """
     global _frozen_count
     _frozen_count = gc.get_freeze_count()
@@ -40,20 +41,31 @@ def _note_frozen() -> int:
 
 
 def _unfrozen_objects() -> int:
-    """Tracked objects not frozen yet: what the next ``gc.freeze()`` moves."""
+    """Tracked objects not frozen yet: what the next ``gc.freeze()`` moves.
+
+    Only for the ordinary pass, where the young generations hold a few
+    thousand survivors; over a thawed heap this builds a list of every object
+    (6 s for the 2 GB CLI of 2026-10-28 00:08) and must not be called.
+    """
     return sum(len(gc.get_objects(generation)) for generation in range(3))
 
 
 def _freeze_counted(*, thawed: bool = False) -> int:
-    """``gc.freeze()`` and keep the frozen count up to date without a heap walk.
+    """``gc.freeze()`` and keep the frozen count up to date.
 
-    Right after a collection the young generations hold only what survived
-    since the last freeze, so counting them costs what the collection itself
-    walked. ``thawed`` means everything was unfrozen first (the deep pass).
+    Ordinary pass: the young generations hold only what survived since the last
+    freeze, so counting them before the freeze costs what the collection
+    itself walked. Deep pass (``thawed``): everything is young again, so the
+    count is read after the freeze from the permanent generation, a C walk of
+    tens of milliseconds, never a Python list of the whole heap.
     """
     global _frozen_count
+    if thawed:
+        gc.freeze()
+        _frozen_count = gc.get_freeze_count()
+        return _frozen_count
     moved = _unfrozen_objects()
-    before = 0 if thawed or _frozen_count is None else _frozen_count
+    before = 0 if _frozen_count is None else _frozen_count
     gc.freeze()
     _frozen_count = before + moved
     return _frozen_count
@@ -104,9 +116,12 @@ DEEP_GC_QUIET_EVENTS_S = 10.0
 # a bound). When the frozen set grows this much past the last deep pass, the
 # deep pass runs once the user is away.
 DEEP_GC_GROWTH = 500_000
-# Past this growth the deep pass no longer waits for the user to be away: one
-# quiet moment is enough, so memory stays bounded on a session never left.
-DEEP_GC_GROWTH_FORCED = DEEP_GC_GROWTH * 4
+# The deep pass never runs while the user is there. The forced form that
+# started "at one quiet moment" once the growth passed 4x froze the screen for
+# 16 s on 2026-10-28 00:08 (a 2 GB CLI, 10 s of collection and 6 s of
+# counting) in the middle of a working session. Memory is bounded instead by
+# the ordinary pass releasing off-screen lines, and the deep pass waits for a
+# minute without input or an unfocused terminal, however large the growth.
 # A pass at least this long is written to the freeze log with its kind, so the
 # next audit knows which pass froze the screen.
 SLOW_GC_PASS_S = 0.5
@@ -197,7 +212,7 @@ class IdleCollector:
                 (idle_input >= DEEP_GC_QUIET_INPUT_S and idle_events >= DEEP_GC_QUIET_EVENTS_S)
                 or (not self._is_focused() and idle_events >= DEEP_GC_QUIET_EVENTS_S)
             )
-            if away or growth >= DEEP_GC_GROWTH_FORCED:
+            if away:
                 # The one long pass: it gives back what left the chat since.
                 gc.unfreeze()
                 self._collect(deep=True)

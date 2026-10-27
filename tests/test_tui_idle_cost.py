@@ -311,7 +311,12 @@ def test_a_frozen_set_that_keeps_growing_is_reclaimed_once_the_user_steps_away(m
     assert collector.deep_collections == 1 and calls == [1, 2]
 
 
-def test_a_runaway_frozen_set_is_reclaimed_at_the_next_quiet_moment(monkeypatch):
+def test_a_runaway_frozen_set_still_waits_for_the_user_to_be_away(monkeypatch):
+    """Measured 2026-10-28 00:08 in the CLI freeze log: the forced deep pass
+    (growth past 4x) ran on a 2 s typing pause of a 2 GB session and froze the
+    screen for 16 s (10 s of gen-2 collection, 6 s of counting). However large
+    the growth, the whole-heap walk waits for a minute without input or an
+    unfocused terminal; the user never pays it under their fingers."""
     clock = _Clock()
     count = {"objects": 0}
     monkeypatch.setattr(frames, "_frozen_count", 0)
@@ -322,15 +327,36 @@ def test_a_runaway_frozen_set_is_reclaimed_at_the_next_quiet_moment(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
     with terminal_gc_policy():
-        count["objects"] = frames.DEEP_GC_GROWTH_FORCED
+        count["objects"] = frames.DEEP_GC_GROWTH * 8
         _with_pending(monkeypatch, frames.FULL_GC_DUE)
         clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert collector.tick() and collector.deep_collections == 0
         _with_pending(monkeypatch, 0)
-        collector.note_input()
-        clock.now += frames.FULL_GC_QUIET_INPUT_S
-        assert collector.tick(), "bounded memory beats waiting for the user to leave"
+        for _ in range(5):
+            collector.note_input()
+            clock.now += frames.FULL_GC_QUIET_INPUT_S
+            assert not collector.tick(), "a typing pause never pays the whole-heap walk"
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert collector.tick(), "reclaimed once the user is away"
     assert collector.deep_collections == 1 and calls == [1, 2]
+
+
+def test_the_deep_pass_counts_the_frozen_set_in_c_not_with_a_python_list(monkeypatch):
+    """After a thaw the young generations are the whole heap: ``gc.get_objects``
+    over them built a list of every object (6 s on 2026-10-28 00:08). The deep
+    pass reads ``gc.get_freeze_count`` after freezing instead, a C walk."""
+    listed: list[int] = []
+    counted: list[int] = []
+    monkeypatch.setattr(frames.gc, "get_objects", lambda generation=None: listed.append(generation) or [1, 2, 3])
+    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: counted.append(1) or 123_456)
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    monkeypatch.setattr(frames, "_frozen_count", 10)
+    assert frames._freeze_counted(thawed=True) == 123_456
+    assert listed == [], "a thawed heap is never listed object by object"
+    assert counted == [1]
+    # The ordinary pass keeps counting the few young survivors, no C walk needed.
+    assert frames._freeze_counted() == 123_456 + 9
+    assert listed == [0, 1, 2] and counted == [1]
 
 
 def test_collections_never_walk_the_frozen_heap_to_count_it(monkeypatch):
