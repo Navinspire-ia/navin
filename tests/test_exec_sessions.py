@@ -51,6 +51,17 @@ def _idle_process() -> unittest.mock.MagicMock:
     return process
 
 
+def _sleep_command(seconds: float) -> str:
+    """A command that sleeps about ``seconds`` in this platform's shell.
+
+    ``timeout.exe`` refuses a redirected stdin, so Windows uses ping's one
+    second pause between echoes; its output is harmless noise in the session.
+    """
+    if WINDOWS:
+        return f"ping -n {int(seconds) + 1} 127.0.0.1"
+    return f"sleep {seconds}"
+
+
 class IncrementalDecodingTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_character_cut_at_a_chunk_boundary_survives(self) -> None:
         # "é" is 0xC3 0xA9; the pipe hands each byte in its own chunk.
@@ -133,13 +144,12 @@ class BackgroundSessionsLiveTest(unittest.TestCase):
         self.root = Path(self._tmp.name).resolve()
         self.manager = session_mod.ExecSessionManager(idle_timeout=1)
 
-    @unittest.skipIf(WINDOWS, "uses a POSIX sleep")
     def test_the_foreground_timeout_is_not_a_deadline_for_a_background_session(self) -> None:
         # Config default of 1 s: a foreground call would hand over after 1 s.
         tool = ExecTool(working_dir=str(self.root), session_manager=self.manager, timeout=1)
 
         async def run() -> tuple[str, list[session_mod.ExecSessionInfo]]:
-            result = str(await tool.execute(command="sleep 30", background=True, timeout=1))
+            result = str(await tool.execute(command=_sleep_command(30), background=True, timeout=1))
             session_id = result.split("session_id:")[1].strip().split()[0]
             await asyncio.sleep(1.2)
             poll = await self.manager.write(
@@ -155,14 +165,13 @@ class BackgroundSessionsLiveTest(unittest.TestCase):
         self.assertEqual(len(infos), 1)
         self.assertIsNone(infos[0].returncode)
 
-    @unittest.skipIf(WINDOWS, "uses a POSIX sleep")
     def test_the_idle_sweep_forgets_finished_sessions_but_never_kills_a_live_one(self) -> None:
         tool = ExecTool(working_dir=str(self.root), session_manager=self.manager)
 
         async def run() -> tuple[int, int | None, list[str]]:
-            live = str(await tool.execute(command="sleep 30", background=True))
+            live = str(await tool.execute(command=_sleep_command(30), background=True))
             live_id = live.split("session_id:")[1].strip().split()[0]
-            done = str(await tool.execute(command="sleep 0.2", yield_time_ms=50))
+            done = str(await tool.execute(command=_sleep_command(0.2), yield_time_ms=50))
             done_id = done.split("session_id:")[1].strip().split()[0]
             await asyncio.sleep(1.3)  # past idle_timeout for both, done one has exited
             infos = await self.manager.list()  # runs the sweep
