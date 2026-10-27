@@ -68,6 +68,12 @@ class TestFrameTimestamps:
 
 
 class TestExtractVideoFrames:
+    @pytest.fixture(autouse=True)
+    def _frames_stay_in_the_test_dir(self, tmp_path: Path, monkeypatch):
+        # Without a base_dir frames go to ~/.navin/cache: a test must not fill
+        # the user's real cache (read-only in a sandbox, too).
+        monkeypatch.setattr(video_frames, "frames_cache_root", lambda: tmp_path / "frames-cache")
+
     def test_missing_file_is_reported_not_raised(self, tmp_path: Path):
         result = extract_video_frames(tmp_path / "nope.mp4")
         assert not result.ok

@@ -570,6 +570,9 @@ class MacUpdateTest(unittest.TestCase):
             with (
                 _Frozen(str(executable)),
                 mock.patch.object(self.service.subprocess, "Popen", fake_popen),
+                # The handoff folder goes under ~/.navin/updates: keep it out
+                # of the real install (read-only in a sandbox, too).
+                mock.patch.object(self.service, "_updates_dir", lambda: Path(tmp) / "updates"),
             ):
                 self.service._install_macos_app(
                     Path(tmp) / "update.dmg", pid=4242, desktop_pid=77

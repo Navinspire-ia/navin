@@ -56,6 +56,19 @@ class _GateTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve()
 
+    def _outside_file(self, name: str, text: str) -> Path:
+        """A file outside the project and outside the OS temp dirs.
+
+        Temp dirs are free to read and write for the agent, so the file has to
+        sit elsewhere; next to this test suite, not in the user's real home
+        (which the test must not touch, and which is read-only in a sandbox).
+        """
+        holder = TemporaryDirectory(dir=Path(__file__).resolve().parent, prefix=".approval-outside-")
+        self.addCleanup(holder.cleanup)
+        outside = Path(holder.name).resolve() / name
+        outside.write_text(text, encoding="utf-8")
+        return outside
+
     def _run(self, coro: Any, gate: _RecordingGate | None) -> str:
         async def go() -> str:
             token = bind_approval_gate(gate)
@@ -182,9 +195,7 @@ class ExecApprovalTest(_GateTest):
         self.assertIn("blocked by safety guard", out)
 
     def test_a_workspace_escape_runs_when_the_user_allows_it(self) -> None:
-        outside = Path.home() / "navin-approval-escape.txt"
-        self.addCleanup(lambda: outside.unlink(missing_ok=True))
-        outside.write_text("escaped-ok\n", encoding="utf-8")
+        outside = self._outside_file("navin-approval-escape.txt", "escaped-ok\n")
         gate = _RecordingGate(allowed=True)
         tool = ExecTool(working_dir=str(self.root), restrict_to_workspace=True)
         out = self._run(tool.execute(command=f"cat {outside}"), gate)
@@ -211,9 +222,7 @@ class FileApprovalTest(_GateTest):
     """A path outside the project is a card, not a silent wall."""
 
     def test_a_read_outside_the_project_is_asked_in_the_chat(self) -> None:
-        outside = Path.home() / "navin-approval-read.txt"
-        self.addCleanup(lambda: outside.unlink(missing_ok=True))
-        outside.write_text("file-ok\n", encoding="utf-8")
+        outside = self._outside_file("navin-approval-read.txt", "file-ok\n")
         gate = _RecordingGate(allowed=False)
         tool = ReadFileTool(
             workspace=self.root,
@@ -227,9 +236,7 @@ class FileApprovalTest(_GateTest):
         self.assertNotIn("file-ok", out)
 
     def test_a_read_outside_the_project_runs_when_allowed(self) -> None:
-        outside = Path.home() / "navin-approval-read.txt"
-        self.addCleanup(lambda: outside.unlink(missing_ok=True))
-        outside.write_text("file-ok\n", encoding="utf-8")
+        outside = self._outside_file("navin-approval-read.txt", "file-ok\n")
         gate = _RecordingGate(allowed=True)
         tool = ReadFileTool(
             workspace=self.root,
