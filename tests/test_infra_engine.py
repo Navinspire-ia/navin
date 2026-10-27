@@ -398,6 +398,32 @@ def test_production_targets_and_scopes(isolated):
     assert judge("terraform apply tfplan", InfraPolicy(), isolated).action == "allow"
 
 
+def test_scale_to_zero_is_critical_and_compose_dry_run_is_a_plan():
+    """Audit against the real CLIs: danger levels of a stop and of a Compose dry run."""
+    stopped = worst(classify_command("kubectl scale deploy/web -n shop --replicas=0"))
+    assert stopped.risk == "critical" and "availability" in stopped.categories
+    assert worst(classify_command("kubectl scale deploy/web -n shop --replicas 0")).risk == "critical"
+    assert worst(classify_command("kubectl scale deploy/web -n shop --replicas=3")).risk == "change"
+    # docker compose --dry-run (global flag, Compose v2.17+) only prints what it would do.
+    assert worst(classify_command("docker compose --dry-run up -d")).risk == "plan"
+    assert worst(classify_command("docker compose up -d --dry-run")).risk == "plan"
+    assert worst(classify_command("docker compose down -v --dry-run")).risk == "plan"
+    assert worst(classify_command("docker compose up -d")).risk == "change"
+
+
+def test_curated_examples_use_the_flags_of_the_installed_clis():
+    """kubectl 1.35 dropped autoscale --cpu-percent for --cpu=70%; az monitor metrics list takes --metrics; gcloud monitoring policies is GA."""
+    from navin.infra.curated import curated_operations
+
+    by_command = {op.command: op for op in curated_operations()}
+    autoscale = by_command["kubectl autoscale deployment"].examples[0]
+    assert "--cpu=70%" in autoscale and "--cpu-percent" not in autoscale
+    metrics = by_command["az monitor metrics list"].examples[0]
+    assert "--metrics " in metrics and "--metric " not in metrics
+    policies = by_command["gcloud monitoring policies list"].examples[0]
+    assert policies.startswith("gcloud monitoring policies list")
+
+
 def test_widening_the_policy_is_detected_and_long_lived_keys_are_reported(isolated, tmp_path):
     narrow = InfraPolicy(level="prepare", scopes={**InfraPolicy().scopes, "kube_contexts": ["dev"]})
     wider = update_policy(narrow, {"level": "execute", "scopes": {"kube_contexts": []}})

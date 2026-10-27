@@ -56,6 +56,15 @@ _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 # Last built GraphState JSON per (root, view), for diffs and sticky layout.
 _state_cache: dict[tuple[str, str], dict[str, Any]] = {}
+# The same state serialized once: every query handed the whole graph (5 600
+# nodes, 12 000 edges) to the native engine as JSON built on the spot, which
+# was most of a 100 ms "find". Keyed like the state and dropped with it.
+_state_json_cache: dict[tuple[str, str], tuple[int, str]] = {}
+# The agent's payload (no layout) keyed by what it is derived from: the index
+# entries object (replaced on every change) and the metadata file's stamp.
+# ``find``, ``overview`` and ``file`` rebuilt the snapshot and the graph on
+# every call, 100 ms each, for an answer that had not changed since the last.
+_payload_cache: dict[tuple[str, str], tuple[tuple[int, int], dict[str, Any]]] = {}
 _generation: dict[str, int] = {}
 _cache_lock = threading.Lock()
 
@@ -564,6 +573,15 @@ def build_metagraph(
     Paying the layout on every agent turn was most of the tool's cost.
     """
     view = "packages" if view == "packages" else "files"
+    cache_key = _cache_key(root, view)
+    if not layout and sticky is None:
+        stamp = _payload_stamp(root)
+        with _cache_lock:
+            hit = _payload_cache.get(cache_key)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+    else:
+        stamp = None
     snapshot = _collect_snapshot(root, max_nodes=max_nodes)
     generation = _bump_generation(root) if bump else (
         _generation.get(str(root.resolve(strict=False)), 0) or 1
@@ -571,7 +589,6 @@ def build_metagraph(
     snapshot["generation"] = generation
     snapshot["view"] = view
 
-    cache_key = _cache_key(root, view)
     with _cache_lock:
         cached = _state_cache.get(cache_key)
     cached_positions = cached.get("positions") if cached else None
@@ -609,7 +626,32 @@ def build_metagraph(
 
     with _cache_lock:
         _state_cache[cache_key] = state
-    return _state_to_payload(state)
+        _state_json_cache.pop(cache_key, None)
+    payload = _state_to_payload(state)
+    if stamp is not None:
+        with _cache_lock:
+            if len(_payload_cache) >= 16:
+                _payload_cache.clear()
+            _payload_cache[cache_key] = (stamp, payload)
+    return payload
+
+
+def _payload_stamp(root: Path) -> tuple[int, int]:
+    """What the agent payload depends on: the index entries and the metadata file.
+
+    ``ensure`` is the throttled revalidate (free inside its window, a stat walk
+    past it), so an edited file still shows up; the entries dict is replaced,
+    never mutated, when anything changed.
+    """
+    from navin.index import get_index
+
+    index = get_index(root)
+    index.ensure()
+    try:
+        meta_stamp = _metadata_path(root).stat().st_mtime_ns
+    except OSError:
+        meta_stamp = 0
+    return (id(index.entries), meta_stamp)
 
 
 def query_metagraph(
@@ -635,11 +677,25 @@ def query_metagraph(
     if core is not None:
         try:
             return json.loads(
-                core.graph_query(json.dumps(state), op, json.dumps(args or {}))
+                core.graph_query(_state_json(cache_key, state), op, json.dumps(args or {}))
             )
         except Exception:
             pass
     return _python_query(state, op, args or {})
+
+
+def _state_json(cache_key: tuple[str, str], state: dict[str, Any]) -> str:
+    """The graph state as JSON, serialized once per build."""
+    with _cache_lock:
+        cached = _state_json_cache.get(cache_key)
+        if cached is not None and cached[0] == id(state):
+            return cached[1]
+    text = json.dumps(state)
+    with _cache_lock:
+        if len(_state_json_cache) >= 32:
+            _state_json_cache.clear()
+        _state_json_cache[cache_key] = (id(state), text)
+    return text
 
 
 def _python_query(state: dict[str, Any], op: str, args: dict[str, Any]) -> dict[str, Any]:

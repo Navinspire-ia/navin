@@ -151,14 +151,17 @@ class ExecutionEvaluator:
             boundary = any(str(row.get("detail", "")).startswith(("blocked by ", "workspace_violation", "ssrf_violation"))
                            for row in result.tool_events if row.get("status") == "error")
             boundary = boundary or any(getattr(registry.get(name), "boundary_violation", False) for name in registry.tool_names)
-            intact = all((root / name).is_file() and (root / name).read_text() == text
-                         for name, text in case.files.items() if name != "solution.py")
+            def files_intact() -> bool:
+                return all((root / name).is_file() and (root / name).read_text() == text
+                           for name, text in case.files.items() if name != "solution.py")
+
+            intact = await asyncio.to_thread(files_intact)
             if case.suite == "code":
                 actual = await asyncio.to_thread(run_solution, root, case.inputs)
                 correct = actual == case.expected and checker.verified_digest == source_digest(root)
             else:
                 try:
-                    actual = json.loads((root / "result.json").read_text())
+                    actual = json.loads(await asyncio.to_thread((root / "result.json").read_text))
                 except (OSError, ValueError):
                     actual = None
                 correct = actual == case.expected

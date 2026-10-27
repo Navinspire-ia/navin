@@ -810,7 +810,8 @@ async def install_remotion(
         return out
     readme = home / "README.md"
     if not readme.is_file():
-        readme.write_text(
+        await asyncio.to_thread(
+            readme.write_text,
             "# Navin Montage - Remotion (optional)\n\n"
             "Installed on demand. Not required for HyperFrames or ffmpeg packaging.\n"
             "Keep compositions under marketing/montage/compositions-remotion/.\n",

@@ -799,7 +799,8 @@ async def detect_beats(
         if not result.ok or not raw.is_file():
             raise AudioMixError(result.stderr or "could not decode the music for beat detection")
         samples = array("h")
-        samples.frombytes(raw.read_bytes()[: (raw.stat().st_size // 2) * 2])
+        raw_bytes = await asyncio.to_thread(raw.read_bytes)
+        samples.frombytes(raw_bytes[: (len(raw_bytes) // 2) * 2])
     import sys
 
     if sys.byteorder == "big":

@@ -2451,7 +2451,7 @@ def _run_gateway(
                 config.workspace_path, "HEARTBEAT.md"
             )
             try:
-                content = heartbeat_file.read_text(encoding="utf-8")
+                content = await asyncio.to_thread(heartbeat_file.read_text, encoding="utf-8")
             except OSError:
                 logger.debug("Heartbeat: HEARTBEAT.md missing")
                 return None

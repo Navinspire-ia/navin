@@ -3050,7 +3050,7 @@ class GatewayHTTPHandler:
                 if path is None:
                     return _http_error(404, "asset not found")
                 return _http_response(
-                    path.read_bytes(),
+                    await asyncio.to_thread(path.read_bytes),
                     content_type=mime_for(path.name),
                     extra_headers=[("Cache-Control", "public, max-age=3600")],
                 )
@@ -5172,10 +5172,14 @@ class GatewayHTTPHandler:
                 into = Path.home() / "Navin" / (stem or bundle.name.removesuffix(BUNDLE_SUFFIX))
                 # The same session opened again: a fresh folder beside the first
                 # (name-2, name-3...), never an error about a folder the user did not choose.
-                base, n = into, 2
-                while into.exists() and any(into.iterdir()):
-                    into = base.with_name(f"{base.name}-{n}")
-                    n += 1
+                def first_free(base: Path) -> Path:
+                    into, n = base, 2
+                    while into.exists() and any(into.iterdir()):
+                        into = base.with_name(f"{base.name}-{n}")
+                        n += 1
+                    return into
+
+                into = await asyncio.to_thread(first_free, into)
             new_chat = uuid.uuid4().hex
 
             def link(project_dir: Path) -> dict[str, Any]:

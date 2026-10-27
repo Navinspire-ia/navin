@@ -634,7 +634,7 @@ async def render_storyboard(
     except StoryboardError as exc:
         return {"ok": False, "error": str(exc), "scenes": scene_rows}
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, workdir, ignore_errors=True)
 
 
 __all__ = [

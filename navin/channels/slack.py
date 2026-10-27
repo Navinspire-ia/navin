@@ -508,7 +508,7 @@ class SlackChannel(BaseChannel):
                 response.raise_for_status()
             if self._looks_like_html_download(response):
                 raise ValueError("Slack returned HTML instead of file content")
-            path.write_bytes(response.content)
+            await asyncio.to_thread(path.write_bytes, response.content)
             return str(path), marker
         except Exception as e:
             self.logger.warning("Failed to download file {}: {}", file_id, e)

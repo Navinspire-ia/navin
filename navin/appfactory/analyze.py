@@ -25,6 +25,12 @@ _SKIP_DIRS = frozenset({
 })
 _FRONTEND_DIRS = ("", "frontend", "web", "client", "app", "apps/web", "apps/frontend", "apps/client",
                   "packages/web", "packages/frontend", "packages/app", "ui", "site", "webapp")
+# Folders a shallow search never enters when the frontend sits under another name
+# (webui, front, dashboard, site/front...).
+_SKIP_DIRS = frozenset({"node_modules", ".git", "os", ".navin", "dist", "build", "out", ".next", ".nuxt", ".svelte-kit",
+                        "target", "vendor", "venv", ".venv", "__pycache__", "coverage", "android", "ios", "src-tauri",
+                        "desktop", "desktop-electron", "public", "static", "assets", "docs", "tests", "test", "scripts"})
+_SEARCH_DEPTH = 2
 _BACKEND_DIRS = ("", "backend", "server", "api", "apps/api", "apps/backend", "apps/server",
                  "services/api", "packages/api", "packages/server")
 _SOURCE_EXT = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"})
@@ -66,7 +72,9 @@ _RE_ENV_NAME = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=", re.M)
 _URL_HINT = re.compile(r"(?:^|_)(?:URL|URI|API|ENDPOINT|BACKEND|SERVER|HOST|ORIGIN)(?:_|$)")
 # Names that hold secrets are never reported, even with API in them (API_KEY).
 _SECRET_HINT = re.compile(r"(?:^|_)(?:KEY|SECRET|TOKEN|PASSWORD|PASS|PWD|PRIVATE|CREDENTIALS?)(?:_|$)")
-_RE_VITE_OUT = re.compile(r"""outDir\s*:\s*['"]([^'"]+)['"]""")
+_RE_VITE_OUT = re.compile(
+    r"""outDir\s*:\s*(?:path\.|node:path\.)?(?:resolve|join)?\(?\s*(?:__dirname\s*,\s*|import\.meta\.dirname\s*,\s*)?['"]([^'"]+)['"]"""
+)
 _RE_VITE_BASE = re.compile(r"""\bbase\s*:\s*['"]([^'"]*)['"]""")
 _RE_NEXT_OUTPUT = re.compile(r"""output\s*:\s*['"](export|standalone)['"]""")
 
@@ -198,7 +206,12 @@ def _output_dir(framework: str, pkg_dir: Path) -> str:
     for name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs", "astro.config.mjs"):
         found = _RE_VITE_OUT.search(_read_text(pkg_dir / name))
         if found:
-            return found.group(1).strip("./") or "dist"
+            # ``outDir: "dist"`` or ``outDir: path.resolve(__dirname, "../navin/web/dist")``:
+            # kept relative to the frontend folder, which is what build-web.mjs resolves against.
+            raw = found.group(1).strip()
+            if raw.startswith("./"):
+                raw = raw[2:]
+            return raw.rstrip("/") or "dist"
     return "dist"
 
 
@@ -354,6 +367,44 @@ def _slug(text: str) -> str:
     return slug or "app"
 
 
+def _frontend_candidates(root: Path) -> list[Path]:
+    """The usual frontend folders first, then every folder (two levels deep) with a package.json.
+
+    Navin's own frontend lives in ``webui/``, a client's in ``front/`` or
+    ``site/front/``: a fixed list of names would miss them and the factory
+    would answer "no web frontend" to a project that plainly has one.
+    """
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(folder: Path) -> None:
+        if folder not in seen:
+            seen.add(folder)
+            ordered.append(folder)
+
+    for sub in _FRONTEND_DIRS:
+        add(root / sub if sub else root)
+    pending = [(root, 0)]
+    while pending:
+        folder, depth = pending.pop(0)
+        try:
+            entries = sorted(
+                (entry for entry in os.scandir(folder) if entry.is_dir(follow_symlinks=False)),
+                key=lambda entry: entry.name,
+            )
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in _SKIP_DIRS:
+                continue
+            child = Path(entry.path)
+            if (child / "package.json").is_file():
+                add(child)
+            if depth + 1 < _SEARCH_DEPTH:
+                pending.append((child, depth + 1))
+    return ordered
+
+
 def analyze(project_root: str | Path) -> dict[str, Any]:
     """Describe the project the way the conversion needs it. Read-only."""
     root = Path(project_root).expanduser().resolve()
@@ -362,8 +413,7 @@ def analyze(project_root: str | Path) -> dict[str, Any]:
     pkg_dir: Path | None = None
     pkg: dict[str, Any] = {}
     framework = version = ""
-    for sub in _FRONTEND_DIRS:
-        folder = root / sub if sub else root
+    for folder in _frontend_candidates(root):
         data = _read_json(folder / "package.json")
         if not data:
             continue

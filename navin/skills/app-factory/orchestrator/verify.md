@@ -4,7 +4,7 @@
 
 1. Run the build with `exec background=true` and poll with `write_stdin`:
    - Android: `cd os/android/android && ./gradlew assembleDebug`, then `./gradlew bundleRelease` (signed, see `app-release-manager`).
-   - Desktop: `cd os/<id> && npx tauri build --bundles <msi,nsis|dmg|deb|rpm|appimage>`.
+   - Desktop: `cd os/<id> && npx tauri build --debug --bundles <msi,nsis|dmg|deb|rpm|appimage>` first (fast, installable), then the same without `--debug` for the optimized package.
 2. `appfactory action=artifacts target=<id>`: a package must exist with a non zero size.
 3. Failure -> `recover.md`.
 

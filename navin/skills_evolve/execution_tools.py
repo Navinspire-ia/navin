@@ -130,7 +130,7 @@ class ExecutionDeskTool(Tool):
         return True
 
     async def execute(self, id: str, **kwargs):
-        data = json.loads((self.root / "task.json").read_text())
+        data = json.loads(await asyncio.to_thread((self.root / "task.json").read_text))
         if self.module == "career":
             from navin.career.prospecting import score_candidate
             candidate = next((row for row in data["candidates"] if row["id"] == id), None)

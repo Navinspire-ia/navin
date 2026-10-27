@@ -77,6 +77,94 @@ def _line_diff_stats(before: str, after: str) -> tuple[int, int]:
     return added, deleted
 
 
+def _replacement_diff_stats(content: str, pos: int, old: str, new: str) -> tuple[int, int]:
+    """Added and deleted lines of one replacement at ``pos``.
+
+    Only the lines touched by the hunk differ, so the diff runs on that window
+    (the lines spanning ``old`` and their replacement) instead of the whole
+    file: a SequenceMatcher over 400 000 lines held the event loop for most of
+    a second on a 20 MB file, for a two-number summary.
+    """
+    line_start = content.rfind("\n", 0, pos) + 1
+    end = pos + len(old)
+    line_end = content.find("\n", end)
+    line_end = len(content) if line_end < 0 else line_end + 1
+    before = content[line_start:line_end]
+    after = content[line_start:pos] + new + content[end:line_end]
+    return _line_diff_stats(before, after)
+
+
+def _apply_update(
+    content: str, old_text: str, new_text: str, edit: dict, path: str,
+) -> tuple[str, int, int]:
+    """Replace ``old_text`` in ``content`` and return the new text with its line stats.
+
+    Pure text work on possibly huge files: the caller runs it off the loop.
+    """
+    uses_crlf = "\r\n" in content
+    norm_content = content.replace("\r\n", "\n")
+    norm_old = old_text.replace("\r\n", "\n")
+    terminated = norm_content.endswith("\n")
+
+    positions = _exact_positions(norm_content, norm_old)
+    norm_new = new_text.replace("\r\n", "\n")
+    if edit.get("match_lines"):
+        if not norm_old.endswith("\n"):
+            raise _PatchError(f"match_lines requires old_text ending with a newline: {path}")
+        positions = [
+            pos for pos in positions if pos == 0 or norm_content[pos - 1] == "\n"
+        ]
+        # A complete text hunk can include an unterminated EOF.
+        # Only remove that final separator when matching there.
+        eof_old = norm_old[:-1]
+        eof_pos = len(norm_content) - len(eof_old)
+        eof_match = (
+            not terminated and eof_old and norm_content.endswith(eof_old)
+            and (eof_pos == 0 or norm_content[eof_pos - 1] == "\n")
+        )
+        if edit.get("at_eof"):
+            positions = [pos for pos in positions if pos + len(norm_old) == len(norm_content)]
+        if eof_match:
+            if positions:
+                raise _PatchError(f"old_text matches multiple complete-line locations in {path}")
+            norm_old = eof_old
+            norm_new = norm_new.removesuffix("\n")
+            positions = [eof_pos]
+    if not positions:
+        raise _PatchError(_not_found_detail(norm_old, norm_content, path))
+
+    occurrence = edit.get("occurrence")
+    if occurrence is not None and not isinstance(occurrence, int):
+        raise _PatchError(f"occurrence must be an integer: {path}")
+    if occurrence is not None and not 1 <= occurrence <= len(positions):
+        raise _PatchError(
+            f"occurrence {occurrence} is out of range in {path}: "
+            f"old_text appears {len(positions)} time(s)"
+        )
+    if len(positions) > 1 and occurrence is None:
+        lines = [_line_of(norm_content, offset) for offset in positions]
+        raise _PatchError(
+            f"old_text appears {len(positions)} times in {path} at "
+            f"{_preview_lines(lines)}. Extend old_text with surrounding "
+            "context, or set occurrence to pick one of them."
+        )
+
+    pos = positions[(occurrence or 1) - 1]
+    new_norm = (
+        norm_content[:pos]
+        + norm_new
+        + norm_content[pos + len(norm_old) :]
+    )
+    added, deleted = _replacement_diff_stats(norm_content, pos, norm_old, norm_new)
+    # A file that had no final newline keeps none: adding one
+    # would change a byte the caller never mentioned.
+    if new_norm and terminated and not new_norm.endswith("\n"):
+        new_norm += "\n"
+    if uses_crlf:
+        new_norm = new_norm.replace("\n", "\r\n")
+    return new_norm, added, deleted
+
+
 def _append_text(content: str, addition: str) -> str:
     """Append text without merging it into an unterminated final line.
 
@@ -335,7 +423,10 @@ class ApplyPatchTool(_FsTool):
                         if uses_crlf:
                             new_norm = new_norm.replace("\n", "\r\n")
                         writes[source] = new_norm
-                        added, deleted = _line_diff_stats(content, new_norm)
+                        # An append only adds the new lines; a whole-file diff on
+                        # a big log for that number stalled the loop.
+                        added = _text_line_count(new_text.replace("\r\n", "\n"))
+                        deleted = 0
                         action_name = "update"
                     else:
                         new_norm = new_text.replace("\r\n", "\n")
@@ -371,69 +462,11 @@ class ApplyPatchTool(_FsTool):
                     if pending is None and not source.is_file():
                         raise _PatchError(f"path to update is not a file: {path}")
 
-                    uses_crlf = "\r\n" in content
-                    norm_content = content.replace("\r\n", "\n")
-                    norm_old = old_text.replace("\r\n", "\n")
-                    terminated = norm_content.endswith("\n")
-
-                    positions = _exact_positions(norm_content, norm_old)
-                    norm_new = new_text.replace("\r\n", "\n")
-                    if edit.get("match_lines"):
-                        if not norm_old.endswith("\n"):
-                            raise _PatchError(f"match_lines requires old_text ending with a newline: {path}")
-                        positions = [
-                            pos for pos in positions if pos == 0 or norm_content[pos - 1] == "\n"
-                        ]
-                        # A complete text hunk can include an unterminated EOF.
-                        # Only remove that final separator when matching there.
-                        eof_old = norm_old[:-1]
-                        eof_pos = len(norm_content) - len(eof_old)
-                        eof_match = (
-                            not terminated and eof_old and norm_content.endswith(eof_old)
-                            and (eof_pos == 0 or norm_content[eof_pos - 1] == "\n")
-                        )
-                        if edit.get("at_eof"):
-                            positions = [pos for pos in positions if pos + len(norm_old) == len(norm_content)]
-                        if eof_match:
-                            if positions:
-                                raise _PatchError(f"old_text matches multiple complete-line locations in {path}")
-                            norm_old = eof_old
-                            norm_new = norm_new.removesuffix("\n")
-                            positions = [eof_pos]
-                    if not positions:
-                        raise _PatchError(_not_found_detail(norm_old, norm_content, path))
-
-                    occurrence = edit.get("occurrence")
-                    if occurrence is not None and not isinstance(occurrence, int):
-                        raise _PatchError(f"occurrence must be an integer: {path}")
-                    if occurrence is not None and not 1 <= occurrence <= len(positions):
-                        raise _PatchError(
-                            f"occurrence {occurrence} is out of range in {path}: "
-                            f"old_text appears {len(positions)} time(s)"
-                        )
-                    if len(positions) > 1 and occurrence is None:
-                        lines = [_line_of(norm_content, offset) for offset in positions]
-                        raise _PatchError(
-                            f"old_text appears {len(positions)} times in {path} at "
-                            f"{_preview_lines(lines)}. Extend old_text with surrounding "
-                            "context, or set occurrence to pick one of them."
-                        )
-
-                    pos = positions[(occurrence or 1) - 1]
-                    new_norm = (
-                        norm_content[:pos]
-                        + norm_new
-                        + norm_content[pos + len(norm_old) :]
+                    new_norm, added, deleted = await asyncio.to_thread(
+                        _apply_update, content, old_text, new_text, edit, path,
                     )
-                    # A file that had no final newline keeps none: adding one
-                    # would change a byte the caller never mentioned.
-                    if new_norm and terminated and not new_norm.endswith("\n"):
-                        new_norm += "\n"
-                    if uses_crlf:
-                        new_norm = new_norm.replace("\n", "\r\n")
 
                     writes[source] = new_norm
-                    added, deleted = _line_diff_stats(content, new_norm)
                     summaries.append(
                         _PatchSummary(
                             action="update", path=path, added=added, deleted=deleted

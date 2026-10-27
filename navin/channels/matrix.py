@@ -351,8 +351,9 @@ class MatrixChannel(BaseChannel):
             if self.session_path.exists():
                 self.logger.info("Found session.json at {}; attempting to use existing session...", self.session_path)
                 try:
-                    with open(self.session_path, "r", encoding="utf-8") as f:
-                        session = json.load(f)
+                    session = json.loads(
+                        await asyncio.to_thread(Path(self.session_path).read_text, encoding="utf-8")
+                    )
                     self.client.user_id = self.config.user_id
                     self.client.access_token = session["access_token"]
                     self.client.device_id = session["device_id"]
@@ -1027,7 +1028,7 @@ class MatrixChannel(BaseChannel):
 
         path = self._build_attachment_path(event, atype, filename, mime)
         try:
-            path.write_bytes(data)
+            await asyncio.to_thread(path.write_bytes, data)
         except OSError:
             return None, fail
 

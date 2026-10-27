@@ -207,7 +207,55 @@ def test_spa_plan_commands_follow_the_package_manager_and_flag_an_absolute_base(
     assert any(step["command"] == "pnpm exec cap sync android" for step in pnpm["steps"])
     android = {step["id"]: step for step in pnpm["steps"]}
     assert android["build"]["command"] == "./gradlew assembleDebug" and android["build"]["background"]
+    assert "JDK 21" in android["build"]["needs"] and "ANDROID_HOME" in android["build"]["needs"]
     assert "NAVIN_ANDROID_KEYSTORE" in android["release"]["needs"]
+    assert android["native"]["once"] and android["native"]["skip_if_exists"] == "android"
+
+
+def test_desktop_plan_builds_a_debug_package_first_then_release(vite_spa: Path):
+    """Measured on this machine: the debug deb compiles in 1m40 and installs; release is a third slower."""
+    plan = compat.plan(analyze_mod.analyze(vite_spa), "ubuntu", host=LINUX, backend_url="https://api.spa.test")
+    steps = {step["id"]: step for step in plan["steps"]}
+    assert steps["build"]["command"] == "npx tauri build --debug --bundles deb" and steps["build"]["background"]
+    assert steps["release"]["command"] == "npx tauri build --bundles deb"
+    order = [step["id"] for step in plan["steps"]]
+    assert order.index("icons") < order.index("build") < order.index("release")
+    tests = {step["test"]: step for step in plan["tests"]}
+    assert tests["navigation"]["command"].endswith("npx playwright test tests/smoke.spec.ts")
+    assert "BACKEND_URL=https://api.spa.test" in tests["api"]["command"] and "api.spec.ts" in tests["api"]["command"]
+
+
+def test_ios_plan_builds_the_capacitor_workspace_not_the_bare_project(vite_spa: Path):
+    """Capacitor 8 generates App.xcworkspace (pods or SPM); building App.xcodeproj alone misses them."""
+    plan = compat.plan(analyze_mod.analyze(vite_spa), "ios", host=LINUX)
+    steps = {step["id"]: step for step in plan["steps"]}
+    for step_id in ("build", "release"):
+        assert "-workspace ios/App/App.xcworkspace" in steps[step_id]["command"]
+        assert "App.xcodeproj" not in steps[step_id]["command"]
+        assert steps[step_id]["host"] == "Darwin"
+
+
+def test_analyze_finds_a_frontend_under_any_folder_name_and_a_computed_out_dir(tmp_path: Path):
+    """Navin's own frontend lives in webui/ with ``outDir: path.resolve(__dirname, "../navin/web/dist")``."""
+    project = _write(tmp_path / "navin-like", {
+        "pyproject.toml": "[project]\nname='engine'\n",
+        "webui/package.json": _pkg({"react": "^18.3.1", "vite": "^7.0.0"}, {"build": "tsc && vite build"}),
+        "webui/vite.config.ts": (
+            "import path from 'node:path';\nexport default defineConfig({\n  build: {\n"
+            "    outDir: path.resolve(__dirname, \"../navin/web/dist\"),\n    emptyOutDir: true,\n  },\n});\n"
+        ),
+        "node_modules/some-dep/package.json": _pkg({"react": "^18.0.0"}),  # never a candidate
+        "os/android/package.json": _pkg({"@capacitor/core": "^8.0.0"}),  # a previous scaffold is not the app
+    })
+    report = analyze_mod.analyze(project)
+    assert report["frontend"]["dir"] == "webui" and report["frontend"]["framework"] == "react"
+    assert report["frontend"]["output_dir"] == "../navin/web/dist"
+    plain = _write(tmp_path / "plain", {
+        "front/package.json": _pkg({"vue": "^3.5.0", "vite": "^7.0.0"}),
+        "front/vite.config.js": "export default { build: { outDir: './build' } }\n",
+    })
+    assert analyze_mod.analyze(plain)["frontend"]["dir"] == "front"
+    assert analyze_mod.analyze(plain)["frontend"]["output_dir"] == "build"
 
 
 # -- toolchain -------------------------------------------------------------------------------------
@@ -408,6 +456,12 @@ def test_delivered_only_with_a_package_and_every_required_test_passed(tmp_path: 
     found = deliver.artifacts(tmp_path, "android")["artifacts"]
     assert [item["path"] for item in found] == ["os/android/android/app/build/outputs/apk/debug/app-debug.apk"]
     assert found[0]["debug"] is True and found[0]["size_text"] == "4.0 KB"
+    # A desktop package built with ``tauri build --debug`` lands under target/debug: a real package too.
+    deb = tmp_path / "os" / "ubuntu" / "src-tauri" / "target" / "debug" / "bundle" / "deb" / "Spa App_1.0.0_amd64.deb"
+    deb.parent.mkdir(parents=True)
+    deb.write_bytes(b"!<arch>" + b"\0" * 100)
+    debs = deliver.artifacts(tmp_path, "ubuntu")["artifacts"]
+    assert [item["name"] for item in debs] == ["Spa App_1.0.0_amd64.deb"] and debs[0]["debug"] is True
     done = deliver.report(tmp_path, "android", steps, _PASSED)
     assert done["status"] == "delivered" and done["reasons"] == []
     markdown = (tmp_path / ".navin" / "appfactory" / "android" / "report.md").read_text()

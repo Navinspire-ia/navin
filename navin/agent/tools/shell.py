@@ -78,6 +78,23 @@ from navin.utils.task_progress import (
 
 _IS_WINDOWS = sys.platform == "win32"
 
+# ``shutil.which`` walks PATH (a dozen stats, slow on Windows network shares)
+# and ran on the event loop for every exec call. Resolved programs are kept
+# for a minute: long enough to cost nothing, short enough that a shell
+# installed mid-session is found.
+_WHICH_TTL_S = 60.0
+_which_memo: dict[str, tuple[float, str | None]] = {}
+
+
+def _which_cached(program: str) -> str | None:
+    now = time.monotonic()
+    hit = _which_memo.get(program)
+    if hit is not None and now - hit[0] < _WHICH_TTL_S:
+        return hit[1]
+    found = shutil.which(program)
+    _which_memo[program] = (now, found)
+    return found
+
 _SCAN_RE = re.compile(r"(?:^|[\s;&|(])(?:(?:find|du|tree|rg)\b|grep\s+[^|;&]*-\w*[rR]|ls\s+[^|;&]*-\w*R)")
 # Both directions of the WSL/Windows boundary: a Windows drive seen from WSL
 # (/mnt/c) and a WSL tree seen from Windows (\\wsl$ or \\wsl.localhost).
@@ -2416,7 +2433,11 @@ class ExecTool(Tool):
         the default distribution, and anything else - git-bash, msys, nu, fish -
         is a POSIX shell and gets ``-c``.
         """
-        default_program = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+        default_program = (
+            await asyncio.to_thread(_which_cached, "pwsh")
+            or await asyncio.to_thread(_which_cached, "powershell")
+            or "powershell"
+        )
         program = shell_program or default_program
         stem = PureWindowsPath(program).name.lower().removesuffix(".exe")
 
@@ -2496,7 +2517,7 @@ class ExecTool(Tool):
         shell_program: str | None, login: bool,
         *, stdin: int,
     ) -> asyncio.subprocess.Process:
-        shell_program = shell_program or shutil.which("bash") or "/bin/bash"
+        shell_program = shell_program or await asyncio.to_thread(_which_cached, "bash") or "/bin/bash"
         args = [shell_program]
         shell_name = Path(shell_program).name.lower().removesuffix(".exe")
         if login and shell_name in {"bash", "zsh"}:

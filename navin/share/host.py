@@ -816,7 +816,7 @@ class ShareManager:
                 # it from the Share dialog and sends the file another way.
                 await self._to_guest(share.share_id, guest.guest_id, {"type": "bundle_error", "reason": "too_large"})
                 return
-            data = result.path.read_bytes()
+            data = await asyncio.to_thread(result.path.read_bytes)
         total = (len(data) + BUNDLE_CHUNK_BYTES - 1) // BUNDLE_CHUNK_BYTES or 1
         name = f"{share.chat_id[:8]}.navin-session"
         for index in range(total):

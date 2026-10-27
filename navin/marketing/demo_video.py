@@ -973,7 +973,7 @@ async def _render_format(run: _Run, storyboard: dict[str, Any], fmt: str) -> lis
             if not path.is_file():
                 raise _SceneRenderError(index, f"no clip for {one['template']}")
             if path != target:
-                shutil.copy2(path, target)
+                await asyncio.to_thread(shutil.copy2, path, target)
             run.renders += 1
             run.step("rendered", scene_index=index, format=fmt, template=one["template"])
         clips.append(str(target))

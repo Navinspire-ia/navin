@@ -29,6 +29,13 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 
 _RESOLVED_PATH_CACHE: dict = {}
 _SKILL_META_TTL: dict = {}
+# The directory scan shared by every SkillsLoader built for the same roots.
+# A teammate launch builds one loader per member and a subagent wave one per
+# spawn; each used to walk every library (plugins, home, builtin) on its own,
+# holding the GIL for hundreds of milliseconds per spawn. Keyed by the roots
+# and the trust gate; validated by scan time and _SCAN_GENERATION.
+_SHARED_SCAN_CACHE: dict[tuple, tuple] = {}
+_SHARED_SCAN_LOCK = threading.Lock()
 # How long _skill_path trusts a SKILL.md it checked (exists, inside the roots).
 _VERIFIED_PATH_TTL_S = 5.0
 
@@ -326,6 +333,8 @@ def clear_skills_index_cache() -> None:
         _WHICH_CACHE.clear()
     _SKILL_META_TTL.clear()
     _RESOLVED_PATH_CACHE.clear()
+    with _SHARED_SCAN_LOCK:
+        _SHARED_SCAN_CACHE.clear()
     _PLUGIN_SKILL_DIRS_CACHE = None
 
 
@@ -508,6 +517,8 @@ class SkillsLoader:
         """
         now = time.monotonic()
         cached = self._scan_cache
+        if cached is None:
+            cached = self._adopt_shared_scan()
         if cached is not None and cached[1] == _SCAN_GENERATION:
             if now - cached[0] < _SCAN_TTL_S:
                 return cached[2], cached[3]
@@ -515,6 +526,28 @@ class SkillsLoader:
                 self._refresh_scan_in_background()
                 return cached[2], cached[3]
         return self._scan_now(now)
+
+    def _shared_scan_key(self) -> tuple:
+        return (
+            str(self.workspace), str(self.workspace_skills), str(self.builtin_skills or ""),
+            bool(self.trust_workspace_harness_skills),
+        )
+
+    def _adopt_shared_scan(self) -> tuple | None:
+        """Take the scan another loader with the same roots did a moment ago."""
+        with _SHARED_SCAN_LOCK:
+            shared = _SHARED_SCAN_CACHE.get(self._shared_scan_key())
+        if shared is None:
+            return None
+        scan_time, generation, skills, by_name, workspace_dirs, user_dirs = shared
+        if generation != _SCAN_GENERATION:
+            return None
+        # The roots the scan saw: _skill_roots() and skill_source() must agree
+        # with the catalog they describe.
+        self.workspace_skill_dirs = list(workspace_dirs)
+        self.user_skill_dirs = list(user_dirs)
+        self._scan_cache = (scan_time, generation, skills, by_name)
+        return self._scan_cache
 
     def _refresh_scan_in_background(self) -> None:
         if not self._scan_refreshing.acquire(blocking=False):
@@ -580,11 +613,20 @@ class SkillsLoader:
             )
         by_name = {entry["name"]: Path(entry["path"]) for entry in skills}
         self._scan_cache = (now, _SCAN_GENERATION, skills, by_name)
+        with _SHARED_SCAN_LOCK:
+            if len(_SHARED_SCAN_CACHE) >= 64:
+                _SHARED_SCAN_CACHE.clear()
+            _SHARED_SCAN_CACHE[self._shared_scan_key()] = (
+                now, _SCAN_GENERATION, skills, by_name,
+                tuple(self.workspace_skill_dirs), tuple(self.user_skill_dirs),
+            )
         return skills, by_name
 
     def invalidate_scan(self) -> None:
         """Forget the cached directory scan (after writing a skill file)."""
         self._scan_cache = None
+        with _SHARED_SCAN_LOCK:
+            _SHARED_SCAN_CACHE.pop(self._shared_scan_key(), None)
         _SKILL_META_TTL.clear()
         _RESOLVED_PATH_CACHE.clear()
 
@@ -1182,7 +1224,14 @@ class SkillsLoader:
         # Prompt building asks for every skill of every agent; each lookup
         # costs a resolve() plus two stats. Within 2 s the answer is reused,
         # which collapses a fan-out of hundreds of subagents to one disk pass.
-        memo_key = (tuple(str(r) for r in self._skill_roots()), name)
+        # The roots key itself is a few hundred str() calls: computed once per
+        # scan, not per lookup (6 million of them in a 60-teammate launch).
+        scan = self._scan_cache
+        roots_memo = getattr(self, "_roots_key_memo", None)
+        if roots_memo is None or roots_memo[0] is not scan:
+            roots_memo = (scan, tuple(str(r) for r in self._skill_roots()))
+            self._roots_key_memo = roots_memo
+        memo_key = (roots_memo[1], name)
         now = time.monotonic()
         memo = _SKILL_META_TTL.get(memo_key)
         if memo is not None and now - memo[0] < 2.0:

@@ -291,6 +291,11 @@ def _classify_kube(p: ParsedCommand, c: Classification) -> None:
         c.risk = "change"
         if verb in {"exec", "attach", "debug", "rsh"}:
             c.categories.add("remote-exec")
+        if verb == "scale" and str(p.flag("--replicas")) == "0":
+            # Scaling to zero takes the workload down: as disruptive as a stop.
+            c.risk = "critical"
+            c.categories.add("availability")
+            c.reasons.append("scale --replicas=0 stops every pod of the workload")
         if verb in {"login", "project", "logout"}:
             c.categories.add("local")
         if verb == "replace" and p.has("--force"):
@@ -698,6 +703,10 @@ def _classify_container(p: ParsedCommand, c: Classification) -> None:
                 c.categories.add("data")
         else:
             c.risk = "change"
+        if p.has("--dry-run") and c.risk in {"change", "critical"}:
+            # docker compose --dry-run (Compose v2.17+) only prints what it would do.
+            c.risk = "plan"
+            c.reasons.append("dry run")
         if p.flag("-p", "--project-name"):
             c.targets["compose_project"] = p.flag("-p", "--project-name")
         return

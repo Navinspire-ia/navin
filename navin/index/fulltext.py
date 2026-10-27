@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,20 @@ def _native() -> Any | None:
     if core is None or not hasattr(core, "fulltext_update"):
         return None
     return core
+
+
+_WRITER_WAIT_S = 3.0
+_writer_locks: dict[str, threading.Lock] = {}
+_writer_locks_guard = threading.Lock()
+
+
+def _writer_lock(index_dir: Path) -> threading.Lock:
+    key = str(index_dir)
+    with _writer_locks_guard:
+        lock = _writer_locks.get(key)
+        if lock is None:
+            lock = _writer_locks[key] = threading.Lock()
+        return lock
 
 
 class FulltextIndex:
@@ -76,32 +91,46 @@ class FulltextIndex:
         except OSError:
             logger.debug("Fulltext manifest save failed for {}", self.root)
 
-    def refresh(self, files: dict[str, int]) -> int:
+    def refresh(self, files: dict[str, int], *, wait: bool = True) -> int:
         """Bring the index in line with ``files`` (rel path -> mtime_ns).
 
         Returns how many files were (re)indexed; 0 when already current.
+        Updates of one index are serialized in this process: tantivy allows a
+        single writer, and the background warm and a first text query used to
+        collide on the lock, the loser searching a half-built index.
+
+        ``wait=False`` is for a query on the turn path: when another update of
+        this index is running (the background warm), it returns at once and the
+        caller searches what is on disk now; the warm's result lands in a
+        moment. Waiting here made a text search take three seconds.
         """
         core = _native()
         if core is None:
             return 0
-        manifest = self._load_manifest()
-        changed = [
-            (rel, mtime) for rel, mtime in files.items() if manifest.get(rel) != mtime
-        ]
-        removed = [rel for rel in manifest if rel not in files]
-        if not changed and not removed:
+        lock = _writer_lock(self.index_dir)
+        if not lock.acquire(timeout=_WRITER_WAIT_S if wait else 0):
             return 0
         try:
-            indexed = int(
-                core.fulltext_update(
-                    str(self.index_dir), str(self.root), changed, removed
+            manifest = self._load_manifest()
+            changed = [
+                (rel, mtime) for rel, mtime in files.items() if manifest.get(rel) != mtime
+            ]
+            removed = [rel for rel in manifest if rel not in files]
+            if not changed and not removed:
+                return 0
+            try:
+                indexed = int(
+                    core.fulltext_update(
+                        str(self.index_dir), str(self.root), changed, removed
+                    )
                 )
-            )
-        except Exception as exc:
-            logger.debug("Fulltext update failed for {}: {}", self.root, exc)
-            return 0
-        self._save_manifest(dict(files))
-        return indexed
+            except Exception as exc:
+                logger.debug("Fulltext update failed for {}: {}", self.root, exc)
+                return 0
+            self._save_manifest(dict(files))
+            return indexed
+        finally:
+            lock.release()
 
     def search(self, query: str, *, limit: int = 20) -> list[dict[str, Any]] | None:
         """BM25 hits as ``{path, score, snippet}`` rows, or None when unavailable."""

@@ -884,6 +884,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
             os.execve(argv[0], argv, child_environment())
             return
         if mode == "spawn":
+            # blocking-ok: the engine is replacing itself, nothing else runs after this.
             subprocess.Popen(argv, env=child_environment(), **detached_no_window_kwargs())
         os._exit(0)
 

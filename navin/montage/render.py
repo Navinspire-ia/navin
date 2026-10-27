@@ -119,7 +119,7 @@ async def render_composition(
     # fall back to npx from montage home.
     cmd: list[str]
     if hf.suffix == ".js":
-        node = shutil.which("node")
+        node = await asyncio.to_thread(shutil.which, "node")
         if not node:
             return {
                 "ok": False,

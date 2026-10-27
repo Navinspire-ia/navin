@@ -44,6 +44,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,12 +134,31 @@ def home_harness_dirs() -> list[str]:
 
     Skills and agents installed once under ``~/.claude``, ``~/.omp``,
     or any other ``.<tool>`` folder must be visible from every workspace.
+
+    The listing is kept as long as ``$HOME`` itself is unchanged (its mtime
+    moves when a folder is added or removed): a scan of a home folder with
+    hundreds of entries was the largest single cost of a subagent spawn.
     """
     try:
         home = Path.home()
     except (OSError, RuntimeError):
         return list(HARNESS_DIRS)
-    return [*HARNESS_DIRS, *sorted(_dot_dirs_on(home, ignored=_HOME_IGNORED_DOT_DIRS))]
+    try:
+        stamp = home.stat().st_mtime_ns
+    except OSError:
+        return list(HARNESS_DIRS)
+    key = str(home)
+    hit = _HOME_HARNESS_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return list(hit[1])
+    dirs = [*HARNESS_DIRS, *sorted(_dot_dirs_on(home, ignored=_HOME_IGNORED_DOT_DIRS))]
+    if len(_HOME_HARNESS_CACHE) >= 16:
+        _HOME_HARNESS_CACHE.clear()
+    _HOME_HARNESS_CACHE[key] = (stamp, dirs)
+    return list(dirs)
+
+
+_HOME_HARNESS_CACHE: dict[str, tuple[int, list[str]]] = {}
 
 # Subfolder names carrying agent definitions. OpenCode documents the singular
 # ``agent/``; every other tool uses ``agents/``.
@@ -288,6 +308,16 @@ def _iter_agent_files(agents_dir: Path) -> list[Path]:
 # file. The context builder runs this scan on every turn; the directory walk
 # is cheap but re-reading and re-YAML/TOML-parsing every file was not.
 _AGENTS_CACHE: dict[str, tuple[tuple[tuple[str, int, int], ...], list[ProjectAgent]]] = {}
+# Discovery outside the project (the user's $HOME folders, the plugins) is
+# what a spawn pays for: a scan of every harness folder under $HOME plus a
+# read of every plugin manifest, three times per spawn, six hundred times for
+# a wave of 200. The personal list is trusted for this long, then rechecked
+# against the folders' mtimes and rescanned only when one moved; the plugin
+# list is validated by a few mtimes on every call. A plugin toggle clears
+# both at once (forget_agents_cache).
+_OUTSIDE_TTL_S = 2.0
+_PERSONAL_CACHE: dict[tuple[str, str], tuple[float, tuple, list[Path]]] = {}
+_PLUGIN_CACHE: tuple[tuple, list[tuple[Path, str]]] | None = None
 
 
 def _agent_candidates(root: Path, dirs: list[str]) -> list[Path]:
@@ -310,16 +340,82 @@ def _personal_agent_candidates(workspace_root: Path) -> list[Path]:
         home = Path.home().expanduser()
     except (OSError, RuntimeError):
         return []
+    key = (str(home), str(workspace_root))
+    now = time.monotonic()
+    hit = _PERSONAL_CACHE.get(key)
+    if hit is not None and now - hit[0] < _OUTSIDE_TTL_S:
+        return list(hit[2])
     try:
         if home.resolve(strict=False) == workspace_root.resolve(strict=False):
             return []
     except OSError:
         return []
-    return _agent_candidates(home, home_harness_dirs())
+    dirs = home_harness_dirs()
+    signature = _personal_signature(home, dirs)
+    if hit is not None and hit[1] == signature:
+        _PERSONAL_CACHE[key] = (now, signature, hit[2])
+        return list(hit[2])
+    files = _agent_candidates(home, dirs)
+    if len(_PERSONAL_CACHE) >= 64:
+        _PERSONAL_CACHE.clear()
+    _PERSONAL_CACHE[key] = (now, signature, files)
+    return list(files)
+
+
+def _personal_signature(home: Path, dirs: list[str]) -> tuple:
+    """What changes when a personal agent is added: the folders' mtimes.
+
+    ``$HOME`` (a harness folder appears), each harness folder (an ``agents``
+    subfolder appears) and each agents folder (a file appears). A file added
+    deeper, in a category subfolder, is seen after the TTL's next miss.
+    """
+    parts: list[tuple[str, int]] = []
+    for path in (home, *(home / h for h in dirs), *(home / h / s for h in dirs for s in _AGENT_SUBDIRS)):
+        try:
+            parts.append((str(path), path.stat().st_mtime_ns))
+        except OSError:
+            continue
+    return tuple(parts)
+
+
+def _plugin_signature() -> tuple:
+    """What changes when the plugin roster changes: a few folder mtimes.
+
+    The plugins root (a pack installed or removed), its ``state.json`` (a
+    pack enabled or disabled) and, per pack, the manifest and the ``agents``
+    folder (an agent file added). A handful of stats instead of reading every
+    manifest and resolving every declared path on each spawn.
+    """
+    from navin.plugins.manager import plugins_root
+
+    root = plugins_root()
+    parts: list[tuple[str, int]] = []
+    for path in (root, root / "state.json"):
+        try:
+            parts.append((str(path), path.stat().st_mtime_ns))
+        except OSError:
+            continue
+    try:
+        with os.scandir(root) as scan:
+            packs = sorted(entry.path for entry in scan if entry.is_dir())
+    except OSError:
+        return tuple(parts)
+    for pack in packs:
+        for leaf in ("plugin.json", "agents"):
+            path = Path(pack) / leaf
+            try:
+                parts.append((str(path), path.stat().st_mtime_ns))
+            except OSError:
+                continue
+    return tuple(parts)
 
 
 def _plugin_agent_candidates() -> list[tuple[Path, str]]:
     """Agent files of enabled plugins: ``<plugin>/agents`` + manifest paths."""
+    global _PLUGIN_CACHE
+    signature = _plugin_signature()
+    if _PLUGIN_CACHE is not None and _PLUGIN_CACHE[0] == signature:
+        return list(_PLUGIN_CACHE[1])
     try:
         from navin.plugins.manager import plugin_component_dirs
 
@@ -332,7 +428,16 @@ def _plugin_agent_candidates() -> list[tuple[Path, str]]:
             found.append((folder, plugin))
         elif folder.is_dir():
             found.extend((p, plugin) for p in _iter_agent_files(folder))
-    return found
+    _PLUGIN_CACHE = (signature, found)
+    return list(found)
+
+
+def forget_agents_cache() -> None:
+    """Drop the discovery caches (a plugin was toggled, installed or removed)."""
+    global _PLUGIN_CACHE
+    _PLUGIN_CACHE = None
+    _PERSONAL_CACHE.clear()
+    _AGENTS_CACHE.clear()
 
 
 def list_project_agents(workspace: Path, *, include_extensions: bool = False) -> list[ProjectAgent]:
@@ -344,6 +449,7 @@ def list_project_agents(workspace: Path, *, include_extensions: bool = False) ->
     with Navin follow, in that order.
     """
     root = workspace.expanduser()
+    cache_key = f"{root}|{int(include_extensions)}"
     project_files = _agent_candidates(root, harness_dirs(workspace))
     personal_files = _personal_agent_candidates(root)
     project_set = set(project_files)
@@ -369,7 +475,6 @@ def list_project_agents(workspace: Path, *, include_extensions: bool = False) ->
         fingerprint_parts.append((str(path), stat.st_mtime_ns, stat.st_size))
     fingerprint = tuple(fingerprint_parts)
 
-    cache_key = f"{root}|{int(include_extensions)}"
     cached = _AGENTS_CACHE.get(cache_key)
     if cached is not None and cached[0] == fingerprint:
         return list(cached[1])

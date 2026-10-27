@@ -161,7 +161,7 @@ def _ci_values(target: Target) -> dict[str, str]:
     if target.id == "ios":
         return {
             "CI_PLATFORM_SETUP": "      - run: xcodebuild -version",
-            "CI_BUILD": "      - run: xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build",
+            "CI_BUILD": "      - run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build",
             "CI_ARTIFACTS": target.folder + "/ios/App/build",
         }
     if target.id == "centos":
@@ -267,7 +267,12 @@ def scaffold(project_root: str | Path, target_name: str, analysis: dict[str, Any
             "plugins": {"SplashScreen": {"launchShowDuration": 0}},
         }, indent=2) + "\n")
     else:
-        package["scripts"].update({"tauri": "tauri", "build": f"node scripts/build-web.mjs && tauri build --bundles {','.join(target.bundles)}"})
+        package["scripts"].update({
+            "tauri": "tauri",
+            "build": f"node scripts/build-web.mjs && tauri build --bundles {','.join(target.bundles)}",
+            "build:debug": f"node scripts/build-web.mjs && tauri build --debug --bundles {','.join(target.bundles)}",
+        })
+        # @tauri-apps/cli 2.x; the Rust side pins tauri 2 in Cargo.toml.tmpl.
         package["devDependencies"] = {"@tauri-apps/cli": "^2.0.0"}
         windows: dict[str, Any] = {"title": name, "width": 1280, "height": 800, "minWidth": 360, "minHeight": 560, "resizable": True}
         conf: dict[str, Any] = {
@@ -293,7 +298,7 @@ def scaffold(project_root: str | Path, target_name: str, analysis: dict[str, Any
     source_icon = root / icon["path"] if icon.get("path") and int(icon.get("width") or 0) >= 512 else None
     writer.write(icon_rel, source_icon.read_bytes() if source_icon and source_icon.is_file() else _png(1024, _colour(slug)))
     tests = SKILL_DIR / "tests" / ("android" if target.engine == "capacitor" else "desktop")
-    for path in sorted(tests.glob("smoke.*")):
+    for path in sorted(p for p in tests.iterdir() if p.is_file()):
         text = path.read_text(encoding="utf-8")
         writer.write(f"tests/{path.name}", text.replace("${APP_ID}", app_id))
     if strategy == "client-shell":

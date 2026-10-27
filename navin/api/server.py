@@ -213,7 +213,7 @@ async def _parse_multipart(request: web.Request) -> tuple[str, list[str], str | 
             base = safe_filename(part.filename or "upload.bin")
             filename = f"{uuid.uuid4().hex[:12]}_{base}"
             dest = media_dir / filename
-            dest.write_bytes(raw)
+            await asyncio.to_thread(dest.write_bytes, raw)
             media_paths.append(str(dest))
 
     if not text:

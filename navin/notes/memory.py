@@ -270,14 +270,23 @@ class NotesMemoryIndex:
 
         new_chunks: list[dict[str, Any]] = []
         texts: list[str] = []
-        for rel in changed:
-            info = store._read_note_file(self.root, self.root / rel)
-            if info is None:
-                continue
-            try:
-                text = (self.root / rel).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
+
+        def read_changed() -> list[tuple[str, dict[str, Any], str]]:
+            # One thread hop for the whole batch: the memory sync reads every
+            # changed note, and a big vault read on the loop froze the chat.
+            rows: list[tuple[str, dict[str, Any], str]] = []
+            for rel in changed:
+                info = store._read_note_file(self.root, self.root / rel)
+                if info is None:
+                    continue
+                try:
+                    text = (self.root / rel).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                rows.append((rel, info, text))
+            return rows
+
+        for rel, info, text in await asyncio.to_thread(read_changed):
             _, body = store.parse_note_text(text)
             for chunk in chunk_note(info["title"], body):
                 new_chunks.append(

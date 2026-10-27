@@ -927,12 +927,15 @@ class _BrowserSession:
 
         if raw_path is None or not raw_path.is_file():
             # Fallback: newest webm in the recording dir
-            candidates = sorted(
-                video_dir.glob("*.webm") if video_dir else [],
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            raw_path = candidates[0] if candidates else None
+            def newest_webm() -> Path | None:
+                found = sorted(
+                    video_dir.glob("*.webm") if video_dir else [],
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                return found[0] if found else None
+
+            raw_path = await asyncio.to_thread(newest_webm)
         if raw_path is None or not raw_path.is_file():
             return {
                 "ok": False,

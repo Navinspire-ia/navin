@@ -3691,7 +3691,7 @@ class NavinApp(App[None]):
         target = self.runtime.workspace / "exports"
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"tui-{self.runtime.chat_id}-{int(asyncio.get_running_loop().time())}.md"
-        path.write_text("\n".join(lines), encoding="utf-8")
+        await asyncio.to_thread(path.write_text, "\n".join(lines), encoding="utf-8")
         await self._flash(f"transcript exported to [b]{escape(str(path))}[/b]", "success")
 
     # -- live share through the relay (same link as the desktop) ------------

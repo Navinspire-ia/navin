@@ -7,6 +7,7 @@ import asyncio
 import difflib
 import mimetypes
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,61 @@ def _existing_layout(fp: Path) -> text_decode.DecodedText | None:
         return text_decode.decode(fp.read_bytes())
     except OSError:
         return None
+
+
+def _write_like_existing(fp: Path, content: str) -> None:
+    """Read the current layout, encode ``content`` the same way and write it.
+
+    One worker hop for the three steps: reading and decoding the old file and
+    encoding 20 MB of new text are each a visible stall on the event loop.
+    """
+    layout = _existing_layout(fp)
+    fp.write_bytes(encode_for(_match_line_endings(content, layout), layout))
+
+
+_SPLIT_CHUNK_CHARS = 1 << 20
+
+
+def _iter_line_chunks(text: str) -> Iterator[list[str]]:
+    """``text.splitlines()`` delivered in pieces of about 1 MiB, cut after a newline.
+
+    ``str.splitlines`` on a 20 MB file is one C call that holds the GIL for
+    tens of milliseconds, so running it in a worker thread still froze the
+    event loop. Splitting piece by piece keeps every C call short; the pieces
+    are cut right after a newline, so the lines are exactly those of a single
+    ``splitlines`` call (a bare ``\\r`` separator stays whole on either side).
+    """
+    size = len(text)
+    pos = 0
+    while pos < size:
+        end = min(pos + _SPLIT_CHUNK_CHARS, size)
+        if end < size:
+            cut = text.rfind("\n", pos, end)
+            if cut >= pos:
+                end = cut + 1
+            else:  # a line longer than the piece: extend to its end
+                nxt = text.find("\n", end)
+                end = size if nxt < 0 else nxt + 1
+        yield text[pos:end].splitlines()
+        pos = end
+
+
+def _line_window(text: str, start: int, count: int) -> tuple[int, list[str]]:
+    """Total line count and the lines ``[start, start + count)`` (0-based).
+
+    Same result as ``lines = text.splitlines(); (len(lines), lines[start:start + count])``
+    without materialising 400 000 line objects for a 50-line window.
+    """
+    total = 0
+    window: list[str] = []
+    for lines in _iter_line_chunks(text):
+        base = total
+        total += len(lines)
+        if total > start and base < start + count:
+            low = max(0, start - base)
+            high = min(len(lines), start + count - base)
+            window.extend(lines[low:high])
+    return total, window
 
 
 def _match_line_endings(content: str, layout: text_decode.DecodedText | None) -> str:
@@ -765,20 +821,21 @@ class ReadFileTool(_FsTool):
 
                 text_content = render_notebook(text_content) or text_content
 
-            all_lines = text_content.splitlines()
-            total = len(all_lines)
-
             if offset < 1:
                 offset = 1
+            effective_limit = limit if limit is not None else self._DEFAULT_LIMIT
+            start = offset - 1
+            # Only the window is split into lines; the rest of a big file is
+            # counted in short pieces so the loop keeps turning (see _iter_line_chunks).
+            total, window = await asyncio.to_thread(_line_window, text_content, start, effective_limit)
+
             if offset > total:
                 return ToolResult.error(f"Error: offset {offset} is beyond end of file ({total} lines)")
 
-            effective_limit = limit if limit is not None else self._DEFAULT_LIMIT
-            start = offset - 1
             end = min(start + effective_limit, total)
             numbered = [
                 f"{start + i + 1}| {self._clip_line(line)}"
-                for i, line in enumerate(all_lines[start:end])
+                for i, line in enumerate(window)
             ]
             result = "\n".join(numbered)
             large_hint = ""
@@ -836,7 +893,10 @@ class ReadFileTool(_FsTool):
                     f"file. When a search gives the line, read around it, for example "
                     f"offset={max(1, hit_lines[0] - 20)} limit=80, instead of the whole file.)"
                 )
-            self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
+            # The read state hashes the whole content (20 MB is 30 ms): worker.
+            await asyncio.to_thread(
+                self._file_states.record_read, fp, offset=offset, limit=limit, content=raw, mtime=read_mtime,
+            )
             return result + scoped_project_instructions(self._display_workspace(), fp)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
@@ -1086,8 +1146,7 @@ class WriteFileTool(_FsTool):
             warnings = await asyncio.to_thread(self._overwrite_warnings, fp)
             await asyncio.to_thread(record_file_before, fp)
             await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
-            layout = _existing_layout(fp)
-            await asyncio.to_thread(fp.write_bytes, encode_for(_match_line_endings(content, layout), layout))
+            await asyncio.to_thread(_write_like_existing, fp, content)
             await asyncio.to_thread(self._file_states.record_write, fp)
             written = f"Successfully wrote {len(content)} characters to {fp}"
             summary = "\n".join([*warnings, written]) if warnings else written
@@ -1132,8 +1191,7 @@ class WriteFileTool(_FsTool):
                 warnings = await asyncio.to_thread(self._overwrite_warnings, fp)
                 await asyncio.to_thread(record_file_before, fp)
                 await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
-                layout = _existing_layout(fp)
-                await asyncio.to_thread(fp.write_bytes, encode_for(_match_line_endings(text, layout), layout))
+                await asyncio.to_thread(_write_like_existing, fp, text)
                 await asyncio.to_thread(self._file_states.record_write, fp)
                 written.append(fp)
                 lines.extend(warnings)
@@ -1553,6 +1611,11 @@ class EditFileTool(_FsTool):
         result; each of those reads is a model round trip.
         """
         try:
+            # A 20 MB file splits in tens of milliseconds and the diff itself is
+            # quadratic: both happen in a worker, and a file past 3000 lines
+            # is sized by a count that stops early instead of a full split.
+            if before.count("\n", 0, 400_000) > 3000 or after.count("\n", 0, 400_000) > 3000:
+                return ""
             old_lines, new_lines = before.splitlines(), after.splitlines()
             if len(old_lines) > 3000 or len(new_lines) > 3000:
                 return ""
@@ -1705,15 +1768,22 @@ class EditFileTool(_FsTool):
             # Read-before-edit check
             warning = await asyncio.to_thread(self._file_states.check_read, fp)
 
-            raw = (await asyncio.to_thread(fp.read_bytes))
-            decoded = text_decode.decode(raw)
+            norm_old = old_text.replace("\r\n", "\n")
+
+            def load_and_match() -> tuple[text_decode.DecodedText | None, list[_MatchSpan]]:
+                # Read, decode and search in one thread hop: on a big file each
+                # of these is a visible stall when run on the loop.
+                loaded = text_decode.decode(fp.read_bytes())
+                if loaded is None:
+                    return None, []
+                return loaded, _find_matches(loaded.text, norm_old)
+
+            decoded, matches = await asyncio.to_thread(load_and_match)
             if decoded is None:
                 return ToolResult.error(
                     f"Error: Cannot edit binary file {path}. Only text files can be edited."
                 )
             content = decoded.text
-            norm_old = old_text.replace("\r\n", "\n")
-            matches = _find_matches(content, norm_old)
 
             if not matches:
                 return self._not_found_msg(old_text, content, path)
@@ -1794,11 +1864,14 @@ class EditFileTool(_FsTool):
 
             # Re-encode the way the file was stored, so editing one line of a
             # cp1252 or BOM-prefixed file does not rewrite every other line.
-            await asyncio.to_thread(fp.write_bytes, text_decode.encode(new_content, decoded))
+            def encode_and_write() -> None:
+                fp.write_bytes(text_decode.encode(new_content, decoded))
+
+            await asyncio.to_thread(encode_and_write)
             await asyncio.to_thread(self._file_states.record_write, fp)
             msg = f"Successfully edited {fp}"
             if excerpt:
-                msg += self._changed_excerpt(content, new_content)
+                msg += await asyncio.to_thread(self._changed_excerpt, content, new_content)
             if warning:
                 msg = f"{warning}\n{msg}"
             return await self._finish(msg, fp, diagnostics)

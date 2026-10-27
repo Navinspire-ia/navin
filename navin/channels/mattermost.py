@@ -639,7 +639,7 @@ class MattermostChannel(BaseChannel):
             return None
 
         try:
-            files = {"files": (path.name, path.read_bytes())}
+            files = {"files": (path.name, await asyncio.to_thread(path.read_bytes))}
             resp = await self._http_client.post(
                 "/api/v4/files",
                 data={"channel_id": channel_id},
@@ -665,7 +665,7 @@ class MattermostChannel(BaseChannel):
 
             dl = await self._http_client.get(f"/api/v4/files/{file_id}")
             dl.raise_for_status()
-            out.write_bytes(dl.content)
+            await asyncio.to_thread(out.write_bytes, dl.content)
             return str(out)
         except Exception as e:
             self.logger.warning("file download failed for {}: {}", file_id, e)

@@ -289,6 +289,11 @@ class PluginManager:
         self.root.mkdir(parents=True, exist_ok=True)
         with open(self._state_path(), "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
+        # Enabling or disabling a pack changes which agents exist: the agent
+        # discovery caches must not serve the old roster for two more seconds.
+        from navin.agent.project_agents import forget_agents_cache
+
+        forget_agents_cache()
 
     # -- introspection -------------------------------------------------------
 

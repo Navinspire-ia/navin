@@ -163,8 +163,11 @@ _HEARTBEAT_S = 8.0
 
 # Prompt + tool registry stay off the event loop, on a dedicated pool so a
 # wave of 50 cannot starve other to_thread work (git, worktrees, the parent
-# turn). Eight workers is enough: once prepare returns, the LLM call is async.
-_PREPARE_WORKERS = 8
+# turn). The work is Python holding the GIL (YAML, catalog, registry), so
+# more threads only fight over it: a 60-teammate launch measured 8.2 s with
+# eight workers and 3.8 s with two (tests/test_spawn_wave_latency.py), with
+# the event loop smoother. Two also leaves the GIL to the chat the user types in.
+_PREPARE_WORKERS = 2
 _PREPARE_TIMEOUT_S = 20.0
 # How long cancel_by_session waits for cancelled subagents to wind down.
 _CANCEL_WAIT_S = 10.0
@@ -203,16 +206,44 @@ def _journal_executor() -> ThreadPoolExecutor:
     return _JOURNAL_EXECUTOR
 
 
+def _append_feed_line(path: Path, line: str, window: list[dict[str, Any]], session_key: str) -> None:
+    """Append a team-journal line and keep the file bounded (journal thread)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        if path.stat().st_size > 2_000_000:
+            # Keep the file bounded: rewrite it with the in-memory window.
+            path.write_text(
+                "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in window), encoding="utf-8",
+            )
+    except OSError as exc:
+        logger.debug("Team journal for {} could not be saved: {}", session_key, exc)
+
+
 def _outcomes_dir() -> Path:
     """Where finished-subagent history is persisted, one file per session.
 
     Under the runtime data dir rather than the workspace: the history belongs
     to a conversation, and a conversation can retarget its workspace scope
     mid-life without its subagent record following the folder around.
-    """
-    from navin.config.paths import get_runtime_subdir
 
-    return get_runtime_subdir("subagents")
+    The folder is created once per config location: ``get_runtime_subdir``
+    does two ``mkdir`` syscalls, and this path is asked for on the event loop
+    for every team-journal line and every status write of a wave. The cache
+    follows the config path, so a relocated runtime dir (tests, a second
+    profile) gets its own folder.
+    """
+    global _OUTCOMES_DIR
+    from navin.config.paths import get_config_path, get_runtime_subdir
+
+    data_dir = get_config_path().parent
+    if _OUTCOMES_DIR is None or _OUTCOMES_DIR[0] != data_dir:
+        _OUTCOMES_DIR = (data_dir, get_runtime_subdir("subagents"))
+    return _OUTCOMES_DIR[1]
+
+
+_OUTCOMES_DIR: tuple[Path, Path] | None = None
 # Cap WS fan-out so a chatty subagent does not flood the UI: an unchanged
 # line is re-sent at most this often, since it carries no news.
 _PROGRESS_SAME_LINE_INTERVAL_S = 1.5
@@ -1759,17 +1790,24 @@ class SubagentManager:
         return feed
 
     def _persist_feed_entry(self, session_key: str, entry: dict[str, Any]) -> None:
-        try:
-            path = self._feed_path(session_key)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            if path.stat().st_size > 2_000_000:
-                # Keep the file bounded: rewrite it with the in-memory window.
-                path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n"
-                                        for e in self._team_feed.get(session_key, ())), encoding="utf-8")
-        except OSError:
-            logger.debug("Team journal for {} could not be saved", session_key)
+        """Append one team-journal line, off the event loop.
+
+        Sixty teammates posting their assignment and their result wrote 120
+        lines synchronously on the loop (open, write, stat, sometimes a 2 MB
+        rewrite): the chat froze for most of a second during a team launch.
+        The journal writer is a single ordered thread, so lines land in the
+        order they were posted; the compaction uses the in-memory window taken
+        at post time, which is what the file is meant to mirror.
+        """
+        path = self._feed_path(session_key)
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        window = list(self._team_feed.get(session_key, ()))
+        self._submit_journal_fn(_append_feed_line, path, line, window, session_key)
+
+    def _submit_journal_fn(self, fn: Callable[..., Any], *args: Any) -> None:
+        """Queue ordered disk work on the journal thread; a failure is logged."""
+        future = _journal_executor().submit(fn, *args)
+        self._pending_journal_writes.append(future)
 
     def _publish_team_entry(self, session_key: str, entry: dict[str, Any]) -> None:
         channel, _, chat_id = session_key.partition(":")
@@ -2279,7 +2317,11 @@ class SubagentManager:
                 self._publish_progress(status, force=True)
             # Tools + prompt both do filesystem and YAML work. Dedicated pool
             # so a wave of 50 cannot stall drain/watchdog or starve git.
-            def _prepare() -> tuple[ToolRegistry, str]:
+            # The agent definition (denied tools, permission mode, allowlist)
+            # is resolved here too: looking it up scans the project, $HOME and
+            # the plugins, and doing that three times on the loop per spawn
+            # was the 0.5 to 0.9 s stall of a 200-subagent wave.
+            def _prepare() -> tuple[ToolRegistry, str, Any, str, Any]:
                 prepared_tools = (
                     self._build_tools(workspace=root, tools_config=cfg,
                                       member_tools=frozenset(member.get("tools") or ()))
@@ -2293,11 +2335,18 @@ class SubagentManager:
                 )
                 if member:
                     prompt += "\n\n---\n\n" + self._member_prompt(root, member)
-                return prepared_tools, prompt
+                denied = _agent_denied(
+                    _member_denied(policy.locked_denied_tools, member), root, agent_name
+                )
+                mode = _agent_permission_mode(root, agent_name)
+                allowed = _agent_allowed(
+                    _member_allowed(policy.allowed_tools, member), root, agent_name
+                )
+                return prepared_tools, prompt, denied, mode, allowed
 
             timeout_s = getattr(self, "_prepare_timeout_s", _PREPARE_TIMEOUT_S)
             try:
-                tools, system_prompt = await asyncio.wait_for(
+                tools, system_prompt, agent_denied, permission_mode, agent_allowed = await asyncio.wait_for(
                     asyncio.get_running_loop().run_in_executor(
                         _prepare_executor(),
                         _prepare,
@@ -2315,6 +2364,13 @@ class SubagentManager:
                     self._build_tools, workspace=root, tools_config=cfg,
                 )
                 system_prompt = self._fallback_subagent_prompt(root)
+                agent_denied, permission_mode, agent_allowed = await asyncio.to_thread(
+                    lambda: (
+                        _agent_denied(_member_denied(policy.locked_denied_tools, member), root, agent_name),
+                        _agent_permission_mode(root, agent_name),
+                        _agent_allowed(_member_allowed(policy.allowed_tools, member), root, agent_name),
+                    )
+                )
             from navin.agent.request_checklist import ui_terms as _ui_terms
 
             # Screen words of the delegated task: a subagent that then changes
@@ -2333,9 +2389,6 @@ class SubagentManager:
                 messages = [{"role": "system", "content": system_prompt}, *recovered]
 
             sess_key = origin.get("session_key")
-            agent_denied = _agent_denied(
-                _member_denied(policy.locked_denied_tools, member), root, agent_name
-            )
             llm_timeout = (
                 self._llm_wall_timeout_for_session(sess_key)
                 if self._llm_wall_timeout_for_session
@@ -2361,7 +2414,6 @@ class SubagentManager:
             # forwarded to the chat that spawned it (the card names the
             # subagent). With nobody there to answer, the refusal names the
             # situation so the subagent reports back instead of working around it.
-            permission_mode = _agent_permission_mode(root, agent_name)
             approval_token = bind_approval_gate(SubagentApprovalGate(
                 approval_gate, label=label, permission_mode=permission_mode,
                 unattended_reason=(
@@ -2448,9 +2500,7 @@ class SubagentManager:
                     ),
                     read_only_tools=permission_mode == "plan",
                     locked_denied_tools=agent_denied,
-                    allowed_tools=_agent_allowed(
-                        _member_allowed(policy.allowed_tools, member), root, agent_name
-                    ),
+                    allowed_tools=agent_allowed,
                 ))
             finally:
                 reset_choice_broker(choice_token)

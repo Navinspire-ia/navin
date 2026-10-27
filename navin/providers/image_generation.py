@@ -1026,7 +1026,7 @@ class OpenAIImageGenerationClient(ImageGenerationProvider):
         try:
             for path in reference_images:
                 p = Path(path).expanduser()
-                raw = p.read_bytes()
+                raw = await asyncio.to_thread(p.read_bytes)
                 mime = detect_image_mime(raw)
                 if mime is None:
                     raise ImageGenerationError(f"unsupported reference image: {p}")

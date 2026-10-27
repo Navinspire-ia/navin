@@ -631,7 +631,9 @@ class MotionSession:
 
 async def _concat(ffmpeg: str, segments: list[Path], output: Path, workdir: Path) -> None:
     listing = workdir / "segments.txt"
-    listing.write_text("".join(f"file '{seg.name}'\n" for seg in segments), encoding="utf-8")
+    await asyncio.to_thread(
+        listing.write_text, "".join(f"file '{seg.name}'\n" for seg in segments), encoding="utf-8",
+    )
     argv = [
         ffmpeg,
         "-hide_banner",
@@ -772,7 +774,7 @@ async def render_motion(
                     await _concat(session.ffmpeg or "ffmpeg", segments, staging, workdir)
                 os.replace(staging, out_path)
             finally:
-                shutil.rmtree(workdir, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, workdir, ignore_errors=True)
         report(MotionProgress("done", total, total))
         result: dict[str, Any] = {
             "ok": True,

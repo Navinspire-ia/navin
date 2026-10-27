@@ -13,10 +13,12 @@ table, and caches results incrementally outside the project tree.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from navin.agent.tools.base import ToolResult
@@ -157,6 +159,47 @@ _SEARCH_LIMIT = 40
 _REFERENCE_LIMIT = 40
 _OUTLINE_LIMIT = 200
 _GRAPH_LIST_LIMIT = 40
+
+_REFS_WARMING: set[str] = set()
+_REFS_WARMING_LOCK = threading.Lock()
+
+
+def _warm_refs_in_background(index: Any) -> None:
+    """Build the reference state, then the full-text index, in a daemon thread.
+
+    Both are one-time costs per project (a second and more each on a large
+    repository) that the first ``references``, ``callers`` or ``text`` question
+    used to pay inside the turn. Once per index per process.
+    """
+    key = str(getattr(index, "root", ""))
+    with _REFS_WARMING_LOCK:
+        if key in _REFS_WARMING:
+            return
+        _REFS_WARMING.add(key)
+
+    def run() -> None:
+        try:
+            index.warm_refs()
+            _warm_fulltext(index)
+        finally:
+            with _REFS_WARMING_LOCK:
+                _REFS_WARMING.discard(key)
+
+    threading.Thread(target=run, name="navin-index-refs-warm", daemon=True).start()
+
+
+def _warm_fulltext(index: Any) -> None:
+    from navin.index.fulltext import FulltextIndex, fulltext_file_set
+
+    if not FulltextIndex.available():
+        return
+    try:
+        with index._lifecycle_lock:
+            files = fulltext_file_set(index)
+        FulltextIndex(Path(index.root)).refresh(files)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # Advisory: the first text query rebuilds what this could not.
+        logger.debug("full-text warm failed for {}: {}", index.root, exc)
 
 _SYMBOL_KINDS = [
     "function", "method", "class", "interface", "type", "enum", "struct",
@@ -418,6 +461,12 @@ class CodeIndexTool(_FsTool):
             index.refresh(force=True)
         else:
             index.ensure()
+        # The reference state (who uses what) is the second one-time cost of a
+        # project: built lazily it made the first "references" or "callers"
+        # answer wait a second or more. Start it now, off every turn path, so
+        # that first question finds it ready.
+        if not getattr(index, "_refs_loaded", True):
+            _warm_refs_in_background(index)
         return index
 
     def _query_index(self, index: Any, *args: Any) -> str:
@@ -494,7 +543,9 @@ class CodeIndexTool(_FsTool):
                 "installed here. Use the grep tool for exact text, or "
                 "action=search for symbol names."
             )
-        indexed = fulltext.refresh(fulltext_file_set(index))
+        # A query never waits for the writer: if the background warm is still
+        # indexing, search what is on disk now and say so.
+        indexed = fulltext.refresh(fulltext_file_set(index), wait=False)
         hits = fulltext.search(text, limit=limit or 20)
         if hits is None:
             return ToolResult.error(
@@ -703,6 +754,8 @@ class CodeIndexTool(_FsTool):
         if not needle:
             return ToolResult.error("Error: action=definition requires 'name'")
         locations = index.definition(needle, kind=kind)
+        if not locations and self._fresh_look(index):
+            locations = index.definition(needle, kind=kind)
         if not locations:
             suggestions = index.search(needle, limit=8)
             if suggestions:
@@ -716,6 +769,25 @@ class CodeIndexTool(_FsTool):
         )
         return "\n".join([header, *(f"  {loc.render()}" for loc in locations)])
 
+    @staticmethod
+    def _fresh_look(index: Any) -> bool:
+        """Re-stat the tree after a miss; True when something had changed.
+
+        The symbol the agent asks about right after writing it (through an
+        editor, a checkout, a generator) is the most common reason for a miss,
+        and the throttled revalidate may be up to a few seconds behind. One
+        forced stat walk is tens of milliseconds; a wrong "not found" costs
+        the agent a grep and a guess.
+        """
+        revalidate = getattr(index, "revalidate", None)
+        if revalidate is None:
+            return False
+        try:
+            return bool(revalidate(force=True))
+        except TypeError:
+            # A stub index without the keyword (older callers, tests).
+            return bool(revalidate())
+
     def _references(
         self, index: Any, name: str | None, limit: int | None, calls_only: bool
     ) -> str:
@@ -724,6 +796,8 @@ class CodeIndexTool(_FsTool):
             return ToolResult.error("Error: action=references requires 'name'")
         capped = min(limit or _REFERENCE_LIMIT, 200)
         locations, total = index.references(needle, limit=capped, calls_only=calls_only)
+        if not locations and self._fresh_look(index):
+            locations, total = index.references(needle, limit=capped, calls_only=calls_only)
         if not locations:
             scope = "calls" if calls_only else "uses"
             return (
@@ -852,6 +926,8 @@ class CodeIndexTool(_FsTool):
         locations = index.search(
             needle, kind=kind, limit=capped, exported_only=exported_only
         )
+        if not locations and self._fresh_look(index):
+            locations = index.search(needle, kind=kind, limit=capped, exported_only=exported_only)
         if not locations:
             return f"No symbols matching '{needle}'."
         lines = [f"{len(locations)} symbol(s) matching '{needle}':"]
@@ -885,10 +961,23 @@ class CodeIndexTool(_FsTool):
         if not cleaned:
             return ToolResult.error("Error: action=file requires 'path'")
         result = index.outline(cleaned)
+        if result is None and self._fresh_look(index):
+            result = index.outline(cleaned)
         if result is None:
             return self._path_help(index, cleaned)
         resolved, symbols = result
         entry = index.entries[resolved]
+        # The throttled revalidate may be a second behind the file the agent
+        # just saved; a file card that lies about its imports sends it grepping.
+        try:
+            on_disk = (Path(index.root) / resolved).stat().st_mtime_ns
+        except OSError:
+            on_disk = entry.mtime_ns
+        if on_disk != entry.mtime_ns and self._fresh_look(index):
+            refreshed = index.outline(cleaned)
+            if refreshed is not None:
+                resolved, symbols = refreshed
+                entry = index.entries[resolved]
         dependencies = index.dependencies(resolved)
         dependents = index.dependents(resolved)
 

@@ -814,7 +814,7 @@ class TelegramChannel(BaseChannel):
                     )
                     continue
 
-                media_bytes = Path(media_path).read_bytes()
+                media_bytes = await asyncio.to_thread(Path(media_path).read_bytes)
                 filename = Path(media_path).name
                 send_kwargs = {param: media_bytes, "filename": filename}
                 await self._call_with_retry(

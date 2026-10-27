@@ -78,8 +78,40 @@ function buildSite() {
   if (!existsSync(join(site, "node_modules"))) run(`${cfg.package_manager} install`, site);
   const base = cfg.vite_base || "";
   const rebase = base.startsWith("/") && base !== "/" ? " -- --base=./" : "";
+  const startedAt = Date.now();
   run(`${cfg.web_build_command}${rebase}`, site);
-  return resolve(site, cfg.output_dir);
+  const expected = resolve(site, cfg.output_dir);
+  if (existsSync(join(expected, "index.html"))) return expected;
+  // The build wrote somewhere else (an outDir computed in the config): take the
+  // index.html the build just produced, searched near the site and the project root.
+  const found = newestIndexHtml([site, resolve(here, cfg.project_root || "../..")], startedAt);
+  if (found) {
+    console.log(`build-web: output_dir ${cfg.output_dir} has no index.html; using ${relative(here, found)} (built just now)`);
+    return found;
+  }
+  return expected;
+}
+
+const SKIP_SEARCH = new Set(["node_modules", ".git", "os", ".navin", "src", "public", "android", "ios", "src-tauri", ".stage", "www"]);
+
+function newestIndexHtml(roots, since) {
+  let best = null;
+  const visit = (dir, depth) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SKIP_SEARCH.has(entry.name) || entry.name.startsWith(".")) continue;
+      const path = join(dir, entry.name);
+      const index = join(path, "index.html");
+      if (existsSync(index)) {
+        const mtime = statSync(index).mtimeMs;
+        if (mtime >= since - 2000 && (!best || mtime > best.mtime)) best = { path, mtime };
+      }
+      if (depth < 4) visit(path, depth + 1);
+    }
+  };
+  for (const root of roots) visit(root, 0);
+  return best ? best.path : null;
 }
 
 function buildShell() {

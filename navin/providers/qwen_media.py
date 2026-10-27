@@ -16,6 +16,7 @@ are downloaded at once.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import os
@@ -176,7 +177,8 @@ class QwenTranscriptionProvider:
             logger.error("Audio file not found: {}", file_path)
             return ""
         mime = self._MIME.get(path.suffix.lower(), "audio/wav")
-        data_url = f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+        audio_bytes = await asyncio.to_thread(path.read_bytes)
+        data_url = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode('ascii')}"
         body: dict = {
             "model": self.model,
             "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": data_url}}]}],

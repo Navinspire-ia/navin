@@ -14,6 +14,7 @@ LLM); these two stages are the ones that need real tooling.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -449,8 +450,10 @@ async def transcribe_video(
 
     srt_path = out_dir / "source.srt"
     txt_path = out_dir / "transcript.txt"
-    srt_path.write_text(build_srt(cues), encoding="utf-8")
-    txt_path.write_text("\n".join(text for _s, _e, text in cues) + "\n", encoding="utf-8")
+    await asyncio.to_thread(srt_path.write_text, build_srt(cues), encoding="utf-8")
+    await asyncio.to_thread(
+        txt_path.write_text, "\n".join(text for _s, _e, text in cues) + "\n", encoding="utf-8",
+    )
 
     def rel(p: Path) -> str:
         try:
@@ -636,7 +639,7 @@ async def build_dub_track(
         srt_path = root / srt_path
     if not srt_path.is_file():
         raise LocalizeError(f"subtitle file not found: {srt}")
-    cues = parse_srt(srt_path.read_text(encoding="utf-8", errors="replace"))
+    cues = parse_srt(await asyncio.to_thread(srt_path.read_text, encoding="utf-8", errors="replace"))
     if not cues:
         raise LocalizeError(f"no usable cues in {srt}")
     if len(cues) > _MAX_SEGMENTS:
@@ -667,7 +670,7 @@ async def build_dub_track(
             ref_path = root / ref_path
         if not ref_path.is_file():
             raise LocalizeError(f"reference audio not found: {reference}")
-        extra_fields = reference_extra_fields(ref_path.read_bytes())
+        extra_fields = reference_extra_fields(await asyncio.to_thread(ref_path.read_bytes))
 
     dest = Path(output) if output else srt_path.with_name(f"{srt_path.stem}-voice.wav")
     if not dest.is_absolute():
@@ -707,15 +710,16 @@ async def build_dub_track(
                     for part in parts
                 ]
                 if len(rendered) == 1:
-                    clip.write_bytes(rendered[0])
+                    await asyncio.to_thread(clip.write_bytes, rendered[0])
                 else:
                     part_paths: list[Path] = []
                     for part_index, audio in enumerate(rendered):
                         part_path = Path(tmp) / f"cue-{cue.index:04d}-{part_index:03d}.{suffix}"
-                        part_path.write_bytes(audio)
+                        await asyncio.to_thread(part_path.write_bytes, audio)
                         part_paths.append(part_path)
                     concat = Path(tmp) / f"cue-{cue.index:04d}-concat.txt"
-                    concat.write_text(
+                    await asyncio.to_thread(
+                        concat.write_text,
                         "\n".join(f"file '{path.as_posix()}'" for path in part_paths) + "\n",
                         encoding="utf-8",
                     )
@@ -771,7 +775,8 @@ async def build_dub_track(
         threshold_ms=max(0, int(sync_threshold_ms)),
     )
     report_path = dest.with_suffix(dest.suffix + ".sync.json")
-    report_path.write_text(
+    await asyncio.to_thread(
+        report_path.write_text,
         json.dumps(sync_report, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )

@@ -169,41 +169,53 @@ def _tool_steps(target: Target, pm: str) -> list[dict[str, Any]]:
     if target.engine == "capacitor":
         plat = target.platform
         steps += [
+            # ``cap add`` refuses to run twice ("android platform already exists"):
+            # the step is skipped when the native folder is already there.
             {"id": "native", "title": f"Create the native {target.label} project (first time only)", "cwd": folder,
-             "command": f"{x} cap add {plat}", "once": True},
+             "command": f"{x} cap add {plat}", "once": True, "skip_if_exists": plat},
             {"id": "sync", "title": "Copy the web build and plugins into the native project", "cwd": folder, "command": f"{x} cap sync {plat}"},
+            # Verified against @capacitor/assets 3.x: ``--android`` / ``--ios`` select the platform;
+            # the source images are assets/icon-only.png, icon-foreground.png, icon-background.png, splash.png.
             {"id": "icons", "title": "Generate the app icons and splash screens", "cwd": folder,
              "command": f"{x} capacitor-assets generate --{plat}"},
         ]
         if plat == "android":
             steps += [
                 {"id": "build", "title": "Build the debug APK", "cwd": f"{folder}/android", "command": "./gradlew assembleDebug",
-                 "windows_command": "gradlew.bat assembleDebug", "background": True},
+                 "windows_command": "gradlew.bat assembleDebug", "background": True,
+                 "needs": "JDK 21 on PATH or JAVA_HOME, Android SDK with platform 36 (ANDROID_HOME)"},
                 {"id": "release", "title": "Build the signed release bundle (.aab)", "cwd": f"{folder}/android",
                  "command": "./gradlew bundleRelease", "windows_command": "gradlew.bat bundleRelease", "background": True,
                  "needs": "signing keystore from env: NAVIN_ANDROID_KEYSTORE, NAVIN_ANDROID_KEYSTORE_PASSWORD, NAVIN_ANDROID_KEY_ALIAS, NAVIN_ANDROID_KEY_PASSWORD"},
             ]
         else:
             steps += [
+                # Capacitor 8 generates an Xcode workspace (CocoaPods or SPM): build the
+                # workspace, not the bare project, or the pods are not linked.
                 {"id": "build", "title": "Build for the iOS simulator", "cwd": folder,
-                 "command": "xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build",
+                 "command": "xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build",
                  "background": True, "host": "Darwin"},
                 {"id": "release", "title": "Archive and export the .ipa", "cwd": folder,
-                 "command": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -archivePath ios/App/build/App.xcarchive archive",
+                 "command": "xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -archivePath ios/App/build/App.xcarchive archive",
                  "background": True, "host": "Darwin", "needs": "an Apple team id and signing certificate"},
             ]
     else:
         bundles = ",".join(target.bundles)
         steps += [
             {"id": "icons", "title": "Generate the app icons", "cwd": folder, "command": f"{x} tauri icon app-icon.png"},
-            {"id": "build", "title": f"Build the {target.label} package", "cwd": folder,
+            # Debug first: a third of the compile time of a release build, and a
+            # real installable package; the release build follows once it works.
+            {"id": "build", "title": f"Build the {target.label} package (debug, fast)", "cwd": folder,
+             "command": f"{x} tauri build --debug --bundles {bundles}", "background": True},
+            {"id": "release", "title": f"Build the optimized {target.label} package", "cwd": folder,
              "command": f"{x} tauri build --bundles {bundles}", "background": True},
         ]
     return steps
 
 
-def _test_steps(target: Target, app_id: str, app_name: str) -> list[dict[str, Any]]:
+def _test_steps(target: Target, app_id: str, app_name: str, backend_url: str = "") -> list[dict[str, Any]]:
     folder = target.folder
+    backend_url = backend_url or "<backend url>"
     maestro = (f"maestro test -e HOME_TEXT=\"{app_name}\" -e LOGIN_TEXT=<login button text> "
                "-e LOGIN_SCREEN_TEXT=<text of the login screen> tests/smoke.maestro.yaml")
     if target.id == "android":
@@ -224,9 +236,14 @@ def _test_steps(target: Target, app_id: str, app_name: str) -> list[dict[str, An
         ]
     return [
         {"id": "test-start", "test": "start", "cwd": folder,
-         "command": "launch the built binary from src-tauri/target/release and check the process stays alive for 15 s"},
-        {"id": "test-web", "test": "navigation", "cwd": folder, "command": "npx playwright test tests/smoke.spec.ts",
-         "check": "the packaged frontend (www) renders, navigates and reaches the backend"},
+         "command": "launch the built binary from src-tauri/target/debug (or release) and check the process stays alive for 15 s"},
+        {"id": "test-web", "test": "navigation", "cwd": folder,
+         "command": "BASE_URL=http://127.0.0.1:4173 npx playwright test tests/smoke.spec.ts",
+         "before": "serve www on 4173, e.g. npx serve -l 4173 www (or python3 -m http.server 4173 from www)",
+         "check": "the packaged frontend (www) renders, navigates and loads every asset of its own"},
+        {"id": "test-api", "test": "api", "cwd": folder,
+         "command": f"BASE_URL=http://127.0.0.1:4173 BACKEND_URL={backend_url} npx playwright test tests/api.spec.ts",
+         "check": "the backend answers and the app reaches it without CORS or mixed-content errors"},
     ]
 
 
@@ -309,7 +326,7 @@ def plan(analysis: dict[str, Any], target_name: str, host: dict[str, Any] | None
         "host": {**host, "can_build_here": local},
         "ci": ci,
         "steps": steps,
-        "tests": _test_steps(target, app_id, app_name),
+        "tests": _test_steps(target, app_id, app_name, backend_url),
         "risks": _risks(analysis, target, strategy),
         "files": _files(target, strategy),
         "never": [

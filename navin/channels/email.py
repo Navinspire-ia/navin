@@ -273,7 +273,7 @@ class EmailChannel(BaseChannel):
                         max_attachment_size,
                     )
                     continue
-                data = path.read_bytes()
+                data = await asyncio.to_thread(path.read_bytes)
                 ctype, _ = mimetypes.guess_type(str(path))
                 if ctype is None:
                     ctype = "application/octet-stream"

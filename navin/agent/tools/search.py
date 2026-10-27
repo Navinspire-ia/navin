@@ -297,8 +297,14 @@ def _is_binary(raw: bytes) -> bool:
     sample = raw[:4096]
     if not sample:
         return False
-    non_text = sum(byte < 9 or 13 < byte < 32 for byte in sample)
+    # One C call instead of a Python loop over 4 096 bytes per file (half a
+    # millisecond each, 3 s per grep on this repository).
+    non_text = len(sample.translate(None, _TEXT_BYTES))
     return (non_text / len(sample)) > 0.2
+
+
+# Bytes that may appear in text: tab, LF, VT, FF, CR and everything from space up.
+_TEXT_BYTES = bytes([9, 10, 11, 12, 13, *range(32, 256)])
 
 
 def _paginate(items: list[T], limit: int | None, offset: int) -> tuple[list[T], bool]:
@@ -932,6 +938,76 @@ def _gitignored_paths(root: Path, paths: list[Path]) -> set[Path]:
     return {spelled.get(chunk, Path(chunk)) for chunk in out.stdout.split("\0") if chunk}
 
 
+def _git_visible_files(root: Path, target: Path) -> list[Path] | None:
+    """The files git sees under ``target`` (tracked plus untracked, ignores applied).
+
+    The pure-Python fallback (no Rust scanner, no ripgrep) used to walk the
+    whole tree and ask ``git check-ignore`` about every entry: on this
+    repository that is 137 000 paths, of which 131 000 are build output, and
+    the question alone took 11 s, with the walk and the reads 14 s per grep.
+    ``git ls-files`` answers from the index in 15 ms with exactly the files
+    ripgrep would search, so the fallback is as fast as the real backends on
+    anything git tracks. ``None`` means not a work tree: the caller walks.
+    """
+    from navin.utils.git_argv import git_route
+
+    route = git_route(root)
+    if route is None or route.distro:
+        # Through wsl.exe the path spellings differ on both sides; the walk
+        # plus check-ignore path handles that case and stays correct.
+        return None
+    try:
+        rel = target.relative_to(root).as_posix() if target != root else "."
+    except ValueError:
+        return None
+    try:
+        out = subprocess.run(
+            [*route.argv, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", rel],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_RG_TIMEOUT_S,
+            cwd=str(root),
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    skip = _SEARCH_SKIP_DIRS
+    files: list[Path] = []
+    for chunk in out.stdout.split("\0"):
+        if not chunk:
+            continue
+        parts = chunk.split("/")
+        if any(part in skip for part in parts[:-1]):
+            continue
+        files.append(root / chunk)
+    return files[:_WALK_MAX_ENTRIES]
+
+
+def _rel_posix(file_path: Path, root: Path) -> str | None:
+    """``file_path`` relative to ``root`` with forward slashes, by string slicing.
+
+    ``Path.relative_to`` re-parses both paths on every call: 1.6 s of a 3.4 s
+    pure-Python grep over 5 600 files went there.
+    """
+    text = str(file_path)
+    prefix = str(root)
+    if text == prefix:
+        return "."
+    if not prefix.endswith(os.sep):
+        prefix += os.sep
+    if not text.startswith(prefix):
+        try:
+            return file_path.relative_to(root).as_posix()
+        except ValueError:
+            return None
+    rel = text[len(prefix):]
+    return rel.replace(os.sep, "/") if os.sep != "/" else rel
+
+
 def _read_text_file(
     file_path: Path, max_file_bytes: int,
 ) -> tuple[str | None, str | None]:
@@ -1053,7 +1129,7 @@ class FindFilesTool(_SearchTool):
         }
 
     def _list_entries(
-        self, target: Path, *, include_dirs: bool, include_ignored: bool,
+        self, target: Path, *, include_dirs: bool, include_ignored: bool, root: Path | None = None,
     ) -> tuple[list[tuple[str, bool]], bool]:
         """``(path, is_dir)`` per candidate and whether .gitignore was already applied.
 
@@ -1070,6 +1146,12 @@ class FindFilesTool(_SearchTool):
             files = _wsl_rg_files(target, include_ignored=include_ignored)
             if files is None:
                 files = _rg_files(target, include_ignored=include_ignored)
+            if files is None and not include_ignored:
+                # No ripgrep: git's own file list is the same answer in 15 ms,
+                # against a walk of 137 000 entries here (0.5 s and more).
+                visible = _git_visible_files(root or target, target)
+                if visible is not None:
+                    files = [str(path) for path in visible]
         if files is not None:
             return [(path, False) for path in files], True
         rows = _native_walk(target, include_dirs=include_dirs)
@@ -1093,7 +1175,7 @@ class FindFilesTool(_SearchTool):
     ) -> tuple[list[tuple[str, float]], bool]:
         """Filtered ``(display_path, mtime)`` rows and whether the listing was cut."""
         entries, gitignore_applied = self._list_entries(
-            target, include_dirs=include_dirs, include_ignored=include_ignored,
+            target, include_dirs=include_dirs, include_ignored=include_ignored, root=root,
         )
         truncated = len(entries) >= _WALK_MAX_ENTRIES
         # Every backend prefixes its rows with ``target`` verbatim, so the
@@ -1231,20 +1313,71 @@ def symbol_index_hint(pattern: str) -> str:
     question while code_index sat unused. The nudge only fires for patterns
     that are clearly identifiers (CamelCase, snake_case, a declaration).
     """
+    name = symbol_query_name(pattern)
+    if name is None:
+        return ""
+    match = _SYMBOL_QUERY.match((pattern or "").strip())
+    action = "definition" if match is not None and match.group("decl") else "references"
+    return (
+        f"\n\nTip: `code_index action={action} name={name}` answers this from parsed code "
+        f"(also callers, and impact before changing a signature)."
+    )
+
+
+def symbol_query_name(pattern: str) -> str | None:
+    """The identifier a grep pattern asks about, or None for plain text."""
     match = _SYMBOL_QUERY.match((pattern or "").strip())
     if match is None:
-        return ""
+        return None
     name = match.group("name")
     # TODO / FIXME / HTTP are words to find, not symbols to resolve.
     shouting = name.isupper() and "_" not in name
     identifier = not shouting and ("_" in name or "." in name or any(char.isupper() for char in name[1:]))
     if not (match.group("decl") or (identifier and len(name) >= 4)):
-        return ""
-    action = "definition" if match.group("decl") else "references"
-    return (
-        f"\n\nTip: `code_index action={action} name={name}` answers this from parsed code "
-        f"(also callers, and impact before changing a signature)."
+        return None
+    return name
+
+
+_INDEX_FIRST_LIMIT = 6
+
+
+def index_first_lines(root: Path, pattern: str) -> list[str]:
+    """Definitions of the identifier in ``pattern`` from the already-loaded index.
+
+    The agent greps for a symbol name a hundred times a day: when the index of
+    this workspace is in memory, the parsed definitions come first, in about a
+    millisecond, with their exact line and kind. The text matches follow as
+    usual, so nothing is lost; on a slow filesystem (a WSL project opened from
+    Windows) this header is often the whole answer. The index is never built
+    or refreshed here: a grep must stay a grep when no index is warm.
+    """
+    name = symbol_query_name(pattern)
+    if name is None:
+        return []
+    from navin.index.service import loaded_index
+
+    index = loaded_index(root)
+    if index is None:
+        return []
+    try:
+        locations = index.definition(name)
+        if not locations and index.revalidate(force=True):
+            # The agent greps for what it just wrote: one stat walk (tens of
+            # milliseconds) catches a file saved since the last look.
+            locations = index.definition(name)
+    except (OSError, RuntimeError, ValueError):
+        # The index is a bonus here: a grep stays a grep when it cannot answer.
+        return []
+    if not locations:
+        return []
+    shown = locations[:_INDEX_FIRST_LIMIT]
+    header = (
+        f"Index: {len(locations)} definition(s) of '{name}' (parsed code)"
+        + (f", first {len(shown)}" if len(locations) > len(shown) else "")
+        + ":"
     )
+    callers_hint = f"  (code_index action=callers name={name} lists who calls it)"
+    return [header, *(f"  {loc.render()}" for loc in shown), callers_hint, ""]
 
 
 class GrepTool(_SearchTool):
@@ -1270,7 +1403,10 @@ class GrepTool(_SearchTool):
             "workspace searches. Skips binary files, files >2 MB, dependency "
             "and build directories, and anything .gitignore excludes (pass "
             "include_ignored to search those too). Several searches to run: "
-            "pass them all in `patterns` in ONE call, never one call per pattern."
+            "pass them all in `patterns` in ONE call, never one call per pattern. "
+            "For a symbol name (where is X defined, who calls X) the answer leads "
+            "with the parsed definitions from the code index when it is loaded; "
+            "code_index action=definition/references/callers gives the full picture."
         )
 
     @property
@@ -1513,23 +1649,38 @@ class GrepTool(_SearchTool):
         skipped_binary = 0
         skipped_large = 0
         stopped = False
-        # Walked lazily against the clock: over a slow mount the listing
-        # alone can outlast the whole budget.
-        candidates: list[Path] = []
-        for file_path in self._iter_files(target):
-            if out_of_time():
-                stopped = True
-                break
-            candidates.append(file_path)
-        ignored = set() if include_ignored else _gitignored_paths(root, candidates)
+        # Git knows the visible files already (15 ms on a 5 600-file repo):
+        # a walk of the whole tree plus check-ignore on every entry took 14 s
+        # here, most of it on build output git ignores anyway.
+        visible = None if include_ignored else _git_visible_files(root, target)
+        if visible is not None:
+            candidates = visible
+            ignored: set[Path] = set()
+        else:
+            # Walked lazily against the clock: over a slow mount the listing
+            # alone can outlast the whole budget.
+            candidates = []
+            for file_path in self._iter_files(target):
+                if out_of_time():
+                    stopped = True
+                    break
+                candidates.append(file_path)
+            ignored = set() if include_ignored else _gitignored_paths(root, candidates)
         for file_path in candidates:
             if out_of_time():
                 stopped = True
                 break
             if file_path in ignored:
                 continue
-            hit = self._hit_for(file_path, root, glob, file_type)
-            if hit is None:
+            # The glob and type filters first, on the path string: they cut
+            # most files, and they cost nothing next to a read.
+            rel_path = _rel_posix(file_path, root)
+            if rel_path is None:
+                continue
+            name = rel_path.rsplit("/", 1)[-1]
+            if glob and not _match_glob(rel_path, name, glob):
+                continue
+            if not _matches_type(name, file_type):
                 continue
             content, skip_reason = _read_text_file(file_path, self._MAX_FILE_BYTES)
             if content is None:
@@ -1539,13 +1690,23 @@ class GrepTool(_SearchTool):
                     skipped_binary += 1
                 continue
             if multiline:
-                hit.matches.extend(_multiline_matches(content, regex))
+                found = _multiline_matches(content, regex)
+            elif regex.search(content) is None:
+                # One scan of the whole file instead of one per line: the
+                # common case of a file without the needle costs a C call.
+                continue
             else:
-                for idx, line in enumerate(content.splitlines(), start=1):
-                    if regex.search(line):
-                        hit.matches.append((idx, line))
-            if hit.matches:
-                hits.append(hit)
+                found = [
+                    (idx, line) for idx, line in enumerate(content.splitlines(), start=1)
+                    if regex.search(line)
+                ]
+            if not found:
+                continue
+            hit = self._hit_for(file_path, root, None, None)
+            if hit is None:
+                continue
+            hit.matches.extend(found)
+            hits.append(hit)
         return hits, skipped_binary, skipped_large, stopped
 
     _MAX_PATTERNS = 8
@@ -1812,6 +1973,15 @@ class GrepTool(_SearchTool):
                 )
             if notes:
                 result += "\n\n" + "\n".join(notes)
+            if hits and output_mode in {"files_with_matches", "content"}:
+                # Parsed definitions first when the index is warm: exact line
+                # and kind in a millisecond, the text matches below as always.
+                index_lines = index_first_lines(root, pattern)
+                if index_lines:
+                    result = "\n".join(index_lines) + result
+                    # The header already says where the symbol lives; the
+                    # separate tip would repeat it.
+                    self._index_hints_shown = _INDEX_HINT_LIMIT
             search_key = json.dumps(
                 [pattern, str(target), glob, type, case_insensitive, fixed_strings, output_mode,
                  context_before, context_after, limit, offset, sort, include_ignored, multiline],

@@ -606,7 +606,7 @@ async def run_lipsync_step(
     except LipSyncError:
         raise
     temporary = output.with_suffix(output.suffix + ".part")
-    temporary.write_bytes(result.video)
+    await asyncio.to_thread(temporary.write_bytes, result.video)
     temporary.replace(output)
     try:
         relative = str(output.relative_to(root)).replace("\\", "/")

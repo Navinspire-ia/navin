@@ -25,6 +25,7 @@ result.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -70,6 +71,9 @@ _JS_RESOLVE_SUFFIXES = (
 _MAX_REFERENCE_HITS = 200
 _REF_CONTEXT_CHARS = 200
 _MAX_IMPACT_DEPTH = 4
+# Up to this many changed files the derived maps are patched in place; past
+# it (a branch switch, a generator run) a rebuild is quicker than patching.
+_INCREMENTAL_DERIVED_MAX = 32
 
 # Definitions strong enough that a same-named match is very likely the real
 # target, as opposed to an incidental local variable.
@@ -200,6 +204,85 @@ def _iter_stats(root: Path, files: list[str], *, paced: bool = False):
 # Below this many changed files the parallel read gains nothing over the
 # per-file loop; the common incremental pass touches one or two files.
 _BATCH_READ_MIN = 8
+# Below this many changed files a sequential parse is quicker than starting
+# workers; above it the fork pays for itself many times over.
+_PARALLEL_PARSE_MIN = 400
+_PARALLEL_CHUNK = 24
+
+
+def _can_fork_workers() -> bool:
+    """Only where worker interpreters are cheap and safe.
+
+    A frozen (PyInstaller) engine has no plain interpreter to start, and the
+    Windows engine runs the index on a bridged tree where the stat and read
+    passes dominate; both keep the sequential parse. ``NAVIN_INDEX_PARALLEL=0``
+    turns the workers off anywhere.
+    """
+    if sys.platform == "win32" or getattr(sys, "frozen", False):
+        return False
+    if os.environ.get("NAVIN_INDEX_PARALLEL") == "0":
+        return False
+    return bool(sys.executable) and (os.cpu_count() or 1) >= 2
+
+
+def _extract_in_processes(
+    root: Path, items: list[tuple[str, int, int]]
+) -> dict[str, FileEntry | None] | None:
+    """Parse ``items`` in worker interpreters; ``None`` means fall back to the caller.
+
+    Each worker (``python -m navin.index.parse_worker``) reads and parses its
+    share of the files and writes the entries back as JSON lines in the cache
+    format; the parent only decodes. The pipes are drained in threads with the
+    GIL released, so the engine's event loop stays smooth during a build that
+    used to be one long loop.
+    """
+    import json
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    from navin.index.parse_worker import row_to_entry
+    from navin.utils.proc import no_window_kwargs
+
+    workers = max(2, min(8, (os.cpu_count() or 2) - 1))
+    shares: list[list[str]] = [[] for _ in range(workers)]
+    for position, (rel, _, _) in enumerate(items):
+        shares[position % workers].append(rel)
+    shares = [share for share in shares if share]
+    root_text = str(root)
+
+    def run(share: list[str]) -> list[tuple[str, FileEntry | None]]:
+        payload = (root_text + "\n" + "\n".join(share) + "\n").encode("utf-8")
+        completed = subprocess.run(
+            [sys.executable, "-m", "navin.index.parse_worker"],
+            input=payload, capture_output=True, timeout=600, check=False, cwd=root_text,
+            **no_window_kwargs(),
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"parse worker exited {completed.returncode}: "
+                f"{completed.stderr.decode('utf-8', 'replace')[-400:]}"
+            )
+        return [
+            row_to_entry(json.loads(line))
+            for line in completed.stdout.decode("utf-8").split("\n")
+            if line
+        ]
+
+    out: dict[str, FileEntry | None] = {}
+    try:
+        with ThreadPoolExecutor(max_workers=len(shares), thread_name_prefix="navin-index-parse") as pool:
+            for rows in pool.map(run, shares):
+                for rel, entry in rows:
+                    out[rel] = entry
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        # Workers that cannot start or die mid-way (fd limit, OOM killer, a
+        # sandbox without processes): the sequential parse is always available.
+        logger.warning("code index: parallel parse unavailable ({}), parsing sequentially", exc)
+        return None
+    if len(out) != len(items):
+        logger.warning("code index: parallel parse returned {} of {} files, parsing sequentially", len(out), len(items))
+        return None
+    return out
 
 
 def _extract_batch(
@@ -211,9 +294,18 @@ def _extract_batch(
     slow filesystems (a WSL project opened from Windows); with the native
     extension all contents are read in one parallel Rust pass. Parsing stays
     in Python either way and the entries produced are identical.
+
+    A large batch (a first index, a cache version bump, a branch switch that
+    touched most of the tree) is parsed by worker processes when the platform
+    can fork them cheaply: parsing holds the GIL, so threads cannot help, and
+    5 ms per file on 3 600 files is 17 s on one core that becomes 4 s on six.
     """
     core = native()
     bridged = is_bridged_root(root) and len(items) >= _BATCH_READ_MIN
+    if not bridged and len(items) >= _PARALLEL_PARSE_MIN and _can_fork_workers():
+        parallel = _extract_in_processes(root, items)
+        if parallel is not None:
+            return parallel
     if not bridged and (core is None or len(items) < _BATCH_READ_MIN):
         return {rel: read_and_extract(root, rel) for rel, _, _ in items}
 
@@ -399,7 +491,7 @@ class CodeIndex:
                 return self.stats
             return self.refresh(force=force)
 
-    def revalidate(self) -> bool:
+    def revalidate(self, *, force: bool = False) -> bool:
         """Bring the in-memory index back in line with the files on disk.
 
         Without this the index answers from the state the project had when the
@@ -410,17 +502,25 @@ class CodeIndex:
         is already known, which is two orders of magnitude cheaper, and pays the
         rebuild only when something actually moved.
 
+        ``force`` skips the throttle: a lookup that found nothing asks for it,
+        because a symbol the user just wrote (in an editor, a git checkout, a
+        generator) is the most likely reason for a miss.
+
         Returns whether anything changed.
         """
         with self._lifecycle_lock:
-            return self._revalidate_locked()
+            return self._revalidate_locked(force=force)
 
-    def _revalidate_locked(self) -> bool:
+    def _revalidate_locked(self, *, force: bool = False) -> bool:
         now = time.monotonic()
-        if not self._dirty and now - self._revalidated_at < self._revalidate_ttl():
+        if not force and not self._dirty and now - self._revalidated_at < self._revalidate_ttl():
             if self._dirty_paths:
                 return self._revalidate_paths_locked()
             return False
+        with gc_paused():
+            return self._revalidate_walk_locked(now)
+
+    def _revalidate_walk_locked(self, now: float) -> bool:
         self._dirty = False
         self._dirty_paths.clear()
         self._revalidated_at = now
@@ -530,6 +630,7 @@ class CodeIndex:
         if not fresh and not gone:
             return False
 
+        previous_entries = self.entries
         self.entries = entries
         # A re-parsed entry carries new references, and the ones cached for its
         # previous contents are now wrong, so the lazy reference state is dropped
@@ -539,7 +640,13 @@ class CodeIndex:
         self._refs_by_name = {}
         self._refs_loaded = False
         with gc_paused():
-            self._build_derived()
+            if self._by_name and len(fresh) + len(gone) <= _INCREMENTAL_DERIVED_MAX:
+                # One file saved, one lookup right after: patch the derived
+                # maps for that file instead of rebuilding them from all 3 600
+                # (400 ms on this repository, on the turn's critical path).
+                self._patch_derived(previous_entries, fresh, gone)
+            else:
+                self._build_derived()
         if refs_were_loaded:
             # A session that asked "who calls" once will ask again; rebuild
             # the map now (it waits for this lock) rather than on that query.
@@ -573,6 +680,21 @@ class CodeIndex:
             return self._refresh_locked(force=force)
 
     def _refresh_locked(self, *, force: bool = False) -> RefreshStats:
+        # Millions of small objects are created below (entries, symbols,
+        # references): with the collector running, a dozen full collections
+        # happened per build, each one holding the GIL for up to half a second.
+        with gc_paused():
+            stats = self._refresh_locked_quiet(force=force)
+            # What was just built lives as long as the index: move it to the
+            # permanent generation so the collector never walks it again.
+            # Reference counting still frees it when a file is re-parsed;
+            # nothing in these entries forms a cycle.
+            import gc
+
+            gc.freeze()
+        return stats
+
+    def _refresh_locked_quiet(self, *, force: bool = False) -> RefreshStats:
         started = time.monotonic()
         self._dirty = False
         self._dirty_paths.clear()
@@ -655,6 +777,84 @@ class CodeIndex:
 
     # -- derived structures ------------------------------------------------
 
+    def _patch_derived(
+        self, previous: dict[str, FileEntry], fresh: set[str], gone: list[str]
+    ) -> None:
+        """Update the derived maps for a few changed files; same result as a rebuild.
+
+        Symbols: the old entry's symbols leave the name buckets, the new ones
+        enter. Edges: every edge leaving a changed file is recomputed; edges
+        pointing at a changed file are kept when the target still exists and
+        dropped when it is gone. A brand-new file that other files already
+        imported (they resolved to nothing before) is the one case this cannot
+        see without re-resolving everyone: those files are re-resolved too,
+        found through the import targets that name the new file's stem.
+        """
+        touched = set(fresh) | set(gone)
+        for rel in touched:
+            old = previous.get(rel)
+            if old is None:
+                continue
+            for symbol in old.symbols:
+                self._drop_symbol(rel, symbol)
+        for rel in fresh:
+            entry = self.entries.get(rel)
+            if entry is None:
+                continue
+            for symbol in entry.symbols:
+                self._by_name.setdefault(symbol.name, []).append((rel, symbol))
+                self._by_name_lower.setdefault(symbol.name.lower(), []).append((rel, symbol))
+                self._by_qual.setdefault((rel, symbol.display), symbol)
+
+        paths = set(self.entries)
+        self._top_level = {p.split("/", 1)[0] for p in paths if "/" in p}
+        edges = {
+            (source, target) for source, target in self._edges
+            if source not in touched and target not in gone
+        }
+        # Files whose imports may now resolve onto a new file: their targets
+        # end with the new file's module name.
+        new_files = [rel for rel in fresh if rel not in previous]
+        importers: set[str] = set(fresh)
+        if new_files:
+            stems = {Path(rel).stem for rel in new_files} | {Path(rel).parent.name for rel in new_files if Path(rel).name == "__init__.py"}
+            for rel, entry in self.entries.items():
+                if rel in importers or not entry.imports:
+                    continue
+                for target in entry.imports:
+                    if target.strip().strip("\"'<>").replace(".", "/").rsplit("/", 1)[-1] in stems:
+                        importers.add(rel)
+                        break
+            edges = {(source, target) for source, target in edges if source not in importers}
+        for rel in importers:
+            entry = self.entries.get(rel)
+            if entry is None:
+                continue
+            for target in entry.imports:
+                resolved = self._resolve_import(rel, target, paths)
+                if resolved and resolved != rel:
+                    edges.add((rel, resolved))
+        self._edges = edges
+        dependents: dict[str, set[str]] = defaultdict(set)
+        dependencies: dict[str, set[str]] = defaultdict(set)
+        for source, target in edges:
+            dependencies[source].add(target)
+            dependents[target].add(source)
+        self._dependents = dict(dependents)
+        self._dependencies = dict(dependencies)
+
+    def _drop_symbol(self, rel: str, symbol: Symbol) -> None:
+        for table, key in ((self._by_name, symbol.name), (self._by_name_lower, symbol.name.lower())):
+            bucket = table.get(key)
+            if not bucket:
+                continue
+            kept = [(path, sym) for path, sym in bucket if path != rel]
+            if kept:
+                table[key] = kept
+            else:
+                del table[key]
+        self._by_qual.pop((rel, symbol.display), None)
+
     def _build_derived(self) -> None:
         by_name: dict[str, list[tuple[str, Symbol]]] = defaultdict(list)
         by_name_lower: dict[str, list[tuple[str, Symbol]]] = defaultdict(list)
@@ -674,9 +874,23 @@ class CodeIndex:
         # per import, which dominated this whole method.
         self._top_level = {p.split("/", 1)[0] for p in paths if "/" in p}
         edges: set[tuple[str, str]] = set()
+        # Twenty files in one package import the same twenty modules: the
+        # resolution depends only on the importer's folder (relative imports,
+        # JS, includes) or on nothing at all (absolute Python imports), so one
+        # answer per (folder, target) serves them all. 26 000 imports on this
+        # repository collapse to a few thousand resolutions.
+        memo: dict[tuple[str, str], str | None] = {}
         for rel, entry in self.entries.items():
+            if not entry.imports:
+                continue
+            folder = rel.rsplit("/", 1)[0] if "/" in rel else ""
+            python = rel.endswith((".py", ".pyi"))
             for target in entry.imports:
-                resolved = self._resolve_import(rel, target, paths)
+                key = ("" if python and not target.lstrip().startswith(".") else folder, target)
+                try:
+                    resolved = memo[key]
+                except KeyError:
+                    resolved = memo[key] = self._resolve_import(rel, target, paths)
                 if resolved and resolved != rel:
                     edges.add((rel, resolved))
         self._edges = edges
@@ -1512,4 +1726,19 @@ def get_index(root: Path | str) -> CodeIndex:
     if index is None:
         index = CodeIndex(resolved)
         _instances[key] = index
+    return index
+
+
+def loaded_index(root: Path | str) -> CodeIndex | None:
+    """The index for ``root`` only if this process already built it.
+
+    For callers that want to use the index when it is there (a grep that can
+    answer an identifier from parsed code in a millisecond) without ever
+    paying a build on their own path. Never creates or loads anything.
+    """
+    from navin.utils.resolve_cache import resolve_root
+
+    index = _instances.get(str(resolve_root(root)))
+    if index is None or not index._loaded or index.stats is None:
+        return None
     return index

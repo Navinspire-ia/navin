@@ -20,6 +20,7 @@ The gateway never sees them.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -86,7 +87,7 @@ class FixtureWebFetchTool(Tool):
         for candidate in candidates:
             target = _safe_relative(self._root / WEB_DIR / host, *candidate.split("/"))
             if target is not None and target.is_file():
-                text = target.read_text(encoding="utf-8", errors="replace")
+                text = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
                 return f"HTTP 200 OK {url}\n\n{text[:_MAX_PAGE_CHARS]}"
         return ToolResult.error(f"HTTP 404 Not Found: {url}")
 
