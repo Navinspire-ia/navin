@@ -177,6 +177,8 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "code_review",
         "pr_comments",
         "forge",
+        "infra",
+        "appfactory",
         "start_app",
         "project",
         "open_preview",

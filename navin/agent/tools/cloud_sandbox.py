@@ -228,7 +228,7 @@ class SandboxFilesTool(Tool):
             local = self._local(raw)
             if not local.is_file():
                 return f"Error: {raw} is not a file"
-            data = local.read_bytes()
+            data = await asyncio.to_thread(local.read_bytes)
             total += len(data)
             if total > MAX_UPLOAD_BYTES:
                 return "Error: more than 20 MB in one upload; send fewer files at a time"
@@ -249,12 +249,7 @@ class SandboxFilesTool(Tool):
             if not name:
                 continue
             target = self._local(name)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if block.get("base64"):
-                target.write_bytes(base64.b64decode(block["base64"]))
-            elif block.get("text") is not None:
-                target.write_text(str(block["text"]), encoding="utf-8")
-            else:
+            if not await asyncio.to_thread(_save_block, target, block):
                 continue
             saved.append(target.relative_to(self._workspace).as_posix())
         if not saved:
@@ -273,3 +268,15 @@ __all__ = [
     "sandbox_call",
 ]
 
+
+
+def _save_block(target: Path, block: dict[str, Any]) -> bool:
+    """Write one downloaded block to disk (worker thread); False when it has no body."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if block.get("base64"):
+        target.write_bytes(base64.b64decode(block["base64"]))
+    elif block.get("text") is not None:
+        target.write_text(str(block["text"]), encoding="utf-8")
+    else:
+        return False
+    return True

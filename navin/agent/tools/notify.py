@@ -121,7 +121,18 @@ class NotifyTool(Tool):
             source="agent",
             key=str(kwargs.get("key") or "").strip() or None,
         )
-        if not delivered:
+        remote = 0
+        try:
+            import asyncio
+
+            from navin.agent.remote_channels import forward_notification
+
+            remote = await asyncio.to_thread(
+                forward_notification, title, detail, level, str(kwargs.get("key") or "").strip()
+            )
+        except Exception:  # noqa: BLE001 - remote channels are best effort
+            remote = 0
+        if not delivered and not remote:
             # Worth saying: the agent may be waiting on a human who will never
             # be told, and should fall back to asking in its reply.
             return ToolResult.error(

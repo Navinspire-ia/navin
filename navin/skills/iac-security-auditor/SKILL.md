@@ -10,6 +10,17 @@ metadata: {"navin":{"emoji":"🏰","category":"security"}}
 
 Review how the system is built, shipped, and deployed. Misconfigured infrastructure is exploited as often as vulnerable code. Cite the exact file and directive; rate by blast radius.
 
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: terraform,kubernetes).
+
+1. `infra action=discover provider=terraform workdir=<dir>` and `provider=kubernetes` to know what is deployed vs declared.
+2. Scanners (checkov, tfsec/trivy config, kube-linter, hadolint) run read-only through `infra action=run`.
+3. Remediation goes through `infra action=check` and `infra action=plan`; runtime posture: `cloud-security-posture`.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
+
 ## What to inspect
 
 **Containers (Dockerfile / compose)**

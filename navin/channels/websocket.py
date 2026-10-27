@@ -1376,6 +1376,7 @@ class WebSocketChannel(BaseChannel):
         """Route one typed inbound envelope (``new_chat`` / ``attach`` / ``message``)."""
         t = envelope.get("type")
         if t in {"subagents_list", "subagent_history", "subagent_recover", "subagent_relaunch",
+                 "subagent_retry", "subagent_cancel",
                  "subagent_team_feed", "subagent_team_message", "subagent_team_assign",
                  "subagent_team_select"}:
             tasks = self._subagent_queries.setdefault(connection, set())
@@ -1813,7 +1814,8 @@ class WebSocketChannel(BaseChannel):
         operation = str(envelope["type"]).removeprefix("subagent_")
         if operation == "subagents_list":
             operation = "list"
-        if operation in {"recover", "relaunch", "team_message", "team_assign", "team_select"} and not action_allowed(
+        if operation in {"recover", "relaunch", "retry", "cancel", "team_message", "team_assign",
+                         "team_select"} and not action_allowed(
             self._role_for(connection), "message"
         ):
             await reply(error="This conversation is read only")
@@ -2210,7 +2212,7 @@ class WebSocketChannel(BaseChannel):
                 )
 
             try:
-                session = self._terminals.open(
+                session = await self._terminals.open_async(
                     connection,
                     terminal_id=terminal_id,
                     shell=envelope.get("shell") if isinstance(envelope.get("shell"), str) else None,

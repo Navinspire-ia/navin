@@ -115,6 +115,25 @@ class ProjectDataTests(unittest.TestCase):
                 self.assertTrue(projects.delete_session(str(root), "cli:9"))
                 self.assertEqual(projects.list_project_sessions(str(root), {}), [])
 
+    def test_fork_copies_a_chat_of_any_project_and_refuses_an_empty_one(self) -> None:
+        from navin.session.manager import SessionManager
+
+        with TemporaryDirectory() as tmp:
+            manager = SessionManager(Path(tmp))
+            source = manager.get_or_create("cli:1")
+            source.messages += [{"role": "user", "content": "fix the login"}, {"role": "assistant", "content": "done"}]
+            manager.save(source)
+            manager.save(manager.get_or_create("cli:3"))
+            # no live store given: read from the project's own files
+            self.assertEqual(projects.fork_session(tmp, "cli:1", "cli:2", "Login fix"), "Fork: Login fix")
+            rows = {r.key: r.title for r in projects.list_project_sessions(tmp, {})}
+            self.assertIn("cli:2", rows)
+            copy = SessionManager(Path(tmp)).get_or_create("cli:2")
+            self.assertEqual([m["content"] for m in copy.messages], ["fix the login", "done"])
+            with self.assertRaises(ValueError):
+                projects.fork_session(tmp, "cli:3", "cli:4")
+            self.assertNotIn("cli:4", {r["key"] for r in SessionManager(Path(tmp)).list_sessions()})
+
 
 def _text(widget) -> str:
     """Markup text of a Static, on any Textual version."""
@@ -227,6 +246,30 @@ class ProjectsPanelTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(SPINNER[1], _text(running))
             panel.set_running(set())
             self.assertFalse(any(ch in _text(running) for ch in SPINNER))
+
+        await self._run(body)
+
+    async def test_a_project_working_in_the_background_keeps_its_spinners(self) -> None:
+        from navin.tui.projects_panel import SPINNER
+
+        async def body(app, pilot, panel) -> None:
+            data = _projects(3)
+            data[1] = ProjectEntry("/work/beta", "beta", "#98C379", [SessionEntry("cli:7", "beta chat", "2026-01-09")])
+            panel.set_data(data, "/work/alpha", "cli:1")
+            panel.post_message(panel.Hit("toggle", "/work/beta"))
+            await self._settle(pilot)
+            panel.set_busy({"/work/beta": {"cli:7"}, "/work/alpha": {"cli:2"}})
+            self.assertIn(SPINNER[0], _text(panel._labels[("/work/beta", "cli:7")]))
+            self.assertIn(SPINNER[0], _text(panel._labels[("/work/alpha", "cli:2")]))
+            self.assertNotIn(SPINNER[0], _text(panel._labels[("/work/alpha", "cli:1")]))
+            # the folder says so too, and still does once folded
+            self.assertIn(SPINNER[0], _text(panel._folders["/work/beta"]))
+            panel.post_message(panel.Hit("toggle", "/work/beta"))
+            await self._settle(pilot)
+            self.assertNotIn(("/work/beta", "cli:7"), panel._labels)
+            self.assertIn(SPINNER[0], _text(panel._folders["/work/beta"]))
+            panel.set_busy({})
+            self.assertFalse(any(ch in _text(panel._folders["/work/beta"]) for ch in SPINNER))
 
         await self._run(body)
 

@@ -1,6 +1,6 @@
 ---
 name: gitops-argocd
-description: Run GitOps deployments with ArgoCD - inspect applications, diff desired vs live state, deploy through git commits and PRs, sync and verify rollouts.
+description: Run GitOps deployments with Argo CD and Flux - inspect applications, diff desired vs live state, deploy through git commits and PRs, sync and verify rollouts.
 metadata: {"navin":{"emoji":"🚀","category":"devops"}}
 ---
 
@@ -9,6 +9,29 @@ metadata: {"navin":{"emoji":"🚀","category":"devops"}}
 ## Overview
 
 Deploy through git, not through kubectl. The git repository is the source of truth; ArgoCD reconciles it. Prefer the ArgoCD MCP server (`argocd` preset) or the `argocd` CLI when available; fall back to reading Application CRs with kubectl.
+
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: argocd,flux).
+
+1. `infra action=discover provider=argocd` and/or `provider=flux`.
+2. `infra action=check command="argocd app sync ..."` / `"flux reconcile ..."`.
+3. Diff first (`argocd app diff`, `flux diff kustomization`) via `infra action=run`, then the sync/reconcile step, then `infra action=verify` (Synced + Healthy / Ready=True).
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
+
+## Flux
+
+```bash
+flux check; flux get sources all -A; flux get kustomizations -A; flux get helmreleases -A
+flux diff kustomization <k> --path ./clusters/<env>
+flux reconcile kustomization <k> --with-source
+flux suspend kustomization <k>; flux resume kustomization <k>
+flux logs --level=error --since=1h
+```
+
+Same rule as Argo CD: change git, open a PR, let Flux reconcile; `flux suspend` is the emergency brake and must be resumed and recorded.
 
 ## Common commands
 

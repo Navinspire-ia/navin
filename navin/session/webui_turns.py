@@ -54,7 +54,7 @@ WEBUI_TITLE_PROVISIONAL_METADATA_KEY = "title_provisional"
 TITLE_MAX_CHARS = 60
 # A chat name is a label, not a sentence: at most this many words everywhere
 # (sidebar, CLI and desktop), whatever produced it.
-TITLE_MAX_WORDS = 3
+TITLE_MAX_WORDS = 5
 TITLE_GENERATION_MAX_TOKENS = 96
 TITLE_GENERATION_REASONING_EFFORT = "none"
 
@@ -440,7 +440,7 @@ async def maybe_generate_webui_title(
         "Generate a concise title for this chat.\n"
         "Rules:\n"
         "- Use the same language as the user when practical.\n"
-        "- 2 to 6 words.\n"
+        f"- 2 to {TITLE_MAX_WORDS} words.\n"
         "- No quotes.\n"
         "- No punctuation at the end.\n"
         "- Return only the title.\n"

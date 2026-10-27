@@ -221,6 +221,8 @@ async def handle_credential_event(app: Any, event: Any) -> bool:
         app._credential_screens = open_screens
     if isinstance(event, UiCredentialRequested):
         request_id = event.request_id
+        if request_id in open_screens:
+            return True  # already open: shown again when its session is reopened
         screen = CredentialScreen(event.kind, event.host, list(event.names), event.reason)
         open_screens[request_id] = screen
 

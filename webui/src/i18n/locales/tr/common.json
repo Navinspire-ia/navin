@@ -1914,7 +1914,32 @@
     "toolsRowToggle": "Tools",
     "unsaved": "Unsaved changes",
     "workspace": "Workspace",
-    "terminalSearch": "Terminalde ara"
+    "terminalSearch": "Terminalde ara",
+    "appsMobile": "Mobil uygulamalar",
+    "appsDesktop": "Masaüstü uygulamaları",
+    "appFactory": {
+      "title": "Projenizi bir uygulamaya dönüştürün",
+      "intro": "Navin mevcut projeyi Windows, macOS, Linux, Android ve iOS uygulamalarına dönüştürür. Web projesi ve backend olduğu gibi kalır: her şey ayrı bir os/<platform> klasörüne yazılır.",
+      "learnMore": "Bu nedir?",
+      "honest": "Navin hangi testlerin çalıştığını ve hangilerinin bu makinede çalıştırılamadığını bildirir.",
+      "steps": {
+        "analyze": "Proje analizi",
+        "adapt": "Uyarlama",
+        "build": "Derleme",
+        "test": "Testler",
+        "deliver": "Teslim"
+      },
+      "confirm": {
+        "title": "Projenizin {{platform}} uygulaması oluşturulsun mu?",
+        "body": "Navin projenizi analiz eder, uyarlar, uygulamayı derler, test eder ve paketi size teslim eder. Her şey {{folder}} klasörüne yazılır: web siteniz ve arka ucunuz değiştirilmez.",
+        "project": "Proje",
+        "package": "Paket",
+        "folder": "Klasör",
+        "tools": "Eksik derleme araçları yalnızca onayınızla kurulur. Bu bilgisayar uygulamayı derleyemiyorsa Navin bunu size söyler ve bulutta bir derleme hazırlar.",
+        "start": "{{platform}} uygulamasını oluştur",
+        "cancel": "Vazgeç"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3623,7 +3648,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "Kanallar",
+      "loading": "Kanallar yükleniyor...",
+      "unavailable": "Kanallar kullanılamıyor",
+      "saveFailed": "Kaydedilemedi",
+      "sending": "Gönderiliyor...",
+      "testSent": "Test {{count}} kanala gönderildi",
+      "testNone": "Bildirimleri açık hazır kanal yok",
+      "testFailed": "Test başarısız",
+      "status": {
+        "ready": "hazır",
+        "offline": "çevrimdışı",
+        "setup": "kurulmalı"
+      },
+      "configure": "Ayarlar > Kanallar bölümünden kurun",
+      "recipient": "{{channel}} alıcısı",
+      "placeholder": {
+        "email": "siz@ornek.com",
+        "telegram": "Sohbet kimliği (ör. 123456789)",
+        "teams": "Teams konuşma kimliği"
+      },
+      "flags": {
+        "notify": "Bildirimler",
+        "notifyTitle": "Hatalar, engeller ve biten görevler bu kanala gönderilir",
+        "approve": "Onaylar",
+        "approveTitle": "Onay istekleri: kodla birlikte YES veya NO yanıtlayın",
+        "chat": "Sohbet",
+        "chatTitle": "Bu kanaldan Navin'e istem gönderin"
+      },
+      "sendTest": "Test gönder",
+      "help": "Onaylar: \"YES kod\", \"NO kod\" veya \"ALWAYS kod\" ile yanıtlayın (ya da isteği soran sohbette /approve ve /deny). Kimlik bilgileri (SMTP, bot, WhatsApp QR kodu, Teams uygulaması) Ayarlar > Kanallar veya MCP üzerinden ayarlanır."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -9657,7 +9714,23 @@
       "queued_other": "{{count}} queued, waiting for a slot",
       "waiting": "Waiting for subagent",
       "waiting_other": "Waiting for {{count}} subagents",
-      "working": "Working…"
+      "working": "Working…",
+      "awaitingApproval": "Onayınız bekleniyor",
+      "answerInChat": "Sohbetteki isteği yanıtlayın",
+      "actionRetry": "Yeniden başlat",
+      "actionCancel": "İptal",
+      "actionDismiss": "Kaldır",
+      "actionRetryAria": "{{name}} yeniden başlat",
+      "actionCancelAria": "{{name}} iptal et",
+      "actionDismissAria": "{{name}} kaldır",
+      "barTitle": "Alt ajanlar",
+      "chipRunning": "{{count}} çalışıyor",
+      "chipQueued": "{{count}} sırada",
+      "chipApproval": "{{count}} onay bekliyor",
+      "chipFailed": "{{count}} başarısız",
+      "chipDone": "{{count}} tamamlandı",
+      "dismissFinished": "Bitenleri kaldır",
+      "moreCount": "+{{count}} daha"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -9707,5 +9780,134 @@
     "loadingDiff": "Fark yükleniyor...",
     "open": "İncele",
     "openTests": "Test raporu ({{passed}} ok, {{failed}} başarısız)"
+  },
+  "infra": {
+    "loading": "Yükleniyor...",
+    "error": "Altyapı verileri yüklenemedi",
+    "retry": "Yeniden dene",
+    "empty": "Henüz veri yok.",
+    "level": {
+      "title": "Özerklik seviyesi",
+      "observe": "Gözlemle",
+      "observeHelp": "Salt okunur: incele, listele ve açıkla, hiçbir şeyi değiştirme.",
+      "prepare": "Hazırla",
+      "prepareHelp": "Planlar ve deneme çalıştırmaları; değişiklikler onayınız için hazırlanır.",
+      "execute": "Yürüt",
+      "executeHelp": "Yetkili değişiklikleri kapsam içinde doğrulama ve geri alma ile uygular.",
+      "criticalNote": "Kritik işlemler (üretim, silmeler, IAM, hassas ağ, veri, maliyetli) her zaman önce size sorar"
+    },
+    "scopes": {
+      "title": "Kapsamlar",
+      "placeholder": "Virgülle ayrılmış, boş = yok",
+      "production_markers": "Üretim işaretleri",
+      "save": "Kaydet",
+      "aws_profiles": "AWS profilleri",
+      "kube_contexts": "Kubernetes bağlamları",
+      "namespaces": "Ad alanları",
+      "gcp_projects": "GCP projeleri",
+      "azure_subscriptions": "Azure abonelikleri"
+    },
+    "contexts": {
+      "title": "Bağlamlar",
+      "empty": "Bağlam algılanmadı."
+    },
+    "none": "yok",
+    "production": "üretim",
+    "warnings": "Uyarılar",
+    "catalog": {
+      "counters": "Kayıt",
+      "noProviders": "Henüz bir şey keşfedilmedi. Bir keşif çalıştırın.",
+      "back": "Sonuçlara dön",
+      "search": "İşlem ara (ör. pod listele, s3 bucket)",
+      "allProviders": "Tüm sağlayıcılar",
+      "risk": "Risk",
+      "allRisks": "Tüm riskler",
+      "tier": "Düzey",
+      "allTiers": "Tüm düzeyler",
+      "total": "{{total}} işlemden {{shown}}",
+      "empty": "Eşleşen işlem yok. Başka bir arama deneyin veya keşif çalıştırın."
+    },
+    "tools": {
+      "title": "Araçlar",
+      "available": "mevcut",
+      "missing": "eksik",
+      "empty": "Araç algılanmadı."
+    },
+    "discover": {
+      "title": "Keşif",
+      "all": "Tümünü keşfet",
+      "running": "Keşif sürüyor, birkaç dakika sürebilir...",
+      "result": "{{count}} işlem, {{ms}} ms",
+      "none": "Keşif sonuç döndürmedi."
+    },
+    "op": {
+      "provider": "Sağlayıcı",
+      "version": "Sürüm",
+      "endpoint": "Uç nokta",
+      "source": "Kaynak",
+      "effects": "Etkiler",
+      "required": "Zorunlu parametreler",
+      "optional": "İsteğe bağlı parametreler",
+      "permissions": "İzinler",
+      "examples": "Örnekler",
+      "verify": "Doğrulama",
+      "rollback": "Geri alma",
+      "compat": "Uyumluluk",
+      "decision": "Karar"
+    },
+    "graph": {
+      "buildFrom": "Şuradan oluştur",
+      "summary": "Özet",
+      "counts": "{{nodes}} kaynak, {{edges}} ilişki",
+      "empty": "Grafik boş. Yukarıdaki bir kaynaktan oluşturun.",
+      "search": "Kaynak ara",
+      "noMatch": "Eşleşen kaynak yok.",
+      "impact": "Etki (buna bağlı olanlar)",
+      "noImpact": "Bu kaynağa bağlı hiçbir şey yok.",
+      "edges": "İlişkiler",
+      "noEdges": "İlişki yok."
+    },
+    "refresh": "Yenile",
+    "audit": {
+      "title": "Denetim",
+      "time": "Zaman",
+      "command": "Komut",
+      "ok": "Başarılı",
+      "verified": "Doğrulandı",
+      "duration": "Süre",
+      "empty": "Henüz kaydedilmiş altyapı komutu yok."
+    },
+    "runs": {
+      "title": "Çalıştırmalar",
+      "noSteps": "Adım yok.",
+      "empty": "Henüz çalıştırma yok."
+    },
+    "tab": {
+      "overview": "Genel bakış",
+      "catalog": "Katalog",
+      "graph": "Grafik",
+      "audit": "Denetim ve çalıştırmalar"
+    },
+    "title": "Altyapı",
+    "subtitle": "Kayıt, politika, kaynak grafiği ve denetim",
+    "risk": {
+      "read": "Okuma",
+      "plan": "Plan",
+      "change": "Değişiklik",
+      "critical": "Kritik"
+    },
+    "tier": {
+      "known": "Bilinen",
+      "available": "Mevcut",
+      "authorized": "Yetkili",
+      "tested": "Test edilmiş"
+    },
+    "decision": {
+      "allow": "İzin ver",
+      "ask": "Sor",
+      "deny": "Reddet"
+    },
+    "yes": "evet",
+    "no": "hayır"
   }
 }

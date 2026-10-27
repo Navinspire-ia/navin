@@ -26,4 +26,12 @@ describe("Other menu scroll", () => {
     expect(chrome).toContain("[data-menu-scroll]::-webkit-scrollbar");
     expect(chrome).toContain("html.native-host [data-panel-scroll]");
   });
+
+  it("drops Ops/Actions and supports badges and sub menus", () => {
+    expect(other).not.toContain("DevOpsActions");
+    expect(other).not.toContain("DevProjectActions");
+    expect(other).toContain("badge?: string");
+    expect(other).toContain("children?: DevOtherMenuItem[]");
+    expect(other).toContain("DropdownMenuSubContent");
+  });
 });

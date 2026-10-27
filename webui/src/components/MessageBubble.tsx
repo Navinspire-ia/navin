@@ -52,6 +52,8 @@ import { matchingSlashCommand } from "@/lib/slash-command";
 import { visibleUserChatText } from "@/lib/chat-visible-text";
 import { splitLongUserText } from "@/lib/pasted-content";
 import { stripModeRoutingSlash } from "@/components/thread/ComposerModeMenu";
+import { AppFactoryRequestCard } from "@/components/thread/AppFactoryRequestCard";
+import { parseAppFactoryCommand } from "@/components/dev/appFactoryTargets";
 import type {
   CliAppInfo,
   McpPresetInfo,
@@ -269,6 +271,8 @@ export const MessageBubble = memo(function MessageBubble({
     const hasMedia = media.length > 0;
     const visibleContent = visibleUserChatText(message.content);
     const hasText = visibleContent.trim().length > 0;
+    // "/apps android" sent by the Code menus: a request card, not a bare word.
+    const appRequest = parseAppFactoryCommand(visibleContent);
     const slashCommand = matchingSlashCommand(visibleContent, slashCommands);
     // Mode routing (/ask, /forge, /blueprint, …) is composer plumbing: show
     // only the prompt text. Checked on the raw first token so it works even
@@ -413,16 +417,20 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
               </TooltipProvider>
             ) : null}
-            <p
-              dir="auto"
-              className={cn(
-                "w-fit max-w-full min-w-0 rounded-[16px] bg-secondary/70 px-3.5 py-2",
-                "text-start text-[length:var(--chat-font-size)] leading-[var(--chat-line-height)]",
-                "whitespace-pre-wrap [overflow-wrap:anywhere]",
-              )}
-            >
-              {messageText}
-            </p>
+            {appRequest ? (
+              <AppFactoryRequestCard target={appRequest} />
+            ) : (
+              <p
+                dir="auto"
+                className={cn(
+                  "w-fit max-w-full min-w-0 rounded-[16px] bg-secondary/70 px-3.5 py-2",
+                  "text-start text-[length:var(--chat-font-size)] leading-[var(--chat-line-height)]",
+                  "whitespace-pre-wrap [overflow-wrap:anywhere]",
+                )}
+              >
+                {messageText}
+              </p>
+            )}
           </div>
         ) : null}
         <RevertPromptDialog

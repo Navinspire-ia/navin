@@ -698,3 +698,169 @@ def test_an_agent_running_in_this_process_is_never_shown_as_interrupted():
     assert shown["phase"] == "tools_completed" and shown["done"] is False
     gone = {**record, "metadata": {**record["metadata"], "task_id": "other"}}
     assert manager._stored_metadata(gone, alive=False)["phase"] == "interrupted"
+
+
+def _interrupted_pair(tmp_path):
+    """A manager whose journal holds one resumable agent and one that needs a relaunch."""
+    manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
+    manager.runner = Runner()
+    manager._build_tools = Mock()
+    manager._build_subagent_prompt = Mock(return_value="Agent")
+    descriptor = {"task": "Implement", "label": "Worker", "agent": None,
+                  "origin": {"channel": "cli", "chat_id": "one", "session_key": "cli:one"},
+                  "origin_message_id": None, "isolate": False, "scope_paths": None,
+                  "workspace": str(tmp_path), "policy": {
+                      "requires_verify_before_done": False, "validate_code_changes": False,
+                      "locked_denied_tools": [], "allowed_tools": None,
+                  }}
+    for task_id, phase in (("safe", "tools_completed"), ("broken", "error")):
+        manager.journal.create("cli:one", task_id, {
+            "task_id": task_id, "label": "Worker", "done": phase == "error", "phase": phase,
+            **({"error": "Model timed out"} if phase == "error" else {}),
+        }, descriptor)
+    manager.journal.checkpoint("cli:one", "safe", {
+        "phase": "tools_completed", "iteration": 1,
+        "assistant_message": {"role": "assistant", "content": "Checking"},
+        "completed_tool_results": [],
+    })
+    with manager.journal._lock, manager.journal._db:
+        manager.journal._db.execute("UPDATE agents SET owner_pid=-1")
+    return manager
+
+
+def test_retry_resumes_when_safe_and_relaunches_a_failed_agent(tmp_path, monkeypatch):
+    async def run():
+        monkeypatch.setattr("navin.agent.subagent._outcomes_dir", lambda: tmp_path / "history")
+        manager = _interrupted_pair(tmp_path)
+        resumed = await manager.retry_agent("cli:one", "safe", runtime=runtime())
+        assert resumed["ok"] and resumed["mode"] == "recover" and resumed["task_id"] == "safe"
+        relaunched = await manager.retry_agent("cli:one", "broken", runtime=runtime())
+        assert relaunched["ok"] and relaunched["mode"] == "relaunch"
+        assert relaunched["task_id"] not in {"", "broken"} and relaunched["task_id"] in relaunched["detail"]
+        await asyncio.gather(*manager._running_tasks.values())
+        assert len(manager.runner.specs) == 2
+        missing = await manager.retry_agent("cli:one", "ghost", runtime=runtime())
+        assert not missing["ok"] and "not found" in missing["error"]
+        await manager.flush_journal()
+        manager._watchdog_task.cancel()
+        await asyncio.gather(manager._watchdog_task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_retry_refuses_an_agent_that_still_runs(tmp_path):
+    async def run():
+        manager = _interrupted_pair(tmp_path)
+        manager._task_statuses["safe"] = SubagentStatus("safe", "Worker", "Implement", 0.0)
+        refused = await manager.retry_agent("cli:one", "safe", runtime=runtime())
+        assert not refused["ok"] and "still running" in refused["error"]
+
+    asyncio.run(run())
+
+
+def test_cancel_stops_one_agent_and_leaves_the_others(tmp_path):
+    from collections import deque
+
+    async def run():
+        manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
+        manager._cancel_wait_s = 1.0
+        started = asyncio.Event()
+
+        async def work():
+            started.set()
+            await asyncio.sleep(30)
+
+        slow, other = asyncio.create_task(work()), asyncio.create_task(work())
+        await started.wait()
+        for task_id, task in (("slow", slow), ("other", other)):
+            manager._running_tasks[task_id] = task
+            manager._task_statuses[task_id] = SubagentStatus(task_id, f"Agent {task_id}", "Work", 0.0)
+        manager._session_tasks["cli:one"] = {"slow", "other"}
+        waiting = SubagentStatus("waiting", "Queued one", "Later", 0.0, phase="queued")
+        manager._queued["cli:one"] = deque([SimpleNamespace(task_id="waiting", label="Queued one", status=waiting)])
+
+        dropped = await manager.cancel_agent("cli:one", "waiting")
+        assert dropped == {"ok": True, "detail": "Cancelled Queued one before it started."}
+        assert "cli:one" not in manager._queued
+        frame = manager.bus.outbound.get_nowait()
+        assert frame is not None and waiting.error_kind == "cancelled" and waiting.phase == "error"
+
+        stopped = await manager.cancel_agent("cli:one", "slow")
+        assert stopped == {"ok": True, "detail": "Stopped Agent slow."}
+        assert slow.cancelled() and not other.done()
+        assert not (await manager.cancel_agent("cli:two", "other"))["ok"]  # another conversation's agent
+        assert "already finished" in (await manager.cancel_agent("cli:one", "slow"))["error"]
+        other.cancel()
+        await asyncio.gather(other, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_cancel_and_retry_go_through_the_runtime_control(tmp_path):
+    from navin.agent.subagent import handle_subagents_query
+    from navin.bus.events import (
+        INBOUND_META_RUNTIME_CONTROL,
+        RUNTIME_CONTROL_ACK,
+        RUNTIME_CONTROL_SUBAGENTS_QUERY,
+    )
+
+    async def run():
+        manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
+        manager.cancel_agent = AsyncMock(return_value={"ok": True, "detail": "Stopped Worker."})
+        manager.retry_agent = AsyncMock(return_value={"ok": True, "detail": "x", "mode": "relaunch", "task_id": "n1"})
+        state = SimpleNamespace(
+            subagents=manager,
+            sessions=SimpleNamespace(get_or_create=lambda key: SimpleNamespace(metadata={})),
+            workspace_scopes=SimpleNamespace(for_turn=lambda **kw: None),
+            llm_runtime=runtime,
+        )
+        answers = {}
+        for operation in ("cancel", "retry"):
+            ack = asyncio.get_running_loop().create_future()
+            msg = SimpleNamespace(metadata={
+                INBOUND_META_RUNTIME_CONTROL: RUNTIME_CONTROL_SUBAGENTS_QUERY,
+                RUNTIME_CONTROL_ACK: ack, "operation": operation, "session_key": "cli:one", "task_id": "w1",
+            })
+            assert await handle_subagents_query(state, msg, None)
+            answers[operation] = await ack
+        assert answers["cancel"] == {"ok": True, "detail": "Stopped Worker."}
+        assert answers["retry"]["mode"] == "relaunch" and answers["retry"]["task_id"] == "n1"
+        manager.cancel_agent.assert_awaited_once_with("cli:one", "w1")
+        assert manager.retry_agent.await_args.args == ("cli:one", "w1")
+        refused = await request_subagent_operation(Bus(), "cli:one", "explode", "w1")
+        assert not refused["ok"]
+
+    asyncio.run(run())
+
+
+def test_card_says_it_waits_for_an_approval_then_goes_back(tmp_path):
+    from navin.agent.approval import ApprovalDecision, ApprovalRequest, SubagentApprovalGate
+
+    async def run():
+        manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
+        status = SubagentStatus("w1", "Worker", "Deploy", 0.0, phase="awaiting_tools", origin_channel="websocket")
+        seen = []
+
+        class Parent:
+            async def ask(self, request):
+                seen.append((status.phase, manager._status_line(status), request.action))
+                return ApprovalDecision(allowed=True, reason="ok")
+
+        gate = SubagentApprovalGate(Parent(), label="Worker", unattended_reason="nobody",
+                                    on_wait=manager._approval_waiter(status))
+        decision = await gate.ask(ApprovalRequest(tool="exec", action="kubectl apply", reason="deploy"))
+        assert decision.allowed
+        assert seen == [("awaiting_approval", "Waiting for your approval", "[subagent Worker] kubectl apply")]
+        assert status.phase == "awaiting_tools"
+        assert manager.bus.outbound.qsize() == 2  # one frame when it starts waiting, one when answered
+
+        def broken(_waiting):
+            raise RuntimeError("display failed")
+
+        seen.clear()
+        loud = SubagentApprovalGate(Parent(), label="Worker", unattended_reason="nobody", on_wait=broken)
+        with pytest.raises(RuntimeError, match="display failed"):
+            await loud.ask(ApprovalRequest(tool="exec", action="ls", reason="look"))
+        assert seen == []  # fails closed: the request was never sent, nothing was approved
+
+    asyncio.run(run())

@@ -1,0 +1,8 @@
+// {{APP_NAME}} desktop app (Navin App Factory). Native features are added as
+// Tauri plugins with the smallest permissions they need (see capabilities/).
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .run(tauri::generate_context!())
+        .expect("error while running the {{APP_NAME}} app");
+}

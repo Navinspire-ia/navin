@@ -47,6 +47,7 @@ MODE_BY_ID: dict[str, ComposerMode] = {m.id: m for m in MODES}
 _ROUTING_ALIASES: frozenset[str] = frozenset(
     {
         "/mobile",
+        "/apps",
         "/board",
         "/turbo",
         "/probe",

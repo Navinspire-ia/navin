@@ -49,8 +49,12 @@ MILESTONE_STATUSES = ("planned", "active", "done")
 ACTOR_TYPES = ("human", "agent", "subagent")
 TASK_VALIDATIONS = ("test", "lint", "verify", "manual", "none")
 
-_MAX_FILE_BYTES = 2 * 1024 * 1024
-_MAX_TASKS = 500
+# A plan of several thousand steps is an ordinary ambition for a project run by
+# agents; the file is read and written whole, off the event loop, so the caps
+# bound the cost of one operation (a few tens of milliseconds in a thread), not
+# the user's plan. tests/test_scale_stress.py measures it at the cap.
+_MAX_FILE_BYTES = 16 * 1024 * 1024
+_MAX_TASKS = 5000
 _MAX_MILESTONES = 60
 _MAX_COMMENTS = 100
 _MAX_LABELS = 10

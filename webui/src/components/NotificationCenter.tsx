@@ -17,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import RemoteChannelsPanel from "@/components/RemoteChannelsPanel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -195,6 +196,7 @@ export default function NotificationCenter({
   const { t } = useTranslation();
   const { notifications, unreadCount, markAllRead, dismiss, clear } = useNotifications();
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"inbox" | "channels">("inbox");
   const [now, setNow] = useState(() => Date.now());
   const [coords, setCoords] = useState<PanelCoords | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -265,8 +267,24 @@ export default function NotificationCenter({
       }}
     >
       <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-3 py-2">
-        <span className="text-[13px] font-semibold">{t("notifications.title")}</span>
-        {notifications.length > 0 ? (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTab("inbox")}
+            className={cn("text-[13px]", tab === "inbox" ? "font-semibold" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("notifications.title")}
+          </button>
+          <button
+            type="button"
+            data-testid="notification-channels-tab"
+            onClick={() => setTab("channels")}
+            className={cn("text-[13px]", tab === "channels" ? "font-semibold" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t("notifications.channels.tab", "Channels")}
+          </button>
+        </div>
+        {tab === "inbox" && notifications.length > 0 ? (
           <button
             type="button"
             onClick={clear}
@@ -276,7 +294,11 @@ export default function NotificationCenter({
           </button>
         ) : null}
       </div>
-      {notifications.length === 0 ? (
+      {tab === "channels" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <RemoteChannelsPanel />
+        </div>
+      ) : notifications.length === 0 ? (
         <p className="px-3 py-8 text-center text-[12px] text-muted-foreground">
           {t("notifications.empty")}
         </p>

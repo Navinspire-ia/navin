@@ -1,7 +1,7 @@
 ---
 name: cloud-gcp
 description: Operate Google Cloud with gcloud - GCE, GKE, storage, networking, IAM, logs, costs. Read-first; mutations gated by approval.
-metadata: {"navin":{"emoji":"🌈","category":"devops","requires":{"bins":["gcloud"]}}}
+metadata: {"navin":{"emoji":"🌈","category":"devops"}}
 ---
 
 # GCP Cloud Operator
@@ -9,6 +9,18 @@ metadata: {"navin":{"emoji":"🌈","category":"devops","requires":{"bins":["gclo
 ## Overview
 
 Drive Google Cloud through `gcloud` (or the gcloud/GKE MCP servers when configured). Always confirm project and zone/region before acting.
+
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: gcp).
+
+1. `infra action=status` - gcloud account, project, impersonated service account, production flag.
+2. `infra action=discover provider=gcp` (`deep=true` adds Google API Discovery) and `infra action=graph op=build`.
+3. `infra action=catalog provider=gcp query=<service>` / `describe`; `infra action=check command="gcloud ..."`; `infra action=run`; `infra action=verify`.
+4. Auth: `infra action=policy op=set auth={gcp_impersonate: <sa>}` (with the user) instead of service account keys.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
 
 ## Common commands
 

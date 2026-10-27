@@ -82,6 +82,7 @@ const MODE_FROM_SLASH: Record<string, ComposerTurnMode> = {
   "/ask": "ask",
   "/forge": "agent",
   "/mobile": "agent",
+  "/apps": "agent",
   "/blueprint": "plan",
   "/board": "plan",
   "/inspect": "review",

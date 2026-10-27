@@ -96,11 +96,39 @@ def test_sandbox_and_tools_shape_what_a_teammate_may_call():
     allowed = allowed_tools_for(nassima)
     assert {"security_scan", "exec", "write_file", "spawn", "team"} <= allowed
     for name in ("Mark", "Daniel", "Lucas"):  # dev, devops, infra: the whole general list
-        assert {"exec", "git", "test_run", "browser", "debug_repair", "start_app"} <= allowed_tools_for(find_member(team, name))
+        assert {"exec", "git", "test_run", "browser", "debug_repair", "start_app", "mobile", "appfactory"} <= allowed_tools_for(find_member(team, name))
+    # The Ops engine goes to the roles that run infrastructure, not to a copywriter.
+    for name in ("Daniel", "Lucas"):
+        assert "infra" in allowed_tools_for(find_member(team, name))
+    assert "infra" not in allowed_tools_for(find_member(team, "Jack"))
     assert {"campaigns", "crm", "leads", "scrape"} <= allowed_tools_for(find_member(team, "Jack"))
     # Read-only stays available when the user picks it.
     assert denied_tools_for({**nassima, "sandbox": "readonly"}) == WRITE_TOOLS
     assert allowed_tools_for({"tools": []}) is None
+
+
+def test_a_saved_team_gets_the_new_tools_on_load():
+    """A team saved before v4 learns mobile, appfactory and (for ops roles) infra; nothing is removed."""
+    from navin.config.schema import COLLAB_TOOLS_VERSION
+
+    saved = {
+        "tools_version": 3,
+        "members": [
+            {"id": "mark", "name": "Mark", "role": "developer", "tools": ["read_file", "my_plugin_tool"]},
+            {"id": "daniel", "name": "Daniel", "role": "devops", "tools": ["exec"]},
+            {"id": "jack", "name": "Jack", "role": "sales", "tools": ["crm"]},
+        ],
+    }
+    collab = CollabConfig(**saved)
+    assert collab.tools_version == COLLAB_TOOLS_VERSION == 4
+    by_name = {member.name: list(member.tools) for member in collab.members}
+    assert {"read_file", "my_plugin_tool", "mobile", "appfactory"} <= set(by_name["Mark"])
+    assert "infra" not in by_name["Mark"]
+    assert {"exec", "infra", "appfactory"} <= set(by_name["Daniel"])
+    assert "infra" not in by_name["Jack"] and {"crm", "mobile"} <= set(by_name["Jack"])
+    # An up-to-date team is left exactly as saved.
+    kept = CollabConfig(tools_version=4, members=[{"id": "zed", "name": "Zed", "role": "custom", "tools": ["read_file"]}])
+    assert list(kept.members[0].tools) == ["read_file"]
 
 
 def test_member_prompt_and_roster_name_the_team():

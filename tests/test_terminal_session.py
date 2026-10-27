@@ -524,5 +524,90 @@ class UnixCtrlCTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TIOCSCTTY", source)
 
 
+class _FakeSession:
+    """Stands in for a PTY session: the open path is under test, not the shell."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.sandboxed = False
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class OpenDoesNotStallTheLoopTest(unittest.IsolatedAsyncioTestCase):
+    """Opening a terminal tab must not freeze the engine for every chat.
+
+    Shell discovery walks PATH and probes WSL, the sandbox wrapper checks its
+    helper: on Windows that took seconds, during which no chat of the Desktop
+    moved. ``open_async`` keeps that work in a thread; the loop only spawns.
+    """
+
+    async def test_slow_shell_discovery_runs_off_the_loop(self) -> None:
+        def slow_prepare(requested: str | None, cwd: str) -> tuple[str, str, list[str], str]:
+            time.sleep(0.5)
+            return "sh", "/bin/sh", ["-l"], cwd
+
+        async def ignore(*_args: object) -> None:
+            return
+
+        manager = TerminalManager()
+        gaps: list[float] = []
+        stop = asyncio.Event()
+
+        async def ticker() -> None:
+            last = time.perf_counter()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.03)
+        started = time.perf_counter()
+        with mock.patch.object(terminal_ws, "prepare_launch", slow_prepare), \
+                mock.patch.object(terminal_ws, "_create_session", _FakeSession):
+            session = await manager.open_async(
+                "conn", terminal_id="t1", shell=None, cwd="/tmp", cols=80, rows=24,
+                on_output=ignore, on_exit=ignore,
+            )
+        elapsed = time.perf_counter() - started
+        stop.set()
+        await task
+
+        self.assertGreaterEqual(elapsed, 0.5)
+        self.assertLess(max(gaps), 0.25, f"event loop froze for {max(gaps):.2f}s")
+        self.assertIs(manager.get("conn", "t1"), session)
+        self.assertEqual(session.kwargs["shell_path"], "/bin/sh")
+        self.assertEqual(session.kwargs["shell_args"], ["-l"])
+        self.assertFalse(session.sandboxed)
+        manager.close("conn", "t1")
+        self.assertTrue(session.closed)
+        self.assertIsNone(manager.get("conn", "t1"))
+
+    async def test_the_same_id_opened_twice_is_refused_even_across_the_thread(self) -> None:
+        async def ignore(*_args: object) -> None:
+            return
+
+        def prepare(requested: str | None, cwd: str) -> tuple[str, str, list[str], str]:
+            return "sh", "/bin/sh", [], cwd
+
+        manager = TerminalManager()
+        with mock.patch.object(terminal_ws, "prepare_launch", prepare), \
+                mock.patch.object(terminal_ws, "_create_session", _FakeSession):
+            await manager.open_async(
+                "conn", terminal_id="dup", shell=None, cwd="/tmp", cols=80, rows=24,
+                on_output=ignore, on_exit=ignore,
+            )
+            with self.assertRaisesRegex(terminal_ws.TerminalError, "already open"):
+                await manager.open_async(
+                    "conn", terminal_id="dup", shell=None, cwd="/tmp", cols=80, rows=24,
+                    on_output=ignore, on_exit=ignore,
+                )
+        manager.cleanup_connection("conn")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
 import type { ShareCipher } from "./share-crypto";
 
 /** Envelopes a guest may send; the host checks the rights again anyway. */
-const GUEST_ENVELOPES = new Set(["message", "choice_answer", "subagents_list", "subagent_history", "subagent_recover", "subagent_relaunch"]);
+const GUEST_ENVELOPES = new Set(["message", "choice_answer", "subagents_list", "subagent_history", "subagent_recover", "subagent_relaunch", "subagent_cancel", "subagent_retry"]);
 
 export interface ShareSnapshot {
   chat_id: string;

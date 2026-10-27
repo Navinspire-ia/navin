@@ -1,0 +1,18 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { createHashRouter, RouterProvider } from "react-router";
+import { installFetchBase } from "./api";
+import { routes } from "./routes";
+import "./app.css";
+
+// Relative calls such as fetch("/api/...") in reused components go to the backend.
+installFetchBase();
+
+// Hash routing: every screen loads from the packaged files, also after a reload.
+const router = createHashRouter(routes);
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <RouterProvider router={router} />
+  </StrictMode>,
+);

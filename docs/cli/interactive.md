@@ -37,6 +37,10 @@ Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash com
 
 `exit`, `quit`, or `:q` in an empty prompt also quits.
 
+## Projects and sessions
+
+**Ctrl+S** (or **Sessions** in the bottom line) lists every project with its latest sessions. Several sessions can work at once, in one project or in several: opening another project does not stop the one you leave. Its work goes on in the background, a spinner stays on each working session and on its folder, and a short note says when one finishes or waits for your answer. Opening the project again brings it back as it was: its draft, its queued messages, what the turn did meanwhile, then the rest live. A session that is still working cannot be deleted (stop it first with Esc), and quitting while other projects still work asks first. The **⋯** menu of a session opens, forks (a copy of the chat to go on from there), renames, pins, downloads, shares or deletes it.
+
 ## Modes
 
 Default is **agent**. `/mode` or **Ctrl+T** opens the list: chat, ask, plan, agent, review, security, debug.

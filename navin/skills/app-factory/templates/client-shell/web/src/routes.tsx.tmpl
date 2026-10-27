@@ -1,0 +1,9 @@
+import type { RouteObject } from "react-router";
+import { Status } from "./Status";
+
+// Screens of the website ported to the app (see ../MIGRATION.md). Each entry
+// reuses the site's components; data comes from the backend through ./api.
+export const routes: RouteObject[] = [
+  { path: "/", element: <Status /> },
+  { path: "*", element: <Status /> },
+];

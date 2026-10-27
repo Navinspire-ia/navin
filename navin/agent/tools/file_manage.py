@@ -242,11 +242,11 @@ class ManageFilesTool(_FsTool):
                         f"{raw} is a directory. Pass recursive=true to remove it "
                         "and everything inside it."
                     )
-                doomed.extend(_files_under(target))
+                doomed.extend(await asyncio.to_thread(_files_under, target))
             else:
                 doomed.append(target)
 
-        self._refuse_oversized(doomed, "delete")
+        await asyncio.to_thread(self._refuse_oversized, doomed, "delete")
         warnings = await asyncio.to_thread(self._warn_about, doomed)
         await self._ask_before_losing(
             "delete",
@@ -255,13 +255,7 @@ class ManageFilesTool(_FsTool):
         )
         _record_baselines(doomed)
 
-        removed_dirs = 0
-        for _raw, target in targets:
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
-                removed_dirs += 1
-            else:
-                target.unlink()
+        removed_dirs = await asyncio.to_thread(_remove_targets, [t for _r, t in targets])
         for file in doomed:
             self._file_states.record_write(file)
 
@@ -286,7 +280,7 @@ class ManageFilesTool(_FsTool):
             return f"Directory already exists: {self._display(target)}"
         if target.exists():
             raise _ManageError(f"{raw} already exists and is not a directory")
-        target.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
         return f"Created directory {self._display(target)}"
 
     # -- move / copy --------------------------------------------------------
@@ -328,16 +322,16 @@ class ManageFilesTool(_FsTool):
         # shutil.move nest the source inside it (dest/name/name) instead of
         # replacing it.
         collides = destination.exists() or destination.is_symlink()
-        replaced = _files_under(destination) if collides else []
+        replaced = await asyncio.to_thread(_files_under, destination) if collides else []
         if collides and not overwrite:
             raise _ManageError(
                 f"{self._display(destination)} already exists. Pass overwrite=true "
                 "to replace it."
             )
 
-        arriving = _files_under(source)
+        arriving = await asyncio.to_thread(_files_under, source)
         tracked = [*replaced, *([] if action == "copy" else arriving)]
-        self._refuse_oversized(tracked, action)
+        await asyncio.to_thread(self._refuse_oversized, tracked, action)
         warnings = await asyncio.to_thread(self._warn_about, tracked)
         await self._ask_before_losing(
             action,
@@ -355,20 +349,9 @@ class ManageFilesTool(_FsTool):
         if action == "move":
             _record_baselines(arriving)
 
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if collides:
-            if destination.is_dir() and not destination.is_symlink():
-                shutil.rmtree(destination)
-            else:
-                destination.unlink()
-        if action == "move":
-            shutil.move(str(source), str(destination))
-        elif source.is_dir():
-            shutil.copytree(source, destination)
-        else:
-            shutil.copy2(source, destination)
-
-        landed = _files_under(destination)
+        landed = await asyncio.to_thread(
+            _do_transfer, action, source, destination, collides
+        )
         for file in [*arriving, *landed]:
             self._file_states.record_write(file)
 
@@ -483,3 +466,32 @@ class ManageFilesTool(_FsTool):
         if not warnings:
             return body
         return "\n".join([*warnings, "", body])
+
+
+def _remove_targets(targets: list[Path]) -> int:
+    """Delete each target (runs in a worker thread); return the trees removed."""
+    removed_dirs = 0
+    for target in targets:
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+            removed_dirs += 1
+        else:
+            target.unlink()
+    return removed_dirs
+
+
+def _do_transfer(action: str, source: Path, destination: Path, collides: bool) -> list[Path]:
+    """Move or copy source to destination (worker thread); return landed files."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if collides:
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    if action == "move":
+        shutil.move(str(source), str(destination))
+    elif source.is_dir():
+        shutil.copytree(source, destination)
+    else:
+        shutil.copy2(source, destination)
+    return _files_under(destination)

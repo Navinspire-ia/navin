@@ -936,6 +936,10 @@ class GatewayHTTPHandler:
         if m:
             return await self._handle_board_autonomy(request, m.group(1))
 
+        m = re.match(r"^/api/sessions/([^/]+)/infra(?:/(discover|catalog|operation|graph|audit|runs))?$", got)
+        if m:
+            return await self._handle_infra(request, m.group(1), m.group(2) or "")
+
         m = re.match(r"^/api/sessions/([^/]+)/cognition$", got)
         if m:
             return await self._handle_cognition(request, m.group(1))
@@ -1728,6 +1732,27 @@ class GatewayHTTPHandler:
         except BoardError as e:
             return _http_error(e.status, e.message)
         publish_board_update(self.bus, str(scope.project_path))
+        return _http_json_response(payload)
+
+    async def _handle_infra(self, request: WsRequest, key: str, section: str) -> Response:
+        """The Infrastructure section of the Ops panel (navin.webui.infra_api)."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        from navin.webui.infra_api import InfraApiError, infra_payload
+
+        query = _parse_query(request.path)
+        try:
+            scope = self.workspaces.scope_for_session_key(decoded_key)
+            payload = await asyncio.to_thread(
+                infra_payload, Path(scope.project_path).expanduser(), section, query
+            )
+        except InfraApiError as e:
+            return _http_error(e.status, e.message)
         return _http_json_response(payload)
 
     async def _handle_board_autonomy(self, request: WsRequest, key: str) -> Response:

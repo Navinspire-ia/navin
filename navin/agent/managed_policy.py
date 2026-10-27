@@ -52,7 +52,7 @@ POLICY_SOURCE_VARS = (ENV_PATH, "ProgramData", "PROGRAMDATA")
 LOCKDOWN_DENY = (
     "exec", "shell", "bash", "write_file", "edit_file", "apply_patch", "manage_files",
     "notebook_edit", "browser", "web_fetch", "web_search", "spawn", "mobile", "project",
-    "start_app", "git", "forge", "pr_comments", "exec_remote",
+    "start_app", "git", "forge", "pr_comments", "exec_remote", "infra", "appfactory",
 )
 
 

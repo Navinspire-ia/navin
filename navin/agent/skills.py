@@ -29,6 +29,8 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 
 _RESOLVED_PATH_CACHE: dict = {}
 _SKILL_META_TTL: dict = {}
+# How long _skill_path trusts a SKILL.md it checked (exists, inside the roots).
+_VERIFIED_PATH_TTL_S = 5.0
 
 # Frontmatter metadata per SKILL.md, validated by (mtime_ns, size). The
 # context builder asks for every skill's metadata several times per turn
@@ -755,12 +757,24 @@ class SkillsLoader:
             return None
         _, by_name = self._scan()
         known = by_name.get(name)
-        if (
-            known is not None
-            and known.is_file()
-            and self._contained_in_skill_roots(known)
-        ):
-            return known
+        if known is not None:
+            # A path checked a moment ago is trusted for the same 5 s as the
+            # resolve cache below: a prompt build asks for every skill, and a
+            # stat plus the containment check per skill per lookup showed up
+            # in the CLI freeze log (_skill_path, _contained_in_skill_roots).
+            # A file removed or a symlink retargeted is caught within 5 s.
+            now = time.monotonic()
+            verified = getattr(self, "_verified_paths", None)
+            if verified is None or verified[0] != _SCAN_GENERATION:
+                verified = (_SCAN_GENERATION, {})
+                self._verified_paths = verified
+            hit = verified[1].get(name)
+            if hit is not None and hit[0] == known and now - hit[1] < _VERIFIED_PATH_TTL_S:
+                return known
+            if known.is_file() and self._contained_in_skill_roots(known):
+                verified[1][name] = (known, now)
+                return known
+            verified[1].pop(name, None)
         # Not in the scan: a skill written a moment ago, a name the scan
         # skips on purpose (README.md style), or a stale entry. Probe the roots.
         for root in self._skill_roots():

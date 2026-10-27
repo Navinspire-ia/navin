@@ -1,0 +1,29 @@
+# Builds the {{TARGET_LABEL}} app of {{APP_NAME}}. Copy to .github/workflows/{{TARGET}}.yml to use it.
+name: app-{{TARGET}}
+on:
+  workflow_dispatch:
+  push:
+    paths: ["{{FOLDER}}/**"]
+jobs:
+  build:
+    runs-on: {{CI_RUNNER}}
+    defaults:
+      run:
+        working-directory: {{FOLDER}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+{{CI_PLATFORM_SETUP}}
+      - run: {{PM}} install
+      - run: node scripts/build-web.mjs
+        env:
+          {{API_ENV_LINE}}
+      - run: {{PM_EXEC}} tauri icon app-icon.png
+      - run: {{PM_EXEC}} tauri build --bundles {{BUNDLES}}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: {{APP_SLUG}}-{{TARGET}}
+          path: {{CI_ARTIFACTS}}

@@ -135,6 +135,8 @@ def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
             patch("navin.cron.service.CronService"),
             patch("navin.cron.spend.CronSpendHook", NoopHook),
             patch("navin.webui.token_usage.TokenUsageHook", NoopHook),
+            # The real update server would add an "update available" row mid-test.
+            patch("navin.update.notice.update_notice", return_value=""),
         ):
             try:
                 async with app.run_test(size=(100, 32)) as pilot:
@@ -230,6 +232,8 @@ def test_send_now_opens_a_fresh_bubble_below_the_message(tmp_path):
             patch("navin.cron.service.CronService"),
             patch("navin.cron.spend.CronSpendHook", NoopHook),
             patch("navin.webui.token_usage.TokenUsageHook", NoopHook),
+            # The real update server would add an "update available" row mid-test.
+            patch("navin.update.notice.update_notice", return_value=""),
         ):
             try:
                 async with app.run_test(size=(100, 32)) as pilot:

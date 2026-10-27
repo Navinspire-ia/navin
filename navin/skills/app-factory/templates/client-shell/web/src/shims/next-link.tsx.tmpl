@@ -1,0 +1,28 @@
+// next/link for the app build: website components keep their imports.
+import { forwardRef, type AnchorHTMLAttributes, type ReactNode } from "react";
+import { Link as RouterLink } from "react-router";
+
+type Href = string | { pathname?: string; query?: Record<string, string> };
+type Props = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+  href: Href;
+  replace?: boolean;
+  prefetch?: boolean | null;
+  scroll?: boolean;
+  children?: ReactNode;
+};
+
+function toPath(href: Href): string {
+  if (typeof href === "string") return href;
+  const query = href.query ? `?${new URLSearchParams(href.query).toString()}` : "";
+  return `${href.pathname || ""}${query}`;
+}
+
+const Link = forwardRef<HTMLAnchorElement, Props>(function Link({ href, replace, prefetch, scroll, ...rest }, ref) {
+  void prefetch;
+  void scroll;
+  const to = toPath(href);
+  if (/^[a-z][a-z0-9+.-]*:/i.test(to)) return <a ref={ref} href={to} {...rest} />;
+  return <RouterLink ref={ref} to={to} replace={replace} {...rest} />;
+});
+
+export default Link;

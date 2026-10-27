@@ -13,7 +13,6 @@ import {
 } from "react";
 import {
   Activity,
-  Beaker,
   Blocks,
   BookMarked,
   BrainCircuit,
@@ -67,6 +66,7 @@ import {
   Search,
   ShieldCheck,
   Smartphone,
+  Info,
   TerminalSquare,
   Trash2,
   UsersRound,
@@ -111,6 +111,14 @@ import {
   type ContextMenuEntry,
 } from "@/components/ui/context-menu";
 import { DevOtherMenu, type DevOtherMenuItem } from "@/components/dev/DevOtherMenu";
+import { AppFactoryConfirmDialog, AppFactoryDialog } from "@/components/dev/AppFactoryDialog";
+import { PlatformLogo } from "@/components/dev/PlatformLogo";
+import {
+  APP_FACTORY_DESKTOP_ICON,
+  appFactoryCommand,
+  appFactoryTargetsOf,
+  type AppFactoryKind,
+} from "@/components/dev/appFactoryTargets";
 import { SHARE_SITE_EVENT } from "@/lib/share-events";
 import { noteRunningSite } from "@/lib/running-site";
 import { DevPreviewBrowser } from "@/components/dev/DevPreviewBrowser";
@@ -4775,14 +4783,50 @@ export function DevWorkbench({
     setTerminalMaximized(false);
     setMode(next);
   };
+  const [appFactoryDialog, setAppFactoryDialog] = useState<
+    null | AppFactoryKind | "all"
+  >(null);
+  // Target picked in a menu, waiting for "Create the <platform> app?".
+  const [appFactoryConfirm, setAppFactoryConfirm] = useState<string | null>(null);
+  const appFactoryMenuItems = (): DevOtherMenuItem[] =>
+    onRunAction
+      ? (["mobile", "desktop"] as const).map((kind) => {
+          const Icon = kind === "mobile" ? Smartphone : APP_FACTORY_DESKTOP_ICON;
+          return {
+            key: kind === "mobile" ? "appsMobile" : "appsDesktop",
+            icon: <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+            label:
+              kind === "mobile"
+                ? tx("dev.appsMobile", "Mobile apps")
+                : tx("dev.appsDesktop", "Desktop apps"),
+            badge: tx("dev.reverseNew", "NEW"),
+            onSelect: () => {},
+            children: [
+              {
+                key: "learnMore",
+                icon: <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.appFactory.learnMore", "What is this?"),
+                onSelect: () => setAppFactoryDialog(kind),
+              },
+              ...appFactoryTargetsOf(kind).map((target, index) => ({
+                key: target.id,
+                separatorBefore: index === 0,
+                icon: <PlatformLogo id={target.id} className="h-3.5 w-3.5" />,
+                label: target.label,
+                hint: target.deliverables,
+                // Nothing starts from the menu: the confirmation asks first.
+                onSelect: () => setAppFactoryConfirm(target.id),
+              })),
+            ],
+          };
+        })
+      : [];
   const moreMenuActive =
     debugOpen ||
-    mode === "tests" ||
     mode === "processes" ||
     mode === "project" ||
     mode === "extensions" ||
     mode === "templates" ||
-    mode === "mobile" ||
     mode === "agentBrowser";
   const toolbarOtherActive =
     moreMenuActive ||
@@ -4799,6 +4843,7 @@ export function DevWorkbench({
     wrap: (action: () => void) => () => void,
     exclude: readonly string[] = [],
   ): DevOtherMenuItem[] => [
+    ...appFactoryMenuItems(),
     {
       key: "skills",
       icon: <PackagePlus className="h-3.5 w-3.5 shrink-0" aria-hidden />,
@@ -4875,15 +4920,8 @@ export function DevWorkbench({
       onSelect: wrap(() => showMode("board")),
     },
     {
-      key: "tests",
-      separatorBefore: true,
-      icon: <Beaker className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-      label: tx("dev.testsTab", "Tests"),
-      active: mode === "tests",
-      onSelect: wrap(() => showMode("tests")),
-    },
-    {
       key: "processes",
+      separatorBefore: true,
       icon: <Activity className="h-3.5 w-3.5 shrink-0" aria-hidden />,
       label: tx("dev.panel.processes", "Processes"),
       active: mode === "processes",
@@ -4909,13 +4947,6 @@ export function DevWorkbench({
       label: tx("dev.templatesTab", "Templates"),
       active: mode === "templates",
       onSelect: wrap(() => showMode("templates")),
-    },
-    {
-      key: "mobile",
-      icon: <Smartphone className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-      label: tx("dev.mobileTab", "Mobile"),
-      active: mode === "mobile",
-      onSelect: wrap(() => showMode("mobile")),
     },
     ...(agentBrowser
       ? [
@@ -4977,6 +5008,28 @@ export function DevWorkbench({
     onMaximizeChat?.();
     action();
   };
+  const appFactoryDialogEl = onRunAction ? (
+    <>
+      <AppFactoryDialog
+        open={appFactoryDialog !== null}
+        onOpenChange={(next) => {
+          if (!next) setAppFactoryDialog(null);
+        }}
+        initialKind={appFactoryDialog === "all" ? null : appFactoryDialog}
+        onStart={setAppFactoryConfirm}
+      />
+      <AppFactoryConfirmDialog
+        targetId={appFactoryConfirm}
+        projectName={projectName ?? null}
+        onCancel={() => setAppFactoryConfirm(null)}
+        onConfirm={(id) => {
+          setAppFactoryConfirm(null);
+          if (collapsed) onMaximizeChat?.();
+          onRunAction(appFactoryCommand(id));
+        }}
+      />
+    </>
+  ) : null;
   const collapsedRail = collapsed ? (
       <div
         className={cn(
@@ -5178,6 +5231,21 @@ export function DevWorkbench({
                 active: false,
                 go: () => requestReverseLaunch(),
               },
+              ...appFactoryMenuItems().map((item) => ({
+                key: item.key,
+                icon: item.icon,
+                label: item.label,
+                badge: {
+                  text: tx("dev.reverseNew", "NEW"),
+                  tone: "bg-amber-400/80",
+                  title: tx("dev.appFactory.learnMore", "What is this?"),
+                },
+                onBadgeClick: () =>
+                  setAppFactoryDialog(item.key === "appsMobile" ? "mobile" : "desktop"),
+                menu: (item.children ?? []).filter((child) => child.key !== "learnMore"),
+                active: false,
+                go: () => {},
+              })),
               {
                 // First module after the project folder picker.
                 key: "agi",
@@ -5338,12 +5406,75 @@ export function DevWorkbench({
               extra?: ReactNode;
               /** dot: a small quiet marker (new feature) instead of a text pill; the text stays as its label. */
               badge?: { text: string; tone: string; title: string; dot?: boolean };
+              /** Opens the badge's explanation instead of the entry action. */
+              onBadgeClick?: () => void;
+              /** Sub menu shown when the entry is clicked (app targets). */
+              menu?: DevOtherMenuItem[];
               active: boolean;
               go: () => void;
             } | null>
           )
             .filter((entry) => entry !== null)
-            .map((entry) => (
+            .map((entry) => entry.menu ? (
+              <div key={entry.key} className="relative flex w-full items-center">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(railItem(entry.active), "relative", entry.badge && !railIconsOnly && "pe-11")}
+                      title={railIconsOnly ? entry.label : undefined}
+                      aria-label={railIconsOnly ? entry.label : undefined}
+                      data-testid={`dev-rail-${entry.key}`}
+                    >
+                      {entry.icon}
+                      {railIconsOnly ? null : <span className="truncate">{entry.label}</span>}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="left" align="start" className="w-56">
+                    {entry.menu.map((target) => (
+                      <DropdownMenuItem
+                        key={target.key}
+                        // The confirmation dialog restores the layout once the user agrees.
+                        onSelect={target.onSelect}
+                        data-testid={`dev-rail-${entry.key}-${target.key}`}
+                      >
+                        {target.icon}
+                        <span className="min-w-0">
+                          <span className="block truncate">{target.label}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {target.hint}
+                          </span>
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {entry.badge ? (
+                  <button
+                    type="button"
+                    onClick={entry.onBadgeClick}
+                    aria-label={tx("dev.appFactory.learnMore", "What is this?")}
+                    title={entry.badge.title}
+                    className={cn(
+                      "absolute grid place-items-center rounded-full p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      railIconsOnly ? "-end-1 -top-1" : "end-1 top-1/2 -translate-y-1/2",
+                    )}
+                    data-testid={`dev-rail-${entry.key}-badge`}
+                  >
+                    {/* The yellow NEW pill, like the Other menu; it opens the explanation. */}
+                    <span
+                      className={cn(
+                        "block rounded-full font-semibold text-black",
+                        entry.badge.tone,
+                        railIconsOnly ? "px-1 text-[8px] leading-3" : "px-1.5 text-[9px] leading-4",
+                      )}
+                    >
+                      {entry.badge.text}
+                    </span>
+                  </button>
+                ) : null}
+              </div>
+            ) : (
               <button
                 key={entry.key}
                 type="button"
@@ -5392,9 +5523,6 @@ export function DevWorkbench({
           <DevOtherMenu
             triggerClassName={railItem(moreMenuActive || mode === "agi" || mode === "computer")}
             showTriggerLabel={!railIconsOnly}
-            onSeed={onSeedChat}
-            onRun={onRunAction}
-            activeFilePath={mode === "code" ? activeTab : null}
             items={overflowMenuItems((action) => restoreAnd(action), [
               "skills",
               "evolve",
@@ -5585,6 +5713,7 @@ export function DevWorkbench({
             )}
           </div>
           {collapsedRail}
+          {appFactoryDialogEl}
         </div>
         {renderStatusBar()}
       </div>
@@ -5618,6 +5747,7 @@ export function DevWorkbench({
       commands={workbenchCommands}
       onOpenChange={setCommandPalette}
     />
+    {appFactoryDialogEl}
     <DevLocationPicker
       open={locationPicker != null}
       title={locationPicker?.title ?? ""}
@@ -6094,9 +6224,6 @@ export function DevWorkbench({
                     <DevOtherMenu
                       triggerClassName={navBtn(toolbarOtherActive)}
                       showTriggerLabel={false}
-                      onSeed={onSeedChat}
-                      onRun={onRunAction}
-                      activeFilePath={mode === "code" ? activeTab : null}
                       items={overflowMenuItems((action) => action)}
                     />
                     </div>

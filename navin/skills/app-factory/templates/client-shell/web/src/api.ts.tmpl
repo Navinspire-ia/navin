@@ -1,0 +1,45 @@
+// Calls to the existing backend from the app. The address comes from
+// appfactory.json (backend_url) or VITE_API_BASE_URL at build time.
+declare const __NAVIN_BACKEND_URL__: string;
+
+export const API_BASE = String(import.meta.env.VITE_API_BASE_URL || __NAVIN_BACKEND_URL__ || "").replace(/\/$/, "");
+const TOKEN_KEY = "navin.auth.token";
+
+export class ApiError extends Error {
+  constructor(readonly status: number, readonly body: string) {
+    super(`HTTP ${status}`);
+  }
+}
+
+export function setAuthToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function withAuth(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
+  if (init.body && typeof init.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  // Cookies of the backend travel too (the backend sets SameSite=None; Secure).
+  return { ...init, headers, credentials: init.credentials ?? "include" };
+}
+
+export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(API_BASE + path, withAuth(init));
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+  const type = response.headers.get("content-type") || "";
+  return (type.includes("application/json") ? await response.json() : await response.text()) as T;
+}
+
+// Sends relative calls ("/api/...") made by reused components to the backend.
+export function installFetchBase(): void {
+  if (!API_BASE) return;
+  const original = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof input === "string" && input.startsWith("/") && !input.startsWith("//")) {
+      return original(API_BASE + input, withAuth(init));
+    }
+    return original(input, init);
+  };
+}

@@ -1,7 +1,7 @@
 ---
 name: cloud-aws
 description: Operate AWS with the aws CLI - EC2, EKS, S3, IAM, VPC, RDS, Lambda, costs. Read-first; mutations gated by approval.
-metadata: {"navin":{"emoji":"🟠","category":"devops","requires":{"bins":["aws"]}}}
+metadata: {"navin":{"emoji":"🟠","category":"devops"}}
 ---
 
 # AWS Cloud Operator
@@ -9,6 +9,19 @@ metadata: {"navin":{"emoji":"🟠","category":"devops","requires":{"bins":["aws"
 ## Overview
 
 Drive AWS through the `aws` CLI (or the AWS MCP servers when configured). Always confirm account and region before acting.
+
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: aws).
+
+1. `infra action=status` - AWS profile, SSO session, account, region, production flag.
+2. `infra action=discover provider=aws` (`deep=true` adds Cloud Control types) and `infra action=graph op=build sources=[aws]`.
+3. `infra action=catalog provider=aws query=<service>` / `describe operation=<id>` for exact parameters and IAM permissions; `infra action=access operations=[...]` simulates them.
+4. `infra action=check command="aws ..."`, then `infra action=run command="aws ..."` (read commands run at observe), `infra action=verify`.
+5. Multi-step changes: `infra action=plan`. Architecture work: `aws-architect`.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
 
 ## Common commands
 

@@ -5048,6 +5048,7 @@ function Shell({
                     projectName={activeWorkspaceScope?.project_name ?? null}
                     recentProjects={sidebarState.recent_projects ?? []}
                     onSelectProject={onSelectDevProject}
+                    sessionKey={activeKey}
                   />
                 )}
                 </Suspense>

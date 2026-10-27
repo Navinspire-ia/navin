@@ -56,6 +56,9 @@ _FORK_VOLATILE_METADATA_KEYS = {
     "thread_goal",
     "title",
     "title_user_edited",
+    # navin.session.turn_recovery.RECOVERY_KEY: a fork of a chat cut mid-turn
+    # must not replay the source's request on the next start.
+    "turn_recovery",
 }
 
 
@@ -484,6 +487,14 @@ def _is_dirty(session: Session) -> bool:
     return saved is None or saved != _session_fingerprint(session)
 
 
+def _metadata_copy(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A copy of a metadata record the caller may change (two levels, no deep walk)."""
+    if record is None:
+        return None
+    metadata = record.get("metadata")
+    return {**record, "metadata": dict(metadata) if isinstance(metadata, dict) else {}}
+
+
 class _SessionCache:
     """Bounded session cache that never holds two copies of one session.
 
@@ -643,6 +654,8 @@ class SessionManager:
         # Bounded: only the most recently used sessions are pinned; others stay
         # reachable (same object) while anything still references them.
         self._cache = _SessionCache(self, max(1, int(max_cached_sessions)))
+        # Metadata lines read from disk, by path, valid while (mtime, size) match.
+        self._metadata_reads: dict[str, tuple[tuple[int, int], dict[str, Any] | None]] = {}
         self._pending_fsync: set[Path] = set()
         # Writes of one session are ordered: every save takes the next number
         # when it is asked for, and a write never replaces a newer one, even
@@ -1236,11 +1249,38 @@ class SessionManager:
         """Load only the metadata record from a session file.
 
         This is used by WebUI routes that need session-level metadata but not the
-        full conversation transcript.
+        full conversation transcript. Many of them run on the engine loop, so a
+        session already loaded answers from memory, and a file read once is
+        reused while its size and modification time stay the same (5.6 s on
+        the loop for one read in the Desktop engine log of 2026-10-26).
         """
+        loaded = self._cache.get(key)
+        if loaded is not None:
+            return {
+                "key": loaded.key,
+                "created_at": loaded.created_at.isoformat(),
+                "updated_at": loaded.updated_at.isoformat(),
+                "metadata": dict(loaded.metadata) if isinstance(loaded.metadata, dict) else {},
+            }
         path = self._get_session_path(key)
-        if not path.exists():
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
             return None
+        except OSError:
+            # Not readable as a file right now: the full read reports and repairs.
+            return self._read_session_metadata_file(key, path)
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        hit = self._metadata_reads.get(str(path))
+        if hit is not None and hit[0] == stamp:
+            return _metadata_copy(hit[1])
+        result = self._read_session_metadata_file(key, path)
+        if len(self._metadata_reads) >= 512:
+            self._metadata_reads.pop(next(iter(self._metadata_reads)))
+        self._metadata_reads[str(path)] = (stamp, _metadata_copy(result))
+        return result
+
+    def _read_session_metadata_file(self, key: str, path: Path) -> dict[str, Any] | None:
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:

@@ -2026,7 +2026,32 @@
     "workspace": "workspace",
     "browserShare": "Diese App teilen (navin.live-Link)",
     "browserLogins": "Site-Anmeldungen für diese App",
-    "terminalSearch": "Im Terminal suchen"
+    "terminalSearch": "Im Terminal suchen",
+    "appsMobile": "Mobile Apps",
+    "appsDesktop": "Desktop-Apps",
+    "appFactory": {
+      "title": "Projekt in eine App verwandeln",
+      "intro": "Navin verwandelt das aktuelle Projekt in Apps für Windows, macOS, Linux, Android und iOS. Das Webprojekt und das Backend bleiben unverändert: alles wird in einen eigenen Ordner os/<plattform> geschrieben.",
+      "learnMore": "Was ist das?",
+      "honest": "Navin meldet, welche Tests liefen und welche auf diesem Rechner nicht laufen konnten.",
+      "steps": {
+        "analyze": "Projektanalyse",
+        "adapt": "Anpassung",
+        "build": "Build",
+        "test": "Tests",
+        "deliver": "Auslieferung"
+      },
+      "confirm": {
+        "title": "Die {{platform}}-App Ihres Projekts erstellen?",
+        "body": "Navin analysiert Ihr Projekt, passt es an, baut die App, testet sie und übergibt Ihnen das Paket. Alles wird in {{folder}} geschrieben: Ihre Website und Ihr Backend bleiben unverändert.",
+        "project": "Projekt",
+        "package": "Paket",
+        "folder": "Ordner",
+        "tools": "Fehlende Build-Werkzeuge werden nur mit Ihrer Zustimmung installiert. Kann dieser Computer die App nicht bauen, sagt Navin es Ihnen und bereitet einen Cloud-Build vor.",
+        "start": "{{platform}}-App erstellen",
+        "cancel": "Abbrechen"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "Die Datei ist zu groß, um sie aus dem editor zu speichern (max {{max}} MB)",
@@ -3769,7 +3794,39 @@
     "updateFailedDetail": "Sie sind noch auf der vorherigen Version. Versuchen Sie es erneut über die Einstellungen.",
     "updateInstalled": "Navin ist auf dem neuesten Stand",
     "updateInstalledDetail": "Das update ist fertig, Sie haben die neueste Version.",
-    "updateManual": "Führen Sie das update mit Ihrem Paketmanager durch."
+    "updateManual": "Führen Sie das update mit Ihrem Paketmanager durch.",
+    "channels": {
+      "tab": "Kanäle",
+      "loading": "Kanäle werden geladen...",
+      "unavailable": "Kanäle nicht verfügbar",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "sending": "Wird gesendet...",
+      "testSent": "Test an {{count}} Kanal/Kanäle gesendet",
+      "testNone": "Kein bereiter Kanal mit aktiven Benachrichtigungen",
+      "testFailed": "Test fehlgeschlagen",
+      "status": {
+        "ready": "bereit",
+        "offline": "offline",
+        "setup": "einzurichten"
+      },
+      "configure": "In Einstellungen > Kanäle einrichten",
+      "recipient": "Empfänger {{channel}}",
+      "placeholder": {
+        "email": "sie@beispiel.de",
+        "telegram": "Chat-ID (z. B. 123456789)",
+        "teams": "Teams-Unterhaltungs-ID"
+      },
+      "flags": {
+        "notify": "Benachrichtigungen",
+        "notifyTitle": "Fehler, Blockaden und abgeschlossene Aufgaben an diesen Kanal",
+        "approve": "Freigaben",
+        "approveTitle": "Freigabeanfragen: mit YES oder NO und dem Code antworten",
+        "chat": "Austausch",
+        "chatTitle": "Prompts aus diesem Kanal an Navin senden"
+      },
+      "sendTest": "Test senden",
+      "help": "Freigaben: mit \"YES Code\", \"NO Code\" oder \"ALWAYS Code\" antworten (oder /approve und /deny im anfragenden Chat). Zugangsdaten (SMTP, Bot, WhatsApp-QR-Code, Teams-App) werden unter Einstellungen > Kanäle oder per MCP festgelegt."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -10369,7 +10426,23 @@
           "ok": "Dateien bearbeitet",
           "error": "Dateien konnten nicht bearbeitet werden"
         }
-      }
+      },
+      "awaitingApproval": "Wartet auf Ihre Freigabe",
+      "answerInChat": "Beantworten Sie die Anfrage im Chat",
+      "actionRetry": "Neu starten",
+      "actionCancel": "Abbrechen",
+      "actionDismiss": "Ausblenden",
+      "actionRetryAria": "{{name}} neu starten",
+      "actionCancelAria": "{{name}} abbrechen",
+      "actionDismissAria": "{{name}} ausblenden",
+      "barTitle": "Subagenten",
+      "chipRunning": "{{count}} laufen",
+      "chipQueued": "{{count}} in Warteschlange",
+      "chipApproval": "{{count}} warten auf Freigabe",
+      "chipFailed": "{{count}} fehlgeschlagen",
+      "chipDone": "{{count}} fertig",
+      "dismissFinished": "Fertige ausblenden",
+      "moreCount": "+{{count}} weitere"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -11317,5 +11390,134 @@
     "loadingDiff": "Diff wird geladen...",
     "open": "Prüfen",
     "openTests": "Testbericht ({{passed}} ok, {{failed}} fehlgeschlagen)"
+  },
+  "infra": {
+    "loading": "Wird geladen...",
+    "error": "Infrastrukturdaten konnten nicht geladen werden",
+    "retry": "Erneut versuchen",
+    "empty": "Noch keine Daten.",
+    "level": {
+      "title": "Autonomiestufe",
+      "observe": "Beobachten",
+      "observeHelp": "Nur Lesen: prüfen, auflisten und beschreiben, nie etwas ändern.",
+      "prepare": "Vorbereiten",
+      "prepareHelp": "Pläne und Testläufe; Änderungen werden zu Ihrer Freigabe vorbereitet.",
+      "execute": "Ausführen",
+      "executeHelp": "Wendet autorisierte Änderungen im Rahmen an, mit Prüfung und Rollback.",
+      "criticalNote": "Kritische Operationen (Produktion, Löschungen, IAM, sensibles Netzwerk, Daten, kostspielig) fragen Sie immer zuerst"
+    },
+    "scopes": {
+      "title": "Bereiche",
+      "placeholder": "Kommagetrennt, leer = keine",
+      "production_markers": "Produktionsmarker",
+      "save": "Speichern",
+      "aws_profiles": "AWS-Profile",
+      "kube_contexts": "Kubernetes-Kontexte",
+      "namespaces": "Namespaces",
+      "gcp_projects": "GCP-Projekte",
+      "azure_subscriptions": "Azure-Abonnements"
+    },
+    "contexts": {
+      "title": "Kontexte",
+      "empty": "Kein Kontext erkannt."
+    },
+    "none": "keiner",
+    "production": "Produktion",
+    "warnings": "Warnungen",
+    "catalog": {
+      "counters": "Register",
+      "noProviders": "Noch nichts erkannt. Starten Sie eine Erkennung.",
+      "back": "Zurück zu den Ergebnissen",
+      "search": "Operationen suchen (z. B. Pods auflisten, S3-Bucket)",
+      "allProviders": "Alle Anbieter",
+      "risk": "Risiko",
+      "allRisks": "Alle Risiken",
+      "tier": "Stufe",
+      "allTiers": "Alle Stufen",
+      "total": "{{shown}} von {{total}} Operationen",
+      "empty": "Keine passende Operation. Andere Suche versuchen oder Erkennung starten."
+    },
+    "tools": {
+      "title": "Werkzeuge",
+      "available": "verfügbar",
+      "missing": "fehlt",
+      "empty": "Kein Werkzeug erkannt."
+    },
+    "discover": {
+      "title": "Erkennung",
+      "all": "Alles erkennen",
+      "running": "Erkennung läuft, das kann einige Minuten dauern...",
+      "result": "{{count}} Operationen, {{ms}} ms",
+      "none": "Die Erkennung lieferte kein Ergebnis."
+    },
+    "op": {
+      "provider": "Anbieter",
+      "version": "Version",
+      "endpoint": "Endpunkt",
+      "source": "Quelle",
+      "effects": "Auswirkungen",
+      "required": "Pflichtparameter",
+      "optional": "Optionale Parameter",
+      "permissions": "Berechtigungen",
+      "examples": "Beispiele",
+      "verify": "Prüfung",
+      "rollback": "Rollback",
+      "compat": "Kompatibilität",
+      "decision": "Entscheidung"
+    },
+    "graph": {
+      "buildFrom": "Aufbauen aus",
+      "summary": "Zusammenfassung",
+      "counts": "{{nodes}} Ressourcen, {{edges}} Beziehungen",
+      "empty": "Der Graph ist leer. Bauen Sie ihn aus einer Quelle oben auf.",
+      "search": "Ressource suchen",
+      "noMatch": "Keine passende Ressource.",
+      "impact": "Auswirkung (was davon abhängt)",
+      "noImpact": "Nichts hängt von dieser Ressource ab.",
+      "edges": "Beziehungen",
+      "noEdges": "Keine Beziehung."
+    },
+    "refresh": "Aktualisieren",
+    "audit": {
+      "title": "Audit",
+      "time": "Zeit",
+      "command": "Befehl",
+      "ok": "OK",
+      "verified": "Geprüft",
+      "duration": "Dauer",
+      "empty": "Noch kein Infrastrukturbefehl aufgezeichnet."
+    },
+    "runs": {
+      "title": "Läufe",
+      "noSteps": "Kein Schritt.",
+      "empty": "Noch kein Lauf."
+    },
+    "tab": {
+      "overview": "Übersicht",
+      "catalog": "Katalog",
+      "graph": "Graph",
+      "audit": "Audit und Läufe"
+    },
+    "title": "Infrastruktur",
+    "subtitle": "Register, Richtlinie, Ressourcengraph und Audit",
+    "risk": {
+      "read": "Lesen",
+      "plan": "Plan",
+      "change": "Änderung",
+      "critical": "Kritisch"
+    },
+    "tier": {
+      "known": "Bekannt",
+      "available": "Verfügbar",
+      "authorized": "Autorisiert",
+      "tested": "Getestet"
+    },
+    "decision": {
+      "allow": "Erlauben",
+      "ask": "Fragen",
+      "deny": "Ablehnen"
+    },
+    "yes": "ja",
+    "no": "nein"
   }
 }

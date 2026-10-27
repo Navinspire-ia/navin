@@ -1,0 +1,17 @@
+// Native behaviour for the packaged web app (added by Navin App Factory).
+// Runs only inside the mobile app; the website never loads this file.
+// @capacitor/app already goes back in history on the Android back button when
+// nothing listens; this listener keeps that and leaves from the first screen.
+(function () {
+  var cap = window.Capacitor;
+  if (!cap || typeof cap.isNativePlatform !== "function" || !cap.isNativePlatform()) return;
+  document.documentElement.classList.add("navin-native", "navin-" + cap.getPlatform());
+  var app = (cap.Plugins && cap.Plugins.App) || (typeof cap.registerPlugin === "function" ? cap.registerPlugin("App") : null);
+  if (app && typeof app.addListener === "function") {
+    // Android back button: go back in the app, leave it from the first screen.
+    app.addListener("backButton", function (event) {
+      if (event && event.canGoBack) window.history.back();
+      else app.exitApp();
+    });
+  }
+})();

@@ -52,6 +52,37 @@ Les skills sont des guides en markdown que l'agent charge à la demande (ou auto
 | `backup-rollback` | Snapshots d'état et restaurations sûres. |
 | `shell-sandbox` | Bonnes pratiques d'exécution shell sandboxée. |
 | `tmux` | Gestion de sessions terminal de longue durée. |
+| `infra-orchestrator` | Point d'entrée des missions infra : discover, graph, plan, run, verify, recover via le moteur `infra` (`/ops`). |
+| `aws-architect` | Architectures AWS HA (VPC, EKS, RDS, Redis, ALB) et revue Well-Architected. |
+| `kubernetes-platform` | Construire, équiper et mettre à jour des clusters EKS/GKE/AKS/K3s/RKE2. |
+| `openshift-operator` | OpenShift : projets, routes, SCC, OLM, oc adm. |
+| `network-engineer` | VPC/VNet, routage, VPN, DNS, pare-feu, diagnostic TLS. |
+| `cloud-security-posture` | Audit IAM/RBAC/KMS/politiques puis remédiation validée. |
+| `finops-analyst` | Analyse des coûts, rightsizing, budgets, nettoyage. |
+| `database-reliability` | HA des bases, sauvegardes, PITR, tests de restauration, migrations. |
+| `storage-operator` | Posture et protection S3/GCS/MinIO/EBS/Ceph/NFS. |
+| `private-cloud-operator` | OpenStack, vSphere (govc), Proxmox. |
+| `config-management` | Ansible, cloud-init, valeurs Helm, Kustomize avec check/diff. |
+| `resilience-tester` | Charge (k6), chaos, exercices PRA, disponibilité. |
+| `platform-engineer` | Golden paths : CI/CD, GitOps, environnements, secrets. |
+
+## Applications (mobile et desktop)
+
+| Skill | Rôle |
+| --- | --- |
+| `app-factory` | Point d'entrée pour transformer une app web en app Android/iOS (Capacitor 8) ou Windows/macOS/Linux (Tauri 2) dans `os/<target>` via le moteur `appfactory` (`/apps`). |
+| `app-project-analyzer` | Phase 1 : frontend, gestionnaire de paquets, build, backend, fonctions serveur, auth (`appfactory action=analyze`). |
+| `app-compatibility-engine` | Phase 2 : stratégie static / next-export / client-shell et règle Next.js des fonctions serveur. |
+| `app-environment-manager` | Phase 3 : diagnostic des outils et installations officielles avec accord de l'utilisateur. |
+| `app-frontend-adapter` | Config de build statique ou client shell dans `os/<target>/web`, adaptation mobile. |
+| `app-backend-bridge` | Backend conservé : URL d'API HTTPS, origines CORS de l'app, cookies ou tokens d'auth. |
+| `app-tauri-builder` | Paquets desktop : msi, nsis, dmg, deb, rpm, AppImage. |
+| `app-capacitor-builder` | Paquets mobile : apk, aab, ipa, signature par keystore depuis l'environnement. |
+| `app-native-capabilities` | Plugins Capacitor et Tauri avec permissions minimales. |
+| `app-security-auditor` | Permissions, CSP/capabilities, secrets, audit des dépendances, API TLS uniquement. |
+| `app-device-tester` | Émulateur/adb, Maestro, lancement desktop, Playwright, rapport honnête des tests non exécutés. |
+| `app-build-repair` | Correctifs Gradle/JDK, SDK, MSVC, WebView2, webkit2gtk, écran blanc, CORS, cookies. |
+| `app-release-manager` | Versions, signature, notarisation, checklists des stores, runners CI, rapport final. |
 
 ## Données
 

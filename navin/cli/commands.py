@@ -84,6 +84,7 @@ from navin.bus.outbound_events import (  # noqa: E402
 from navin.cli.agi import create_agi_app  # noqa: E402
 from navin.cli.app_templates import create_app_templates_app  # noqa: E402
 from navin.cli.gateway import create_gateway_app  # noqa: E402
+from navin.cli.infra_cmd import create_infra_app  # noqa: E402
 from navin.cli.lsp import create_lsp_app  # noqa: E402
 from navin.cli.session_import import create_sessions_app  # noqa: E402
 from navin.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
@@ -2210,6 +2211,12 @@ def _run_gateway(
     # Lets subsystems with no bus of their own - the scheduler, the indexer,
     # the language servers - reach the WebUI notification centre.
     set_notification_bus(bus)
+    # Errors, blocks and finished work also reach the email / WhatsApp /
+    # Telegram / Teams chats switched on in the notifications Channels tab.
+    from navin.agent.remote_channels import forward_notification
+    from navin.bus.notify import set_remote_forwarder
+
+    set_remote_forwarder(forward_notification)
     runtime_events = RuntimeEventBus()
     provider_snapshot = build_provider_snapshot_allowing_unconfigured(config)
     if isinstance(provider_snapshot.provider, UnconfiguredProvider):
@@ -3665,6 +3672,8 @@ app.add_typer(create_agi_app(console=console), name="agi")
 plugins_app = typer.Typer(help="Manage optional navin features")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(create_sessions_app(console=console), name="sessions")
+# Infrastructure orchestrator (same engine as the agent tool and the Ops panel).
+app.add_typer(create_infra_app(console=console), name="infra")
 
 
 @plugins_app.command("list")

@@ -380,8 +380,8 @@ def test_rename_chat_sets_title_and_emits_update(monkeypatch) -> None:
     provider = _Provider('"deploying the API to Kubernetes chat."')
     ctx, sessions, bus = _rename_ctx(provider, args="helm")
     reply = asyncio.run(rename_chat.cmd_rename_chat(ctx))
-    assert sessions.titles == ["Deploying the API"]
-    assert reply.content == "Renamed this chat to: Deploying the API"
+    assert sessions.titles == ["Deploying the API to Kubernetes"]
+    assert reply.content == "Renamed this chat to: Deploying the API to Kubernetes"
     assert dropped == ["websocket:c1"]
     from navin.bus.outbound_events import SessionUpdatedEvent
 
@@ -397,7 +397,7 @@ def test_rename_chat_cli_does_not_emit(monkeypatch) -> None:
     monkeypatch.setattr(rename_chat, "_drop_sidebar_override", lambda key: None)
     ctx, sessions, bus = _rename_ctx(_Provider("Kubernetes API deployment plan"), channel="cli")
     asyncio.run(rename_chat.cmd_rename_chat(ctx))
-    assert sessions.titles == ["Kubernetes API deployment"] and not bus.out
+    assert sessions.titles == ["Kubernetes API deployment plan"] and not bus.out
 
 
 @pytest.mark.parametrize(
@@ -417,8 +417,8 @@ def test_rename_chat_failure_is_plain(monkeypatch, provider, fail) -> None:
 def test_polish_title_limits() -> None:
     from navin.command.rename_chat import polish_title
 
-    assert polish_title("one two three four five six seven") == "One two three"
-    assert polish_title("Conversation about taxes in France") == "About taxes"
+    assert polish_title("one two three four five six seven") == "One two three four five"
+    assert polish_title("Conversation about taxes in France") == "About taxes in France"
     assert polish_title("") == ""
 
 
@@ -432,7 +432,7 @@ def test_drop_sidebar_override(tmp_path, monkeypatch) -> None:
     assert sidebar_state.read_webui_sidebar_state()["title_overrides"] == {"websocket:c2": "Keep"}
 
 
-def test_every_title_source_is_capped_at_three_words() -> None:
+def test_every_title_source_is_capped_at_five_words() -> None:
     from navin.session.import_sessions import _title_from_text
     from navin.session.webui_turns import (
         limit_title_words,
@@ -440,10 +440,11 @@ def test_every_title_source_is_capped_at_three_words() -> None:
     )
     from navin.tui.session_labels import session_display_title
 
-    assert limit_title_words("a b c d e") == "a b c"
+    assert limit_title_words("a b c d e f g") == "a b c d e"
+    assert limit_title_words("a b c d e") == "a b c d e"
     assert limit_title_words("a b") == "a b"
     assert limit_title_words("") == ""
-    assert provisional_title_from_user_text("/forge corrige le bug du sidebar a droite") == "corrige le bug"
-    assert _title_from_text("please fix the login page redirect") == "please fix the"
-    assert session_display_title({"title": "Une longue session sur les gels", "preview": ""}) == "Une longue session"
-    assert session_display_title({"title": "", "preview": "un deux trois quatre cinq"}) == "un deux trois"
+    assert provisional_title_from_user_text("/forge corrige le bug du sidebar a droite") == "corrige le bug du sidebar"
+    assert _title_from_text("please fix the login page redirect") == "please fix the login page"
+    assert session_display_title({"title": "Une longue session sur les gels", "preview": ""}) == "Une longue session sur les"
+    assert session_display_title({"title": "", "preview": "un deux trois quatre cinq six"}) == "un deux trois quatre cinq"

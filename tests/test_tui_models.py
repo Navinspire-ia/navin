@@ -479,6 +479,134 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             notes = " ".join(str(note.content) for note in app.query(SystemNote))
             self.assertIn("boom", notes)
 
+    async def test_switching_project_while_work_runs_asks_nothing_and_says_it_goes_on(self):
+        from unittest.mock import patch
+
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        app, switched = await self._project_host()
+        moved: list[tuple[str, str]] = []
+
+        async def switch_workspace(path, key):
+            moved.append((str(path), key))
+            app.runtime.config.agents.defaults.workspace = str(path)
+
+        asked: list[tuple] = []
+
+        async def confirm(*args):
+            asked.append(args)
+            return False
+
+        app.runtime.switch_workspace = switch_workspace
+        home = str(app.runtime.workspace)
+        # the project left keeps two sessions working in the background
+        app.runtime.background_projects = lambda: [home]
+        app.runtime.running_sessions = lambda: {home: {"cli:1", "cli:2"}}
+        app._confirm = confirm
+        with patch("navin.tui.projects.register_project"):
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                app._flash = AsyncMock()
+                await app._open_project_session(other.name, "cli:42")
+                await pilot.pause()
+                self.assertEqual(asked, [])  # no "stop it and switch" question any more
+                self.assertEqual(moved, [(other.name, "cli:42")])
+                self.assertEqual(switched, ["cli:42"])
+                said = " ".join(str(call.args[0]) for call in app._flash.await_args_list)
+                self.assertIn("keeps working in the background", said)
+                self.assertIn("2 sessions", said)
+
+    async def test_the_session_menu_offers_fork_without_a_search_field(self):
+        app, _switched = await self._project_host()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            path = str(app.runtime.workspace)
+            app.push_screen_wait = AsyncMock(return_value="fork")
+            app._fork_session = AsyncMock()
+            await app._session_menu(path, "cli:1")
+            menu = app.push_screen_wait.await_args.args[0]
+            self.assertIn("fork", [item.id for item in menu._items])
+            self.assertFalse(menu._searchable)
+            app._fork_session.assert_awaited_once_with(path, "cli:1", "", app.runtime.agent_loop.sessions)
+
+    async def test_fork_copies_the_chat_and_opens_the_copy(self):
+        from navin.session.webui_turns import WEBUI_TITLE_METADATA_KEY
+
+        app, _switched = await self._project_host()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            sessions = app.runtime.agent_loop.sessions
+            source = sessions.get_or_create("cli:1")
+            source.messages += [
+                {"role": "user", "content": "fix the login"},
+                {"role": "assistant", "content": "fixed"},
+            ]
+            source.metadata["turn_recovery"] = {"status": "running"}
+            sessions.save(source)
+            path = str(app.runtime.workspace)
+            app._open_project_session = AsyncMock()
+            await app._fork_session(path, "cli:1", "Login fix", sessions)
+            opened_path, new_key = app._open_project_session.await_args.args
+            self.assertEqual(opened_path, path)
+            self.assertNotEqual(new_key, "cli:1")
+            fork = sessions.get_or_create(new_key)
+            self.assertEqual([m["content"] for m in fork.messages], ["fix the login", "fixed"])
+            self.assertEqual(fork.metadata[WEBUI_TITLE_METADATA_KEY], "Fork: Login fix")
+            # the copy never replays the source's interrupted turn
+            self.assertNotIn("turn_recovery", fork.metadata)
+            self.assertEqual(len(sessions.get_or_create("cli:1").messages), 2)
+
+    async def test_a_working_session_is_not_deleted(self):
+        app, _switched = await self._project_host()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            path = str(app.runtime.workspace)
+            sessions = app.runtime.agent_loop.sessions
+            busy_chat = sessions.get_or_create("cli:9")
+            busy_chat.messages.append({"role": "user", "content": "long job"})
+            sessions.save(busy_chat)
+            app.runtime.session_busy = lambda folder, key: key == "cli:9"
+            app.push_screen_wait = AsyncMock(return_value="delete")
+            app._confirm = AsyncMock(return_value=True)
+            app._note = AsyncMock()
+            await app._session_menu(path, "cli:9")
+            app._confirm.assert_not_awaited()
+            self.assertIn("still working", app._note.await_args.args[0])
+            self.assertIn("cli:9", {row["key"] for row in sessions.list_sessions()})
+
+    async def test_quitting_asks_first_when_other_projects_still_work(self):
+        app, _switched = await self._project_host()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            app.runtime.background_work = lambda: 3
+            app.runtime.background_projects = lambda: ["/work/beta"]
+            asked: list[tuple] = []
+            answer = {"value": False}
+
+            async def confirm(*args):
+                asked.append(args)
+                return answer["value"]
+
+            app._confirm = confirm
+            app.exit = Mock()
+            app.runtime.close = AsyncMock()
+            await app.action_quit()
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(len(asked), 1)
+            self.assertIn("3 tasks running in beta", asked[0][2])
+            app.exit.assert_not_called()  # cancelled: the CLI and the work go on
+            answer["value"] = True
+            await app.action_quit()
+            for _ in range(10):
+                if app.exit.called:
+                    break
+                await pilot.pause()
+            app.exit.assert_called_once()
+            self.assertEqual(len(asked), 2)
+            if app._runtime_close_task is not None:
+                await app._runtime_close_task
+
 
 class WorkspaceSwitchTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -556,3 +684,197 @@ class WorkspaceSwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.running_work(), 2)
         self.runtime.agent_loop = SimpleNamespace()
         self.assertEqual(self.runtime.running_work(), 0)
+
+    async def _task(self):
+        import asyncio
+
+        task = asyncio.create_task(asyncio.sleep(3600))
+        self.addAsyncCleanup(self._cancel, task)
+        return task
+
+    @staticmethod
+    async def _cancel(task):
+        import asyncio
+        import contextlib
+
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _stop_reaper(self):
+        await self._cancel(self.runtime._reaper_task)
+
+    async def test_a_working_project_goes_on_in_the_background_and_comes_back_as_it_is(self):
+        import os
+
+        working = self.runtime.agent_loop
+        turn = await self._task()
+        working._active_tasks = {"cli:direct": [turn]}
+        self.runtime.bus = SimpleNamespace(name="home bus")
+        self.runtime._loop_task = await self._task()
+        self.runtime._consumer_task = await self._task()
+        self.runtime.start = self._start()
+        await self.runtime.switch_workspace(self.other.name, "cli:7")
+        self.addAsyncCleanup(self._stop_reaper)
+        home = Path(self.home.name).resolve()
+        # nothing was stopped: the turn still runs, the CLI shows the other project
+        self.runtime.close.assert_not_awaited()
+        self.assertFalse(turn.done())
+        self.assertEqual(Path(self.runtime.workspace), Path(self.other.name).resolve())
+        self.assertEqual([Path(p).resolve() for p in self.runtime.background_projects()], [home])
+        busy = {Path(path).resolve(): keys for path, keys in self.runtime.running_sessions().items()}
+        self.assertEqual(busy, {home: {"cli:direct"}})
+        self.assertIs(self.runtime.sessions_for(self.home.name), working.sessions)
+        parked = next(iter(self.runtime._parked.values()))
+        self.assertEqual(Path(parked.config.workspace_path).resolve(), home)  # keeps its own folder
+        # back on it: the same engine, not a new one, and the idle project is closed
+        await self.runtime.switch_workspace(self.home.name, "cli:direct")
+        self.assertIs(self.runtime.agent_loop, working)
+        self.assertEqual(len(self.starts), 1)
+        self.runtime.close.assert_awaited_once()
+        self.assertEqual(self.runtime.background_projects(), [])
+        self.assertEqual(Path(os.getcwd()).resolve(), home)
+        self.assertEqual(self.runtime.session_key, "cli:direct")
+        self.assertEqual(self.runtime.agent_loop.model_preset, "claude")
+
+    async def test_a_background_project_closes_once_idle_for_a_while(self):
+        from navin.tui import runtime as rt
+
+        work = await self._task()
+        loop = SimpleNamespace(_active_tasks={"cli:1": [work]}, sessions=SessionManager(Path(self.other.name)))
+        self.runtime._parked[rt._workspace_id(self.other.name)] = rt._ParkedEngine(
+            workspace=self.other.name, config=self.config, bus=None, agent_loop=loop,
+            loop_task=None, consumer_task=None, unsubscribe=None,
+        )
+        self.assertEqual(await self.runtime.reap_idle_parked(now=0.0), [])  # still working
+        await self._cancel(work)
+        self.assertEqual(await self.runtime.reap_idle_parked(now=1.0), [])  # idle from now
+        self.assertEqual(await self.runtime.reap_idle_parked(now=rt.PARKED_IDLE_CLOSE_S), [])
+        self.assertEqual(await self.runtime.reap_idle_parked(now=1.0 + rt.PARKED_IDLE_CLOSE_S), [self.other.name])
+        self.assertEqual(self.runtime.background_projects(), [])
+
+    def test_busy_sessions_count_turns_running_and_queued_subagents(self):
+        from navin.tui.runtime import busy_session_keys
+
+        done, live = Mock(), Mock()
+        done.done.return_value, live.done.return_value = True, False
+        loop = SimpleNamespace(
+            _active_tasks={"cli:1": [live], "cli:2": [done]},
+            subagents=SimpleNamespace(
+                _running_tasks={"a": live, "b": done},
+                _session_tasks={"cli:3": {"a"}, "cli:4": {"b"}},
+                _queued={"cli:5": [object()], "cli:6": []},
+            ),
+        )
+        self.assertEqual(busy_session_keys(loop), {"cli:1", "cli:3", "cli:5"})
+        self.assertEqual(busy_session_keys(None), set())
+
+    async def test_a_session_off_screen_reports_its_card_and_its_end(self):
+        import asyncio
+
+        from navin.bus.events import OutboundMessage
+        from navin.bus.outbound_events import ApprovalRequestedEvent
+        from navin.bus.queue import MessageBus
+        from navin.bus.runtime_events import RuntimeEventContext, TurnCompleted
+        from navin.tui.runtime import UiBackgroundSession
+
+        events: list = []
+        self.runtime._on_event = events.append
+        handlers: list = []
+        self.runtime.agent_loop.runtime_events = SimpleNamespace(
+            subscribe=lambda handler: handlers.append(handler) or (lambda: None)
+        )
+        self.runtime._subscribe_runtime_events()
+        await handlers[0](TurnCompleted(RuntimeEventContext("cli", "9", "cli:9"), latency_ms=5))
+        workspace = str(self.runtime.workspace)
+        self.assertEqual(events, [UiBackgroundSession(workspace, "cli:9", "done")])
+        # a project working in the background asks for an approval
+        self.runtime.bus = MessageBus()
+        parked = MessageBus()
+        consumer = asyncio.create_task(self.runtime._consume_outbound(parked, "/work/beta"))
+        self.addAsyncCleanup(self._cancel, consumer)
+        await parked.publish_outbound(OutboundMessage(
+            channel="cli", chat_id="3", content="",
+            event=ApprovalRequestedEvent(request_id="r1", tool="exec", action="run tests", reason="why"),
+        ))
+        for _ in range(20):
+            if len(events) > 1:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(events[1:], [UiBackgroundSession("/work/beta", "cli:3", "attention")])
+
+    async def test_cards_still_waiting_are_drawn_again_when_their_session_opens(self):
+        from navin.tui.runtime import UiApprovalRequested
+
+        events: list = []
+        self.runtime._on_event = events.append
+        row = {
+            "request_id": "r1", "tool": "exec", "action": "run tests", "reason": "why", "detail": "pytest",
+            "consequence": "", "scope": "exec", "expires_at_ms": None, "remember_offered": True,
+        }
+        key = self.runtime.session_key
+        self.runtime.agent_loop.approvals = SimpleNamespace(
+            open_requests=lambda session_key=None: [row] if session_key in (None, key) else []
+        )
+        await self.runtime.replay_open_requests()
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], UiApprovalRequested)
+        self.assertEqual((events[0].request_id, events[0].detail), ("r1", "pytest"))
+        self.assertTrue(events[0].remember_offered)
+
+    def test_a_settings_reload_keeps_the_project_open_here(self):
+        from unittest.mock import patch
+
+        self.runtime.config.agents.defaults.workspace = self.other.name
+        on_disk = model_config(Path(self.home.name))
+        with patch("navin.config.loader.load_config", return_value=on_disk):
+            self.runtime.reload_from_disk()
+        self.assertEqual(Path(self.runtime.workspace), Path(self.other.name))
+        with patch("navin.config.loader.load_config", return_value=model_config(Path(self.home.name))):
+            self.runtime.apply_account_from_disk()
+        self.assertEqual(Path(self.runtime.workspace), Path(self.other.name))
+
+    async def test_a_project_switch_keeps_the_process_wide_services(self):
+        import navin.license_sync as license_sync
+        from navin.tui.runtime import TuiRuntime
+
+        runtime = TuiRuntime(self.config, on_event=AsyncMock())
+        runtime.agent_loop = SimpleNamespace(sessions=None)
+        lag = SimpleNamespace(stop=AsyncMock())
+        runtime._loop_lag, runtime._license_sync = lag, object()
+        stop = Mock()
+        original = license_sync.stop_license_sync
+        license_sync.stop_license_sync = stop
+        try:
+            await runtime.close(keep_parked=True)
+            lag.stop.assert_not_awaited()
+            stop.assert_not_called()
+            self.assertIs(runtime._loop_lag, lag)
+            runtime._closed = False
+            await runtime.close()  # quitting stops them
+            lag.stop.assert_awaited_once()
+            stop.assert_called_once()
+        finally:
+            license_sync.stop_license_sync = original
+
+    async def test_the_turn_log_merges_deltas_and_never_changes_what_was_drawn(self):
+        from navin.bus.events import OutboundMessage
+        from navin.bus.outbound_events import StreamDeltaEvent
+        from navin.tui import runtime as rt
+
+        def delta(text):
+            return OutboundMessage(channel="cli", chat_id="1", content=text, event=StreamDeltaEvent(text, "s"))
+
+        workspace = self.home.name
+        key = (rt._workspace_id(workspace), "cli:1")
+        self.runtime._log_turn(delta("Hel"), workspace)
+        self.runtime._log_turn(delta("lo"), workspace)
+        self.assertEqual([m.content for m in self.runtime._replay[key]], ["Hello"])
+        self.runtime._sealed[key] = 1  # "Hello" is being drawn
+        self.runtime._log_turn(delta(" world"), workspace)
+        self.assertEqual([m.content for m in self.runtime._replay[key]], ["Hello", " world"])
+        self.runtime._sealed.pop(key)
+        self.runtime._log_turn(OutboundMessage(channel="system", chat_id="x", content="ignored"), workspace)
+        self.assertEqual(len(self.runtime._replay), 1)

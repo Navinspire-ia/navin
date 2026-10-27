@@ -40,9 +40,11 @@ import { ThreadComposer, type ComposerModelOption, type ComposerTeamMode } from 
 import {
   createSubagentCardStore,
   LiveSubagentsPanel,
+  type SubagentActionHandler,
 } from "@/components/thread/ParallelSubagentsPanel";
 import { SubagentsButton, SubagentsSidePanel, SubagentJournalContext } from "@/components/thread/SubagentsSidePanel";
-import { useSubagentCardReconcile } from "@/hooks/useSubagentCardReconcile";
+import { useSubagentCardReconcile, useSubagentFailedRestore } from "@/hooks/useSubagentCardReconcile";
+import { SubagentStatusBar } from "@/components/thread/SubagentStatusBar";
 import { ThreadPlanPanel } from "@/components/thread/ThreadPlanPanel";
 import { ConversationFindBar } from "@/components/ConversationFindBar";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
@@ -2040,12 +2042,38 @@ export function ThreadShell({
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [subagentsIncludeCompleted, setSubagentsIncludeCompleted] = useState(false);
   useEffect(() => {
-    subagentStore.reset();
+    subagentStore.reset(chatId);
     setSubagentsOpen(false);
     setSubagentsIncludeCompleted(false);
   }, [chatId, subagentStore]);
 
   useSubagentCardReconcile(client, chatId, subagentStore);
+  useSubagentFailedRestore(client, chatId, subagentStore);
+
+  // One handler for the journal rows and the status bar above the composer.
+  const subagentAction = useCallback<SubagentActionHandler>(
+    async (card, action) => {
+      if (action === "dismiss") {
+        subagentStore.dismiss(card.taskId);
+        return { ok: true };
+      }
+      if (!chatId) return { ok: false, error: "No chat" };
+      try {
+        const res = await client.querySubagents<{ ok?: boolean; error?: string; mode?: string; task_id?: string }>(
+          chatId,
+          action,
+          { task_id: card.taskId },
+        );
+        if (res && res.ok === false) return { ok: false, error: res.error || "Request failed" };
+        // A relaunch runs as a new agent with its own card: drop the old one.
+        if (action === "retry" && res?.mode === "relaunch") subagentStore.dismiss(card.taskId);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    [chatId, client, subagentStore],
+  );
 
   // Fill the header control on chat open: finished agents keep it visible.
   const [subagentHistory, setSubagentHistory] = useState(false);
@@ -2709,7 +2737,7 @@ export function ThreadShell({
   // Sub-agents and a running robustness proof read in the conversation, at its end.
   const transcriptTail = (
     <>
-      <LiveSubagentsPanel store={subagentStore} />
+      <LiveSubagentsPanel store={subagentStore} onAction={subagentAction} canManage={!isViewer} />
       <ProofRunCard prove={proveChange} href={proveHref} />
     </>
   );
@@ -2807,6 +2835,14 @@ export function ThreadShell({
               ? realtimeSessionVoice(settings?.voice?.live_realtime_voice, liveVoice.realtimeModel, i18n.resolvedLanguage ?? i18n.language ?? "en")
               : settings?.voice?.voice} /> : null}
           {!isViewer ? <AppShareHint chatId={chatId} /> : null}
+          {session && chatId ? (
+            <SubagentStatusBar
+              store={subagentStore}
+              onAction={subagentAction}
+              canManage={!isViewer}
+              onOpenPanel={subagentJournal.openPanel}
+            />
+          ) : null}
           <div className="relative z-10">
         <ThreadComposer
           key={chatId}

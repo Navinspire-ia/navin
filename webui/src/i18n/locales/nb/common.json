@@ -1914,7 +1914,32 @@
     "toolsRowToggle": "Tools",
     "unsaved": "Unsaved changes",
     "workspace": "Workspace",
-    "terminalSearch": "Søk i terminalen"
+    "terminalSearch": "Søk i terminalen",
+    "appsMobile": "Mobilapper",
+    "appsDesktop": "Skrivebordsapper",
+    "appFactory": {
+      "title": "Gjør prosjektet om til en app",
+      "intro": "Navin gjør det gjeldende prosjektet om til apper for Windows, macOS, Linux, Android og iOS. Webprosjektet og backend forblir urørt: alt skrives i en egen mappe os/<plattform>.",
+      "learnMore": "Hva er dette?",
+      "honest": "Navin rapporterer hvilke tester som kjørte og hvilke som ikke kunne kjøres på denne maskinen.",
+      "steps": {
+        "analyze": "Prosjektanalyse",
+        "adapt": "Tilpasning",
+        "build": "Bygging",
+        "test": "Tester",
+        "deliver": "Levering"
+      },
+      "confirm": {
+        "title": "Lage {{platform}}-appen for prosjektet ditt?",
+        "body": "Navin analyserer prosjektet ditt, tilpasser det, bygger appen, tester den og gir deg pakken. Alt skrives i {{folder}}: nettstedet og backend-en din endres ikke.",
+        "project": "Prosjekt",
+        "package": "Pakke",
+        "folder": "Mappe",
+        "tools": "Manglende byggeverktøy installeres bare med ditt samtykke. Hvis denne datamaskinen ikke kan bygge appen, sier Navin fra og forbereder et bygg i skyen.",
+        "start": "Lag {{platform}}-appen",
+        "cancel": "Avbryt"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3623,7 +3648,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "Kanaler",
+      "loading": "Laster kanaler...",
+      "unavailable": "Kanalene er utilgjengelige",
+      "saveFailed": "Kunne ikke lagre",
+      "sending": "Sender...",
+      "testSent": "Test sendt til {{count}} kanal(er)",
+      "testNone": "Ingen klar kanal med varsler på",
+      "testFailed": "Testen mislyktes",
+      "status": {
+        "ready": "klar",
+        "offline": "frakoblet",
+        "setup": "må settes opp"
+      },
+      "configure": "Sett opp i Innstillinger > Kanaler",
+      "recipient": "Mottaker {{channel}}",
+      "placeholder": {
+        "email": "deg@eksempel.no",
+        "telegram": "Chat-ID (f.eks. 123456789)",
+        "teams": "Teams-samtale-ID"
+      },
+      "flags": {
+        "notify": "Varsler",
+        "notifyTitle": "Feil, blokkeringer og fullførte oppgaver sendt til denne kanalen",
+        "approve": "Godkjenninger",
+        "approveTitle": "Godkjenningsforespørsler: svar YES eller NO med koden",
+        "chat": "Utveksling",
+        "chatTitle": "Send forespørsler til Navin fra denne kanalen"
+      },
+      "sendTest": "Send en test",
+      "help": "Godkjenninger: svar \"YES kode\", \"NO kode\" eller \"ALWAYS kode\" (eller /approve og /deny i chatten som spurte). Påloggingsdata (SMTP, bot, WhatsApp-QR-kode, Teams-app) settes i Innstillinger > Kanaler eller via MCP."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -9657,7 +9714,23 @@
       "queued_other": "{{count}} queued, waiting for a slot",
       "waiting": "Waiting for subagent",
       "waiting_other": "Waiting for {{count}} subagents",
-      "working": "Working…"
+      "working": "Working…",
+      "awaitingApproval": "Venter på godkjenningen din",
+      "answerInChat": "Svar på forespørselen i chatten",
+      "actionRetry": "Start på nytt",
+      "actionCancel": "Avbryt",
+      "actionDismiss": "Fjern",
+      "actionRetryAria": "Start {{name}} på nytt",
+      "actionCancelAria": "Avbryt {{name}}",
+      "actionDismissAria": "Fjern {{name}}",
+      "barTitle": "Underagenter",
+      "chipRunning": "{{count}} kjører",
+      "chipQueued": "{{count}} i kø",
+      "chipApproval": "{{count}} venter på godkjenning",
+      "chipFailed": "{{count}} mislyktes",
+      "chipDone": "{{count}} ferdige",
+      "dismissFinished": "Fjern ferdige",
+      "moreCount": "+{{count}} til"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -9707,5 +9780,134 @@
     "loadingDiff": "Laster inn diff...",
     "open": "Inspiser",
     "openTests": "Testrapport ({{passed}} ok, {{failed}} feilet)"
+  },
+  "infra": {
+    "loading": "Laster...",
+    "error": "Kunne ikke laste infrastrukturdata",
+    "retry": "Prøv igjen",
+    "empty": "Ingen data ennå.",
+    "level": {
+      "title": "Autonominivå",
+      "observe": "Observere",
+      "observeHelp": "Kun lesing: inspisere, liste og beskrive, aldri endre noe.",
+      "prepare": "Forberede",
+      "prepareHelp": "Planer og prøvekjøringer; endringer forberedes for din godkjenning.",
+      "execute": "Utføre",
+      "executeHelp": "Bruker autoriserte endringer innenfor omfanget, med verifisering og tilbakerulling.",
+      "criticalNote": "Kritiske operasjoner (produksjon, slettinger, IAM, sensitivt nettverk, data, kostbare) spør deg alltid først"
+    },
+    "scopes": {
+      "title": "Omfang",
+      "placeholder": "Kommaseparert, tom = ingen",
+      "production_markers": "Produksjonsmarkører",
+      "save": "Lagre",
+      "aws_profiles": "AWS-profiler",
+      "kube_contexts": "Kubernetes-kontekster",
+      "namespaces": "Navnerom",
+      "gcp_projects": "GCP-prosjekter",
+      "azure_subscriptions": "Azure-abonnementer"
+    },
+    "contexts": {
+      "title": "Kontekster",
+      "empty": "Ingen kontekst oppdaget."
+    },
+    "none": "ingen",
+    "production": "produksjon",
+    "warnings": "Advarsler",
+    "catalog": {
+      "counters": "Register",
+      "noProviders": "Ingenting oppdaget ennå. Kjør en oppdagelse.",
+      "back": "Tilbake til resultatene",
+      "search": "Søk i operasjoner (f.eks. list pods, s3-bøtte)",
+      "allProviders": "Alle leverandører",
+      "risk": "Risiko",
+      "allRisks": "Alle risikoer",
+      "tier": "Nivå",
+      "allTiers": "Alle nivåer",
+      "total": "{{shown}} av {{total}} operasjoner",
+      "empty": "Ingen operasjon passer. Prøv et annet søk eller kjør en oppdagelse."
+    },
+    "tools": {
+      "title": "Verktøy",
+      "available": "tilgjengelig",
+      "missing": "mangler",
+      "empty": "Ingen verktøy oppdaget."
+    },
+    "discover": {
+      "title": "Oppdagelse",
+      "all": "Oppdag alt",
+      "running": "Oppdagelse pågår, dette kan ta noen minutter...",
+      "result": "{{count}} operasjoner, {{ms}} ms",
+      "none": "Oppdagelsen ga ingen resultater."
+    },
+    "op": {
+      "provider": "Leverandør",
+      "version": "Versjon",
+      "endpoint": "Endepunkt",
+      "source": "Kilde",
+      "effects": "Effekter",
+      "required": "Påkrevde parametere",
+      "optional": "Valgfrie parametere",
+      "permissions": "Tillatelser",
+      "examples": "Eksempler",
+      "verify": "Verifisering",
+      "rollback": "Tilbakerulling",
+      "compat": "Kompatibilitet",
+      "decision": "Beslutning"
+    },
+    "graph": {
+      "buildFrom": "Bygg fra",
+      "summary": "Sammendrag",
+      "counts": "{{nodes}} ressurser, {{edges}} relasjoner",
+      "empty": "Grafen er tom. Bygg den fra en kilde ovenfor.",
+      "search": "Søk etter en ressurs",
+      "noMatch": "Ingen ressurs passer.",
+      "impact": "Påvirkning (hva som avhenger av den)",
+      "noImpact": "Ingenting avhenger av denne ressursen.",
+      "edges": "Relasjoner",
+      "noEdges": "Ingen relasjon."
+    },
+    "refresh": "Oppdater",
+    "audit": {
+      "title": "Revisjon",
+      "time": "Tid",
+      "command": "Kommando",
+      "ok": "OK",
+      "verified": "Verifisert",
+      "duration": "Varighet",
+      "empty": "Ingen infrastrukturkommando registrert ennå."
+    },
+    "runs": {
+      "title": "Kjøringer",
+      "noSteps": "Ingen steg.",
+      "empty": "Ingen kjøring ennå."
+    },
+    "tab": {
+      "overview": "Oversikt",
+      "catalog": "Katalog",
+      "graph": "Graf",
+      "audit": "Revisjon og kjøringer"
+    },
+    "title": "Infrastruktur",
+    "subtitle": "Register, policy, ressursgraf og revisjon",
+    "risk": {
+      "read": "Lesing",
+      "plan": "Plan",
+      "change": "Endring",
+      "critical": "Kritisk"
+    },
+    "tier": {
+      "known": "Kjent",
+      "available": "Tilgjengelig",
+      "authorized": "Autorisert",
+      "tested": "Testet"
+    },
+    "decision": {
+      "allow": "Tillat",
+      "ask": "Spør",
+      "deny": "Avslå"
+    },
+    "yes": "ja",
+    "no": "nei"
   }
 }

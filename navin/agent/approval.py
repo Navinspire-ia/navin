@@ -64,7 +64,14 @@ DECLINED = "The user refused this operation. Do not attempt it another way."
 # joins this set once it renders the card and replies with an approval_decision
 # envelope; until then, publishing to it would wait out the timeout for nothing,
 # which is worse than treating the run as unattended from the start.
-ANSWERING_CHANNELS: frozenset[str] = frozenset({"websocket"})
+# Messaging channels answer in plain text with ``/approve <id>`` or
+# ``/deny <id>`` (see navin.command.builtin.cmd_approve); the answer only counts
+# from the chat that received the request, and senders are already filtered by
+# each channel's ``allow_from`` list configured in Settings > Channels.
+ANSWERING_CHANNELS: frozenset[str] = frozenset(
+    {"websocket", "telegram", "whatsapp", "msteams", "slack", "discord",
+     "matrix", "mattermost", "signal", "email"}
+)
 
 
 class ApprovalConfig(Base):
@@ -141,6 +148,19 @@ def _bypass_forbidden() -> bool:
 
         return bool(load().disable_bypass_permissions)
     except Exception:  # noqa: BLE001 - a broken policy reader keeps today's behaviour
+        return False
+
+
+def _remote_can_answer(channel: str) -> bool:
+    """WhatsApp/Telegram/Teams/email chats answer with ``OUI <code>``."""
+    from navin.agent.remote_channels import can_answer
+
+    try:
+        return can_answer(channel)
+    except OSError:
+        # The runtime folder holding the channel switches cannot be created or
+        # read: that chat cannot answer, the other approvers still can.
+        logger.opt(exception=True).warning("remote channels check failed for {}", channel)
         return False
 
 
@@ -244,7 +264,7 @@ class ApprovalBroker:
         if (
             self._publish is None
             or not chat_id
-            or channel not in self._answering_channels
+            or (channel not in self._answering_channels and not _remote_can_answer(channel))
         ):
             return _unattended(request, NO_APPROVER)
 
@@ -557,11 +577,15 @@ class SubagentApprovalGate:
     def __init__(
         self, parent: ApprovalGate | None, *, label: str, unattended_reason: str,
         permission_mode: str = "default",
+        on_wait: Callable[[bool], None] | None = None,
     ) -> None:
         self._parent = parent
         self._label = label
         self._unattended = unattended_reason
         self._mode = permission_mode
+        # Told when a request goes to the user and when it is answered, so the
+        # subagent's card can say it waits for an approval instead of looking stuck.
+        self._on_wait = on_wait
 
     async def ask(self, request: ApprovalRequest) -> ApprovalDecision:
         from dataclasses import replace as _replace
@@ -575,6 +599,7 @@ class SubagentApprovalGate:
         named = _replace(
             request, action=f"[subagent {self._label}] {request.action or request.tool}"
         )
+        self._notify_wait(True)
         try:
             decision = await self._parent.ask(named)
         except asyncio.CancelledError:
@@ -582,6 +607,14 @@ class SubagentApprovalGate:
         except Exception:
             logger.exception("subagent approval forwarding failed for {}", request.tool)
             return _unattended(request, self._unattended)
+        finally:
+            self._notify_wait(False)
         if not decision.allowed and decision.reason == NO_APPROVER:
             return ApprovalDecision(allowed=False, reason=self._unattended)
         return decision
+
+    def _notify_wait(self, waiting: bool) -> None:
+        # Our own display hook: a bug in it surfaces instead of being hidden,
+        # and before the request is sent it fails closed (nothing is approved).
+        if self._on_wait is not None:
+            self._on_wait(waiting)

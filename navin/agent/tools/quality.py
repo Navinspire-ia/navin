@@ -458,7 +458,7 @@ class TestRunTool(_QualityTool):
 
         if action == "detect":
             await emit_tool_output("Detecting test suites…")
-            rows = detect_suites(root)
+            rows = await asyncio.to_thread(detect_suites, root)
             lines = ["Test suites in this project:"]
             for row in rows:
                 mark = "yes" if row["available"] else "no "

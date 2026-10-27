@@ -1,0 +1,33 @@
+// Client frontend of the {{APP_NAME}} app (Navin App Factory, strategy client-shell).
+// It reuses the website's components through aliases and calls the existing backend.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+const cfg = JSON.parse(readFileSync(new URL("../appfactory.json", import.meta.url), "utf8"));
+const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
+const backend = process.env.VITE_API_BASE_URL || cfg.backend_url || "";
+
+export default defineConfig({
+  base: "./",
+  plugins: [react()],
+  resolve: {
+    alias: [
+      { find: /^next\/link$/, replacement: here("./src/shims/next-link.tsx") },
+      { find: /^next\/navigation$/, replacement: here("./src/shims/next-navigation.ts") },
+      { find: /^next\/image$/, replacement: here("./src/shims/next-image.tsx") },
+      ...Object.entries(cfg.aliases || {}).map(([find, target]) => ({
+        find,
+        replacement: here(`../${String(target)}`),
+      })),
+    ],
+  },
+  define: {
+    __NAVIN_BACKEND_URL__: JSON.stringify(backend),
+    ...Object.fromEntries(
+      (cfg.api_env || []).map((name: string) => [`process.env.${name}`, JSON.stringify(backend)]),
+    ),
+  },
+  build: { outDir: "dist", emptyOutDir: true },
+});

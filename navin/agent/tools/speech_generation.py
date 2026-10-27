@@ -28,6 +28,7 @@ import wave
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from pydantic import Field
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
@@ -500,12 +501,14 @@ class SpeechGenerationTool(Tool):
             "words": [word.to_dict() for word in words],
         }
         if want_words:
+            timing_path = Path(path).with_suffix(".timing.json")
+            timing_text = json.dumps(segment, ensure_ascii=False, indent=2)
             try:
-                Path(path).with_suffix(".timing.json").write_text(
-                    json.dumps(segment, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-            except OSError:
-                pass
+                await asyncio.to_thread(timing_path.write_text, timing_text, encoding="utf-8")
+            except OSError as exc:
+                # The audio is already on disk; a missing sidecar only costs
+                # word timings, which the caller can recompute.
+                logger.warning("speech: cannot write word timings {}: {}", timing_path, exc)
         return artifact, segment
 
 

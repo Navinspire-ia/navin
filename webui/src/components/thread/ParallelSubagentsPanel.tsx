@@ -6,13 +6,22 @@ import {
   useCallback,
   useEffect,
   useId,
-  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronRight, CircleSlash, Clock, Loader2, X } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  CircleSlash,
+  Clock,
+  Loader2,
+  RotateCcw,
+  ShieldAlert,
+  Square,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
@@ -36,9 +45,6 @@ export type ParallelSubagentCard = SubagentProgressUpdate & {
    * late duplicate frame does not keep a finished card on screen. */
   finishedAt?: number;
 };
-
-/** Keep a finished card readable for a moment instead of blinking out. */
-export const FINISHED_CARD_LINGER_MS = 12_000;
 
 /**
  * Merge a progress frame into the card list, keeping one card per task.
@@ -81,55 +87,13 @@ function startedAtForUpdate(
   return existing?.startedAt ?? fromReplay;
 }
 
-/**
- * Drop finished cards once they have been on screen long enough to read.
- *
- * A card the user has opened (``keep``) stays: removing it under their eyes
- * would close the details they are reading. Returns ``cards`` itself when
- * nothing goes, so a caller holding it in state does not re-render for nothing.
- */
-export function pruneFinishedSubagentCards(
-  cards: ParallelSubagentCard[],
-  now: number = Date.now(),
-  keep?: ReadonlySet<string>,
-): ParallelSubagentCard[] {
-  const next = cards.filter(
-    (card) =>
-      !card.done ||
-      now - finishedAtOf(card) < FINISHED_CARD_LINGER_MS ||
-      Boolean(keep?.has(card.taskId)),
-  );
-  return next.length === cards.length ? cards : next;
-}
-
-function finishedAtOf(card: ParallelSubagentCard): number {
-  return card.finishedAt ?? card.updatedAt;
-}
-
-/**
- * When the next finished card is due to go (epoch ms), or null if none is.
- *
- * Taken from the cards' own finish times, so frames from cards still running
- * leave it unchanged: a timer restarted on every frame never fired while a
- * sibling kept working, and finished cards stayed up for the whole wave.
- */
-export function nextSubagentPruneAt(
-  cards: ParallelSubagentCard[],
-  keep?: ReadonlySet<string>,
-): number | null {
-  let due: number | null = null;
-  for (const card of cards) {
-    if (!card.done || keep?.has(card.taskId)) continue;
-    const at = finishedAtOf(card) + FINISHED_CARD_LINGER_MS;
-    if (due === null || at < due) due = at;
-  }
-  return due;
-}
-
 export function isFailedCard(
   card: Pick<SubagentProgressUpdate, "done" | "phase" | "error">,
 ): boolean {
-  return card.done && (card.phase === "error" || Boolean(card.error));
+  return (
+    card.done &&
+    (card.phase === "error" || card.phase === "interrupted" || Boolean(card.error))
+  );
 }
 
 /** Stopped on request (/stop, a cancelled wave): not a failure, drawn neutral. */
@@ -189,6 +153,11 @@ export function subagentStatusLine(card: ParallelSubagentCard, t: TFunction): st
     });
   }
   if (isFailedCard(card)) return subagentErrorReason(card, t);
+  if (!card.done && card.phase === "awaiting_approval") {
+    return t("thread.subagents.awaitingApproval", {
+      defaultValue: "Waiting for your approval",
+    });
+  }
   if (card.done) {
     return t("thread.subagents.completed", { defaultValue: "Completed" });
   }
@@ -262,7 +231,7 @@ function useElapsedClock(active: boolean): number {
 
 export type SubagentCardsSnapshot = {
   cards: ParallelSubagentCard[];
-  /** Cards the user opened: they must not linger out while being read. */
+  /** Cards the user opened in the journal. */
   expanded: ReadonlySet<string>;
 };
 
@@ -270,10 +239,45 @@ export type SubagentCardStore = {
   getSnapshot: () => SubagentCardsSnapshot;
   subscribe: (listener: () => void) => () => void;
   upsert: (update: SubagentProgressUpdate) => void;
-  prune: (now?: number) => void;
   setExpanded: (next: ReadonlySet<string>) => void;
-  reset: () => void;
+  /** Hide one card; a late done frame for it stays hidden. */
+  dismiss: (taskId: string) => void;
+  /** Hide every finished card (ok, failed, cancelled). */
+  dismissFinished: () => void;
+  isDismissed: (taskId: string) => boolean;
+  /** Clear the cards; with a chat id, load that chat's dismissed ids. */
+  reset: (chatId?: string | null) => void;
 };
+
+/** Dismissed ids kept per chat, so a refresh does not bring failures back. */
+export const SUBAGENT_DISMISSED_MAX = 300;
+
+export function subagentDismissedKey(chatId: string): string {
+  return `navin.subagents.dismissed.${chatId}`;
+}
+
+function loadDismissed(chatId: string | null): string[] {
+  if (!chatId) return [];
+  try {
+    const raw = window.localStorage.getItem(subagentDismissedKey(chatId));
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDismissed(chatId: string | null, ids: Set<string>): void {
+  if (!chatId) return;
+  try {
+    const list = [...ids].slice(-SUBAGENT_DISMISSED_MAX);
+    window.localStorage.setItem(subagentDismissedKey(chatId), JSON.stringify(list));
+  } catch {
+    // Private mode or a full quota: dismissals then last for this tab only.
+  }
+}
 
 /**
  * The subagent cards of one thread, outside React state.
@@ -283,14 +287,29 @@ export type SubagentCardStore = {
  * that reads the store does. The shell still owns the store, so frames that
  * arrive while the panel is not mounted (history still loading after a chat
  * switch, when the gateway replays running work) are kept.
+ *
+ * Finished cards stay until the user dismisses them: a failure that blinked
+ * out after a few seconds left no way to see or relaunch it.
  */
 export function createSubagentCardStore(): SubagentCardStore {
   let snapshot: SubagentCardsSnapshot = { cards: [], expanded: new Set() };
+  let chat: string | null = null;
+  let dismissed = new Set<string>();
   const listeners = new Set<() => void>();
   const set = (next: SubagentCardsSnapshot) => {
     if (next.cards === snapshot.cards && next.expanded === snapshot.expanded) return;
     snapshot = next;
     for (const listener of listeners) listener();
+  };
+  const hide = (ids: Set<string>) => {
+    if (ids.size === 0) return;
+    for (const id of ids) {
+      dismissed.delete(id);
+      dismissed.add(id);
+    }
+    saveDismissed(chat, dismissed);
+    const expanded = new Set([...snapshot.expanded].filter((id) => !ids.has(id)));
+    set({ cards: snapshot.cards.filter((card) => !ids.has(card.taskId)), expanded });
   };
   return {
     getSnapshot: () => snapshot,
@@ -300,50 +319,57 @@ export function createSubagentCardStore(): SubagentCardStore {
         listeners.delete(listener);
       };
     },
-    upsert: (update) =>
-      set({ ...snapshot, cards: upsertSubagentCard(snapshot.cards, update) }),
-    prune: (now = Date.now()) =>
-      set({
-        ...snapshot,
-        cards: pruneFinishedSubagentCards(snapshot.cards, now, snapshot.expanded),
-      }),
+    upsert: (update) => {
+      if (dismissed.has(update.taskId)) {
+        // A duplicate final frame must not resurrect a dismissed card; a
+        // live one means the agent resumed, so it shows again.
+        if (update.done) return;
+        dismissed.delete(update.taskId);
+        saveDismissed(chat, dismissed);
+      }
+      set({ ...snapshot, cards: upsertSubagentCard(snapshot.cards, update) });
+    },
     setExpanded: (expanded) => set({ ...snapshot, expanded }),
-    reset: () => set({ cards: [], expanded: new Set() }),
+    dismiss: (taskId) => hide(new Set([taskId])),
+    dismissFinished: () =>
+      hide(new Set(snapshot.cards.filter((card) => card.done).map((card) => card.taskId))),
+    isDismissed: (taskId) => dismissed.has(taskId),
+    reset: (chatId) => {
+      chat = chatId ?? null;
+      dismissed = new Set(loadDismissed(chat));
+      set({ cards: [], expanded: new Set() });
+    },
   };
 }
 
-/** The panel for a thread's card store, which also clears finished cards. */
+export type SubagentAction = "retry" | "cancel" | "dismiss";
+export type SubagentActionResult = { ok: boolean; error?: string };
+export type SubagentActionHandler = (
+  card: ParallelSubagentCard,
+  action: SubagentAction,
+) => Promise<SubagentActionResult> | void;
+
+/** The panel for a thread's card store. */
 export function LiveSubagentsPanel({
   store,
   className,
+  onAction,
+  canManage,
 }: {
   store: SubagentCardStore;
   className?: string;
+  onAction?: SubagentActionHandler;
+  canManage?: boolean;
 }) {
   const { cards, expanded } = useSyncExternalStore(store.subscribe, store.getSnapshot);
-
-  // Drop finished cards once they have been readable for a moment. The
-  // deadline comes from the finish times alone, so frames from cards still
-  // running neither restart nor postpone it. An opened card stays until it
-  // is closed, then lingers like any other.
-  const pruneAt = useMemo(() => nextSubagentPruneAt(cards, expanded), [cards, expanded]);
-  useEffect(() => {
-    if (pruneAt === null) return;
-    const timer = window.setTimeout(
-      () => store.prune(),
-      // A hair past the deadline, so the prune never runs a tick early and
-      // keeps the card with no new deadline left to wake it.
-      Math.max(0, pruneAt - Date.now()) + 50,
-    );
-    return () => window.clearTimeout(timer);
-  }, [pruneAt, store]);
-
   return (
     <ParallelSubagentsPanel
       cards={cards}
       className={className}
       expandedIds={expanded}
       onExpandedChange={store.setExpanded}
+      onAction={onAction}
+      canManage={canManage}
     />
   );
 }
@@ -361,11 +387,17 @@ export function ParallelSubagentsPanel({
   className,
   expandedIds,
   onExpandedChange,
+  onAction,
+  canManage = true,
 }: {
   cards: ParallelSubagentCard[];
   className?: string;
   expandedIds?: ReadonlySet<string>;
   onExpandedChange?: (next: ReadonlySet<string>) => void;
+  /** Relaunch, cancel or dismiss one agent; without it the rows have no actions. */
+  onAction?: SubagentActionHandler;
+  /** False for viewers: only the local Dismiss stays. */
+  canManage?: boolean;
 }) {
   const { t } = useTranslation();
   const [localExpanded, setLocalExpanded] = useState<ReadonlySet<string>>(
@@ -432,6 +464,8 @@ export function ParallelSubagentsPanel({
           now={card.done || isQueuedCard(card) ? 0 : now}
           expanded={expanded.has(card.taskId)}
           onToggle={toggle}
+          onAction={onAction}
+          canManage={canManage}
         />
       ))}
       {cards.length > SUBAGENT_VISIBLE_MAX ? (
@@ -456,9 +490,105 @@ export function ParallelSubagentsPanel({
   );
 }
 
-type CardState = "queued" | "running" | "ok" | "error" | "stopped";
+export type CardState = "queued" | "running" | "approval" | "ok" | "error" | "stopped";
 
-function StatusIcon({
+export function subagentCardState(card: ParallelSubagentCard): CardState {
+  if (isQueuedCard(card)) return "queued";
+  if (!card.done) return card.phase === "awaiting_approval" ? "approval" : "running";
+  if (isCancelledCard(card)) return "stopped";
+  return isFailedCard(card) ? "error" : "ok";
+}
+
+/** Which buttons a row offers in a given state. */
+export function subagentActionsFor(state: CardState, canManage: boolean): SubagentAction[] {
+  const actions: SubagentAction[] =
+    state === "error" || state === "stopped"
+      ? ["retry", "dismiss"]
+      : state === "ok"
+        ? ["dismiss"]
+        : ["cancel"];
+  return canManage ? actions : actions.filter((action) => action === "dismiss");
+}
+
+/** Busy and error state of one row's actions, shared by the journal and the status bar. */
+export function useSubagentActions(
+  card: ParallelSubagentCard,
+  onAction: SubagentActionHandler | undefined,
+) {
+  const [busy, setBusy] = useState<SubagentAction | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = useCallback(
+    async (action: SubagentAction) => {
+      if (!onAction) return;
+      setBusy(action);
+      setError(null);
+      try {
+        const result = await onAction(card, action);
+        if (result && !result.ok) setError(result.error || "Request failed");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [card, onAction],
+  );
+  return { busy, error, run };
+}
+
+export function SubagentActionButtons({
+  card,
+  actions,
+  busy,
+  onRun,
+}: {
+  card: ParallelSubagentCard;
+  actions: SubagentAction[];
+  busy: SubagentAction | null;
+  onRun: (action: SubagentAction) => void;
+}) {
+  const { t } = useTranslation();
+  if (actions.length === 0) return null;
+  const label = (action: SubagentAction) =>
+    action === "retry"
+      ? t("thread.subagents.actionRetry", { defaultValue: "Relaunch" })
+      : action === "cancel"
+        ? t("thread.subagents.actionCancel", { defaultValue: "Cancel" })
+        : t("thread.subagents.actionDismiss", { defaultValue: "Dismiss" });
+  const aria = (action: SubagentAction) =>
+    action === "retry"
+      ? t("thread.subagents.actionRetryAria", { defaultValue: "Relaunch {{name}}", name: card.label })
+      : action === "cancel"
+        ? t("thread.subagents.actionCancelAria", { defaultValue: "Cancel {{name}}", name: card.label })
+        : t("thread.subagents.actionDismissAria", { defaultValue: "Dismiss {{name}}", name: card.label });
+  return (
+    <span className="flex shrink-0 items-center gap-0.5">
+      {actions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          data-action={action}
+          aria-label={aria(action)}
+          aria-busy={busy === action || undefined}
+          disabled={busy !== null}
+          onClick={() => onRun(action)}
+          className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60 active:scale-[0.97]"
+        >
+          {busy === action ? (
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+          ) : action === "retry" ? (
+            <RotateCcw className="h-3 w-3" aria-hidden />
+          ) : action === "cancel" ? (
+            <Square className="h-3 w-3" aria-hidden />
+          ) : null}
+          {label(action)}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+export function StatusIcon({
   state,
   size = "md",
 }: {
@@ -474,6 +604,9 @@ function StatusIcon({
       <Loader2 className={cn(cls, "animate-spin text-muted-foreground/70")} aria-hidden />
     );
   }
+  if (state === "approval") {
+    return <ShieldAlert className={cn(cls, "text-amber-500")} aria-hidden />;
+  }
   if (state === "stopped") {
     return <CircleSlash className={cn(cls, "text-muted-foreground/70")} aria-hidden />;
   }
@@ -488,11 +621,15 @@ const SubagentCard = memo(function SubagentCard({
   now,
   expanded,
   onToggle,
+  onAction,
+  canManage = true,
 }: {
   card: ParallelSubagentCard;
   now: number;
   expanded: boolean;
   onToggle: (taskId: string) => void;
+  onAction?: SubagentActionHandler;
+  canManage?: boolean;
 }) {
   const { t } = useTranslation();
   const detailsId = useId();
@@ -506,18 +643,14 @@ const SubagentCard = memo(function SubagentCard({
     : formatElapsed((card.done ? (card.finishedAt ?? card.updatedAt) : now) - card.startedAt);
   const meta = [card.model, elapsed].filter(Boolean).join(" · ");
   const statusLine = subagentStatusLine(card, t);
-  const state: CardState = queued
-    ? "queued"
-    : !card.done
-      ? "running"
-      : cancelled
-        ? "stopped"
-        : failed
-          ? "error"
-          : "ok";
+  const state = subagentCardState(card);
+  const actions = onAction ? subagentActionsFor(state, canManage) : [];
+  const { busy, error: actionError, run } = useSubagentActions(card, onAction);
   const stateLabel = queued
     ? t("thread.subagents.queued", { defaultValue: "Queued - waiting for a free slot" })
-    : !card.done
+    : state === "approval"
+      ? t("thread.subagents.awaitingApproval", { defaultValue: "Waiting for your approval" })
+      : !card.done
       ? t("thread.subagents.statusRunning", { defaultValue: "Running" })
       : failed
         ? t("thread.subagents.statusStopped", { defaultValue: "Stopped" })
@@ -536,6 +669,7 @@ const SubagentCard = memo(function SubagentCard({
         expanded ? "bg-muted/30" : "hover:bg-muted/30",
       )}
     >
+      <div className="flex items-start gap-1">
       <button
         type="button"
         onClick={() => onToggle(card.taskId)}
@@ -546,7 +680,7 @@ const SubagentCard = memo(function SubagentCard({
             ? t("thread.subagents.hideDetails", { defaultValue: "Hide details" })
             : t("thread.subagents.showDetails", { defaultValue: "Show details" })
         }
-        className="flex w-full items-start gap-2 rounded-md px-1.5 py-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-1.5 py-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
           <StatusIcon state={state} />
@@ -591,6 +725,17 @@ const SubagentCard = memo(function SubagentCard({
           aria-hidden
         />
       </button>
+      {actions.length > 0 ? (
+        <span className="pt-1 pe-1">
+          <SubagentActionButtons card={card} actions={actions} busy={busy} onRun={(a) => void run(a)} />
+        </span>
+      ) : null}
+      </div>
+      {actionError ? (
+        <p role="alert" className="px-7 pb-1 text-[12px] text-red-600 dark:text-red-400">
+          {actionError}
+        </p>
+      ) : null}
       <AnimatePresence initial={false}>
         {expanded ? (
           <motion.div

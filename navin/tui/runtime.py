@@ -20,6 +20,7 @@ import contextlib
 import os
 import time
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -336,6 +337,20 @@ class UiDisplayError(UiEvent):
     text: str
 
 
+@dataclass(frozen=True)
+class UiBackgroundSession(UiEvent):
+    """A session that is not on screen needs the user or has finished.
+
+    ``kind`` is ``attention`` (an approval, a choice or a login waits) or
+    ``done`` (its turn ended). ``workspace`` names the project, because two
+    projects can both have a ``cli:direct`` session.
+    """
+
+    workspace: str
+    session_key: str
+    kind: str
+
+
 # ---------------------------------------------------------------------------
 # Status snapshot
 # ---------------------------------------------------------------------------
@@ -410,6 +425,82 @@ class WorkspaceSwitchError(RuntimeError):
     """The engine could not open the other project folder; it stays on the previous one."""
 
 
+#: A project left while it still worked keeps its engine this long once idle.
+PARKED_IDLE_CLOSE_S = 30.0
+#: How often the parked engines are checked for idleness.
+PARKED_CHECK_EVERY_S = 5.0
+#: Messages kept per session during its turn, to draw it again when it opens mid-turn.
+REPLAY_LIMIT = 4000
+#: Longest a session opened mid-turn holds its live messages while it is drawn.
+HOLD_MAX_S = 30.0
+#: Events not replayed: open cards are drawn again from the brokers, and the
+#: subagent rows from the subagent manager, both with their current state.
+_NOT_REPLAYED = (
+    ApprovalRequestedEvent, ApprovalClosedEvent, ChoiceRequestedEvent, ChoiceClosedEvent,
+    CredentialRequestedEvent, CredentialClosedEvent, SubagentProgressEvent,
+)
+
+
+@dataclass
+class _ParkedEngine:
+    """The engine of a project the user left while it was still working.
+
+    It keeps running (turns, subagents, approvals) in this process; opening
+    the project again puts it back on screen instead of building a new one.
+    """
+
+    workspace: str
+    config: Any
+    bus: Any
+    agent_loop: Any
+    loop_task: asyncio.Task | None
+    consumer_task: asyncio.Task | None
+    unsubscribe: Callable[[], None] | None
+    idle_since: float | None = None
+
+
+def _workspace_id(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve(strict=False))
+
+
+def active_turn_keys(loop: Any) -> set[str]:
+    """Sessions of ``loop`` with a main turn in progress."""
+    active = getattr(loop, "_active_tasks", None) or {}
+    return {key for key, tasks in active.items() if any(not task.done() for task in tasks)}
+
+
+def _work_count(loop: Any) -> int:
+    """Turns and subagents still running in ``loop``."""
+    active = getattr(loop, "_active_tasks", None) or {}
+    turns = sum(1 for tasks in active.values() for task in tasks if not task.done())
+    subagents = getattr(getattr(loop, "subagents", None), "_running_tasks", None) or {}
+    return turns + sum(1 for task in subagents.values() if not task.done())
+
+
+def busy_session_keys(loop: Any) -> set[str]:
+    """Sessions of ``loop`` that still work: a turn, a running or a queued subagent."""
+    keys = active_turn_keys(loop)
+    subagents = getattr(loop, "subagents", None)
+    running = getattr(subagents, "_running_tasks", None) or {}
+    for key, task_ids in (getattr(subagents, "_session_tasks", None) or {}).items():
+        if any((task := running.get(task_id)) is not None and not task.done() for task_id in task_ids):
+            keys.add(key)
+    for key, queued in (getattr(subagents, "_queued", None) or {}).items():
+        if queued:
+            keys.add(key)
+    return keys
+
+
+def open_request_count(loop: Any) -> int:
+    """Approval, choice and login cards still waiting on the user in ``loop``."""
+    count = 0
+    for name in ("approvals", "choices", "credentials"):
+        rows = getattr(getattr(loop, name, None), "open_requests", None)
+        if callable(rows):
+            count += len(rows())
+    return count
+
+
 class TuiRuntime:
     """Own the engine for one TUI process.
 
@@ -447,6 +538,21 @@ class TuiRuntime:
         self.usage = CliUsageHook()
         self.worked_seconds = 0.0
         self.shutdown_warnings: list[str] = []
+        # Projects left while they still worked, by resolved folder.
+        self._parked: dict[str, _ParkedEngine] = {}
+        self._reaper_task: asyncio.Task | None = None
+        # When each running turn started, by (project folder, session), so a
+        # chat opened again mid-turn shows its real elapsed time.
+        self._turn_starts: dict[tuple[str, str], float] = {}
+        # What each session showed during its current turn, by (project folder,
+        # session): drawn again when one is opened mid-turn.
+        self._replay: dict[tuple[str, str], list[OutboundMessage]] = {}
+        # Log entries already drawn by a release in progress, by the same key.
+        self._sealed: dict[tuple[str, str], int] = {}
+        # While a session opened mid-turn is being drawn, its live messages wait
+        # in the replay buffer instead of landing in a transcript being rebuilt.
+        self._holding = False
+        self._hold_completed = False
 
     async def list_subagents(self) -> list[dict[str, Any]]:
         """Agents of the conversation on screen, not of every chat on this key.
@@ -618,14 +724,17 @@ class TuiRuntime:
         self._subscribe_runtime_events()
         from navin.optional_live import live_modules_available
 
-        try:
-            if not live_modules_available():
-                raise ImportError("live account disabled")
-            from navin.license_sync import start_license_sync
+        # Still running when a working project was left in the background: it
+        # always follows the engine on screen (the lambda), so it is not doubled.
+        if self._license_sync is None:
+            try:
+                if not live_modules_available():
+                    raise ImportError("live account disabled")
+                from navin.license_sync import start_license_sync
 
-            self._license_sync = start_license_sync(lambda: self.agent_loop)
-        except ImportError:
-            self._license_sync = None
+                self._license_sync = start_license_sync(lambda: self.agent_loop)
+            except ImportError:
+                self._license_sync = None
         self._ensure_tasks()
         self._start_freeze_watch()
         # Windows: same background ripgrep and Git installs as the desktop gateway.
@@ -718,6 +827,8 @@ class TuiRuntime:
         stack to ~/.navin/logs/cli-freeze.log, and faulthandler dumps every
         thread there if the process dies hard.
         """
+        if getattr(self, "_loop_lag", None) is not None:
+            return  # one watch per process, kept while a project works in the background
         with contextlib.suppress(Exception):
             import faulthandler
 
@@ -752,7 +863,9 @@ class TuiRuntime:
             return
         for attribute, factory, name in (
             ("_loop_task", self._run_agent_loop, "navin-tui-agent-loop"),
-            ("_consumer_task", self._consume_outbound, "navin-tui-outbound"),
+            # Bound to this engine's bus: it keeps draining it if the project is
+            # left while working, and speaks to the screen again once reopened.
+            ("_consumer_task", partial(self._consume_outbound, self.bus, str(self.workspace)), "navin-tui-outbound"),
         ):
             task = getattr(self, attribute)
             if task is None or task.done():
@@ -792,31 +905,71 @@ class TuiRuntime:
 
         asyncio.create_task(report())
 
-    async def close(self) -> None:
+    async def close(self, *, keep_parked: bool = False) -> None:
+        """Stop the engine on screen; ``keep_parked`` spares the projects working in the background.
+
+        ``keep_parked`` is the project switch: the process-wide services (the
+        freeze watch, the account sync) and the engines working in the
+        background stay up. Without it, everything stops (quitting).
+        """
         if self._closed:
             return
         self._closed = True
-        lag = getattr(self, "_loop_lag", None)
-        if lag is not None:
-            self._loop_lag = None
-            with contextlib.suppress(Exception):
-                await lag.stop()
         self.worked_seconds += self.turn_elapsed_s
         self._turn_started_at = None
-        if self._license_sync is not None:
-            with contextlib.suppress(Exception):
-                from navin.license_sync import stop_license_sync
+        if not keep_parked:
+            lag = getattr(self, "_loop_lag", None)
+            if lag is not None:
+                self._loop_lag = None
+                with contextlib.suppress(Exception):
+                    await lag.stop()
+            if self._license_sync is not None:
+                with contextlib.suppress(Exception):
+                    from navin.license_sync import stop_license_sync
 
-                stop_license_sync(self._license_sync)
-            self._license_sync = None
+                    stop_license_sync(self._license_sync)
+                self._license_sync = None
+            await self._close_parked()
         if self._unsubscribe_runtime:
             with contextlib.suppress(Exception):
                 self._unsubscribe_runtime()
-        loop = self.agent_loop
+        await self._shutdown_engine(
+            self.agent_loop, self._loop_task, self._consumer_task,
+            # Browser and desktop-control sessions are shared by the whole
+            # process: a project still working in the background may use them.
+            close_shared=not self._parked,
+        )
+
+    async def _close_parked(self) -> None:
+        reaper, self._reaper_task = self._reaper_task, None
+        if reaper is not None and not reaper.done():
+            reaper.cancel()
+        parked = list(self._parked.values())
+        self._parked.clear()
+        if parked:
+            await asyncio.gather(*(self._close_parked_engine(engine) for engine in parked))
+
+    async def _close_parked_engine(self, engine: _ParkedEngine) -> None:
+        if engine.unsubscribe:
+            with contextlib.suppress(Exception):
+                engine.unsubscribe()
+        await self._shutdown_engine(
+            engine.agent_loop, engine.loop_task, engine.consumer_task, close_shared=False,
+        )
+
+    async def _shutdown_engine(
+        self,
+        loop: Any,
+        loop_task: asyncio.Task | None,
+        consumer_task: asyncio.Task | None,
+        *,
+        close_shared: bool,
+    ) -> None:
+        """Stop one engine: dispatch, turns and subagents, then sync its saved history."""
         if loop is not None:
             with contextlib.suppress(Exception):
                 loop.stop()
-        tasks = [t for t in (self._loop_task, self._consumer_task) if t and not t.done()]
+        tasks = [t for t in (loop_task, consumer_task) if t and not t.done()]
         for active in getattr(loop, "_active_tasks", {}).values():
             tasks.extend(t for t in active if not t.done())
         subagents = getattr(loop, "subagents", None)
@@ -831,11 +984,13 @@ class TuiRuntime:
 
         # AgentLoop.run owns MCP cleanup in its finally block. Calling it again
         # here can wait twice and enter an AnyIO scope from the wrong task.
-        if loop is not None and self._loop_task is None:
-            tasks.append(asyncio.create_task(loop.close_mcp(), name="cli-mcp-close"))
-        from navin.cli.commands import _close_agent_subprocesses
+        close_mcp = getattr(loop, "close_mcp", None)
+        if loop is not None and loop_task is None and callable(close_mcp):
+            tasks.append(asyncio.create_task(close_mcp(), name="cli-mcp-close"))
+        if close_shared:
+            from navin.cli.commands import _close_agent_subprocesses
 
-        tasks.append(asyncio.create_task(_close_agent_subprocesses(), name="cli-subprocess-close"))
+            tasks.append(asyncio.create_task(_close_agent_subprocesses(), name="cli-subprocess-close"))
         if not await drain(tasks, timeout=2.0):
             self.shutdown_warnings.append("Background cleanup exceeded 2 seconds; cancellation requested.")
         if loop is not None:
@@ -852,15 +1007,134 @@ class TuiRuntime:
 
     def running_work(self) -> int:
         """Turns and subagents still running in this engine."""
-        loop = self.agent_loop
-        active = getattr(loop, "_active_tasks", None) or {}
-        turns = sum(1 for tasks in active.values() for task in tasks if not task.done())
-        subagents = getattr(getattr(loop, "subagents", None), "_running_tasks", None) or {}
-        return turns + sum(1 for task in subagents.values() if not task.done())
+        return _work_count(self.agent_loop)
+
+    def background_work(self) -> int:
+        """Turns and subagents still running in the projects working in the background."""
+        return sum(_work_count(engine.agent_loop) for engine in self._parked.values())
+
+    def session_busy(self, path: str | Path, key: str) -> bool:
+        """Whether one session of a project open in this CLI still works."""
+        wanted = _workspace_id(path)
+        return any(
+            key in keys for workspace, keys in self.running_sessions().items()
+            if _workspace_id(workspace) == wanted
+        )
+
+    def running_sessions(self) -> dict[str, set[str]]:
+        """Working sessions by project folder: the one on screen and those in the background."""
+        out: dict[str, set[str]] = {}
+        if self.agent_loop is not None:
+            keys = busy_session_keys(self.agent_loop)
+            if self.status.turn_active:
+                keys.add(self.session_key)
+            if keys:
+                out[str(self.workspace)] = keys
+        for engine in self._parked.values():
+            keys = busy_session_keys(engine.agent_loop)
+            if keys:
+                out[engine.workspace] = keys
+        return out
+
+    def background_projects(self) -> list[str]:
+        """Folders whose engine still runs while another project is on screen."""
+        return [engine.workspace for engine in self._parked.values()]
+
+    def sessions_for(self, path: str | Path) -> Any:
+        """The live session store of a project open in this process, else None."""
+        wanted = _workspace_id(path)
+        if self.agent_loop is not None and _workspace_id(self.workspace) == wanted:
+            return getattr(self.agent_loop, "sessions", None)
+        engine = self._parked.get(wanted)
+        return getattr(engine.agent_loop, "sessions", None) if engine is not None else None
+
+    def _park_engine(self) -> str:
+        """Move the working engine on screen to the background; it keeps running."""
+        key = _workspace_id(self.workspace)
+        self._parked[key] = _ParkedEngine(
+            workspace=str(self.workspace),
+            config=self.config,
+            bus=self.bus,
+            agent_loop=self.agent_loop,
+            loop_task=self._loop_task,
+            consumer_task=self._consumer_task,
+            unsubscribe=self._unsubscribe_runtime,
+        )
+        # The next engine changes the folder in its config; the parked one keeps its own.
+        self.config = self.config.model_copy(deep=True)
+        self.worked_seconds += self.turn_elapsed_s
+        self._turn_started_at = None
+        self.bus = None
+        self.agent_loop = None
+        self._loop_task = None
+        self._consumer_task = None
+        self._unsubscribe_runtime = None
+        self.status.turn_active = False
+        self._hold(False)
+        if self._reaper_task is None or self._reaper_task.done():
+            self._reaper_task = asyncio.create_task(self._reap_parked(), name="navin-tui-parked-reaper")
+        return key
+
+    def _adopt_parked(self, key: str, session_id: str, preset: str | None) -> bool:
+        """Put a project's background engine back on screen. False when there is none."""
+        engine = self._parked.pop(key, None)
+        if engine is None:
+            return False
+        self.config = engine.config
+        self.bus = engine.bus
+        self.agent_loop = engine.agent_loop
+        self._loop_task = engine.loop_task
+        self._consumer_task = engine.consumer_task
+        self._unsubscribe_runtime = engine.unsubscribe
+        os.chdir(self.config.workspace_path)
+        self.channel, self.chat_id = split_session_id(session_id)
+        self.status.workspace = str(self.config.workspace_path)
+        self.status.session_key = self.session_key
+        # Its live messages wait until the session is drawn (release_held).
+        self._hold(self.session_key in active_turn_keys(self.agent_loop))
+        self._enable_interaction()
+        self._ensure_tasks()
+        if preset:
+            self.agent_loop.model_preset = preset
+        return True
+
+    async def _leave_engine(self) -> str | None:
+        """Free the screen for another project: park a working engine, close an idle one."""
+        if self.agent_loop is not None and (
+            self.running_work() or busy_session_keys(self.agent_loop) or open_request_count(self.agent_loop)
+        ):
+            return self._park_engine()
+        await self._stop_engine()
+        return None
+
+    async def _reap_parked(self) -> None:
+        while self._parked:
+            await asyncio.sleep(PARKED_CHECK_EVERY_S)
+            await self.reap_idle_parked()
+
+    async def reap_idle_parked(self, now: float | None = None) -> list[str]:
+        """Close background engines idle for :data:`PARKED_IDLE_CLOSE_S`; return their folders."""
+        now = time.monotonic() if now is None else now
+        closed: list[str] = []
+        for key, engine in list(self._parked.items()):
+            if busy_session_keys(engine.agent_loop) or open_request_count(engine.agent_loop):
+                engine.idle_since = None
+                continue
+            if engine.idle_since is None:
+                engine.idle_since = now
+                continue
+            if now - engine.idle_since < PARKED_IDLE_CLOSE_S:
+                continue
+            if self._parked.get(key) is engine:
+                del self._parked[key]
+                self._forget_replay(engine.workspace)
+                await self._close_parked_engine(engine)
+                closed.append(engine.workspace)
+        return closed
 
     async def _stop_engine(self) -> None:
         """Close this engine and leave the runtime ready to :meth:`start` again."""
-        await self.close()
+        await self.close(keep_parked=True)
         self._closed = False
         self.bus = None
         self.agent_loop = None
@@ -868,6 +1142,7 @@ class TuiRuntime:
         self._consumer_task = None
         self._unsubscribe_runtime = None
         self.status.turn_active = False
+        self._hold(False)
 
     async def _start_on(self, workspace: str, session_id: str, preset: str | None) -> None:
         self.config.agents.defaults.workspace = workspace
@@ -889,6 +1164,10 @@ class TuiRuntime:
         the working directory follows it, as ``navin-cli <folder>`` does. If
         the new folder fails, the engine comes back on the previous one and
         :class:`WorkspaceSwitchError` says why.
+
+        A project that still works (a turn, a subagent, a card waiting on the
+        user) is not stopped: its engine keeps running in the background and
+        comes back on screen, as it is, when the project is opened again.
         """
         target = Path(workspace).expanduser()
         if not target.is_dir():
@@ -896,13 +1175,18 @@ class TuiRuntime:
         previous = str(self.config.agents.defaults.workspace)
         previous_session = self.session_key
         preset = getattr(self.agent_loop, "model_preset", None)
-        await self._stop_engine()
+        parked = await self._leave_engine()
+        resolved = str(target.resolve())
         try:
-            await self._start_on(str(target.resolve()), session_id, preset)
+            if self._adopt_parked(_workspace_id(resolved), session_id, preset):
+                await asyncio.to_thread(self._refresh_status)
+            else:
+                await self._start_on(resolved, session_id, preset)
         except Exception as exc:
             await self._stop_engine()
             try:
-                await self._start_on(previous, previous_session, preset)
+                if parked is None or not self._adopt_parked(parked, previous_session, preset):
+                    await self._start_on(previous, previous_session, preset)
             except Exception as again:
                 raise WorkspaceSwitchError(
                     f"Could not open {target}: {exc}. The engine did not restart on {previous} either: {again}"
@@ -936,18 +1220,32 @@ class TuiRuntime:
             return True
         return msg.channel == self.channel and msg.chat_id == self.chat_id
 
-    async def _consume_outbound(self) -> None:
+    async def _consume_outbound(self, bus: Any = None, workspace: str | None = None) -> None:
+        """Drain one engine's bus for as long as that engine lives.
+
+        Only the session on screen of the engine on screen is drawn. Every
+        other session (another chat of this project, or a project left while
+        it worked) only reports what the user must know: a card waiting for an
+        answer. Its finished turn is reported by the runtime events.
+        """
+        bus = bus if bus is not None else self.bus
+        workspace = workspace or str(self.workspace)
         pending = None
         while True:
             try:
-                msg = pending if pending is not None else await self.bus.consume_outbound()
+                msg = pending if pending is not None else await bus.consume_outbound()
                 pending = None
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
             try:
-                if self._is_ours(msg):
+                if bus is not self.bus or not self._is_ours(msg):
+                    self._log_turn(msg, workspace)
+                    await self._note_background(msg, workspace)
+                elif self._holding and msg.channel != "system" and self._hold_fresh():
+                    self._log_turn(msg, workspace)  # drawn by release_held
+                else:
                     event = outbound_event_from_message(msg)
                     if isinstance(event, StreamDeltaEvent):
                         chunks = [msg.content or ""]
@@ -955,7 +1253,7 @@ class TuiRuntime:
                         # stream-end or another session is an ordering barrier.
                         for _ in range(255):
                             try:
-                                following = self.bus.outbound.get_nowait()
+                                following = bus.outbound.get_nowait()
                             except asyncio.QueueEmpty:
                                 break
                             next_event = outbound_event_from_message(following)
@@ -969,6 +1267,7 @@ class TuiRuntime:
                             chunks.append(following.content or "")
                         content = "".join(chunks)
                         msg = replace(msg, content=content, event=replace(event, content=content))
+                    self._log_turn(msg, workspace)
                     await self._dispatch(msg)
                 # Queue.get() and mounted widget callbacks can both complete
                 # without yielding. Give keyboard and navigation a turn even
@@ -978,9 +1277,111 @@ class TuiRuntime:
                 logger.exception("TUI failed to dispatch outbound message")
                 await self._report_display_error()
 
-    async def _dispatch(self, msg: OutboundMessage) -> None:
+    def _log_turn(self, msg: OutboundMessage, workspace: str) -> None:
+        """Keep what a session shows during its turn, stream deltas merged.
+
+        Kept for every session, on screen or not: a chat opened again mid-turn
+        is drawn from its saved history (the request) plus this log (what the
+        turn did so far), then goes on live. Forgotten when the turn ends.
+        """
+        if msg.channel == "system" or not msg.chat_id:
+            return
+        event = outbound_event_from_message(msg)
+        if isinstance(event, _NOT_REPLAYED):
+            return
+        key = (_workspace_id(workspace), f"{msg.channel}:{msg.chat_id}")
+        log = self._replay.setdefault(key, [])
+        # Entries already drawn by a release in progress are never changed.
+        sealed = self._sealed.get(key, 0)
+        if isinstance(event, StreamDeltaEvent) and len(log) > sealed:
+            last = log[-1]
+            last_event = outbound_event_from_message(last)
+            if isinstance(last_event, StreamDeltaEvent) and last_event.stream_id == event.stream_id:
+                content = (last.content or "") + (msg.content or "")
+                log[-1] = replace(last, content=content, event=replace(last_event, content=content))
+                return
+        log.append(msg)
+        if len(log) > REPLAY_LIMIT and key not in self._sealed:
+            del log[: len(log) - REPLAY_LIMIT]
+
+    def _forget_replay(self, workspace: str, key: str | None = None) -> None:
+        folder = _workspace_id(workspace)
+        for entry in [k for k in self._replay if k[0] == folder and (key is None or k[1] == key)]:
+            del self._replay[entry]
+
+    def _hold(self, on: bool) -> None:
+        self._holding = on
+        self._hold_completed = False
+        self._hold_since = time.monotonic()
+
+    def _hold_fresh(self) -> bool:
+        """A hold lasts while one chat is drawn; past :data:`HOLD_MAX_S` it was never released."""
+        if time.monotonic() - getattr(self, "_hold_since", 0.0) < HOLD_MAX_S:
+            return True
+        logger.warning("TUI: session {} was held {:.0f}s, showing it live", self.session_key, HOLD_MAX_S)
+        self._holding = False
+        return False
+
+    async def release_held(self) -> bool:
+        """Draw what the session on screen did so far in its turn, then go live.
+
+        Called once its history is painted. True means its turn ended while
+        the chat was being drawn: paint the history again, it holds the answer.
+        """
+        key = (_workspace_id(self.workspace), self.session_key)
+        try:
+            if self._hold_completed:
+                self._replay.pop(key, None)
+                return True
+            if self.session_key not in active_turn_keys(self.agent_loop):
+                # Finished: the saved history already has all of it.
+                self._replay.pop(key, None)
+                return False
+            current: list[OutboundMessage] | None = None
+            sent = 0
+            while True:
+                log = self._replay.get(key) or []
+                if log is not current:  # a new turn started meanwhile
+                    current, sent = log, 0
+                if sent >= len(log):
+                    return False
+                batch = log[sent:]
+                sent = len(log)
+                self._sealed[key] = sent
+                for msg in batch:
+                    await self._dispatch(msg, replay=True)
+        finally:
+            # No await since the last check: nothing slipped in between.
+            self._sealed.pop(key, None)
+            self._hold(False)
+
+    async def _note_background(self, msg: OutboundMessage, workspace: str) -> None:
+        """A session off screen asks the user something: say where."""
+        if msg.channel == "system" or not msg.chat_id:
+            return
+        event = outbound_event_from_message(msg)
+        if isinstance(event, (ApprovalRequestedEvent, ChoiceRequestedEvent, CredentialRequestedEvent)):
+            await self._emit(UiBackgroundSession(workspace, f"{msg.channel}:{msg.chat_id}", "attention"))
+
+    async def replay_open_requests(self) -> None:
+        """Show again the cards the session on screen still waits on.
+
+        A card asked while the user was in another session or project was
+        never drawn; one drawn earlier left with the transcript on the switch.
+        """
+        loop = self.agent_loop
+        key = self.session_key
+        for name in ("approvals", "choices", "credentials"):
+            rows = getattr(getattr(loop, name, None), "open_requests", None)
+            if not callable(rows):
+                continue
+            for row in rows(key):
+                await self._emit(_request_event(name, row))
+
+    async def _dispatch(self, msg: OutboundMessage, *, replay: bool = False) -> None:
         observer = getattr(self, "share_observer", None)
-        if observer is not None and msg.channel == self.channel:
+        # A replayed turn already reached the live-share guests when it happened.
+        if observer is not None and msg.channel == self.channel and not replay:
             try:
                 await observer.on_outbound(msg)
             except Exception:  # noqa: BLE001 - a guest never breaks the host chat
@@ -1215,22 +1616,45 @@ class TuiRuntime:
     # -- runtime events (model changes from other paths) ------------------
 
     def _subscribe_runtime_events(self) -> None:
-        bus = getattr(self.agent_loop, "runtime_events", None)
+        loop = self.agent_loop
+        bus = getattr(loop, "runtime_events", None)
         if bus is None:
             return
         from navin.bus.runtime_events import RuntimeModelChanged, SessionTurnStarted, TurnCompleted
+        from navin.tui.projects import is_chat_key
+
+        workspace = str(self.workspace)
 
         async def _handler(event: Any) -> None:
+            on_screen = self.agent_loop is loop
             if isinstance(event, RuntimeModelChanged):
-                self._refresh_status()
-            elif isinstance(event, SessionTurnStarted):
-                if event.context.session_key == self.session_key and not self.status.turn_active:
+                if on_screen:
+                    self._refresh_status()
+                return
+            key = event.context.session_key if isinstance(event, (SessionTurnStarted, TurnCompleted)) else ""
+            if isinstance(event, SessionTurnStarted):
+                self._turn_starts[(workspace, key)] = time.monotonic()
+                # A new turn: what an earlier one left in the buffer is history now.
+                self._forget_replay(workspace, key)
+            elif isinstance(event, TurnCompleted):
+                self._turn_starts.pop((workspace, key), None)
+                if on_screen and key == self.session_key and self._holding:
+                    self._hold_completed = True
+                else:
+                    self._forget_replay(workspace, key)
+            if not on_screen or key != self.session_key:
+                # Another chat of this project, or a project working in the background.
+                if isinstance(event, TurnCompleted) and is_chat_key(key):
+                    await self._emit(UiBackgroundSession(workspace, key, "done"))
+                return
+            if isinstance(event, SessionTurnStarted):
+                if not self.status.turn_active:
                     self.status.turn_active = True
                     self._streamed_this_turn = False
                     self._turn_started_at = time.monotonic()
                     await self._emit(UiTurnStarted(event.user_text))
             elif isinstance(event, TurnCompleted):
-                if event.context.session_key == self.session_key and self.status.turn_active:
+                if self.status.turn_active:
                     self._finish_turn({"latency_ms": event.latency_ms})
 
         self._unsubscribe_runtime = bus.subscribe(_handler)
@@ -1481,12 +1905,23 @@ class TuiRuntime:
         """Point the UI at another session key (no engine restart needed)."""
         self.channel, self.chat_id = split_session_id(session_id)
         self._enable_interaction()
-        self.status.turn_active = False
-        self._turn_started_at = None
+        # A chat still working (left earlier, or in a project left in the
+        # background) shows as working again instead of looking finished.
+        self.status.turn_active = self.session_key in active_turn_keys(self.agent_loop)
+        # Its live messages wait until its history is on screen (release_held).
+        self._hold(self._holding or self.status.turn_active)
+        if not self.status.turn_active:
+            # A turn stopped without a completion event leaves no stale start.
+            self._turn_starts.pop((str(self.workspace), self.session_key), None)
+        started = self._turn_starts.get((str(self.workspace), self.session_key))
+        self._turn_started_at = (started or time.monotonic()) if self.status.turn_active else None
+        self._streamed_this_turn = False
         await asyncio.to_thread(self._adopt_session_model_pin)
         await asyncio.to_thread(self._refresh_status)
-        # Opening a chat whose turn was interrupted picks that work up again.
-        await self._resume_interrupted_turn()
+        # Opening a chat whose turn was interrupted picks that work up again;
+        # one still running is not interrupted, and must not be replayed.
+        if not self.status.turn_active:
+            await self._resume_interrupted_turn()
 
     async def send(self, text: str, *, model_preset: str | None = None, followup: bool = False) -> None:
         await self._wait_for_start()
@@ -1697,9 +2132,7 @@ class TuiRuntime:
 
     def reload_from_disk(self, config_path: Path | None = None) -> None:
         """Pick up provider / model / account edits without restarting the TUI."""
-        from navin.config.loader import load_config
-
-        self.config = load_config(config_path) if config_path else load_config()
+        self.config = self._fresh_config(config_path)
         loop = self.agent_loop
         if loop is not None:
             with contextlib.suppress(Exception):
@@ -1708,9 +2141,7 @@ class TuiRuntime:
 
     def apply_account_from_disk(self, config_path: Path | None = None) -> None:
         """After connect / refresh / disconnect, use the disk provider now."""
-        from navin.config.loader import load_config
-
-        self.config = load_config(config_path) if config_path else load_config()
+        self.config = self._fresh_config(config_path)
         from navin.optional_live import live_modules_available
 
         if live_modules_available():
@@ -1726,9 +2157,57 @@ class TuiRuntime:
 
     # -- workspace ----------------------------------------------------------
 
+    def _fresh_config(self, config_path: Path | None) -> Any:
+        """The settings on disk, on the project open here.
+
+        The file names the default folder, not the one this engine runs on:
+        taken as is, the CLI read as being on another project after any
+        settings change, and the project list, the drafts and the background
+        work lost track of the project on screen.
+        """
+        from navin.config.loader import load_config
+
+        fresh = load_config(config_path) if config_path else load_config()
+        current = getattr(getattr(getattr(self.config, "agents", None), "defaults", None), "workspace", None)
+        if current:
+            fresh.agents.defaults.workspace = current
+        return fresh
+
     @property
     def workspace(self) -> Path:
         return Path(self.config.workspace_path)
+
+
+def _request_event(broker: str, row: dict[str, Any]) -> UiEvent:
+    """The card event for one ``open_requests`` row of the named broker."""
+    if broker == "approvals":
+        return UiApprovalRequested(
+            str(row.get("request_id") or ""),
+            str(row.get("tool") or ""),
+            str(row.get("action") or ""),
+            str(row.get("reason") or ""),
+            str(row.get("detail") or ""),
+            str(row.get("consequence") or ""),
+            str(row.get("scope") or ""),
+            bool(row.get("remember_offered")),
+            row.get("expires_at_ms"),
+        )
+    if broker == "choices":
+        return UiChoiceRequested(
+            str(row.get("request_id") or ""),
+            str(row.get("question") or ""),
+            list(row.get("options") or []),
+            bool(row.get("allow_skip")),
+            str(row.get("recommended_id") or ""),
+            row.get("expires_at_ms"),
+        )
+    return UiCredentialRequested(
+        str(row.get("request_id") or ""),
+        str(row.get("kind") or ""),
+        str(row.get("host") or ""),
+        list(row.get("names") or []),
+        str(row.get("reason") or ""),
+    )
 
 
 def _concurrent_import_race(exc: ImportError) -> bool:

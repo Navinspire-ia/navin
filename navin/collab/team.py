@@ -34,7 +34,8 @@ ALL_TOOLS: tuple[str, ...] = (
     "write_file", "edit_file", "apply_patch", "manage_files", "notebook_edit",
     "exec", "write_stdin", "list_exec_sessions", "git", "lint", "test_run", "verify",
     "debug_repair", "code_review", "security_scan", "pr_comments", "start_app",
-    "open_preview", "browser", "web_search", "web_fetch", "team", "project", "board",
+    "open_preview", "browser", "mobile", "appfactory", "infra", "web_search", "web_fetch",
+    "team", "project", "board",
     "notes", "present_artifact", "spawn", "seo", "scrape", "marketing", "leads",
     "crm", "generate_image", "ads", "campaigns", "generate_video", "generate_music",
     "generate_speech", "visual_qa", "montage",
@@ -62,7 +63,8 @@ GENERAL_TOOLS: tuple[str, ...] = (
     "write_file", "edit_file", "apply_patch", "manage_files", "notebook_edit",
     "exec", "write_stdin", "list_exec_sessions", "git", "lint", "test_run", "verify",
     "debug_repair", "code_review", "security_scan", "pr_comments", "start_app",
-    "open_preview", "browser", "web_search", "web_fetch", "team", "project", "board",
+    "open_preview", "browser", "mobile", "appfactory", "web_search", "web_fetch",
+    "team", "project", "board",
     "notes", "present_artifact", "spawn",
 )
 DESK_TOOLS: tuple[str, ...] = ("seo", "scrape", "marketing", "leads", "crm", "generate_image", "ads", "campaigns")
@@ -72,15 +74,21 @@ _GROWTH_ROLES = ("seo", "marketing", "sales", "ads", "campaigns", "designer")
 VIDEO_TOOLS: tuple[str, ...] = ("montage", "generate_video", "generate_music", "generate_speech", "visual_qa")
 _VIDEO_ROLES = ("designer", "marketing")
 
+# Cloud, clusters and infrastructure as code under the Ops policy (the same
+# approvals as the main agent: critical operations always ask).
+OPS_TOOLS: tuple[str, ...] = ("infra",)
+_OPS_ROLES = ("devops", "infra", "architect", "security")
+
 ROLE_TOOLS: dict[str, tuple[str, ...]] = {
     role: (*GENERAL_TOOLS, *(DESK_TOOLS if role in _GROWTH_ROLES else ()),
-           *(VIDEO_TOOLS if role in _VIDEO_ROLES else ()))
+           *(VIDEO_TOOLS if role in _VIDEO_ROLES else ()),
+           *(OPS_TOOLS if role in _OPS_ROLES else ()))
     for role in ROLE_KEYS
 }
 
 ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "architect": ("task-planner", "archify", "fullstack-dev", "api-engineer", "threat-modeler"),
-    "developer": ("fullstack-dev", "api-engineer", "git", "test-generator", "debug-live"),
+    "developer": ("fullstack-dev", "api-engineer", "git", "test-generator", "debug-live", "app-factory"),
     "tester": ("test-generator", "quality-gate", "playwright-browser", "critic-reviewer", "performance-auditor"),
     "security": (
         "security-auditor", "vulnerability-scanner", "secrets-scanner",
@@ -105,10 +113,10 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "ads": ("paid-ads-manager", "ad-creative-generator", "conversion-rate-optimization", "marketing-analytics"),
     "devops": (
         "cicd-agent", "docker-operator", "kubernetes-operator", "helm-operator",
-        "gitops-argocd", "observability-agent", "sre-incident-responder",
+        "gitops-argocd", "observability-agent", "sre-incident-responder", "infra-orchestrator",
     ),
     "infra": (
-        "terraform-agent", "cloud-aws", "cloud-azure", "cloud-gcp",
+        "infra-orchestrator", "terraform-agent", "cloud-aws", "cloud-azure", "cloud-gcp",
         "iac-security-auditor", "sysops-administrator", "backup-rollback",
     ),
     "designer": ("ui-ux-pro-max", "make-interfaces-feel-better", "presentation-designer", "image-generation",

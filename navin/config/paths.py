@@ -68,6 +68,27 @@ def _legacy_default_workspace_path() -> Path:
     return Path.home() / ".navin" / "workspace"
 
 
+def _resolves_to_legacy_default(path: Path) -> bool:
+    """Whether *path* is the legacy ``~/.navin/workspace`` default, symlinks resolved."""
+    legacy = _legacy_default_workspace_path()
+    key = (str(path), str(legacy))
+    hit = _LEGACY_MATCH_CACHE.get(key)
+    if hit is not None:
+        return hit
+    match = path.resolve(strict=False) == legacy.resolve(strict=False)
+    if len(_LEGACY_MATCH_CACHE) >= 256:
+        _LEGACY_MATCH_CACHE.pop(next(iter(_LEGACY_MATCH_CACHE)))
+    _LEGACY_MATCH_CACHE[key] = match
+    return match
+
+
+# resolve() stats every component of both paths; the CLI asks for the
+# workspace several times a second (status line, projects panel) on the event
+# loop, and on WSL one resolve took up to 2 s (7 freezes, 7.4 s, in the CLI
+# freeze log of 2026-10-27). The answer for a given path and home is kept.
+_LEGACY_MATCH_CACHE: dict[tuple[str, str], bool] = {}
+
+
 def resolve_workspace_setting(workspace: str | None = None) -> Path:
     """Resolve a configured workspace value without creating it.
 
@@ -76,7 +97,7 @@ def resolve_workspace_setting(workspace: str | None = None) -> Path:
     used (or shown) as a project workspace again.
     """
     path = Path(workspace).expanduser() if workspace else get_default_workspace_path()
-    if path.resolve(strict=False) == _legacy_default_workspace_path().resolve(strict=False):
+    if _resolves_to_legacy_default(path):
         return get_default_workspace_path()
     return path
 

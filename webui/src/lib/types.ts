@@ -3714,7 +3714,7 @@ export type MobilePreviewEvent =
     } & MobilePreviewStatus);
 
 export type Outbound =
-  | { type: "subagents_list" | "subagent_history" | "subagent_recover" | "subagent_relaunch" | "subagent_team_feed" | "subagent_team_message" | "subagent_team_assign" | "subagent_team_select"; chat_id: string; request_id: string; task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string }
+  | { type: "subagents_list" | "subagent_history" | "subagent_recover" | "subagent_relaunch" | "subagent_cancel" | "subagent_retry" | "subagent_team_feed" | "subagent_team_message" | "subagent_team_assign" | "subagent_team_select"; chat_id: string; request_id: string; task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string }
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
   | { type: "fork_chat"; source_chat_id: string; before_user_index: number; title?: string }
   | { type: "attach"; chat_id: string }

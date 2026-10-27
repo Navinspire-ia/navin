@@ -1,0 +1,20 @@
+/* Mobile adaptation for the packaged web app (added by Navin App Factory). */
+html.navin-native body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+html.navin-native a,
+html.navin-native button,
+html.navin-native [role="button"] {
+  touch-action: manipulation;
+}
+/* 16px inputs: the keyboard opens without zooming the page. */
+html.navin-native input,
+html.navin-native select,
+html.navin-native textarea {
+  font-size: max(16px, 1em);
+}

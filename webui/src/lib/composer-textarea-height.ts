@@ -26,6 +26,7 @@ type Measurable = {
   clientWidth: number;
   scrollHeight: number;
   style: { height: string };
+  parentElement?: { offsetHeight: number; style: { minHeight: string } } | null;
 };
 
 /**
@@ -58,9 +59,19 @@ export function fitTextareaHeight(
 ): number | null {
   if (!el) return null;
   if (textareaContentWidth(el) < COMPOSER_MIN_MEASURABLE_WIDTH_PX) return null;
+  // WebKit (macOS Safari and the Desktop app) paints the collapsed
+  // `height: auto` box between the two writes, so the composer jumped on
+  // every keystroke. The parent keeps its height while the textarea is
+  // measured, so nothing around it moves.
+  const parent = el.parentElement ?? null;
+  const previousMin = parent ? parent.style.minHeight : "";
+  if (parent) parent.style.minHeight = `${parent.offsetHeight}px`;
+  const previous = el.style.height;
   el.style.height = "auto";
   const next = Math.min(el.scrollHeight, max);
-  el.style.height = `${next}px`;
+  const nextPx = `${next}px`;
+  el.style.height = previous === nextPx ? previous : nextPx;
+  if (parent) parent.style.minHeight = previousMin;
   return next;
 }
 

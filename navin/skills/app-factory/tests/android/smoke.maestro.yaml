@@ -1,0 +1,16 @@
+# Android smoke flow template. Replace APP_ID and the visible texts.
+# Run: maestro test os/android/tests/smoke.maestro.yaml
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    text: "${HOME_TEXT}"
+- tapOn:
+    text: "${LOGIN_TEXT}"
+- assertVisible:
+    text: "${LOGIN_SCREEN_TEXT}"
+- back
+- assertVisible:
+    text: "${HOME_TEXT}"
+- takeScreenshot: smoke-home

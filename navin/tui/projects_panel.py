@@ -4,15 +4,17 @@
 """Projects and their sessions in the CLI sidebar, laid out like the desktop panel.
 
 Folder names in bold, sessions in grey under them, three at first and three more
-per "more", a spinner in front of the session that is working, a small menu on
-the right of each session. The panel scrolls when the list outgrows the screen.
-It only draws and reports clicks (:class:`ProjectsPanel.Hit`); the app decides
-what a click does, because opening a session of another project moves the engine
-to that folder.
+per "more", a spinner in front of every session that is working (in any project:
+the CLI runs a project left while it worked in the background) and next to its
+folder, a small menu on the right of each session. The panel scrolls when the
+list outgrows the screen. It only draws and reports clicks
+(:class:`ProjectsPanel.Hit`); the app decides what a click does, because opening
+a session of another project moves the engine to that folder.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from functools import partial
 
 from textual import events
@@ -59,6 +61,20 @@ class _Hit(Static):
         if event.key in {"enter", "space"}:
             event.stop()
             self.post_message(ProjectsPanel.Hit(self.kind, self.path, self.key))
+
+
+class _FolderLabel(_Hit):
+    """A project: fold chevron, colored square, bold name, a spinner while it works."""
+
+    def __init__(self, project: ProjectEntry, opened: bool) -> None:
+        super().__init__("", "toggle", project.path, classes="proj-name")
+        chevron = "▾" if opened else "▸"
+        self._base = f"[$text-muted]{chevron}[/] [{project.color}]■[/] [b $foreground]{escape(project.name)}[/]"
+        self.paint(None)
+
+    def paint(self, frame: int | None) -> None:
+        spin = f" [$accent]{SPINNER[frame % len(SPINNER)]}[/]" if frame is not None else ""
+        self.update(f"{self._base}{spin}")
 
 
 class _SessionLabel(_Hit):
@@ -156,8 +172,10 @@ class ProjectsPanel(VerticalScroll):
         self._current_key = ""
         self._open: set[str] = set()
         self._shown: dict[str, int] = {}
-        self._busy_keys: set[str] = set()
+        # Working sessions by project id, for every project open in this CLI.
+        self._busy: dict[str, frozenset[str]] = {}
         self._labels: dict[tuple[str, str], _SessionLabel] = {}
+        self._folders: dict[str, _FolderLabel] = {}
         self._spin = 0
         self._generation = 0
         self._seeded = False
@@ -192,16 +210,30 @@ class ProjectsPanel(VerticalScroll):
                 return any(s.key == key and s.pinned for s in project.sessions)
         return False
 
-    def set_running(self, keys: set[str]) -> None:
+    def set_running(self, keys: Iterable[str]) -> None:
         """Sessions of the project open here that have a turn in progress."""
-        if keys == self._busy_keys:
+        keys = set(keys)
+        self.set_busy({self._current_path: keys} if keys else {})
+
+    def set_busy(self, by_project: Mapping[str, Iterable[str]]) -> None:
+        """Working sessions of every project, by folder path."""
+        busy = {
+            self._pid(path): frozenset(keys)
+            for path, keys in by_project.items()
+            if keys
+        }
+        if busy == self._busy:
             return
-        self._busy_keys = set(keys)
+        self._busy = busy
         self._paint_labels()
+
+    def is_busy(self, path: str, key: str = "") -> bool:
+        keys = self._busy.get(self._pid(path), frozenset())
+        return key in keys if key else bool(keys)
 
     def tick(self) -> None:
         """One spinner step; free when nothing is working."""
-        if not self._busy_keys:
+        if not self._busy:
             return
         self._spin += 1
         self._paint_labels()
@@ -244,6 +276,7 @@ class ProjectsPanel(VerticalScroll):
         if generation != self._generation:
             return
         self._labels = {}
+        self._folders = {}
         widgets = self._build()
         await self.mount(*widgets)
         self._paint_labels()
@@ -261,12 +294,11 @@ class ProjectsPanel(VerticalScroll):
 
     def _project_rows(self, project: ProjectEntry) -> list[Static | Horizontal]:
         opened = self.is_open(project.path)
-        chevron = "▾" if opened else "▸"
-        folder = f"[{project.color}]■[/]"
-        name = f"[$text-muted]{chevron}[/] {folder} [b $foreground]{escape(project.name)}[/]"
+        folder = _FolderLabel(project, opened)
+        self._folders[self._pid(project.path)] = folder
         rows: list[Static | Horizontal] = [
             Horizontal(
-                _Hit(name, "toggle", project.path, classes="proj-name"),
+                folder,
                 _Hit("[$text-muted]+[/] new agent", "new", project.path, classes="proj-new"),
                 classes="proj-row",
             )
@@ -297,7 +329,8 @@ class ProjectsPanel(VerticalScroll):
         return rows
 
     def _paint_labels(self) -> None:
-        here = self._pid(self._current_path)
         for (pid, key), label in self._labels.items():
-            working = pid == here and key in self._busy_keys
+            working = key in self._busy.get(pid, ())
             label.paint(self._spin if working else None)
+        for pid, folder in self._folders.items():
+            folder.paint(self._spin if self._busy.get(pid) else None)

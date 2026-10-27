@@ -1,0 +1,35 @@
+// next/navigation for the app build, backed by the app router.
+import { useLocation, useNavigate, useParams as useRouterParams, useSearchParams as useRouterSearchParams } from "react-router";
+
+export function useRouter() {
+  const navigate = useNavigate();
+  return {
+    push: (href: string) => navigate(href),
+    replace: (href: string) => navigate(href, { replace: true }),
+    back: () => navigate(-1),
+    forward: () => navigate(1),
+    refresh: () => navigate(0),
+    prefetch: () => undefined,
+  };
+}
+
+export function usePathname(): string {
+  return useLocation().pathname;
+}
+
+export function useSearchParams(): URLSearchParams {
+  return useRouterSearchParams()[0];
+}
+
+export function useParams<T extends Record<string, string>>(): T {
+  return useRouterParams() as T;
+}
+
+export function redirect(href: string): never {
+  window.location.hash = `#${href}`;
+  throw new Error(`redirect to ${href}`);
+}
+
+export function notFound(): never {
+  throw new Error("not found");
+}

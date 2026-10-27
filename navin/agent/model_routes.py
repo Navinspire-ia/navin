@@ -25,6 +25,7 @@ WORKFLOW_ROUTE_ROLES: dict[str, str] = {
     "/cruise": "dev",
     "/mission": "deep",
     "/mobile": "dev",
+    "/apps": "dev",
     "/atlas": "docs",
     "/inspect": "review",
     "/fortify": "security",

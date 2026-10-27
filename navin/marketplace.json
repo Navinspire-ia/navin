@@ -375,6 +375,175 @@
       ]
     },
     {
+      "name": "infra-ops",
+      "description": "Cloud, DevOps, SRE and platform engineering bench driven by the infra engine: discover, graph, plan, run through the broker, verify and recover. Entry point: infra-orchestrator.",
+      "version": "1.0.0",
+      "category": "devops",
+      "source": "builtin_plugins/infra-ops",
+      "commands": [],
+      "agents": [],
+      "skills": [
+        {
+          "name": "infra-orchestrator",
+          "skill": "skills/infra-orchestrator/SKILL.md"
+        },
+        {
+          "name": "ops-supervisor",
+          "skill": "skills/ops-supervisor/SKILL.md"
+        },
+        {
+          "name": "aws-architect",
+          "skill": "skills/aws-architect/SKILL.md"
+        },
+        {
+          "name": "cloud-aws",
+          "skill": "skills/cloud-aws/SKILL.md"
+        },
+        {
+          "name": "cloud-gcp",
+          "skill": "skills/cloud-gcp/SKILL.md"
+        },
+        {
+          "name": "cloud-azure",
+          "skill": "skills/cloud-azure/SKILL.md"
+        },
+        {
+          "name": "kubernetes-platform",
+          "skill": "skills/kubernetes-platform/SKILL.md"
+        },
+        {
+          "name": "kubernetes-operator",
+          "skill": "skills/kubernetes-operator/SKILL.md"
+        },
+        {
+          "name": "openshift-operator",
+          "skill": "skills/openshift-operator/SKILL.md"
+        },
+        {
+          "name": "helm-operator",
+          "skill": "skills/helm-operator/SKILL.md"
+        },
+        {
+          "name": "docker-operator",
+          "skill": "skills/docker-operator/SKILL.md"
+        },
+        {
+          "name": "terraform-agent",
+          "skill": "skills/terraform-agent/SKILL.md"
+        },
+        {
+          "name": "config-management",
+          "skill": "skills/config-management/SKILL.md"
+        },
+        {
+          "name": "network-engineer",
+          "skill": "skills/network-engineer/SKILL.md"
+        },
+        {
+          "name": "database-reliability",
+          "skill": "skills/database-reliability/SKILL.md"
+        },
+        {
+          "name": "storage-operator",
+          "skill": "skills/storage-operator/SKILL.md"
+        },
+        {
+          "name": "private-cloud-operator",
+          "skill": "skills/private-cloud-operator/SKILL.md"
+        },
+        {
+          "name": "platform-engineer",
+          "skill": "skills/platform-engineer/SKILL.md"
+        },
+        {
+          "name": "cicd-agent",
+          "skill": "skills/cicd-agent/SKILL.md"
+        },
+        {
+          "name": "gitops-argocd",
+          "skill": "skills/gitops-argocd/SKILL.md"
+        },
+        {
+          "name": "cloud-security-posture",
+          "skill": "skills/cloud-security-posture/SKILL.md"
+        },
+        {
+          "name": "iac-security-auditor",
+          "skill": "skills/iac-security-auditor/SKILL.md"
+        },
+        {
+          "name": "finops-analyst",
+          "skill": "skills/finops-analyst/SKILL.md"
+        },
+        {
+          "name": "observability-agent",
+          "skill": "skills/observability-agent/SKILL.md"
+        },
+        {
+          "name": "sre-incident-responder",
+          "skill": "skills/sre-incident-responder/SKILL.md"
+        },
+        {
+          "name": "resilience-tester",
+          "skill": "skills/resilience-tester/SKILL.md"
+        },
+        {
+          "name": "sysops-administrator",
+          "skill": "skills/sysops-administrator/SKILL.md"
+        }
+      ],
+      "steps": [
+        {
+          "step": "decompose and run a multi-domain infra mission",
+          "use": "skill:infra-orchestrator"
+        },
+        {
+          "step": "design an AWS platform",
+          "use": "skill:aws-architect"
+        },
+        {
+          "step": "build or upgrade a Kubernetes cluster",
+          "use": "skill:kubernetes-platform"
+        },
+        {
+          "step": "debug Kubernetes workloads",
+          "use": "skill:kubernetes-operator"
+        },
+        {
+          "step": "change infrastructure as code",
+          "use": "skill:terraform-agent"
+        },
+        {
+          "step": "network, DNS and TLS issues",
+          "use": "skill:network-engineer"
+        },
+        {
+          "step": "databases: HA, backups, restore drills",
+          "use": "skill:database-reliability"
+        },
+        {
+          "step": "security posture audit and remediation",
+          "use": "skill:cloud-security-posture"
+        },
+        {
+          "step": "cost analysis and savings",
+          "use": "skill:finops-analyst"
+        },
+        {
+          "step": "golden paths, CI/CD and GitOps",
+          "use": "skill:platform-engineer"
+        },
+        {
+          "step": "incident response",
+          "use": "skill:sre-incident-responder"
+        },
+        {
+          "step": "load, chaos and DR drills",
+          "use": "skill:resilience-tester"
+        }
+      ]
+    },
+    {
       "name": "issue-triage",
       "description": "Issue maintenance: find likely duplicates and comment them, triage an issue by applying only labels that exist.",
       "version": "1.0.0",
@@ -819,6 +988,84 @@
       "category": "security"
     },
     {
+      "name": "app-backend-bridge",
+      "description": "Phase 4 of App Factory. Keep the existing backend (FastAPI, NestJS, Express, Django, Next.js API) and make the mobile/desktop app talk to it over HTTPS - API base URL, CORS origins capacitor://localhost, http://localhost, https://tauri.localhost, tauri://localhost, auth cookies or tokens. Sidecar backend only when a local desktop backend is required.",
+      "skill": "skills/app-backend-bridge/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-build-repair",
+      "description": "App Factory recovery for failed mobile/desktop builds and broken runtimes - Gradle/JDK mismatch, SDK licenses, minSdk, missing webkit2gtk-4.1, MSVC link.exe not found, WebView2 missing, Rust target missing, frontendDist empty, white screen from absolute asset paths, CORS, SameSite cookies on capacitor://localhost and https://tauri.localhost, mixed content.",
+      "skill": "skills/app-build-repair/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-capacitor-builder",
+      "description": "App Factory mobile builder. Wrap the web frontend with Capacitor 8 inside os/<target> and build Android (.apk, .aab) then iOS (.ipa) - cap init, add android, sync, run, Gradle assembleDebug / bundleRelease, signing via keystore with secrets from env.",
+      "skill": "skills/app-capacitor-builder/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-compatibility-engine",
+      "description": "Phase 2 of App Factory. Decide how a web frontend runs inside a mobile (Capacitor 8) or desktop (Tauri 2) shell - strategy static, next-export or client-shell - and enforce the Next.js rule (never just output export when Server Actions, SSR, middleware or route handlers exist). Drives `appfactory action=plan`.",
+      "skill": "skills/app-compatibility-engine/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-device-tester",
+      "description": "App Factory tests on real runtimes - Android emulator or device via the `mobile` tool and adb, Maestro flows, desktop binary launch and Playwright against the web build - with honest passed / failed / not_run reporting. A compiled build is not a working app.",
+      "skill": "skills/app-device-tester/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-environment-manager",
+      "description": "Phase 3 of App Factory. Detect and prepare the build toolchain for a mobile or desktop target (Node, JDK 21, Android SDK, Gradle, Rust, MSVC, WebView2, webkit2gtk-4.1, Xcode) with `appfactory action=doctor`, and install missing tools with official installers only after the user agrees.",
+      "skill": "skills/app-environment-manager/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-factory",
+      "description": "Entry point to turn an existing web app into a real mobile or desktop app (Android, iOS, Windows, macOS, Linux). Use when the user says \"turn my app into an Android/iOS/Windows/macOS/Linux app\", \"make a mobile app\", \"make a desktop app\", \"/apps\", \"build an apk\", \"build an msi\", \"AppImage\", \"dmg\", \"aab\". Drives the `appfactory` engine through 6 phases (analysis, compatibility, tools, transformation, build and tests, delivery) and delegates to the 12 app-* specialist skills.",
+      "skill": "skills/app-factory/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-frontend-adapter",
+      "description": "Phase 4 of App Factory. Adapt the web frontend to run inside the Capacitor 8 or Tauri 2 shell without touching the website - static build config in os/<target>, client-shell frontend in os/<target>/web for Next.js server features, API base URL from env, relative assets, real mobile adaptation (safe areas, 44px touch targets, keyboard, back navigation).",
+      "skill": "skills/app-frontend-adapter/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-native-capabilities",
+      "description": "App Factory native features. Add only the native capabilities the app really uses - Capacitor plugins (Camera, Filesystem, Preferences, Push Notifications, Geolocation, App back button, StatusBar, Keyboard, SplashScreen) and Tauri 2 plugins (fs, dialog, notification, shell with scope, updater, store) - always with minimal permissions.",
+      "skill": "skills/app-native-capabilities/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-project-analyzer",
+      "description": "Phase 1 of App Factory. Analyze a web project before turning it into a mobile or desktop app - frontend framework and version, package manager, build script and output dir, backend, server features, auth, API base URL env vars, existing native folders. Drives `appfactory action=analyze` and verifies its report against the files.",
+      "skill": "skills/app-project-analyzer/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-release-manager",
+      "description": "App Factory delivery and publishing - versionCode/versionName, Tauri version, signing (Android keystore, Windows code signing, macOS notarization), Play Store .aab, store checklists, CI runners for hosts that cannot build locally, and the final appfactory report.",
+      "skill": "skills/app-release-manager/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-security-auditor",
+      "description": "App Factory security gate before delivery or publishing of a mobile/desktop app - Android permissions in AndroidManifest, Tauri capabilities and CSP, secrets scan, dependency audit (npm audit, cargo audit), signing key handling, TLS-only API.",
+      "skill": "skills/app-security-auditor/SKILL.md",
+      "category": "development"
+    },
+    {
+      "name": "app-tauri-builder",
+      "description": "App Factory desktop builder. Wrap the web frontend with Tauri 2 + Rust inside os/<target> and build Windows (.exe NSIS, .msi), macOS (.dmg), Linux (.deb, .rpm, .AppImage) packages - tauri init, frontendDist, beforeBuildCommand, minimal capabilities, updater and signing keys from env.",
+      "skill": "skills/app-tauri-builder/SKILL.md",
+      "category": "development"
+    },
+    {
       "name": "application-tracker",
       "description": "Track job applications - statuses, follow-ups, interviews, and reminders - in a structured pipeline. Use to keep a job search organized.",
       "skill": "skills/application-tracker/SKILL.md",
@@ -841,6 +1088,12 @@
       "description": "Keep a clear audit trail of actions, tools used, actors, outcomes, and errors for sensitive work. Use for compliance-sensitive tasks, incidents, or when the user asks what changed.",
       "skill": "skills/audit-logger/SKILL.md",
       "category": "security"
+    },
+    {
+      "name": "aws-architect",
+      "description": "Design and build production AWS architectures - HA multi-AZ VPC, EKS, RDS PostgreSQL, ElastiCache Redis, ALB, Route 53, ACM, S3, backups - with Well-Architected checks and IaC (Terraform, CDK, CloudFormation, Cloud Control). Use for new AWS platforms, reviews and migrations.",
+      "skill": "skills/aws-architect/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "backlink-strategy",
@@ -924,34 +1177,25 @@
       "name": "cloud-aws",
       "description": "Operate AWS with the aws CLI - EC2, EKS, S3, IAM, VPC, RDS, Lambda, costs. Read-first; mutations gated by approval.",
       "skill": "skills/cloud-aws/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "aws"
-        ]
-      }
+      "category": "devops"
     },
     {
       "name": "cloud-azure",
       "description": "Operate Microsoft Azure with the az CLI - VMs, AKS, storage, networking, ARM resources, costs. Read-first; mutations gated by approval.",
       "skill": "skills/cloud-azure/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "az"
-        ]
-      }
+      "category": "devops"
     },
     {
       "name": "cloud-gcp",
       "description": "Operate Google Cloud with gcloud - GCE, GKE, storage, networking, IAM, logs, costs. Read-first; mutations gated by approval.",
       "skill": "skills/cloud-gcp/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "gcloud"
-        ]
-      }
+      "category": "devops"
+    },
+    {
+      "name": "cloud-security-posture",
+      "description": "Audit and harden cloud and Kubernetes security posture - IAM, RBAC, KMS, Vault, cert-manager, OPA/Gatekeeper, Kyverno, Trivy, Falco, CIS benchmarks. Read-only audit first, then gated remediation. Use for posture reviews, compliance checks and hardening.",
+      "skill": "skills/cloud-security-posture/SKILL.md",
+      "category": "security"
     },
     {
       "name": "code-reviewer",
@@ -994,6 +1238,12 @@
       "description": "Desktop control - see the real screen, click, type, press shortcuts, scroll, drag and drive any native application (Windows / macOS / Linux X11 and Wayland) with the built-in `computer` tool. Use for anything a browser tab cannot reach (Office, IDEs, installers, system dialogs, legacy apps). Safety first, one action per screenshot.",
       "skill": "skills/computer-use/SKILL.md",
       "category": "navigation"
+    },
+    {
+      "name": "config-management",
+      "description": "Manage configuration as code - Ansible playbooks and roles, SSH fleets, cloud-init, Helm values, Kustomize overlays - always check/diff before apply. Use for server configuration, fleet changes and environment overlays.",
+      "skill": "skills/config-management/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "content-generation",
@@ -1110,6 +1360,12 @@
       "category": "data"
     },
     {
+      "name": "database-reliability",
+      "description": "Run databases reliably - PostgreSQL, MySQL, Redis, MongoDB, Kafka, Amazon RDS/Aurora, Cloud SQL, Azure Database - HA and failover, backups, PITR, restore drills, replication, performance and safe schema migrations. Use for any database design, incident, backup or migration.",
+      "skill": "skills/database-reliability/SKILL.md",
+      "category": "devops"
+    },
+    {
       "name": "debug-live",
       "description": "Live debugging workflow - reproduce first, DebugMCP breakpoints, conversational state questions, isolated repair branch, before/after tests, repair report. Use for /debug and hard production bugs.",
       "skill": "skills/debug-live/SKILL.md",
@@ -1147,14 +1403,9 @@
     },
     {
       "name": "docker-operator",
-      "description": "Build, run, inspect, and diagnose Docker containers and Compose stacks safely. Use when debugging images, ports, volumes, or container logs.",
+      "description": "Build, run, inspect, and diagnose containers safely - Docker and Compose, Podman, containerd (nerdctl, crictl). Use when debugging images, ports, volumes, or container logs.",
       "skill": "skills/docker-operator/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "docker"
-        ]
-      }
+      "category": "devops"
     },
     {
       "name": "document-templates",
@@ -1203,6 +1454,12 @@
       "description": "Verify claims, statistics, quotes, and citations before publication - with sources and confidence levels. Use before publishing anything containing factual assertions.",
       "skill": "skills/fact-checker/SKILL.md",
       "category": "writing"
+    },
+    {
+      "name": "finops-analyst",
+      "description": "Analyze and reduce cloud spend - inventory, cost breakdown per provider/service/tag, rightsizing, idle and orphaned resources, budgets and alerts, savings plans and reservations, cleanup. Use for cost reviews, estimates of a planned architecture and cost incidents.",
+      "skill": "skills/finops-analyst/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "followup-writer",
@@ -1258,7 +1515,7 @@
     },
     {
       "name": "gitops-argocd",
-      "description": "Run GitOps deployments with ArgoCD - inspect applications, diff desired vs live state, deploy through git commits and PRs, sync and verify rollouts.",
+      "description": "Run GitOps deployments with Argo CD and Flux - inspect applications, diff desired vs live state, deploy through git commits and PRs, sync and verify rollouts.",
       "skill": "skills/gitops-argocd/SKILL.md",
       "category": "devops"
     },
@@ -1284,12 +1541,7 @@
       "name": "helm-operator",
       "description": "Inspect, template, install, and upgrade Helm releases safely; author and lint charts. Use for anything chart- or release-related.",
       "skill": "skills/helm-operator/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "helm"
-        ]
-      }
+      "category": "devops"
     },
     {
       "name": "hook-development",
@@ -1320,6 +1572,12 @@
       "description": "Generate images and iteratively edit saved image artifacts.",
       "skill": "skills/image-generation/SKILL.md",
       "category": "general"
+    },
+    {
+      "name": "infra-orchestrator",
+      "description": "Master playbook for any Cloud, DevOps, SRE, platform, security or observability mission stated in natural language (build a platform, migrate, audit, fix, scale). Use it as the entry point - it decomposes the mission, discovers the real environment with the infra engine, builds the resource graph, plans, delegates per domain to subagents and the board, runs through the broker, verifies, recovers and reports with evidence.",
+      "skill": "skills/infra-orchestrator/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "interview-coach",
@@ -1361,12 +1619,13 @@
       "name": "kubernetes-operator",
       "description": "Inspect pods, logs, services, ingress, and deployments with kubectl. Use for cluster debugging and safe read-mostly operations.",
       "skill": "skills/kubernetes-operator/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "kubectl"
-        ]
-      }
+      "category": "devops"
+    },
+    {
+      "name": "kubernetes-platform",
+      "description": "Build and operate Kubernetes platforms - EKS, GKE, AKS, OpenShift, K3s, RKE2, MicroK8s - with ingress, cert-manager, external-dns, autoscaling, storage classes, CRDs/operators and version upgrades. Use for cluster creation, platform add-ons and upgrades; use kubernetes-operator for workload debugging.",
+      "skill": "skills/kubernetes-platform/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "lead-enrichment",
@@ -1525,6 +1784,12 @@
       "category": "general"
     },
     {
+      "name": "network-engineer",
+      "description": "Design and troubleshoot networks - cloud VPC/VNet, subnets, routing, VPN, NAT, DNS, firewalls and security groups, load balancers - and debug hosts with ip, ss, nft, dig, tcpdump, openssl. Use for connectivity issues, network design and firewall/DNS/TLS changes.",
+      "skill": "skills/network-engineer/SKILL.md",
+      "category": "devops"
+    },
+    {
       "name": "new-repo",
       "description": "Publish a local project to a new private repository on GitHub, GitLab or Forgejo: inspect first, prepare a safe first commit (.gitignore, no secrets), create the repo with forge action=repo_create, add origin and push through the git tool. Use for /publish, 'push this project to GitHub', 'put this on GitLab', 'crée un repo pour ce projet'. Never creates a second repo, never changes an existing remote, never deletes a repo.",
       "skill": "skills/new-repo/SKILL.md",
@@ -1549,7 +1814,7 @@
     },
     {
       "name": "observability-agent",
-      "description": "Query metrics, logs, and traces (Prometheus, Grafana, Loki, Sentry, OpenTelemetry) to diagnose incidents. Use during outages or performance investigations.",
+      "description": "Query metrics, logs, and traces (Prometheus, Grafana, Loki, Tempo, Sentry, OpenTelemetry, CloudWatch) to diagnose incidents. Use during outages or performance investigations.",
       "skill": "skills/observability-agent/SKILL.md",
       "category": "devops"
     },
@@ -1564,6 +1829,12 @@
       "description": "Optimize existing pages - titles, meta descriptions, heading hierarchy, internal links, and content depth. Use to improve pages that rank on page 2-3 or underperform.",
       "skill": "skills/on-page-seo-optimizer/SKILL.md",
       "category": "seo"
+    },
+    {
+      "name": "openshift-operator",
+      "description": "Operate Red Hat OpenShift with oc - projects, routes, SecurityContextConstraints, builds and image streams, operators through OLM, cluster operators and upgrades with oc adm. Use for any OpenShift or OKD cluster task.",
+      "skill": "skills/openshift-operator/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "ops-supervisor",
@@ -1632,6 +1903,12 @@
       "category": "sales"
     },
     {
+      "name": "platform-engineer",
+      "description": "Build golden paths for developers - CI/CD (GitHub Actions, GitLab CI, Jenkins, Forgejo Actions), GitOps (Argo CD, Flux), environments, secrets management and an observability baseline - so a team ships a service from template to production safely. Use for internal developer platforms and delivery standardization.",
+      "skill": "skills/platform-engineer/SKILL.md",
+      "category": "devops"
+    },
+    {
       "name": "playwright-browser",
       "description": "Browser automation - navigate, click, fill forms, multi-tab, upload, extract, infinite scroll, download, screenshot, and deliver web tasks end-to-end. Prefer the built-in `browser` tool (Playwright + optional browser-use). Use with scrape-operator for project delivery.",
       "skill": "skills/playwright-browser/SKILL.md",
@@ -1672,6 +1949,12 @@
       "description": "Build pricing scenarios - options, margins, discount policies, and negotiation floors - for offers and deals. Use before pricing any proposal or negotiation.",
       "skill": "skills/pricing-assistant/SKILL.md",
       "category": "sales"
+    },
+    {
+      "name": "private-cloud-operator",
+      "description": "Operate private clouds and virtualization - OpenStack (openstack CLI), VMware vSphere (govc), Proxmox VE (pvesh, qm, pct) - VMs, templates, networks, storage, snapshots and capacity. Use for on-premise VM lifecycle, inventory and maintenance.",
+      "skill": "skills/private-cloud-operator/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "proactive-agent",
@@ -1750,6 +2033,12 @@
       "description": "Assemble recurring or one-off business reports - data, charts, narrative, and formatted output (PDF/DOCX/Markdown) - from multiple sources. Use for weekly/monthly reports and study deliverables.",
       "skill": "skills/report-generator/SKILL.md",
       "category": "documents"
+    },
+    {
+      "name": "resilience-tester",
+      "description": "Test that a system holds - network checks, API tests, performance and load (k6, hey, vegeta), security scans, availability probes, disaster recovery drills and chaos experiments (pod/node/AZ failure). Use before a launch, after an architecture change or to validate RTO/RPO.",
+      "skill": "skills/resilience-tester/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "rfp-writer",
@@ -1895,6 +2184,12 @@
       "category": "devops"
     },
     {
+      "name": "storage-operator",
+      "description": "Operate object, block and file storage - S3, GCS, Azure Blob, MinIO, EBS, EFS, Persistent Volumes, Ceph, NFS - encryption, lifecycle, versioning, replication, quotas and backups. Use for bucket and volume management, storage audits and data protection.",
+      "skill": "skills/storage-operator/SKILL.md",
+      "category": "devops"
+    },
+    {
       "name": "stripe-operator",
       "description": "Inspect and operate Stripe (customers, payments, subscriptions, invoices, products) through the Stripe API or CLI. Use for billing questions, payment debugging, and revenue reporting.",
       "skill": "skills/stripe-operator/SKILL.md",
@@ -1937,7 +2232,7 @@
     },
     {
       "name": "sysops-administrator",
-      "description": "Administer Linux, macOS, and Windows servers and VMs - services, disks, memory, processes, network, certificates, backups, patches. Whitelisted read commands; dangerous ops need approval.",
+      "description": "Administer Linux, macOS, and Windows servers and VMs - systemd services, Nginx, Traefik, HAProxy, IIS, disks, memory, processes, network, certificates, backups, patches. Whitelisted read commands; dangerous ops need approval.",
       "skill": "skills/sysops-administrator/SKILL.md",
       "category": "devops"
     },
@@ -1975,12 +2270,7 @@
       "name": "terraform-agent",
       "description": "Author and validate Terraform / OpenTofu IaC with plan-before-apply discipline. Use for infrastructure changes and reviews.",
       "skill": "skills/terraform-agent/SKILL.md",
-      "category": "devops",
-      "requires": {
-        "bins": [
-          "terraform"
-        ]
-      }
+      "category": "devops"
     },
     {
       "name": "test-generator",

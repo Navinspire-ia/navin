@@ -14,23 +14,68 @@ which work gets done, so a full queue or a closed bus must not fail the caller.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
+
+from loguru import logger
 
 from navin.bus.outbound_events import NotificationEvent, outbound_message_for_event
 
 LEVELS = ("info", "success", "warning", "error")
+
+# Levels copied to the remote channels the user switched on (email, WhatsApp,
+# Telegram, Teams): errors, blocks and finished work, the things worth hearing
+# about away from the app. Info stays in the notification centre.
+REMOTE_LEVELS = frozenset({"success", "warning", "error"})
 
 # Set once when the gateway starts. Subsystems that raise notifications -
 # the scheduler, the indexer, the language servers - sit well below the layer
 # that owns the bus, and threading it through every signature to carry an
 # optional courtesy message would be a poor trade. They call ``notify`` instead.
 _default_bus: Any = None
+# Installed by the gateway (navin.agent.remote_channels.forward_notification):
+# (title, detail, level, key) -> number of channels queued. None in a CLI run
+# or a test, so nothing here reaches the user's real channels by accident.
+_remote_forwarder: Callable[[str, str, str, str], int] | None = None
 
 
 def set_notification_bus(bus: Any) -> None:
     global _default_bus
     _default_bus = bus
+
+
+def set_remote_forwarder(forwarder: Callable[[str, str, str, str], int] | None) -> None:
+    global _remote_forwarder
+    _remote_forwarder = forwarder
+
+
+def _call_forwarder(forwarder: Callable[[str, str, str, str], int], args: tuple[str, str, str, str]) -> int:
+    try:
+        return int(forwarder(*args) or 0)
+    except Exception:  # noqa: BLE001 - a courtesy copy must never fail the caller; the WebUI already has it
+        logger.opt(exception=True).warning("could not copy a notification to the remote channels")
+        return 0
+
+
+def _forward_remote(title: str, detail: str | None, level: str, key: str | None, source: str) -> None:
+    """Copy to the remote channels, off the event loop (the outbox is on disk).
+
+    The notify tool forwards its own calls (source "agent") to report how many
+    channels got them, so they are not copied twice here.
+    """
+    forwarder = _remote_forwarder
+    if forwarder is None or source == "agent" or level not in REMOTE_LEVELS:
+        return
+    args = (title, detail or "", level, key or "")
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        _call_forwarder(forwarder, args)  # already on a worker thread or in a plain script
+        return
+    loop.run_in_executor(None, _call_forwarder, forwarder, args)
 
 
 def clear_notification_bus() -> None:
@@ -122,6 +167,7 @@ def publish_notification(
     clean_title = (title or "").strip()
     if not clean_title:
         return False
+    clean_level = level if level in LEVELS else "info"
     try:
         put_outbound(
             bus,
@@ -130,7 +176,7 @@ def publish_notification(
                 chat_id=chat_id,
                 event=NotificationEvent(
                     title=clean_title,
-                    level=level if level in LEVELS else "info",
+                    level=clean_level,
                     detail=(detail or "").strip() or None,
                     key=(key or "").strip() or None,
                     source=source,
@@ -139,4 +185,5 @@ def publish_notification(
         )
     except Exception:
         return False
+    _forward_remote(clean_title, detail, clean_level, key, source)
     return True

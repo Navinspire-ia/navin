@@ -38,7 +38,6 @@ import {
   Bug,
   Check,
   ChevronDown,
-  Download,
   ChevronUp,
   CircleHelp,
   Clapperboard,
@@ -113,12 +112,10 @@ import {
   DocumentTemplatePicker,
 } from "@/components/thread/DocumentTemplatePicker";
 import { commitOnPointerDown, commitOnSelect } from "@/components/thread/menuChoice";
-import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import {
   WorkspaceProjectPicker,
   workspaceProjectPickerVisible,
 } from "@/components/thread/WorkspaceControls";
-import { projectNameFromPath } from "@/lib/workspace";
 import {
   DEFAULT_REASONING_EFFORT_VALUES,
   reasoningEffortShortLabel,
@@ -981,11 +978,6 @@ function ThreadComposerImpl({
   workspaceScopeDisabled = false,
   workspaceError = null,
   onWorkspaceScopeChange,
-  sidebarHidden = false,
-  onImportSessions,
-  onCreateProjectFolder,
-  onOpenProject,
-  recentProjects = [],
   onNewChat,
   pendingQueueKey = null,
   transcriptionProvider = null,
@@ -2805,44 +2797,6 @@ function ThreadComposerImpl({
           )}
         >
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
-            {onImportSessions || onCreateProjectFolder || onOpenProject ? (
-              <div
-                className={cn(
-                  "flex shrink-0 items-center gap-0.5",
-                  !sidebarHidden && "lg:hidden",
-                )}
-              >
-                {onCreateProjectFolder || onOpenProject ? (
-                  <DevProjectSelector
-                    variant="sidebar"
-                    projectPath={workspaceDefaultScope?.project_path ?? null}
-                    recentProjects={recentProjects}
-                    onCreateFolder={onCreateProjectFolder}
-                    onSelectProject={(path, name) => {
-                      onOpenProject?.(path, name || projectNameFromPath(path));
-                    }}
-                  />
-                ) : null}
-                {onImportSessions ? (
-                  <button
-                    type="button"
-                    onClick={onImportSessions}
-                    aria-label={t("sidebar.sessionImport.row", {
-                      defaultValue: "Import sessions",
-                    })}
-                    title={t("sidebar.sessionImport.row", {
-                      defaultValue: "Import sessions",
-                    })}
-                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-muted-foreground/80 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
-                  >
-                    <Download className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-                    <span>
-                      {t("sidebar.sessionImport.short", { defaultValue: "sessions" })}
-                    </span>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
             <ComposerModeMenu
               mode={turnMode}
               disabled={disabled || isStreaming}
@@ -2850,56 +2804,6 @@ function ThreadComposerImpl({
               compact={toolbarCompact}
               onChange={setTurnMode}
             />
-            {liveVoice && !voiceRecorder.isRecording ? (
-              <TooltipProvider delayDuration={220} skipDelayDuration={80}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={disabled || liveVoice.disabled || liveVoice.state === "starting"}
-                      aria-label={liveVoiceLabel}
-                      aria-pressed={liveVoiceActive}
-                      data-live-voice-toggle
-                      onClick={liveVoice.toggle}
-                      className={cn(
-                        "relative h-7 shrink-0 gap-1.5 rounded-lg border-transparent px-2 text-[12.5px] font-medium text-muted-foreground hover:bg-muted/65 hover:text-foreground",
-                        liveVoiceActive &&
-                          "rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(37,99,235,0.28)] hover:bg-primary hover:text-primary-foreground",
-                      )}
-                    >
-                      {liveVoice.state === "starting" ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <AudioLines className="h-3.5 w-3.5" />
-                      )}
-                      <span>{t("thread.composer.liveVoice.short", { defaultValue: "Live" })}</span>
-                      {liveVoiceActive && liveVoice.state === "listening" ? (
-                        <span
-                          aria-hidden
-                          className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/35 motion-reduce:hidden"
-                        />
-                      ) : null}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    align="center"
-                    className="max-w-[16rem] rounded-xl border border-border/70 bg-background px-3 py-2 text-[12px] text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.13)] dark:border-white/10 dark:bg-neutral-900 dark:text-white"
-                  >
-                    <span className="block font-medium">{liveVoiceLabel}</span>
-                    {!liveVoiceActive ? (
-                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
-                        {t("thread.composer.liveVoice.hint", {
-                          defaultValue:
-                            "Talk with the agent: it listens, explains what it will do, asks when unsure and tells you when it is done.",
-                        })}
-                      </span>
-                    ) : null}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : null}
             {modelLabel && !voiceRecorder.isRecording ? (
               !modelNeedsSetup && onModelSelect && modelOptions.length > 0 ? (
                 <ComposerModelPicker
@@ -3016,6 +2920,57 @@ function ThreadComposerImpl({
                       <kbd className="rounded-full bg-muted px-2 py-0.5 font-sans text-[12px] font-semibold leading-none text-muted-foreground dark:bg-white/10 dark:text-white/80">
                         {voiceShortcutLabel}
                       </kbd>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+            {/* Voice conversation: an icon right of the microphone, its name in the tooltip. */}
+            {liveVoice && !voiceRecorder.isRecording ? (
+              <TooltipProvider delayDuration={220} skipDelayDuration={80}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      disabled={disabled || liveVoice.disabled || liveVoice.state === "starting"}
+                      aria-label={liveVoiceLabel}
+                      aria-pressed={liveVoiceActive}
+                      data-live-voice-toggle
+                      onClick={liveVoice.toggle}
+                      className={cn(
+                        "relative h-7 w-7 shrink-0 rounded-md border-transparent p-0 text-muted-foreground hover:bg-muted/65 hover:text-foreground",
+                        liveVoiceActive &&
+                          "rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(37,99,235,0.28)] hover:bg-primary hover:text-primary-foreground",
+                      )}
+                    >
+                      {liveVoice.state === "starting" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AudioLines className="h-3.5 w-3.5" />
+                      )}
+                      {liveVoiceActive && liveVoice.state === "listening" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/35 motion-reduce:hidden"
+                        />
+                      ) : null}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align="center"
+                    className="max-w-[16rem] rounded-xl border border-border/70 bg-background px-3 py-2 text-[12px] text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.13)] dark:border-white/10 dark:bg-neutral-900 dark:text-white"
+                  >
+                    <span className="block font-medium">{liveVoiceLabel}</span>
+                    {!liveVoiceActive ? (
+                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                        {t("thread.composer.liveVoice.hint", {
+                          defaultValue:
+                            "Talk with the agent: it listens, explains what it will do, asks when unsure and tells you when it is done.",
+                        })}
+                      </span>
                     ) : null}
                   </TooltipContent>
                 </Tooltip>

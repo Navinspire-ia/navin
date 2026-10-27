@@ -945,10 +945,10 @@ class _BrowserSession:
             stamp = int(time.time())
             dest = (video_dir or Path(".")) / f"demo_{stamp}.webm"
         dest = dest.expanduser().resolve()
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
         if raw_path.resolve() != dest:
             try:
-                dest.write_bytes(raw_path.read_bytes())
+                await asyncio.to_thread(_copy_recording, raw_path, dest)
             except OSError as exc:
                 return {"ok": False, "error": "copy_failed", "fix": str(exc)}
 
@@ -960,7 +960,7 @@ class _BrowserSession:
         except Exception:
             mp4 = None
 
-        actions = self._write_action_log(dest, action_log)
+        actions = await asyncio.to_thread(self._write_action_log, dest, action_log)
         return {
             "ok": True,
             "recording": False,
@@ -1004,7 +1004,7 @@ class _BrowserSession:
                 ),
             }
         recorder.discard()
-        actions = self._write_action_log(mp4, action_log)
+        actions = await asyncio.to_thread(self._write_action_log, mp4, action_log)
         return {
             "ok": True,
             "recording": False,
@@ -2623,7 +2623,7 @@ class BrowserTool(Tool):
             resolved = await self._bound_browser_path(out, must_exist=False)
             if isinstance(resolved, ToolResult):
                 return resolved
-            resolved.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(resolved.parent.mkdir, parents=True, exist_ok=True)
             await page.pdf(path=str(resolved))
             return f"Saved PDF to {resolved}"
 
@@ -3361,9 +3361,8 @@ class BrowserTool(Tool):
                 f"Error: browser.screenshot_dir is misconfigured ({exc}); "
                 "it must be a relative subfolder of the media directory."
             )
-        directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"screenshot_{int(time.time() * 1000)}.png"
-        path.write_bytes(raw)
+        await asyncio.to_thread(_save_screenshot, directory, path, raw)
         label = f"(Screenshot of {page.url}, saved to {path})\nmetadata: {json.dumps(meta)}"
         warning = _screenshot_warning()
         if warning:
@@ -3473,3 +3472,14 @@ class BrowserTool(Tool):
                 "navigation or blaming the test target."
             )
         return text
+
+
+def _copy_recording(raw_path: Path, dest: Path) -> None:
+    """Copy the recorded video to its destination (worker thread)."""
+    dest.write_bytes(raw_path.read_bytes())
+
+
+def _save_screenshot(directory: Path, path: Path, raw: bytes) -> None:
+    """Write a screenshot to disk (worker thread)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)

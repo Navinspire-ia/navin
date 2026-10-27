@@ -444,13 +444,13 @@ class MobileTool(_QualityTool):
                     return ToolResult.error(
                         f"Error: cannot save mobile screenshot ({exc})."
                     )
-                directory.mkdir(parents=True, exist_ok=True)
                 path = directory / f"mobile_{int(time.time() * 1000)}.png"
-                path.write_bytes(bytes(png))
+                await asyncio.to_thread(_save_png, directory, path, bytes(png))
                 w = frame.get("width")
                 h = frame.get("height")
                 seq = frame.get("seq")
-                return build_image_content_blocks(
+                return await asyncio.to_thread(
+                    build_image_content_blocks,
                     bytes(png),
                     "image/png",
                     str(path),
@@ -731,3 +731,9 @@ def _normalize_target(target: str | None) -> str:
     if value in {"android", "ios", "web", "metro"}:
         return value
     return "android"
+
+
+def _save_png(directory: Path, path: Path, data: bytes) -> None:
+    """Write a screenshot to disk (worker thread)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)

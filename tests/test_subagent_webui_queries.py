@@ -26,6 +26,19 @@ def test_query_rejects_another_session_and_readonly_recovery(monkeypatch):
         assert replies[-1]["result"] == [{"task_id": "one"}]
         assert query.await_args.args[1:3] == ("websocket:chat-1", "list")
         assert query.await_args.kwargs["limit"] == 200
+        # Cancel and relaunch change work: a viewer may not, a member may.
+        for kind in ("subagent_cancel", "subagent_retry"):
+            query.reset_mock()
+            await WebSocketChannel._dispatch_subagent_query(fake, conn, {"type": kind, "chat_id": "chat-1", "request_id": "r4", "task_id": "one"})
+            assert replies[-1]["error"] == "This conversation is read only"
+            query.assert_not_awaited()
+        fake._role_for = lambda _conn: "owner"
+        query.return_value = {"ok": True, "detail": "Stopped one.", "mode": "relaunch", "task_id": "two"}
+        await WebSocketChannel._dispatch_subagent_query(fake, conn, {"type": "subagent_retry", "chat_id": "chat-1", "request_id": "r5", "task_id": "one"})
+        assert query.await_args.args[1:4] == ("websocket:chat-1", "retry", "one")
+        assert replies[-1]["result"]["task_id"] == "two"
+        await WebSocketChannel._dispatch_subagent_query(fake, conn, {"type": "subagent_cancel", "chat_id": "chat-1", "request_id": "r6", "task_id": "one"})
+        assert query.await_args.args[1:4] == ("websocket:chat-1", "cancel", "one")
     asyncio.run(scenario())
 
 

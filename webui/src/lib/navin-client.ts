@@ -734,7 +734,7 @@ export class NavinClient {
     };
   }
 
-  querySubagents<T>(chatId: string, operation: "list" | "history" | "recover" | "relaunch" | "team_feed" | "team_message" | "team_assign" | "team_select", extra: { task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string } = {}): Promise<T> {
+  querySubagents<T>(chatId: string, operation: "list" | "history" | "recover" | "relaunch" | "cancel" | "retry" | "team_feed" | "team_message" | "team_assign" | "team_select", extra: { task_id?: string; after?: number; limit?: number; offset?: number; target?: string; content?: string } = {}): Promise<T> {
     if (this.socket?.readyState !== WS_OPEN) return Promise.reject(new Error("The agent connection is offline. Reconnect to inspect agents."));
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {

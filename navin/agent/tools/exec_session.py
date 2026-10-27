@@ -285,8 +285,19 @@ class _ExecSession:
 
 
 class ExecSessionManager:
-    def __init__(self, *, max_sessions: int = 8, idle_timeout: int = 1800) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = 8,
+        idle_timeout: int = 1800,
+        max_total_sessions: int = 256,
+    ) -> None:
+        # ``max_sessions`` is per conversation (owner session key): one agent
+        # cannot starve the others, and a thousand subagents each keep their
+        # own dev server or test run. ``max_total_sessions`` bounds the whole
+        # process so a runaway loop still cannot exhaust the machine.
         self.max_sessions = max_sessions
+        self.max_total_sessions = max(max_sessions, max_total_sessions)
         self.idle_timeout = idle_timeout
         self._sessions: dict[str, _ExecSession] = {}
         self._lock = asyncio.Lock()
@@ -355,8 +366,7 @@ class ExecSessionManager:
     ) -> tuple[str, _SessionPoll]:
         async with self._lock:
             await self._cleanup_locked()
-            if len(self._sessions) >= self.max_sessions:
-                raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
+            self._check_capacity_locked(owner_session_key)
             process = await self._spawn(command, cwd, env, shell_program, login)
             session_id = uuid.uuid4().hex[:12]
             session = _ExecSession(
@@ -399,8 +409,7 @@ class ExecSessionManager:
         """
         async with self._lock:
             await self._cleanup_locked()
-            if len(self._sessions) >= self.max_sessions:
-                raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
+            self._check_capacity_locked(owner_session_key)
             session_id = uuid.uuid4().hex[:12]
             self._sessions[session_id] = _ExecSession(
                 session_id=session_id,
@@ -526,17 +535,43 @@ class ExecSessionManager:
         session.exit_reported = True
         await session.kill()
 
+    def _check_capacity_locked(self, owner_session_key: str | None) -> None:
+        """Refuse a new session when this conversation, or the process, is full.
+
+        Finished sessions were already evicted by ``_cleanup_locked``; the
+        running ones count, including those a user forgot to stop.
+        """
+        running = [s for s in self._sessions.values() if s.process.returncode is None]
+        if len(running) >= self.max_total_sessions:
+            raise RuntimeError(
+                f"maximum exec sessions reached ({self.max_total_sessions} in this engine)"
+            )
+        owned = [s for s in running if s.owner_session_key == owner_session_key]
+        if len(owned) >= self.max_sessions:
+            raise RuntimeError(
+                f"maximum exec sessions reached ({self.max_sessions} for this conversation); "
+                "terminate one with write_stdin(session_id=..., terminate=true)"
+            )
+
     async def _cleanup_locked(self) -> None:
+        """Forget finished sessions nobody read for ``idle_timeout`` seconds.
+
+        A running session is never killed here: a dev server the user tests in
+        Preview, a watcher or a long test suite is alive on purpose, and the
+        agent may not poll it for an hour. Only ``terminate=true``, the UI or
+        ``shutdown`` stop a live process; silently killing one on a timer was
+        how a background pytest run died with no word to anyone.
+        """
         now = time.monotonic()
         stale = [
             session_id
             for session_id, session in self._sessions.items()
-            if now - session.last_access > self.idle_timeout
+            if session.process.returncode is not None
+            and now - session.last_access > self.idle_timeout
         ]
         for session_id in stale:
             session = self._sessions.pop(session_id)
             session.exit_reported = True
-            await session.kill()
 
     async def shutdown(self) -> int:
         """Kill every live session. Returns how many were still running.

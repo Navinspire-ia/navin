@@ -10,6 +10,18 @@ metadata: {"navin":{"emoji":"🚨","category":"devops"}}
 
 Diagnose first, mutate last. Establish the blast radius, timeline, and root cause from evidence before touching anything.
 
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: kubernetes,aws).
+
+1. `infra action=status` then `infra action=graph op=build` and `op=impact node=<failing service>` to see dependencies and blast radius.
+2. Evidence gathering is read-only: `infra action=run command="kubectl ..."` / cloud describe commands.
+3. Mitigations (rollback, scale, failover, restart): `infra action=check`, user validation when critical, `infra action=run`, `infra action=verify`; `infra action=recover run_id=..` for failed changes.
+4. `infra action=audit` gives the timeline of changes for the postmortem.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
+
 ## Signal sources
 
 Cross-platform (kubectl, k8sgpt, and docker work identically on Linux, macOS, and Windows):

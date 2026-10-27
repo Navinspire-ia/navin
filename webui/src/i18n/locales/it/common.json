@@ -1914,7 +1914,32 @@
     "toolsRowToggle": "Tools",
     "unsaved": "Unsaved changes",
     "workspace": "Workspace",
-    "terminalSearch": "Cerca nel terminale"
+    "terminalSearch": "Cerca nel terminale",
+    "appsMobile": "App mobili",
+    "appsDesktop": "App desktop",
+    "appFactory": {
+      "title": "Trasforma il progetto in un'app",
+      "intro": "Navin trasforma il progetto corrente in app Windows, macOS, Linux, Android e iOS. Il progetto web e il backend restano intatti: tutto viene scritto in una cartella dedicata os/<piattaforma>.",
+      "learnMore": "Cos'è?",
+      "honest": "Navin indica quali test sono stati eseguiti e quali non è stato possibile eseguire su questa macchina.",
+      "steps": {
+        "analyze": "Analisi del progetto",
+        "adapt": "Adattamento",
+        "build": "Compilazione",
+        "test": "Test",
+        "deliver": "Consegna"
+      },
+      "confirm": {
+        "title": "Creare l'app {{platform}} del tuo progetto?",
+        "body": "Navin analizza il tuo progetto, lo adatta, compila l'app, la testa e ti consegna il pacchetto. Tutto viene scritto in {{folder}}: il tuo sito e il tuo backend non vengono modificati.",
+        "project": "Progetto",
+        "package": "Pacchetto",
+        "folder": "Cartella",
+        "tools": "Gli strumenti di compilazione mancanti vengono installati solo con il tuo consenso. Se questo computer non può compilare l'app, Navin te lo dice e prepara una compilazione nel cloud.",
+        "start": "Crea l'app {{platform}}",
+        "cancel": "Annulla"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3623,7 +3648,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "Canali",
+      "loading": "Caricamento dei canali...",
+      "unavailable": "Canali non disponibili",
+      "saveFailed": "Salvataggio non riuscito",
+      "sending": "Invio in corso...",
+      "testSent": "Test inviato a {{count}} canale/i",
+      "testNone": "Nessun canale pronto con le notifiche attive",
+      "testFailed": "Test non riuscito",
+      "status": {
+        "ready": "pronto",
+        "offline": "non in linea",
+        "setup": "da configurare"
+      },
+      "configure": "Configura in Impostazioni > Canali",
+      "recipient": "Destinatario {{channel}}",
+      "placeholder": {
+        "email": "tu@esempio.it",
+        "telegram": "ID della chat (es. 123456789)",
+        "teams": "ID della conversazione Teams"
+      },
+      "flags": {
+        "notify": "Notifiche",
+        "notifyTitle": "Errori, blocchi e attività completate inviati a questo canale",
+        "approve": "Autorizzazioni",
+        "approveTitle": "Richieste di autorizzazione: rispondi YES o NO con il codice",
+        "chat": "Scambio",
+        "chatTitle": "Invia prompt a Navin da questo canale"
+      },
+      "sendTest": "Invia un test",
+      "help": "Autorizzazioni: rispondi \"YES codice\", \"NO codice\" o \"ALWAYS codice\" (oppure /approve e /deny nella chat che ha chiesto). Le credenziali (SMTP, bot, QR di WhatsApp, app Teams) si impostano in Impostazioni > Canali o tramite MCP."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -9657,7 +9714,23 @@
       "queued_other": "{{count}} queued, waiting for a slot",
       "waiting": "Waiting for subagent",
       "waiting_other": "Waiting for {{count}} subagents",
-      "working": "Working…"
+      "working": "Working…",
+      "awaitingApproval": "In attesa della tua autorizzazione",
+      "answerInChat": "Rispondi alla richiesta nella chat",
+      "actionRetry": "Riavvia",
+      "actionCancel": "Annulla",
+      "actionDismiss": "Rimuovi",
+      "actionRetryAria": "Riavvia {{name}}",
+      "actionCancelAria": "Annulla {{name}}",
+      "actionDismissAria": "Rimuovi {{name}}",
+      "barTitle": "Subagenti",
+      "chipRunning": "{{count}} in corso",
+      "chipQueued": "{{count}} in coda",
+      "chipApproval": "{{count}} in attesa di autorizzazione",
+      "chipFailed": "{{count}} non riusciti",
+      "chipDone": "{{count}} completati",
+      "dismissFinished": "Rimuovi i completati",
+      "moreCount": "+{{count}} altri"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -9707,5 +9780,134 @@
     "loadingDiff": "Caricamento del diff...",
     "open": "Ispeziona",
     "openTests": "Report dei test ({{passed}} ok, {{failed}} falliti)"
+  },
+  "infra": {
+    "loading": "Caricamento...",
+    "error": "Impossibile caricare i dati dell'infrastruttura",
+    "retry": "Riprova",
+    "empty": "Ancora nessun dato.",
+    "level": {
+      "title": "Livello di autonomia",
+      "observe": "Osservare",
+      "observeHelp": "Sola lettura: ispezionare, elencare e descrivere, senza mai modificare nulla.",
+      "prepare": "Preparare",
+      "prepareHelp": "Piani e simulazioni; le modifiche vengono preparate per la tua approvazione.",
+      "execute": "Eseguire",
+      "executeHelp": "Applica le modifiche autorizzate entro gli ambiti, con verifica e rollback.",
+      "criticalNote": "Le operazioni critiche (produzione, eliminazioni, IAM, rete sensibile, dati, costose) ti chiedono sempre prima conferma"
+    },
+    "scopes": {
+      "title": "Ambiti",
+      "placeholder": "Separati da virgole, vuoto = nessuno",
+      "production_markers": "Marcatori di produzione",
+      "save": "Salva",
+      "aws_profiles": "Profili AWS",
+      "kube_contexts": "Contesti Kubernetes",
+      "namespaces": "Namespace",
+      "gcp_projects": "Progetti GCP",
+      "azure_subscriptions": "Sottoscrizioni Azure"
+    },
+    "contexts": {
+      "title": "Contesti",
+      "empty": "Nessun contesto rilevato."
+    },
+    "none": "nessuno",
+    "production": "produzione",
+    "warnings": "Avvisi",
+    "catalog": {
+      "counters": "Registro",
+      "noProviders": "Ancora nulla di rilevato. Avvia un rilevamento.",
+      "back": "Torna ai risultati",
+      "search": "Cerca operazioni (es. elencare i pod, bucket s3)",
+      "allProviders": "Tutti i provider",
+      "risk": "Rischio",
+      "allRisks": "Tutti i rischi",
+      "tier": "Livello",
+      "allTiers": "Tutti i livelli",
+      "total": "{{shown}} di {{total}} operazioni",
+      "empty": "Nessuna operazione corrisponde. Prova un'altra ricerca o avvia un rilevamento."
+    },
+    "tools": {
+      "title": "Strumenti",
+      "available": "disponibile",
+      "missing": "mancante",
+      "empty": "Nessuno strumento rilevato."
+    },
+    "discover": {
+      "title": "Rilevamento",
+      "all": "Rileva tutto",
+      "running": "Rilevamento in corso, può richiedere alcuni minuti...",
+      "result": "{{count}} operazioni, {{ms}} ms",
+      "none": "Il rilevamento non ha restituito risultati."
+    },
+    "op": {
+      "provider": "Provider",
+      "version": "Versione",
+      "endpoint": "Endpoint",
+      "source": "Fonte",
+      "effects": "Effetti",
+      "required": "Parametri obbligatori",
+      "optional": "Parametri facoltativi",
+      "permissions": "Permessi",
+      "examples": "Esempi",
+      "verify": "Verifica",
+      "rollback": "Rollback",
+      "compat": "Compatibilità",
+      "decision": "Decisione"
+    },
+    "graph": {
+      "buildFrom": "Costruisci da",
+      "summary": "Riepilogo",
+      "counts": "{{nodes}} risorse, {{edges}} relazioni",
+      "empty": "Il grafo è vuoto. Costruiscilo da una fonte qui sopra.",
+      "search": "Cerca una risorsa",
+      "noMatch": "Nessuna risorsa corrisponde.",
+      "impact": "Impatto (cosa dipende da essa)",
+      "noImpact": "Nulla dipende da questa risorsa.",
+      "edges": "Relazioni",
+      "noEdges": "Nessuna relazione."
+    },
+    "refresh": "Aggiorna",
+    "audit": {
+      "title": "Audit",
+      "time": "Ora",
+      "command": "Comando",
+      "ok": "OK",
+      "verified": "Verificato",
+      "duration": "Durata",
+      "empty": "Ancora nessun comando di infrastruttura registrato."
+    },
+    "runs": {
+      "title": "Esecuzioni",
+      "noSteps": "Nessun passaggio.",
+      "empty": "Ancora nessuna esecuzione."
+    },
+    "tab": {
+      "overview": "Panoramica",
+      "catalog": "Catalogo",
+      "graph": "Grafo",
+      "audit": "Audit ed esecuzioni"
+    },
+    "title": "Infrastruttura",
+    "subtitle": "Registro, policy, grafo delle risorse e audit",
+    "risk": {
+      "read": "Lettura",
+      "plan": "Piano",
+      "change": "Modifica",
+      "critical": "Critico"
+    },
+    "tier": {
+      "known": "Nota",
+      "available": "Disponibile",
+      "authorized": "Autorizzata",
+      "tested": "Testata"
+    },
+    "decision": {
+      "allow": "Consenti",
+      "ask": "Chiedi",
+      "deny": "Nega"
+    },
+    "yes": "sì",
+    "no": "no"
   }
 }

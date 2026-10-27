@@ -414,8 +414,10 @@ def test_parallel_agents_show_under_the_chat_in_at_most_ten_rows(tmp_path):
                     f"t{index}", "general-purpose", "done", "Completed", None, 2, True, None,
                 ))
             for row in panel._agents.values():
-                row["done_at"] -= AgentsPanel.DONE_LINGER_S + 1
+                row["done_at"] -= 3600
             panel.tick(False, 0)
+            assert panel.display, "finished agents stay until dismissed"
+            assert panel.dismiss_finished() == 12
             assert not panel.display
     asyncio.run(run())
 
@@ -443,14 +445,15 @@ def test_eight_agents_show_six_rows_then_show_more_expands(tmp_path):
             assert "show less" in lines[-1]
             await app._on_runtime_event(UiSubagent("a0", "Worker 0", "done", "Completed", None, 2, True, None))
             assert "Done" in str(panel.content)
-            panel._agents["a0"]["done_at"] -= AgentsPanel.DONE_LINGER_S + 1
+            panel._agents["a0"]["done_at"] -= 3600
+            panel.dismiss("a0")
             await app._on_runtime_event(UiSubagent("a1", "Worker 1", "awaiting_tools", "Reading files", None, 3, False, None))
             content = str(panel.content)
             assert "Worker 0" not in content
             assert "Reading files" in content
             for index in range(1, 3):
                 await app._on_runtime_event(UiSubagent(f"a{index}", "w", "done", "Completed", None, 2, True, None))
-                panel._agents[f"a{index}"]["done_at"] -= AgentsPanel.DONE_LINGER_S + 1
+                panel.dismiss(f"a{index}")
             panel.tick(False, 0)
             lines = str(panel.content).splitlines()
             assert len(lines) == 1 + 5

@@ -75,6 +75,7 @@ from navin.tui.runtime import (
     UiApprovalClosed,
     UiApprovalRequested,
     UiAssistantMessage,
+    UiBackgroundSession,
     UiCheckpointSaved,
     UiChoiceClosed,
     UiChoiceRequested,
@@ -689,6 +690,7 @@ class NavinApp(App[None]):
         Binding("f3", "open_evolve", "Evolve"),
         Binding("f4", "open_agi", "AGI"),
         Binding("f8", "inspect_agents", "Agents", priority=True),
+        Binding("f9", "dismiss_finished_agents", "Dismiss finished agents", show=False, priority=True),
         Binding("f6", "run_queued_parallel", "Run queued in parallel", show=False, priority=True),
         Binding("f7", "toggle_agents_list", "More agents", show=False, priority=True),
         Binding("f1", "show_help", "Help"),
@@ -724,7 +726,14 @@ class NavinApp(App[None]):
         # Full garbage collections wait for a quiet moment (frames.py).
         self._idle_gc = IdleCollector(
             before_collect=self._release_offscreen_lines,
-            busy=lambda: self.runtime.status.turn_active,
+            # Any work of this CLI shares the loop: a turn, a subagent, or a
+            # project still working in the background.
+            busy=lambda: (
+                self.runtime.status.turn_active
+                or self.runtime.running_work() > 0
+                or self.runtime.background_work() > 0
+            ),
+            focused=lambda: self.app_focus,
         )
         # Synchronized output without waiting for the terminal's answer (terminal.py).
         self._navin_sync_output = forces_synchronized_output()
@@ -762,6 +771,10 @@ class NavinApp(App[None]):
         self._history_draft = ""
         self._engine_ready = False
         self._quitting = False
+        # Quitting stops the projects working in the background: asked once.
+        self._quit_confirmed = False
+        # Drafts and queued messages of the projects not on screen, by folder.
+        self._unsent_by_project: dict[str, dict[str, Any]] = {}
         self._quit_armed_at = 0.0
         self._runtime_close_task: asyncio.Task | None = None
         self._update_info: dict[str, Any] = {}
@@ -942,9 +955,17 @@ class NavinApp(App[None]):
         projects_panel = self._projects_panel() if visible and self._projects_shown() else None
         if projects_panel is not None:
             projects_panel.set_current(str(self.runtime.workspace), key)
-            projects_panel.set_running({key} if busy else set())
+            # Every working session, of this project and of the ones left
+            # working in the background, like the desktop list.
+            running = getattr(self.runtime, "running_sessions", None)
+            busy_map = running() if callable(running) else None
+            if not isinstance(busy_map, dict):
+                busy_map = {str(self.runtime.workspace): {key}} if busy else {}
+            projects_panel.set_busy(busy_map)
             projects_panel.tick()
-        if self._queue_visible_session != key:
+        # Not while a project switch is in flight: the session key already
+        # names the new project while the drafts still belong to the old one.
+        if self._engine_ready and self._queue_visible_session != key:
             self._save_unsent_work()
             self._queue_visible_session = key
             if key not in self._drafts:
@@ -1046,6 +1067,40 @@ class NavinApp(App[None]):
         self._save_unsent_work()
         if self._session_save_task is not None:
             await asyncio.shield(self._session_save_task)
+
+    _UNSENT_ATTRS = (
+        "_drafts", "_queued_prompts", "_queue_paused", "_saved_session_states",
+        "_requested_session_states", "_pending_session_states", "_session_store",
+    )
+
+    def _swap_unsent_work(self, old_workspace: str, new_workspace: str, key: str) -> None:
+        """Give each project its own drafts and queued messages.
+
+        Every project has a ``cli:direct`` chat: keyed by session alone, the
+        draft or the queue of one project showed, and was sent, in another.
+        Call it right after :meth:`_flush_unsent_work`, with no await between,
+        so no write of the old project is left pending.
+        """
+        def folder(path: str) -> str:
+            return str(Path(path).expanduser().resolve(strict=False))
+
+        self._unsent_by_project[folder(old_workspace)] = {name: getattr(self, name) for name in self._UNSENT_ATTRS}
+        bundle = self._unsent_by_project.pop(folder(new_workspace), None)
+        if bundle is None:
+            from navin.tui.session_state import TuiSessionStore
+
+            bundle = {
+                "_drafts": {}, "_queued_prompts": {}, "_queue_paused": set(),
+                "_saved_session_states": {}, "_requested_session_states": {}, "_pending_session_states": {},
+                "_session_store": TuiSessionStore(self._session_store.root, Path(new_workspace)),
+            }
+        for name, value in bundle.items():
+            setattr(self, name, value)
+        self._queue_visible_session = key
+        if key not in self._drafts:
+            self._restore_unsent_work(key)
+        self.composer.set_text(self._drafts.get(key, ""))
+        self.call_later(self._refresh_queue)
 
     @on(TextArea.Changed, "Composer")
     def _save_composer_draft(self, _event: TextArea.Changed) -> None:
@@ -2566,6 +2621,9 @@ class NavinApp(App[None]):
             show = self._note if level == "error" else self._flash
             await show(f"{escape(event.title)}{detail}", level)
             return
+        if isinstance(event, UiBackgroundSession):
+            await self._background_session(event)
+            return
         if isinstance(event, UiRetryWait):
             await self._retire_retry_wait_note()
             note = SystemNote(f"[$warning]{escape(event.text)}[/]", "warning")
@@ -2581,6 +2639,8 @@ class NavinApp(App[None]):
         if await handle_merge_event(self, event):
             return
         if isinstance(event, UiApprovalRequested):
+            if event.request_id in self._pending_approvals:
+                return  # drawn again on a session switch while it was arriving
             card = ApprovalCard(
                 event.request_id,
                 event.tool,
@@ -2608,6 +2668,8 @@ class NavinApp(App[None]):
             self._set_status()
             return
         if isinstance(event, UiChoiceRequested):
+            if event.request_id in self._pending_choices:
+                return
             if self._current is not None:
                 await self._current.reveal()
             card = ChoiceCard(
@@ -2969,6 +3031,7 @@ class NavinApp(App[None]):
                 title,
                 [PickItem("yes", yes), PickItem("no", "Cancel")],
                 hint=hint,
+                searchable=False,
             )
         )
         return answer == "yes"
@@ -3006,20 +3069,23 @@ class NavinApp(App[None]):
         await self._flash(f"project added: [b]{escape(path.name)}[/b]", "success")
 
     async def _open_project(self, path: str, key: str) -> None:
-        """Open a session of another project here: the engine moves, the CLI stays open."""
+        """Open a session of another project here: the engine moves, the CLI stays open.
+
+        Work still running in the project left (a turn, subagents, a card
+        waiting for an answer) is not stopped: it goes on in the background,
+        its sessions keep their spinner in the list, and opening the project
+        again brings it back as it is.
+        """
         from loguru import logger
 
         from navin.tui import projects
+        from navin.tui.projects import same_path
         from navin.tui.runtime import WorkspaceSwitchError
 
         name = Path(path).name or path
-        running = self.runtime.running_work()
-        if running and not await self._confirm(
-            "Work is still running in this project",
-            "Stop it and switch",
-            f"{running} running task(s) stop when the engine moves to {name}.",
-        ):
-            return
+        leaving_path = str(self.runtime.workspace)
+        leaving = Path(leaving_path).name or leaving_path
+        await self._flush_unsent_work()
         self._engine_ready = False
         self._set_status(f"opening {escape(name)}…")
         try:
@@ -3029,6 +3095,10 @@ class NavinApp(App[None]):
             self._set_status()
             await self._note(f"[$error]{escape(str(exc))}[/]", "error")
             return
+        # What was typed meanwhile still belongs to the project left.
+        await self._flush_unsent_work()
+        self._swap_unsent_work(leaving_path, str(self.runtime.workspace), key)
+        self.config = self.runtime.config
         self.project_root = Path(self.runtime.workspace)
         self.prefs.project_root = str(self.project_root)
         self._load_engine_commands()
@@ -3041,6 +3111,28 @@ class NavinApp(App[None]):
         await self._switch_session(key)
         self._reload_projects(force=True)
         self._set_status()
+        if any(same_path(leaving_path, folder) for folder in self.runtime.background_projects()):
+            busy = self.runtime.running_sessions()
+            count = sum(len(keys) for folder, keys in busy.items() if same_path(folder, leaving_path))
+            what = f"{count} session{'s' if count != 1 else ''}" if count else "a question for you"
+            await self._flash(f"[b]{escape(leaving)}[/b] keeps working in the background ({what})")
+
+    async def _background_session(self, event: UiBackgroundSession) -> None:
+        """A session off screen finished, or waits on the user: say which, in which project."""
+        from navin.tui.projects import same_path
+
+        if same_path(event.workspace, self.runtime.workspace) and event.session_key == self.runtime.session_key:
+            return  # on screen now: its own cards and answer show in the chat
+        panel = self._projects_panel()
+        title = (panel.title_of(event.workspace, event.session_key) if panel is not None else "") or "a session"
+        where = Path(event.workspace).name or event.workspace
+        label = f"[b]{escape(where)}[/b] · {escape(title)}"
+        self._reload_projects(force=True)
+        if event.kind == "attention":
+            self.bell()
+            await self._flash(f"{label} is waiting for your answer: open it in Sessions", "warning")
+        elif event.kind == "done":
+            await self._flash(f"{label} finished", "success")
 
     async def _open_project_session(self, path: str, key: str) -> None:
         from navin.tui.projects import same_path
@@ -3074,6 +3166,7 @@ class NavinApp(App[None]):
                 title or "Session",
                 [
                     PickItem("open", "Open"),
+                    PickItem("fork", "Fork", "a copy of this chat to go on from here"),
                     PickItem("rename", "Rename"),
                     PickItem("pin", "Unpin" if pinned else "Pin"),
                     PickItem("download", "Download", "a .navin-session file for the desktop or another CLI"),
@@ -3081,12 +3174,20 @@ class NavinApp(App[None]):
                     PickItem("delete", "Delete"),
                 ],
                 hint="Enter picks an action.",
+                searchable=False,
             )
         )
         here = same_path(path, self.runtime.workspace)
-        live = getattr(self.runtime.agent_loop, "sessions", None) if here else None
+        # The live store of this project when it is open here, on screen or
+        # working in the background, so its latest messages are included.
+        sessions_for = getattr(self.runtime, "sessions_for", None)
+        live = sessions_for(path) if callable(sessions_for) else None
+        if live is None and here:
+            live = getattr(self.runtime.agent_loop, "sessions", None)
         if choice == "open":
             await self._open_project_session(path, key)
+        elif choice == "fork":
+            await self._fork_session(path, key, title, live)
         elif choice == "rename":
             values = await self.push_screen_wait(
                 FormScreen(
@@ -3118,6 +3219,12 @@ class NavinApp(App[None]):
                 await self._switch_session(key)
             await self._share_live()
         elif choice == "delete":
+            session_busy = getattr(self.runtime, "session_busy", None)
+            if callable(session_busy) and session_busy(path, key):
+                await self._note(
+                    "This session is still working. Open it, stop it with Esc, then delete it.", "warning",
+                )
+                return
             if not await self._confirm("Delete this session?", "Delete it", title or key):
                 return
             try:
@@ -3129,6 +3236,20 @@ class NavinApp(App[None]):
                 await self._switch_session(projects.new_session_key())
             self._reload_projects(force=True)
             await self._flash("session deleted", "success")
+
+    async def _fork_session(self, path: str, key: str, title: str, live: Any = None) -> None:
+        """Copy a chat and open the copy, like Fork chat in the desktop."""
+        from navin.tui import projects
+
+        new_key = projects.new_session_key()
+        try:
+            name = await asyncio.to_thread(projects.fork_session, path, key, new_key, title, live)
+        except (OSError, ValueError) as exc:  # shown to the user, the source is untouched
+            await self._note(f"[$error]{escape(str(exc))}[/]", "error")
+            return
+        self._reload_projects(force=True)
+        await self._open_project_session(path, new_key)
+        await self._flash(f"forked: [b]{escape(name)}[/b]", "success")
 
     async def _download_session(self, path: str, key: str, title: str) -> None:
         from navin.tui.session_bundle import (
@@ -3823,7 +3944,12 @@ class NavinApp(App[None]):
         if panel is not None:
             panel.toggle_expanded()
 
-    def action_inspect_agents(self) -> None:
+    def action_dismiss_finished_agents(self) -> None:
+        panel = self._agents_panel()
+        if panel is not None:
+            panel.dismiss_finished()
+
+    def action_inspect_agents(self, task_id: str = "") -> None:
         from navin.tui.agents import AgentsScreen
 
         panel = self._agents_panel()
@@ -3832,6 +3958,9 @@ class NavinApp(App[None]):
             list_loader=getattr(self.runtime, "list_subagents", None),
             history_loader=getattr(self.runtime, "subagent_history", None),
             operation_loader=getattr(self.runtime, "subagent_operation", None),
+            dismiss=panel.dismiss if panel else None,
+            dismiss_finished=panel.dismiss_finished if panel else None,
+            select=task_id or None,
         ))
 
     def action_rename_chat(self) -> None:
@@ -4007,24 +4136,50 @@ class NavinApp(App[None]):
         # crash with NoMatches on .assistant-preview / .assistant-foot.
         self._invalidate_history()
         async with self._history_lock:
-            await self.runtime.switch_session(key)
-            panel = self._agents_panel()
-            if panel is not None:
-                panel.reset()
-            replay = getattr(self.runtime, "replay_subagents", None)
-            if replay is not None:
-                await replay()
-            self.prefs.last_session = key
-            self._save_prefs_in_background()
-            await self.transcript.remove_children()
-            self._current = None
-            self._parked_bubbles = []
-            self._last_speaker = None
-            self._activity.clear()
-            token = self._invalidate_history()
-            await self._paint_history(token)
-            self._refresh_side()
-            await self._flash(f"session → [b]{escape(key)}[/b]")
+            try:
+                await self._show_session(key)
+            finally:
+                # Never leave its live messages waiting if drawing it failed.
+                if getattr(self.runtime, "_holding", False):
+                    await self.runtime.release_held()
+
+    async def _show_session(self, key: str) -> None:
+        """Body of :meth:`_switch_session`, under the history lock."""
+        await self.runtime.switch_session(key)
+        # The cards on screen belong to the session left; the ones this
+        # session still waits on are drawn again below.
+        self._pending_approvals.clear()
+        self._pending_choices.clear()
+        self._sync_shortcuts()
+        self._awaiting_reply = self.runtime.turn_active
+        panel = self._agents_panel()
+        if panel is not None:
+            panel.reset()
+        replay = getattr(self.runtime, "replay_subagents", None)
+        if replay is not None:
+            await replay()
+        self.prefs.last_session = key
+        self._save_prefs_in_background()
+        await self._clear_chat_view()
+        self._activity.clear()
+        await self._paint_history(self._invalidate_history())
+        release = getattr(self.runtime, "release_held", None)
+        if release is not None and await release():
+            # Its turn ended while it was being drawn: the saved history
+            # now holds the answer, draw it again from there.
+            await self._clear_chat_view()
+            await self._paint_history(self._invalidate_history())
+        replay_requests = getattr(self.runtime, "replay_open_requests", None)
+        if replay_requests is not None:
+            await replay_requests()
+        self._refresh_side()
+        await self._flash(f"session → [b]{escape(key)}[/b]")
+
+    async def _clear_chat_view(self) -> None:
+        await self.transcript.remove_children()
+        self._current = None
+        self._parked_bubbles = []
+        self._last_speaker = None
 
     async def action_open_tools(self) -> None:
         if not self._engine_ready:
@@ -4384,6 +4539,12 @@ class NavinApp(App[None]):
     async def action_quit(self) -> None:
         if self._quitting:
             return
+        background = getattr(self.runtime, "background_work", None)
+        count = background() if callable(background) else 0
+        if count and not self._quit_confirmed:
+            # Invisible from here: say what quitting stops before it does.
+            self._spawn(self._confirm_quit(count))
+            return
         self._quitting = True
         if self._live is not None:
             with contextlib.suppress(Exception):
@@ -4395,6 +4556,16 @@ class NavinApp(App[None]):
         self._save_unsent_work()
         self._runtime_close_task = asyncio.create_task(self.runtime.close())
         self.exit()
+
+    async def _confirm_quit(self, count: int) -> None:
+        names = ", ".join(Path(folder).name or folder for folder in self.runtime.background_projects())
+        if await self._confirm(
+            "Other projects are still working",
+            "Quit and stop them",
+            f"{count} task{'s' if count != 1 else ''} running in {names} stop if you quit now.",
+        ):
+            self._quit_confirmed = True
+            await self.action_quit()
 
     # -- jump to the latest messages ----------------------------------------
 

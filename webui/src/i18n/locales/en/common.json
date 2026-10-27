@@ -2031,7 +2031,32 @@
     "workspace": "Workspace",
     "browserShare": "Share this app (navin.live link)",
     "browserLogins": "Site logins for this app",
-    "terminalSearch": "Search the terminal"
+    "terminalSearch": "Search the terminal",
+    "appsMobile": "Mobile apps",
+    "appsDesktop": "Desktop apps",
+    "appFactory": {
+      "title": "Turn your project into an app",
+      "intro": "Navin turns the current project into Windows, macOS, Linux, Android and iOS apps. The web project and the backend stay untouched: everything is written in a dedicated os/<platform> folder.",
+      "learnMore": "What is this?",
+      "honest": "Navin reports which tests ran and which could not run on this machine.",
+      "steps": {
+        "analyze": "Project analysis",
+        "adapt": "Code adaptation",
+        "build": "Build",
+        "test": "App tests",
+        "deliver": "Delivery"
+      },
+      "confirm": {
+        "title": "Create the {{platform}} app of your project?",
+        "body": "Navin analyses your project, adapts it, builds the app, tests it and gives you the package. Everything is written in {{folder}}: your website and your backend are not modified.",
+        "project": "Project",
+        "package": "Package",
+        "folder": "Folder",
+        "tools": "Missing build tools are installed only after you agree. If this computer cannot build this app, Navin tells you and prepares a cloud build.",
+        "start": "Create the {{platform}} app",
+        "cancel": "Cancel"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3806,7 +3831,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "Channels",
+      "loading": "Loading channels...",
+      "unavailable": "Channels unavailable",
+      "saveFailed": "Could not save",
+      "sending": "Sending...",
+      "testSent": "Test sent to {{count}} channel(s)",
+      "testNone": "No ready channel with Notifications on",
+      "testFailed": "Test failed",
+      "status": {
+        "ready": "ready",
+        "offline": "offline",
+        "setup": "to set up"
+      },
+      "configure": "Set up in Settings > Channels",
+      "recipient": "{{channel}} recipient",
+      "placeholder": {
+        "email": "you@example.com",
+        "telegram": "Chat ID (e.g. 123456789)",
+        "teams": "Teams conversation ID"
+      },
+      "flags": {
+        "notify": "Notifications",
+        "notifyTitle": "Errors, blocks and finished tasks sent to this channel",
+        "approve": "Approvals",
+        "approveTitle": "Approval requests: reply YES or NO with the code",
+        "chat": "Chat",
+        "chatTitle": "Send prompts to Navin from this channel"
+      },
+      "sendTest": "Send a test",
+      "help": "Approvals: reply \"YES code\", \"NO code\" or \"ALWAYS code\" (or /approve and /deny in the chat that asked). Credentials (SMTP, bot, WhatsApp QR code, Teams app) are set in Settings > Channels or through MCP."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -5657,7 +5714,12 @@
         "reload": "Reload",
         "remove": "Remove rule",
         "dismiss": "Dismiss",
-        "level": {"see": "See only", "click": "Click", "type": "Type", "launch": "Launch"}
+        "level": {
+          "see": "See only",
+          "click": "Click",
+          "type": "Type",
+          "launch": "Launch"
+        }
       },
       "takeoverHelp": "You retain control: detected mouse movement pauses the agent. The live panel also lets you take control and return it to the agent.",
       "audit": {
@@ -10473,7 +10535,23 @@
           "ok": "Edited files",
           "error": "Could not edit files"
         }
-      }
+      },
+      "awaitingApproval": "Waiting for your approval",
+      "answerInChat": "Answer the request in the chat",
+      "actionRetry": "Relaunch",
+      "actionCancel": "Cancel",
+      "actionDismiss": "Dismiss",
+      "actionRetryAria": "Relaunch {{name}}",
+      "actionCancelAria": "Cancel {{name}}",
+      "actionDismissAria": "Dismiss {{name}}",
+      "barTitle": "Subagents",
+      "chipRunning": "{{count}} running",
+      "chipQueued": "{{count}} queued",
+      "chipApproval": "{{count}} awaiting approval",
+      "chipFailed": "{{count}} failed",
+      "chipDone": "{{count}} done",
+      "dismissFinished": "Dismiss finished",
+      "moreCount": "+{{count}} more"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -11421,5 +11499,134 @@
     "loadingDiff": "Loading the diff...",
     "open": "Inspect",
     "openTests": "Test report ({{passed}} ok, {{failed}} failed)"
+  },
+  "infra": {
+    "loading": "Loading...",
+    "error": "Could not load infrastructure data",
+    "retry": "Retry",
+    "empty": "No data yet.",
+    "level": {
+      "title": "Autonomy level",
+      "observe": "Observe",
+      "observeHelp": "Read-only: inspect, list and describe, never change anything.",
+      "prepare": "Prepare",
+      "prepareHelp": "Plans and dry runs; changes are prepared for your approval.",
+      "execute": "Execute",
+      "executeHelp": "Applies authorized changes within the scopes, with verification and rollback.",
+      "criticalNote": "Critical operations (production, deletions, IAM, sensitive network, data, costly) always ask you first"
+    },
+    "scopes": {
+      "title": "Scopes",
+      "placeholder": "Comma-separated, empty = none",
+      "production_markers": "Production markers",
+      "save": "Save",
+      "aws_profiles": "AWS profiles",
+      "kube_contexts": "Kubernetes contexts",
+      "namespaces": "Namespaces",
+      "gcp_projects": "GCP projects",
+      "azure_subscriptions": "Azure subscriptions"
+    },
+    "contexts": {
+      "title": "Contexts",
+      "empty": "No context detected."
+    },
+    "none": "none",
+    "production": "production",
+    "warnings": "Warnings",
+    "catalog": {
+      "counters": "Registry",
+      "noProviders": "Nothing discovered yet. Run a discovery.",
+      "back": "Back to results",
+      "search": "Search operations (e.g. list pods, s3 bucket)",
+      "allProviders": "All providers",
+      "risk": "Risk",
+      "allRisks": "All risks",
+      "tier": "Tier",
+      "allTiers": "All tiers",
+      "total": "{{shown}} of {{total}} operations",
+      "empty": "No operation matches. Try another search or run a discovery."
+    },
+    "tools": {
+      "title": "Tools",
+      "available": "available",
+      "missing": "missing",
+      "empty": "No tool detected."
+    },
+    "discover": {
+      "title": "Discovery",
+      "all": "Discover all",
+      "running": "Discovery running, this can take a few minutes...",
+      "result": "{{count}} operations, {{ms}} ms",
+      "none": "Discovery returned no result."
+    },
+    "op": {
+      "provider": "Provider",
+      "version": "Version",
+      "endpoint": "Endpoint",
+      "source": "Source",
+      "effects": "Effects",
+      "required": "Required parameters",
+      "optional": "Optional parameters",
+      "permissions": "Permissions",
+      "examples": "Examples",
+      "verify": "Verification",
+      "rollback": "Rollback",
+      "compat": "Compatibility",
+      "decision": "Decision"
+    },
+    "graph": {
+      "buildFrom": "Build from",
+      "summary": "Summary",
+      "counts": "{{nodes}} resources, {{edges}} relations",
+      "empty": "The graph is empty. Build it from a source above.",
+      "search": "Search a resource",
+      "noMatch": "No resource matches.",
+      "impact": "Impact (what depends on it)",
+      "noImpact": "Nothing depends on this resource.",
+      "edges": "Relations",
+      "noEdges": "No relation."
+    },
+    "refresh": "Refresh",
+    "audit": {
+      "title": "Audit",
+      "time": "Time",
+      "command": "Command",
+      "ok": "OK",
+      "verified": "Verified",
+      "duration": "Duration",
+      "empty": "No infrastructure command recorded yet."
+    },
+    "runs": {
+      "title": "Runs",
+      "noSteps": "No step.",
+      "empty": "No run yet."
+    },
+    "tab": {
+      "overview": "Overview",
+      "catalog": "Catalog",
+      "graph": "Graph",
+      "audit": "Audit and runs"
+    },
+    "title": "Infrastructure",
+    "subtitle": "Registry, policy, resource graph and audit",
+    "risk": {
+      "read": "Read",
+      "plan": "Plan",
+      "change": "Change",
+      "critical": "Critical"
+    },
+    "tier": {
+      "known": "Known",
+      "available": "Available",
+      "authorized": "Authorized",
+      "tested": "Tested"
+    },
+    "decision": {
+      "allow": "Allow",
+      "ask": "Ask",
+      "deny": "Deny"
+    },
+    "yes": "yes",
+    "no": "no"
   }
 }

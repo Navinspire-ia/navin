@@ -660,16 +660,95 @@ class TerminalManager:
         if len(sessions) >= MAX_TERMINALS_PER_CONNECTION:
             raise TerminalError("too many terminals open")
         shell_name, shell_path, shell_args, cwd = prepare_launch(shell, cwd)
+        shell_path, shell_args, sandboxed = self._confine(
+            shell_path, shell_args, sandbox=sandbox, workspace=workspace, cwd=cwd,
+        )
+        return self._register(
+            connection, sessions,
+            terminal_id=terminal_id, shell_name=shell_name, shell_path=shell_path,
+            shell_args=shell_args, cwd=cwd, cols=cols, rows=rows,
+            on_output=on_output, on_exit=on_exit, sandboxed=sandboxed,
+        )
 
-        sandboxed = False
-        if sandbox and not _IS_WINDOWS:
-            launch = sandboxed_launch(
-                shell_path, shell_args, workspace=workspace or cwd, cwd=cwd
+    async def open_async(
+        self,
+        connection: Any,
+        *,
+        terminal_id: str,
+        shell: str | None,
+        cwd: str,
+        cols: int,
+        rows: int,
+        on_output: Callable[[str, bytes], Awaitable[None]],
+        on_exit: Callable[[str, int | None], Awaitable[None]],
+        sandbox: bool = False,
+        workspace: str | None = None,
+    ) -> TerminalSession:
+        """Open a terminal without stalling the engine loop.
+
+        Picking the shell walks PATH, probes WSL distributions and reads the
+        project folder, and the sandbox wrapper checks its helper binary: disk
+        and process work that took seconds on Windows and froze every chat of
+        the Desktop while one tab opened. It runs in a worker thread; only the
+        PTY spawn and the reader registration, which need the loop, stay on it.
+        """
+        sessions = self._by_connection.setdefault(connection, {})
+        if terminal_id in sessions:
+            raise TerminalError("terminal already open")
+        if len(sessions) >= MAX_TERMINALS_PER_CONNECTION:
+            raise TerminalError("too many terminals open")
+
+        def prepare() -> tuple[str, str, list[str], str, bool]:
+            name, path, args, launch_cwd = prepare_launch(shell, cwd)
+            path, args, sandboxed = self._confine(
+                path, args, sandbox=sandbox, workspace=workspace, cwd=launch_cwd,
             )
-            if launch is not None:
-                shell_path, shell_args = launch
-                sandboxed = True
+            return name, path, args, launch_cwd, sandboxed
 
+        shell_name, shell_path, shell_args, launch_cwd, sandboxed = await asyncio.to_thread(prepare)
+        # The thread took a while: another frame may have opened this id meanwhile.
+        if terminal_id in sessions:
+            raise TerminalError("terminal already open")
+        return self._register(
+            connection, sessions,
+            terminal_id=terminal_id, shell_name=shell_name, shell_path=shell_path,
+            shell_args=shell_args, cwd=launch_cwd, cols=cols, rows=rows,
+            on_output=on_output, on_exit=on_exit, sandboxed=sandboxed,
+        )
+
+    @staticmethod
+    def _confine(
+        shell_path: str,
+        shell_args: list[str],
+        *,
+        sandbox: bool,
+        workspace: str | None,
+        cwd: str,
+    ) -> tuple[str, list[str], bool]:
+        if not sandbox or _IS_WINDOWS:
+            return shell_path, shell_args, False
+        launch = sandboxed_launch(shell_path, shell_args, workspace=workspace or cwd, cwd=cwd)
+        if launch is None:
+            return shell_path, shell_args, False
+        shell_path, shell_args = launch
+        return shell_path, shell_args, True
+
+    def _register(
+        self,
+        connection: Any,
+        sessions: dict[str, TerminalSession],
+        *,
+        terminal_id: str,
+        shell_name: str,
+        shell_path: str,
+        shell_args: list[str],
+        cwd: str,
+        cols: int,
+        rows: int,
+        on_output: Callable[[str, bytes], Awaitable[None]],
+        on_exit: Callable[[str, int | None], Awaitable[None]],
+        sandboxed: bool,
+    ) -> TerminalSession:
         buffer = bytearray()
         self._scrollback[(connection, terminal_id)] = buffer
 

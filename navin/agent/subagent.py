@@ -104,6 +104,15 @@ def spawn_was_accepted(detail: str) -> bool:
     return isinstance(detail, str) and not detail.startswith(SPAWN_REFUSED_PREFIX)
 
 
+_SPAWNED_ID = re.compile(r"\(id: ([^)\s]+)\)")
+
+
+def spawned_task_id(detail: str) -> str:
+    """The task id named in a spawn answer ("... started (id: ab12cd34)"), or ''."""
+    found = _SPAWNED_ID.search(detail or "")
+    return found.group(1) if found else ""
+
+
 def _changed_files_note(
     validation: Any, *, partial: bool, kept_at: Path | str | None = None,
 ) -> str:
@@ -352,7 +361,7 @@ class SubagentStatus:
     task_description: str
     started_at: float          # time.monotonic()
     # queued | isolating | initializing | awaiting_model | thinking | responding | awaiting_tools
-    # | tools_completed | final_response | done | error
+    # | awaiting_approval | tools_completed | final_response | done | error
     phase: str = "initializing"
     iteration: int = 0
     tool_events: list = field(default_factory=list)   # [{name, status, detail}, ...]
@@ -1454,6 +1463,72 @@ class SubagentManager:
         finally:
             reset_turn_policy(token)
 
+    async def retry_agent(
+        self, session_key: str, task_id: str, *, runtime: LLMRuntime,
+        workspace_scope: WorkspaceScope | None = None,
+    ) -> dict[str, Any]:
+        """The one "Relaunch" of the journal: resume where it stopped when that is
+        safe, otherwise start the same task again.
+
+        Returns ``mode`` (recover or relaunch) and the ``task_id`` that now runs:
+        the same one for a resume, a new one for a relaunch.
+        """
+        record = await asyncio.get_running_loop().run_in_executor(
+            _journal_executor(), self._journal_io, "get", session_key, task_id,
+        )
+        if record is None:
+            return {"ok": False, "error": "Cannot relaunch: agent not found in this conversation."}
+        if task_id in self._task_statuses:
+            return {"ok": False, "error": "Cannot relaunch: agent is still running. Cancel it first."}
+        mode = "recover" if self._stored_metadata(record).get("recoverable") else "relaunch"
+        method = self.recover_agent if mode == "recover" else self.relaunch_agent
+        detail = await method(session_key, task_id, runtime=runtime, workspace_scope=workspace_scope)
+        if not spawn_was_accepted(detail) or detail.startswith("Cannot"):
+            return {"ok": False, "error": detail, "mode": mode}
+        now_running = task_id if mode == "recover" else spawned_task_id(detail)
+        return {"ok": True, "detail": detail, "mode": mode, "task_id": now_running}
+
+    async def cancel_agent(self, session_key: str, task_id: str) -> dict[str, Any]:
+        """Stop one agent of this conversation, queued or running; the others go on.
+
+        The card gets its final "cancelled" frame from the same paths as /stop:
+        here for a queued agent, from the run's own cancellation for a running one.
+        """
+        queue = self._queued.get(session_key)
+        pending = next((item for item in queue or () if item.task_id == task_id), None)
+        if queue is not None and pending is not None:
+            queue.remove(pending)
+            if not queue:
+                self._queued.pop(session_key, None)
+            journaled = task_id in self._agent_sessions
+            pending.status.phase = "error"
+            pending.status.error = "Cancelled"
+            pending.status.error_kind = "cancelled"
+            self._publish_progress(pending.status, force=True, done=True)
+            self._forget(task_id)
+            if journaled:
+                await self.flush_journal()
+                await asyncio.get_running_loop().run_in_executor(
+                    _journal_executor(), self._journal_io, "append_many", [(session_key, task_id)], "result",
+                    {"role": "assistant", "content": "Cancelled before execution.", "status": "error"},
+                )
+            return {"ok": True, "detail": f"Cancelled {pending.label} before it started."}
+        task = self._running_tasks.get(task_id)
+        if task is None or task_id not in self._session_tasks.get(session_key, ()):
+            return {"ok": False, "error": "Cannot cancel: this agent is not running in this conversation."}
+        if task.done():
+            return {"ok": False, "error": "Cannot cancel: this agent already finished."}
+        status = self._task_statuses.get(task_id)
+        label = status.label if status is not None else task_id
+        task.cancel()
+        # Bounded like /stop: an agent that will not finish must not hold the loop.
+        timeout_s = getattr(self, "_cancel_wait_s", _CANCEL_WAIT_S)
+        _, still = await asyncio.wait({task}, timeout=timeout_s)
+        if still:
+            logger.warning("Subagent [{}] still stopping after {}s", task_id, timeout_s)
+            return {"ok": True, "detail": f"Stopping {label}..."}
+        return {"ok": True, "detail": f"Stopped {label}."}
+
     def _has_free_slot(self, session_key: str | None) -> bool:
         """Whether one more subagent may run right now for this conversation."""
         total = len(self._running_tasks) + sum(self._reserved_slots.values())
@@ -2294,6 +2369,7 @@ class SubagentManager:
                     "what you need approved in your result and let the main agent "
                     "ask, instead of working around the refusal."
                 ),
+                on_wait=self._approval_waiter(status),
             ))
             # Same route for a real fork: the ask_user card lands on the parent's
             # chat, named after this subagent, and waits for the user there.
@@ -2535,6 +2611,8 @@ class SubagentManager:
             return "Completed"
         if status.phase == "queued":
             return "Queued - waiting for a free slot"
+        if status.phase == "awaiting_approval":
+            return "Waiting for your approval"
         if status.phase == "isolating":
             return "Preparing isolated checkout…"
         if status.phase == "initializing":
@@ -2570,6 +2648,29 @@ class SubagentManager:
         if status.iteration:
             return f"Working (step {status.iteration})"
         return "Working…"
+
+    def _approval_waiter(self, status: SubagentStatus) -> Callable[[bool], None]:
+        """Show "Waiting for your approval" on the card while a request is open.
+
+        Concurrent tool calls can each ask: the card leaves that state when the
+        last open request is answered, back to the phase it was in.
+        """
+        state: dict[str, Any] = {"open": 0, "phase": None}
+
+        def waiting(active: bool) -> None:
+            if active:
+                state["open"] += 1
+                if state["open"] == 1 and status.phase not in {"done", "error"}:
+                    state["phase"] = status.phase
+                    status.phase = "awaiting_approval"
+            else:
+                state["open"] = max(0, state["open"] - 1)
+                if state["open"] == 0 and status.phase == "awaiting_approval":
+                    status.phase = state["phase"] or "awaiting_tools"
+            if status.phase not in {"done", "error"}:
+                self._publish_progress(status, force=True)
+
+        return waiting
 
     @staticmethod
     def _progress_steps(status: SubagentStatus) -> list[dict[str, str]]:
@@ -3565,8 +3666,8 @@ async def request_subagent_operation(
         RUNTIME_CONTROL_SUBAGENTS_QUERY,
     )
     if not session_key or operation not in {
-        "list", "history", "recover", "relaunch", "team_feed", "team_message", "team_assign",
-        "team_select",
+        "list", "history", "recover", "relaunch", "retry", "cancel", "team_feed", "team_message",
+        "team_assign", "team_select",
     }:
         return {"ok": False, "error": "Invalid subagent operation or conversation."}
     ack = asyncio.get_running_loop().create_future()
@@ -3816,6 +3917,21 @@ async def handle_subagents_query(state: Any, msg: Any, registry: Any) -> bool:
                     result = {"ok": accepted, "detail": detail}
                     if not result["ok"]:
                         result["error"] = detail
+                elif operation == "retry":
+                    if not isinstance(ack, asyncio.Future) or ack.done():
+                        return True
+                    session = state.sessions.get_or_create(session_key)
+                    channel, _, _chat_id = session_key.partition(":")
+                    scope = state.workspace_scopes.for_turn(
+                        channel=channel, message_metadata=None,
+                        session_metadata=getattr(session, "metadata", None),
+                    )
+                    result = await manager.retry_agent(
+                        session_key, str(metadata.get("task_id", "")),
+                        runtime=state.llm_runtime(), workspace_scope=scope,
+                    )
+                elif operation == "cancel":
+                    result = await manager.cancel_agent(session_key, str(metadata.get("task_id", "")))
                 else:
                     result = {"ok": False, "error": "Unknown subagent operation."}
             except Exception as error:

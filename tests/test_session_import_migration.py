@@ -86,9 +86,13 @@ def test_opencode_keeps_its_project_directory(tmp_path):
 
 
 def test_titles_skip_pasted_and_injected_blocks():
+    # Titles keep 5 words (the user's rule for every chat name).
     assert _title_from_messages([
         {"role": "user", "content": '<pasted_content id="a">[2026-10-04] 500 errors...</pasted_content> why does it crash?'},
-    ]) == "why does it"
+    ]) == "why does it crash?"
+    assert _title_from_messages([
+        {"role": "user", "content": "please fix the login page before the demo tomorrow"},
+    ]) == "please fix the login page"
 
 
 def test_origin_project_rules():

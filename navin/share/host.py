@@ -68,7 +68,7 @@ GUEST_QUEUE_LIMIT = 2000
 # terminals, previews, browser input, new chats, forks or attaching elsewhere.
 DRIVER_ENVELOPES = frozenset({"message", "choice_answer"})
 AGENT_READ_ENVELOPES = frozenset({"subagents_list", "subagent_history"})
-AGENT_DRIVE_ENVELOPES = frozenset({"subagent_recover", "subagent_relaunch"})
+AGENT_DRIVE_ENVELOPES = frozenset({"subagent_recover", "subagent_relaunch", "subagent_retry", "subagent_cancel"})
 # The only fields a driving guest's envelope keeps. Anything else (file
 # mentions, open files, media paths, CLI apps, MCP presets, model presets,
 # workspace scope...) could make the agent read or reach beyond the shared

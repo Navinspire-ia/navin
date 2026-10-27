@@ -7438,6 +7438,45 @@ export function sendCollabTestEmail(token: string, base: string = ""): Promise<{
   return request<{ ok: boolean; to: string }>(`${base}/api/settings/collab/test-email`, token, undefined, 30_000);
 }
 
+/** Remote channels panel: notify / approve / chat per email, WhatsApp, Telegram, Teams. */
+export type RemoteChannelName = "email" | "whatsapp" | "telegram" | "teams";
+export interface RemoteChannelRow {
+  channel: RemoteChannelName;
+  notify: boolean;
+  approve: boolean;
+  chat: boolean;
+  to: string;
+  enabled: boolean;
+  configured: boolean;
+  ready: boolean;
+  hint: string;
+}
+export interface RemoteChannelsPayload {
+  channels: RemoteChannelRow[];
+  queued?: number;
+}
+
+export function fetchRemoteChannels(token: string, base: string = ""): Promise<RemoteChannelsPayload> {
+  return request<RemoteChannelsPayload>(`${base}/api/settings/remote-channels`, token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export function updateRemoteChannel(
+  token: string,
+  channel: RemoteChannelName,
+  changes: Partial<Pick<RemoteChannelRow, "notify" | "approve" | "chat" | "to">>,
+  base: string = "",
+): Promise<RemoteChannelsPayload> {
+  const query = new URLSearchParams({ channel });
+  for (const [key, value] of Object.entries(changes)) {
+    if (value !== undefined) query.set(key, typeof value === "boolean" ? String(value) : value);
+  }
+  return request<RemoteChannelsPayload>(`${base}/api/settings/remote-channels/update?${query}`, token);
+}
+
+export function testRemoteChannels(token: string, base: string = ""): Promise<RemoteChannelsPayload> {
+  return request<RemoteChannelsPayload>(`${base}/api/settings/remote-channels/test`, token, undefined, 30_000);
+}
+
 /** Collaboration Mode on or off for every chat (Settings > Team and the chat menu). */
 export function setCollabEnabled(token: string, enabled: boolean, base: string = ""): Promise<CollabPayload> {
   return request<CollabPayload>(
@@ -8186,4 +8225,86 @@ export async function searchNavinDocs(token: string, query: string, base: string
     token,
   );
   return body.results ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Infra engine (Universal Command & API Registry, policy, resource graph).
+// ---------------------------------------------------------------------------
+
+export type InfraLevel = "observe" | "prepare" | "execute";
+export type InfraRisk = "read" | "plan" | "change" | "critical";
+export type InfraTier = "known" | "available" | "authorized" | "tested";
+export type InfraPolicy = { level: InfraLevel; scopes: { aws_profiles: string[]; kube_contexts: string[]; namespaces: string[]; gcp_projects: string[]; azure_subscriptions: string[] }; production_markers: string[]; auth: { aws_profile: string; gcp_impersonate: string } };
+export type InfraToolInfo = { name: string; provider: string; available: boolean; version: string; path: string };
+export type InfraProviderStat = { provider: string; count: number; source: string; version: string; discovered_at: string; context: string };
+export type InfraState = { project: string; policy: InfraPolicy; levels: InfraLevel[]; tools: InfraToolInfo[];
+  contexts: { kubernetes: { current: string; contexts: string[]; production: boolean }; aws: { profile: string; profiles: string[]; production: boolean }; gcp: { project: string; configuration: string; production: boolean }; terraform: { workspace: string; production: boolean } };
+  catalog: { known: number; available: number; authorized: number; tested: number; providers: InfraProviderStat[] };
+  warnings: string[]; graph: { nodes: number; edges: number; updated_at: string }; audit_count: number;
+  /** Providers the Discover action can read on this machine. */
+  discoverable?: string[] };
+export type InfraDiscoverResult = { provider: string; count: number; available: boolean; version: string; source: string; errors: string[]; duration_ms: number };
+export type InfraCatalogItem = { id: string; provider: string; service: string; name: string; command: string; risk: InfraRisk; known: boolean; available: boolean; authorized: boolean; tested: boolean };
+export type InfraOperation = InfraCatalogItem & { version: string; endpoint: string; required: string[]; optional: string[]; permissions: string[]; examples: string[]; effects: string; verify: string[]; rollback: string[]; compat: string[]; source: string; decision: { action: "allow" | "ask" | "deny"; reasons: string[] } };
+export type InfraGraph = { summary: { nodes: number; edges: number; kinds: Record<string, number>; updated_at: string; sources: string[] }; nodes: { id: string; kind: string; name: string; provider: string }[]; edges: { src: string; dst: string; rel: string }[]; impact: string[]; errors: string[] };
+export type InfraAuditItem = { ts: string; command: string; risk: InfraRisk; decision: string; exit_code: number | null; ok: boolean; duration_ms: number; verified: boolean | null; snapshot: string };
+export type InfraRun = { id: string; goal: string; created_at: string; status: string; steps: { id: string; title: string; command: string; risk: InfraRisk; decision: string; status: string; owner: string }[] };
+
+export type InfraPolicyFields = Partial<Pick<InfraPolicy, "level" | "production_markers">> & {
+  scopes?: Partial<InfraPolicy["scopes"]>;
+  auth?: Partial<InfraPolicy["auth"]>;
+};
+
+const INFRA_SLOW_TIMEOUT_MS = 180_000;
+
+function infraUrl(base: string, key: string, path: string, params?: URLSearchParams): string {
+  const query = params && params.toString() ? `?${params}` : "";
+  return `${base}/api/sessions/${encodeURIComponent(key)}/infra${path}${query}`;
+}
+
+export async function fetchInfraState(token: string, key: string, base: string = ""): Promise<InfraState> {
+  return request<InfraState>(infraUrl(base, key, ""), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export async function updateInfraPolicy(token: string, key: string, fields: InfraPolicyFields, base: string = ""): Promise<InfraState> {
+  const params = new URLSearchParams();
+  params.set("fields", JSON.stringify(fields));
+  return request<InfraState>(infraUrl(base, key, "", params), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export async function discoverInfra(token: string, key: string, provider: string, deep: boolean = false, base: string = ""): Promise<{ results: InfraDiscoverResult[] }> {
+  const params = new URLSearchParams({ provider, deep: deep ? "1" : "0" });
+  return request<{ results: InfraDiscoverResult[] }>(infraUrl(base, key, "/discover", params), token, undefined, INFRA_SLOW_TIMEOUT_MS);
+}
+
+export type InfraCatalogQuery = { q?: string; provider?: string; risk?: InfraRisk | ""; tier?: InfraTier | ""; limit?: number };
+
+export async function searchInfraCatalog(token: string, key: string, query: InfraCatalogQuery = {}, base: string = ""): Promise<{ total: number; items: InfraCatalogItem[] }> {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.provider) params.set("provider", query.provider);
+  if (query.risk) params.set("risk", query.risk);
+  if (query.tier) params.set("tier", query.tier);
+  if (query.limit) params.set("limit", String(query.limit));
+  return request<{ total: number; items: InfraCatalogItem[] }>(infraUrl(base, key, "/catalog", params), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export async function fetchInfraOperation(token: string, key: string, id: string, base: string = ""): Promise<InfraOperation> {
+  return request<InfraOperation>(infraUrl(base, key, "/operation", new URLSearchParams({ id })), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export async function fetchInfraGraph(token: string, key: string, opts: { node?: string; build?: string[] } = {}, base: string = ""): Promise<InfraGraph> {
+  const params = new URLSearchParams();
+  if (opts.node) params.set("node", opts.node);
+  if (opts.build && opts.build.length) params.set("build", opts.build.join(","));
+  const timeout = opts.build && opts.build.length ? INFRA_SLOW_TIMEOUT_MS : API_READ_TIMEOUT_MS;
+  return request<InfraGraph>(infraUrl(base, key, "/graph", params), token, undefined, timeout);
+}
+
+export async function fetchInfraAudit(token: string, key: string, limit: number = 100, base: string = ""): Promise<{ items: InfraAuditItem[] }> {
+  return request<{ items: InfraAuditItem[] }>(infraUrl(base, key, "/audit", new URLSearchParams({ limit: String(limit) })), token, undefined, API_READ_TIMEOUT_MS);
+}
+
+export async function fetchInfraRuns(token: string, key: string, base: string = ""): Promise<{ items: InfraRun[] }> {
+  return request<{ items: InfraRun[] }>(infraUrl(base, key, "/runs"), token, undefined, API_READ_TIMEOUT_MS);
 }

@@ -191,6 +191,9 @@ class WebUISettingsRouter:
             return self._handle_settings_model_configuration_delete(request)
         if path == "/api/settings/model-routes/update":
             return self._handle_settings_model_route_update(request)
+        if path in {"/api/settings/remote-channels", "/api/settings/remote-channels/update",
+                    "/api/settings/remote-channels/test"}:
+            return await self._handle_remote_channels(request, path.rsplit("/", 1)[-1])
         if path == "/api/settings/collab":
             return await self._handle_settings_collab(request, update=False)
         if path == "/api/settings/collab/update":
@@ -280,11 +283,11 @@ class WebUISettingsRouter:
         if path == "/api/settings/channels/login/cancel":
             return await self._handle_settings_channel_login_cancel(request)
         if path == "/api/settings/pairing":
-            return self._handle_settings_pairing(request)
+            return await self._handle_settings_pairing(request)
         if path == "/api/settings/pairing/approve":
-            return self._handle_settings_pairing_action(request, "approve")
+            return await self._handle_settings_pairing_action(request, "approve")
         if path == "/api/settings/pairing/deny":
-            return self._handle_settings_pairing_action(request, "deny")
+            return await self._handle_settings_pairing_action(request, "deny")
         if path == "/api/settings/mcp-presets":
             return await self._handle_settings_mcp_presets(request)
         if path == "/api/settings/version-check":
@@ -410,12 +413,18 @@ class WebUISettingsRouter:
         model = (_query_first(query, "model") or "").strip()
         return self._json_response(reasoning_effort_values_payload(provider, model))
 
-    def _handle_settings_pairing(self, request: WsRequest) -> Response:
+    async def _handle_settings_pairing(self, request: WsRequest) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
-        return self._json_response(_pairing_payload())
+        # The pairing store is a file: off the loop (1.2 s seen, desktop log).
+        return self._json_response(await asyncio.to_thread(_pairing_payload))
 
-    def _handle_settings_pairing_action(self, request: WsRequest, action: str) -> Response:
+    async def _handle_settings_pairing_action(self, request: WsRequest, action: str) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        return await asyncio.to_thread(self._settings_pairing_action_sync, request, action)
+
+    def _settings_pairing_action_sync(self, request: WsRequest, action: str) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
         query = self._query(request)
@@ -537,6 +546,37 @@ class WebUISettingsRouter:
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
+
+    async def _handle_remote_channels(self, request: WsRequest, action: str) -> Response:
+        """Channels panel: notify / approve / chat switches per remote channel."""
+        from navin.agent import remote_channels
+
+        if not self._authorized(request):
+            return self._unauthorized()
+        query = self._query(request)
+
+        def flag(name: str) -> bool | None:
+            raw = (_query_first(query, name) or "").strip().lower()
+            return None if not raw else raw in {"1", "true", "yes", "on"}
+
+        try:
+            if action == "update":
+                channel = (_query_first(query, "channel") or "").strip().lower()
+                to = _query_first(query, "to")
+                payload = await asyncio.to_thread(
+                    remote_channels.save_prefs, channel,
+                    notify=flag("notify"), approve=flag("approve"), chat=flag("chat"), to=to,
+                )
+                return self._json_response(payload)
+            if action == "test":
+                count = await asyncio.to_thread(
+                    remote_channels.forward_notification,
+                    "Test de notification", "Si vous lisez ce message, le canal est pret.", "info",
+                )
+                return self._json_response({**remote_channels.status(), "queued": count})
+            return self._json_response(await asyncio.to_thread(remote_channels.status))
+        except ValueError as exc:
+            return self._error_response(400, str(exc))
 
     async def _handle_settings_collab(self, request: WsRequest, *, update: bool) -> Response:
         """Settings > Team. The team travels as chunked base64 headers (no HTTP body)."""

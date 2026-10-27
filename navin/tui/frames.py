@@ -78,25 +78,31 @@ def background_lines(widget: Widget, crop: Region) -> list[Strip]:
     return [strip] * crop.height
 
 
-# Gen-1 collections between two full ones: Python's own cadence under this
-# policy. A full pass is due after this many and waits for a quiet moment.
+# Gen-1 collections between two ordinary passes. An ordinary pass collects the
+# young generations and freezes what survives: a few milliseconds, never a
+# walk of the heap, so it may run at any short quiet moment.
 FULL_GC_DUE = 50
-# Past this many, the pass runs at the next tick even while the user types,
-# so memory stays bounded when the session never goes quiet.
+# Past this many, the pass runs at the next tick even while the user types.
 FULL_GC_FORCED = FULL_GC_DUE * 8
 FULL_GC_QUIET_INPUT_S = 2.0
 FULL_GC_QUIET_EVENTS_S = 0.5
-# Survivors of a full pass are frozen: later passes walk only what is new,
-# milliseconds instead of ~2 s on a long session. A deep pass (unfreeze,
-# collect, freeze) reclaims cycles among frozen objects at most this often,
-# and only once the user has been away from the keyboard for a while.
-DEEP_GC_INTERVAL_S = 20 * 60.0
+# Generation the ordinary pass collects: the young ones only. A gen-2 pass
+# walked every object promoted since the last freeze (1.6 s on average, up
+# to 3 s, in the CLI freeze log of 2026-10-27); garbage that reached gen 2
+# is now frozen with the rest and given back by the deep pass.
+ORDINARY_GC_GENERATION = 1
+# The deep pass (unfreeze, collect everything, freeze) is the one walk of the
+# whole heap: 2 to 6 s on a long session. It runs only when the frozen set grew
+# enough to be worth it AND nobody is looking: no key, paste, click or wheel for
+# a minute, or the terminal window left in the background. A timer alone no
+# longer starts it: an idle CLI paid 3 s every 20 minutes to reclaim nothing
+# (27 deep passes, 88 s of frozen screen in one day of the freeze log).
 DEEP_GC_QUIET_INPUT_S = 60.0
 DEEP_GC_QUIET_EVENTS_S = 10.0
 # Freezing also keeps widgets that later leave the chat window (a frozen cycle
 # is never collected: +240 MB after 30 turns when this was tried once without
 # a bound). When the frozen set grows this much past the last deep pass, the
-# deep pass runs at the next quiet moment, away from the keyboard or not.
+# deep pass runs once the user is away.
 DEEP_GC_GROWTH = 500_000
 # Past this growth the deep pass no longer waits for the user to be away: one
 # quiet moment is enough, so memory stays bounded on a session never left.
@@ -139,21 +145,24 @@ def terminal_gc_policy():
 
 
 class IdleCollector:
-    """Run the full collections ``terminal_gc_policy`` holds back, when quiet.
+    """Run the collections ``terminal_gc_policy`` holds back, when nobody waits.
 
-    Quiet means no key, paste or click for a couple of seconds and no engine
-    event for half a second: typically while the model thinks. Survivors are
-    frozen after each pass, so the next ones only walk new objects; a deep
-    pass that reclaims frozen cycles waits for the user to be away.
+    The ordinary pass (young generations, then freeze) is cheap and runs at a
+    short quiet moment: no key, paste or click for a couple of seconds and no
+    engine event for half a second. The deep pass that walks the whole heap
+    waits for the user to be away and for any work of this CLI (a turn, a
+    subagent, a project in the background) to be over.
     """
 
     def __init__(self, clock: Any = time.monotonic, before_collect: Any = None,
-                 busy: Any = None) -> None:
+                 busy: Any = None, focused: Any = None) -> None:
         self._clock = clock
         self._before_collect = before_collect
-        # A turn is running: the engine shares this loop, and the 2 s "quiet"
+        # Work is running: the engine shares this loop, and the 2 s "quiet"
         # gaps are the wait for the model's next token, not a free moment.
         self._busy = busy
+        # Whether the terminal window has the focus (terminal focus reports).
+        self._focused = focused
         self.input_at = 0.0
         self.event_at = 0.0
         self.collections = 0
@@ -161,6 +170,9 @@ class IdleCollector:
         self.deep_at = self._clock()
         self.frozen_after_deep = frozen_count()
         self.last_pass_s = 0.0
+        # gc.get_count()[2] keeps counting the gen-1 collections between two
+        # deep passes (the ordinary pass never resets it): due counts from here.
+        self._pending_base = 0
 
     def note_input(self) -> None:
         self.input_at = self._clock()
@@ -169,37 +181,43 @@ class IdleCollector:
         self.event_at = self._clock()
 
     def tick(self) -> bool:
-        """Collect if a full pass is due and the moment allows it."""
+        """Collect if a pass is due and the moment allows it."""
         if gc.get_threshold()[2] < _NO_AUTOMATIC_FULL_GC or not gc.isenabled():
             return False  # Python still runs full passes on its own
         now = self._clock()
-        quiet = (now - self.input_at >= FULL_GC_QUIET_INPUT_S
-                 and now - self.event_at >= FULL_GC_QUIET_EVENTS_S)
+        idle_input = now - self.input_at
+        idle_events = now - self.event_at
+        quiet = idle_input >= FULL_GC_QUIET_INPUT_S and idle_events >= FULL_GC_QUIET_EVENTS_S
+        if quiet and self._is_busy():
+            quiet = False  # a turn's 2 s gaps wait for the model's next token
         frozen = frozen_count()
-        away = (now - self.input_at >= DEEP_GC_QUIET_INPUT_S
-                and now - self.event_at >= DEEP_GC_QUIET_EVENTS_S)
         growth = frozen - self.frozen_after_deep
-        if self._is_busy():
-            quiet = away = False
-        # The deep pass walks the whole heap: 2 to 6 s on a long session, so
-        # it waits for the user to be away. Only a runaway growth makes a
-        # short quiet moment enough.
-        due = now - self.deep_at >= DEEP_GC_INTERVAL_S or growth >= DEEP_GC_GROWTH
-        if frozen and ((away and due) or (quiet and growth >= DEEP_GC_GROWTH_FORCED)):
-            # The one long pass: it gives back what left the chat since.
-            gc.unfreeze()
-            self._collect(deep=True)
-            self.deep_at = now
-            self.frozen_after_deep = frozen_count()
-            self.deep_collections += 1
-            return True
-        pending = gc.get_count()[2]
+        if frozen and growth >= DEEP_GC_GROWTH and quiet:
+            away = (
+                (idle_input >= DEEP_GC_QUIET_INPUT_S and idle_events >= DEEP_GC_QUIET_EVENTS_S)
+                or (not self._is_focused() and idle_events >= DEEP_GC_QUIET_EVENTS_S)
+            )
+            if away or growth >= DEEP_GC_GROWTH_FORCED:
+                # The one long pass: it gives back what left the chat since.
+                gc.unfreeze()
+                self._collect(deep=True)
+                self.deep_at = now
+                self.frozen_after_deep = frozen_count()
+                self.deep_collections += 1
+                self._pending_base = gc.get_count()[2]
+                return True
+        pending = gc.get_count()[2] - self._pending_base
+        if pending < 0:
+            # A deep pass (here or a thaw elsewhere) reset Python's count.
+            self._pending_base = 0
+            pending = gc.get_count()[2]
         if pending < FULL_GC_DUE:
             return False
         if not quiet and pending < FULL_GC_FORCED:
             return False
         self._collect()
         self.collections += 1
+        self._pending_base = gc.get_count()[2]
         return True
 
     def _is_busy(self) -> bool:
@@ -210,6 +228,11 @@ class IdleCollector:
         except Exception:  # noqa: BLE001 - unknown state: behave as before
             return False
 
+    def _is_focused(self) -> bool:
+        # Textual's App.app_focus: a plain attribute, it cannot fail. A hook
+        # that raises is a bug and surfaces instead of being taken as "looking".
+        return True if self._focused is None else bool(self._focused())
+
     def _collect(self, *, deep: bool = False) -> None:
         if self._before_collect is not None:
             try:
@@ -217,7 +240,7 @@ class IdleCollector:
             except Exception:  # noqa: BLE001 - never skip the collection for it
                 pass
         started = time.perf_counter()
-        gc.collect(2)
+        gc.collect(2 if deep else ORDINARY_GC_GENERATION)
         # Everything still alive now is long-lived (the chat, the widgets, the
         # index): out of the next passes, which then cost only the new objects.
         frozen = _freeze_counted(thawed=deep)
@@ -227,7 +250,7 @@ class IdleCollector:
 
             logger.warning(
                 "CLI {} garbage collection took {:.1f}s ({} objects kept)",
-                "deep" if deep else "full", self.last_pass_s, frozen,
+                "deep" if deep else "ordinary", self.last_pass_s, frozen,
             )
 
 

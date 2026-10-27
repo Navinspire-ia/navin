@@ -1,0 +1,24 @@
+// next/image for the app build: a plain image (no image server in the app).
+import type { CSSProperties, ImgHTMLAttributes } from "react";
+
+type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
+  src: string | { src: string };
+  fill?: boolean;
+  priority?: boolean;
+  quality?: number;
+  placeholder?: string;
+  blurDataURL?: string;
+  unoptimized?: boolean;
+  loader?: unknown;
+};
+
+export default function Image({ src, fill, priority, quality, placeholder, blurDataURL, unoptimized, loader, style, ...rest }: Props) {
+  void quality;
+  void placeholder;
+  void blurDataURL;
+  void unoptimized;
+  void loader;
+  const url = typeof src === "string" ? src : src.src;
+  const fillStyle: CSSProperties = fill ? { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" } : {};
+  return <img src={url} loading={priority ? "eager" : "lazy"} style={{ ...fillStyle, ...style }} {...rest} />;
+}

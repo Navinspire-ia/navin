@@ -1,0 +1,23 @@
+{
+  "name": "infra-ops",
+  "version": "1.0.0",
+  "description": "Cloud, DevOps, SRE and platform engineering bench driven by the infra engine: discover, graph, plan, run through the broker, verify and recover. Entry point: infra-orchestrator.",
+  "category": "devops",
+  "commands": [],
+  "agents": [],
+  "skills": ["infra-orchestrator", "ops-supervisor", "aws-architect", "cloud-aws", "cloud-gcp", "cloud-azure", "kubernetes-platform", "kubernetes-operator", "openshift-operator", "helm-operator", "docker-operator", "terraform-agent", "config-management", "network-engineer", "database-reliability", "storage-operator", "private-cloud-operator", "platform-engineer", "cicd-agent", "gitops-argocd", "cloud-security-posture", "iac-security-auditor", "finops-analyst", "observability-agent", "sre-incident-responder", "resilience-tester", "sysops-administrator"],
+  "steps": [
+    {"step": "decompose and run a multi-domain infra mission", "use": "skill:infra-orchestrator"},
+    {"step": "design an AWS platform", "use": "skill:aws-architect"},
+    {"step": "build or upgrade a Kubernetes cluster", "use": "skill:kubernetes-platform"},
+    {"step": "debug Kubernetes workloads", "use": "skill:kubernetes-operator"},
+    {"step": "change infrastructure as code", "use": "skill:terraform-agent"},
+    {"step": "network, DNS and TLS issues", "use": "skill:network-engineer"},
+    {"step": "databases: HA, backups, restore drills", "use": "skill:database-reliability"},
+    {"step": "security posture audit and remediation", "use": "skill:cloud-security-posture"},
+    {"step": "cost analysis and savings", "use": "skill:finops-analyst"},
+    {"step": "golden paths, CI/CD and GitOps", "use": "skill:platform-engineer"},
+    {"step": "incident response", "use": "skill:sre-incident-responder"},
+    {"step": "load, chaos and DR drills", "use": "skill:resilience-tester"}
+  ]
+}

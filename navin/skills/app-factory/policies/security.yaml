@@ -1,0 +1,96 @@
+---
+# App Factory security policy, read by the scaffold and by the audit.
+# Rules: minimal native permissions, no secret shipped in the app, HTTPS
+# only, the app bundles its own frontend (never a remote URL wrapper).
+version: 1
+
+capacitor:
+  # Keys that must not appear in capacitor.config.json.
+  forbidden_config:
+    # A remote URL makes the app a web wrapper (store rejection, no offline).
+    - server.url
+    - server.cleartext  # allows plain HTTP
+    - android.allowMixedContent
+    - android.webContentsDebuggingEnabled
+  android_permissions_default:
+    - android.permission.INTERNET
+  # Allowed only when a feature of the app needs them (a reason is asked).
+  android_permissions_need_reason:
+    - android.permission.CAMERA
+    - android.permission.RECORD_AUDIO
+    - android.permission.ACCESS_FINE_LOCATION
+    - android.permission.ACCESS_COARSE_LOCATION
+    - android.permission.ACCESS_BACKGROUND_LOCATION
+    - android.permission.READ_CONTACTS
+    - android.permission.READ_MEDIA_IMAGES
+    - android.permission.READ_MEDIA_VIDEO
+    - android.permission.READ_EXTERNAL_STORAGE
+    - android.permission.WRITE_EXTERNAL_STORAGE
+    - android.permission.POST_NOTIFICATIONS
+    - android.permission.BLUETOOTH_CONNECT
+  android_permissions_forbidden:
+    - android.permission.READ_SMS
+    - android.permission.SEND_SMS
+    - android.permission.READ_CALL_LOG
+    - android.permission.MANAGE_EXTERNAL_STORAGE
+    - android.permission.REQUEST_INSTALL_PACKAGES
+    - android.permission.SYSTEM_ALERT_WINDOW
+
+tauri:
+  require_csp: true
+  # Permissions the default capability may grant without a reason.
+  permissions_default:
+    - core:default
+  permissions_need_reason:
+    - dialog:default
+    - notification:default
+    - store:default
+    - opener:default
+    - updater:default
+    - fs:default
+    - http:default
+  # Never granted by the factory: they open the machine to the web content.
+  permissions_forbidden:
+    - shell:allow-execute
+    - shell:allow-spawn
+    - fs:allow-write-file
+    - fs:scope-home-recursive
+    - fs:allow-home-write-recursive
+  forbidden_config:
+    - app.security.dangerousDisableAssetCspModification
+    - app.withGlobalTauri
+
+secrets:
+  # Files never shipped in the packaged frontend or in os/<target>.
+  files_never_in_app:
+    - .env
+    - .env.local
+    - .env.production
+    - "*.keystore"
+    - "*.jks"
+    - "*.p12"
+    - "*.pem"
+    - "*.key"
+  patterns:
+    - name: private key
+      regex: "-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+    - name: AWS access key
+      regex: "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"
+    - name: Google API key
+      regex: "\\bAIza[0-9A-Za-z_\\-]{35}\\b"
+    - name: Stripe secret key
+      regex: "\\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\\b"
+    - name: GitHub token
+      regex: "\\bgh[pousr]_[0-9A-Za-z]{36,}\\b"
+    - name: Slack token
+      regex: "\\bxox[abpors]-[0-9A-Za-z-]{10,}\\b"
+    - name: Supabase service role key
+      regex: "service_role[\"']?\\s*[:=]\\s*[\"']eyJ"
+
+backend:
+  https_only: true
+  # Plain HTTP only for these hosts (local dev, Android emulator host).
+  http_hosts_allowed:
+    - localhost
+    - 127.0.0.1
+    - 10.0.2.2

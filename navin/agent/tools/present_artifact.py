@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -297,7 +298,7 @@ class PresentArtifactTool(Tool):
                             f"match {recovered.name} instead)"
                         )
                         target = recovered
-                    body = target.read_bytes()
+                    body = await asyncio.to_thread(target.read_bytes)
                     source_path = str(target)
                     if not artifact_type:
                         artifact_type = "file"

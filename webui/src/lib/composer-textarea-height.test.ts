@@ -45,6 +45,24 @@ describe("fitTextareaHeight", () => {
     expect(fitTextareaHeight(laidOut)).toBe(70);
   });
 
+  it("keeps the parent height while measuring so WebKit never shows the collapsed box", () => {
+    const seen: string[] = [];
+    const parent = { offsetHeight: 96, style: { minHeight: "" } };
+    const el = {
+      clientWidth: 640,
+      parentElement: parent,
+      style: { height: "72px" },
+      get scrollHeight() {
+        seen.push(parent.style.minHeight);
+        return 72;
+      },
+    };
+    expect(fitTextareaHeight(el)).toBe(72);
+    expect(seen).toEqual(["96px"]);
+    expect(parent.style.minHeight).toBe("");
+    expect(el.style.height).toBe("72px");
+  });
+
   it("tolerates a missing element", () => {
     expect(fitTextareaHeight(null)).toBeNull();
     expect(fitTextareaHeight(undefined)).toBeNull();

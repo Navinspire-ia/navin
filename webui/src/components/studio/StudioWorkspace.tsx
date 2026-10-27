@@ -57,6 +57,7 @@ import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import { MarketingQA } from "@/components/studio/MarketingQA";
 import { SeoDesk } from "@/components/studio/seo/SeoDesk";
 import { AdsDesk } from "@/components/studio/ads/AdsDesk";
+import { InfraPanel } from "@/components/studio/InfraPanel";
 
 const ONBOARDING_DISMISSED_KEY = "navin.studio.onboarding.dismissed";
 
@@ -1711,6 +1712,7 @@ export function StudioWorkspace({
   projectName,
   recentProjects,
   onSelectProject,
+  sessionKey,
 }: {
   module: StudioModule;
   chatOpen?: boolean;
@@ -1746,6 +1748,8 @@ export function StudioWorkspace({
   projectName?: string | null;
   recentProjects?: RecentProjectEntry[];
   onSelectProject?: (path: string, name?: string) => void;
+  /** Chat session the ops Infrastructure panel is scoped to. */
+  sessionKey?: string | null;
 }) {
   const { t } = useTranslation();
   const { token } = useClient();
@@ -2200,6 +2204,10 @@ export function StudioWorkspace({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {module === "ops" && showStudioActions && token ? (
+        <InfraPanel token={token} sessionKey={sessionKey || "websocket:webui-dev"} />
       ) : null}
 
       {/* Brief (dialog-driven modules) + theme / group filter */}

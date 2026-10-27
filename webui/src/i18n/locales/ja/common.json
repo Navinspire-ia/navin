@@ -1914,7 +1914,32 @@
     "toolsRowToggle": "Tools",
     "unsaved": "Unsaved changes",
     "workspace": "Workspace",
-    "terminalSearch": "ターミナル内を検索"
+    "terminalSearch": "ターミナル内を検索",
+    "appsMobile": "モバイルアプリ",
+    "appsDesktop": "デスクトップアプリ",
+    "appFactory": {
+      "title": "プロジェクトをアプリに変換",
+      "intro": "Navin は現在のプロジェクトを Windows、macOS、Linux、Android、iOS のアプリに変換します。Web プロジェクトとバックエンドはそのままで、すべて専用の os/<platform> フォルダーに書き込まれます。",
+      "learnMore": "これは何？",
+      "honest": "Navin は実行したテストと、このマシンで実行できなかったテストを報告します。",
+      "steps": {
+        "analyze": "プロジェクト分析",
+        "adapt": "適応",
+        "build": "ビルド",
+        "test": "テスト",
+        "deliver": "納品"
+      },
+      "confirm": {
+        "title": "プロジェクトの {{platform}} アプリを作成しますか?",
+        "body": "Navin がプロジェクトを分析して適応させ、アプリをビルドしてテストし、パッケージをお渡しします。すべて {{folder}} に書き込まれ、Web サイトとバックエンドは変更されません。",
+        "project": "プロジェクト",
+        "package": "パッケージ",
+        "folder": "フォルダー",
+        "tools": "不足しているビルドツールは、同意いただいた場合にのみインストールされます。このコンピューターでビルドできない場合は Navin がお知らせし、クラウドビルドを準備します。",
+        "start": "{{platform}} アプリを作成",
+        "cancel": "キャンセル"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3623,7 +3648,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "チャネル",
+      "loading": "チャネルを読み込み中...",
+      "unavailable": "チャネルを利用できません",
+      "saveFailed": "保存できませんでした",
+      "sending": "送信中...",
+      "testSent": "{{count}} 件のチャネルにテストを送信しました",
+      "testNone": "通知が有効な準備済みチャネルがありません",
+      "testFailed": "テストに失敗しました",
+      "status": {
+        "ready": "準備完了",
+        "offline": "オフライン",
+        "setup": "未設定"
+      },
+      "configure": "設定 > チャネルで設定",
+      "recipient": "{{channel}} の宛先",
+      "placeholder": {
+        "email": "you@example.jp",
+        "telegram": "チャット ID (例: 123456789)",
+        "teams": "Teams の会話 ID"
+      },
+      "flags": {
+        "notify": "通知",
+        "notifyTitle": "エラー、ブロック、完了したタスクをこのチャネルに送信",
+        "approve": "承認",
+        "approveTitle": "承認リクエスト: YES または NO とコードで返信",
+        "chat": "やり取り",
+        "chatTitle": "このチャネルから Navin にプロンプトを送信"
+      },
+      "sendTest": "テストを送信",
+      "help": "承認: 「YES コード」「NO コード」「ALWAYS コード」で返信します (依頼したチャットでは /approve と /deny も使えます)。認証情報 (SMTP、ボット、WhatsApp の QR コード、Teams アプリ) は 設定 > チャネル または MCP で設定します。"
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -9657,7 +9714,23 @@
       "queued_other": "{{count}} queued, waiting for a slot",
       "waiting": "Waiting for subagent",
       "waiting_other": "Waiting for {{count}} subagents",
-      "working": "Working…"
+      "working": "Working…",
+      "awaitingApproval": "承認待ち",
+      "answerInChat": "チャットでリクエストに回答してください",
+      "actionRetry": "再実行",
+      "actionCancel": "キャンセル",
+      "actionDismiss": "閉じる",
+      "actionRetryAria": "{{name}} を再実行",
+      "actionCancelAria": "{{name}} をキャンセル",
+      "actionDismissAria": "{{name}} を閉じる",
+      "barTitle": "サブエージェント",
+      "chipRunning": "実行中 {{count}}",
+      "chipQueued": "待機中 {{count}}",
+      "chipApproval": "承認待ち {{count}}",
+      "chipFailed": "失敗 {{count}}",
+      "chipDone": "完了 {{count}}",
+      "dismissFinished": "完了分を閉じる",
+      "moreCount": "他 {{count}} 件"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -9707,5 +9780,134 @@
     "loadingDiff": "差分を読み込み中...",
     "open": "詳しく見る",
     "openTests": "テストレポート ({{passed}} 件成功, {{failed}} 件失敗)"
+  },
+  "infra": {
+    "loading": "読み込み中...",
+    "error": "インフラデータを読み込めませんでした",
+    "retry": "再試行",
+    "empty": "まだデータがありません。",
+    "level": {
+      "title": "自律レベル",
+      "observe": "監視",
+      "observeHelp": "読み取り専用: 調査、一覧、説明のみで、何も変更しません。",
+      "prepare": "準備",
+      "prepareHelp": "計画とドライラン。変更はあなたの承認用に準備されます。",
+      "execute": "実行",
+      "executeHelp": "許可された変更をスコープ内で適用し、検証とロールバックを行います。",
+      "criticalNote": "重要な操作 (本番、削除、IAM、機密ネットワーク、データ、高コスト) は必ず先に確認を求めます"
+    },
+    "scopes": {
+      "title": "スコープ",
+      "placeholder": "カンマ区切り、空 = なし",
+      "production_markers": "本番マーカー",
+      "save": "保存",
+      "aws_profiles": "AWS プロファイル",
+      "kube_contexts": "Kubernetes コンテキスト",
+      "namespaces": "名前空間",
+      "gcp_projects": "GCP プロジェクト",
+      "azure_subscriptions": "Azure サブスクリプション"
+    },
+    "contexts": {
+      "title": "コンテキスト",
+      "empty": "コンテキストが検出されません。"
+    },
+    "none": "なし",
+    "production": "本番",
+    "warnings": "警告",
+    "catalog": {
+      "counters": "レジストリ",
+      "noProviders": "まだ何も検出されていません。検出を実行してください。",
+      "back": "結果に戻る",
+      "search": "操作を検索 (例: pod の一覧、s3 バケット)",
+      "allProviders": "すべてのプロバイダー",
+      "risk": "リスク",
+      "allRisks": "すべてのリスク",
+      "tier": "段階",
+      "allTiers": "すべての段階",
+      "total": "{{total}} 件中 {{shown}} 件の操作",
+      "empty": "一致する操作はありません。別の検索を試すか検出を実行してください。"
+    },
+    "tools": {
+      "title": "ツール",
+      "available": "利用可能",
+      "missing": "未インストール",
+      "empty": "ツールが検出されません。"
+    },
+    "discover": {
+      "title": "検出",
+      "all": "すべて検出",
+      "running": "検出中です。数分かかる場合があります...",
+      "result": "{{count}} 件の操作、{{ms}} ms",
+      "none": "検出結果はありません。"
+    },
+    "op": {
+      "provider": "プロバイダー",
+      "version": "バージョン",
+      "endpoint": "エンドポイント",
+      "source": "ソース",
+      "effects": "影響",
+      "required": "必須パラメーター",
+      "optional": "任意パラメーター",
+      "permissions": "権限",
+      "examples": "例",
+      "verify": "検証",
+      "rollback": "ロールバック",
+      "compat": "互換性",
+      "decision": "判定"
+    },
+    "graph": {
+      "buildFrom": "構築元",
+      "summary": "概要",
+      "counts": "{{nodes}} 個のリソース、{{edges}} 個の関係",
+      "empty": "グラフは空です。上のソースから構築してください。",
+      "search": "リソースを検索",
+      "noMatch": "一致するリソースはありません。",
+      "impact": "影響 (これに依存するもの)",
+      "noImpact": "このリソースに依存するものはありません。",
+      "edges": "関係",
+      "noEdges": "関係はありません。"
+    },
+    "refresh": "更新",
+    "audit": {
+      "title": "監査",
+      "time": "時刻",
+      "command": "コマンド",
+      "ok": "成功",
+      "verified": "検証済み",
+      "duration": "所要時間",
+      "empty": "インフラコマンドはまだ記録されていません。"
+    },
+    "runs": {
+      "title": "実行履歴",
+      "noSteps": "ステップはありません。",
+      "empty": "実行はまだありません。"
+    },
+    "tab": {
+      "overview": "概要",
+      "catalog": "カタログ",
+      "graph": "グラフ",
+      "audit": "監査と実行"
+    },
+    "title": "インフラストラクチャ",
+    "subtitle": "レジストリ、ポリシー、リソースグラフ、監査",
+    "risk": {
+      "read": "読み取り",
+      "plan": "計画",
+      "change": "変更",
+      "critical": "重大"
+    },
+    "tier": {
+      "known": "既知",
+      "available": "利用可能",
+      "authorized": "許可済み",
+      "tested": "テスト済み"
+    },
+    "decision": {
+      "allow": "許可",
+      "ask": "確認",
+      "deny": "拒否"
+    },
+    "yes": "はい",
+    "no": "いいえ"
   }
 }

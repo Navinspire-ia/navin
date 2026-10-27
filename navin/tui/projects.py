@@ -228,6 +228,28 @@ def rename_session(path: str, key: str, title: str, manager: Any = None) -> str:
     return manager.set_title(key, title)
 
 
+def fork_session(path: str, key: str, new_key: str, title: str = "", manager: Any = None) -> str:
+    """Copy a chat of any project into ``new_key`` to go on from there; return its name.
+
+    The copy has every message so far and the chat's settings (model, effort),
+    not its running state: an interrupted turn of the source is never resumed
+    in the copy. ``manager`` is the live one when the project is open here.
+    """
+    import sys
+
+    if manager is None:
+        from navin.session.manager import SessionManager
+
+        manager = SessionManager(Path(path))
+    forked = manager.fork_session_before_user_index(key, new_key, sys.maxsize)
+    if forked is None or not forked.messages:
+        if forked is not None:
+            manager.delete_session(new_key)
+        raise ValueError("Nothing to fork yet: this session has no message.")
+    name = f"Fork: {title.strip()}" if title.strip() else "Fork"
+    return manager.set_title(new_key, name)
+
+
 def delete_session(path: str, key: str, manager: Any = None) -> bool:
     """Delete a chat file (and its cache entry) of any project."""
     if manager is None:

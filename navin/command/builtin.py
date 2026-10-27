@@ -287,6 +287,15 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         accepts_args=True,
     ),
     BuiltinCommandSpec(
+        "/apps",
+        "App Factory",
+        "Turn this project into a mobile or desktop app, built and tested, in os/<platform>.",
+        "app-window",
+        "[android|ios|windows|macos|ubuntu|centos|appimage]",
+        lifecycle="agent_turn",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
         "/atlas",
         "Project atlas",
         "Build or refresh .navin/metadata: role of every file, dependencies, metagraph.",
@@ -1023,6 +1032,31 @@ async def cmd_permission(ctx: CommandContext) -> OutboundMessage:
                 reason="Approved by the user's /permission auto command.",
             )
     return reply(f"Command confirmations: **{mode}**\n\nSaved and applied immediately.\n\n" + usage)
+
+
+async def cmd_approve(ctx: CommandContext) -> OutboundMessage:
+    """Answer an approval request from a text channel: /approve [id] | /deny [id]."""
+    raw = (ctx.raw or ctx.msg.content or "").strip()
+    parts = raw.split()
+    allowed = parts[0].lower().startswith("/approve")
+    wanted = parts[1].lower() if len(parts) > 1 else ""
+    broker = ctx.loop.approvals
+    open_requests = broker.open_requests(ctx.key)
+    matches = [r for r in open_requests if str(r["request_id"]).startswith(wanted)]
+    if not wanted and len(matches) > 1:
+        ids = ", ".join(str(r["request_id"])[:8] for r in matches)
+        return OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                               content=f"Several requests are open: {ids}. Add the id.")
+    if not matches:
+        return OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                               content="No pending approval request matches.")
+    request_id = str(matches[0]["request_id"])
+    ok = broker.resolve(request_id, allowed=allowed, answerer_chats=[ctx.msg.chat_id])
+    verdict = "approved" if allowed else "denied"
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=f"Request {request_id[:8]} {verdict}." if ok else "This request is no longer open.",
+    )
 
 
 def _format_preset_names(names: list[str]) -> str:
@@ -1883,6 +1917,40 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "healthy. Do not claim success without packager output or a connected "
         "device when a device target was requested.",
     ),
+    "/apps": (
+        "App Factory",
+        "app-factory, app-project-analyzer, app-compatibility-engine, "
+        "app-environment-manager, app-frontend-adapter, app-backend-bridge, "
+        "app-tauri-builder, app-capacitor-builder, app-native-capabilities, "
+        "app-security-auditor, app-device-tester, app-build-repair, "
+        "app-release-manager, mission-ledger",
+        "App Factory: turn the current project into the native app named in the "
+        "request (android, ios, windows, macos, ubuntu, centos or appimage; a bare "
+        "'mobile' means android, a bare 'desktop' means windows). The engines are "
+        "imposed and never offered as a choice: desktop is Tauri 2 + Rust, mobile is "
+        "Capacitor 8. Talk to the user in product words only (mobile app, desktop "
+        "app, build tools), never framework names. Follow the app-factory skill and "
+        "its six phases with the appfactory tool: 1) action=analyze; 2) action=plan "
+        "target=<id> - when Next.js or another framework uses server features "
+        "(Server Actions, route handlers, SSR, middleware, server auth) never turn on "
+        "output: \"export\": the plan's client-shell strategy builds a client "
+        "frontend in os/<id>/web that calls the existing backend; ask the user once "
+        "for anything listed in questions (the backend HTTPS address); 3) "
+        "action=doctor target=<id> - install a missing tool only after the user "
+        "agreed (ask_user), with the official command it gives, then re-run doctor; "
+        "when this machine cannot build the target, say so and use the CI workflow "
+        "of the plan; 4) action=scaffold target=<id>, then adapt only inside "
+        "os/<id> (never edit the website, its configs or the backend without the "
+        "user's agreement); 5) run the plan steps with exec (long builds with "
+        "background=true and polling), fix build errors with app-build-repair, run "
+        "the plan's tests (device preview through the mobile tool, adb, Maestro, "
+        "Playwright, launching the desktop binary) and action=audit target=<id>; 6) "
+        "action=report target=<id> with every step and every test, run or not, and "
+        "real evidence. Keep a short journal for the user (Analyse du projet "
+        "terminee, Application compilee, Tests Android valides...). Never call the "
+        "app delivered when the report says partial or failed: give the packages, "
+        "the tests that ran, the tests that could not run and why.",
+    ),
     "/atlas": (
         "Project atlas",
         "project-metadata, task-planner, context-compressor",
@@ -2725,10 +2793,14 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
     ),
     "/ops": (
         "Ops studio",
-        "ops-supervisor, kubernetes-operator, docker-operator, gitops-argocd, "
-        "helm-operator, terraform-agent, cicd-agent, cloud-aws, cloud-azure, "
-        "cloud-gcp, sre-incident-responder, sysops-administrator, "
-        "observability-agent, iac-security-auditor, backup-rollback, human-approval",
+        "infra-orchestrator, ops-supervisor, aws-architect, kubernetes-platform, "
+        "kubernetes-operator, openshift-operator, docker-operator, gitops-argocd, "
+        "helm-operator, terraform-agent, config-management, cicd-agent, "
+        "platform-engineer, cloud-aws, cloud-azure, cloud-gcp, network-engineer, "
+        "database-reliability, storage-operator, private-cloud-operator, "
+        "cloud-security-posture, iac-security-auditor, finops-analyst, "
+        "resilience-tester, sre-incident-responder, sysops-administrator, "
+        "observability-agent, backup-rollback, human-approval",
         "Act as a complete DevOps/SysOps/infra platform covering the whole ops chain "
         "end to end: containers and images, Kubernetes workloads, Helm releases, "
         "GitOps deployments through ArgoCD, CI/CD pipelines (GitLab, GitHub Actions), "
@@ -2743,7 +2815,14 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "to zero, IAM/firewall changes, data operations) requires explicit human "
         "approval before running. After each mutation verify the outcome (re-read "
         "state, rollout status, logs, health) and close with a report: what changed, "
-        "evidence it works, rollback instructions, and remarks (risks, observations).",
+        "evidence it works, rollback instructions, and remarks (risks, observations). "
+        "Drive every infra CLI through the `infra` tool, starting from "
+        "infra-orchestrator: infra action=status then action=discover first, "
+        "action=check on every infra command, action=graph (op=build, op=impact) "
+        "for the blast radius, action=plan for multi-step changes, action=run "
+        "through the broker, action=verify after each change, action=recover on "
+        "failure, and action=runs/audit for the evidence. Never bypass the policy "
+        "through raw exec; raising the autonomy level needs the user.",
     ),
     "/seo": (
         "SEO studio",
@@ -2833,6 +2912,7 @@ _COMPOSER_MODE_BY_COMMAND: dict[str, str] = {
     "/cruise": "agent",
     "/mission": "agent",
     "/mobile": "agent",
+    "/apps": "agent",
     "/montage": "montage",
     "/inspect": "review",
     "/turbo": "review",
@@ -2861,6 +2941,7 @@ _TRACKED_WORKFLOWS = frozenset(
         "/cruise",
         "/mission",
         "/mobile",
+        "/apps",
         "/atlas",
         "/inspect",
         "/fortify",
@@ -3043,6 +3124,7 @@ _SLIM_SKILL_PRELOAD_WORKFLOWS = frozenset(
         "/cruise",
         "/mission",
         "/mobile",
+        "/apps",
         "/inspect",
         "/fortify",
         "/debug",
@@ -4257,6 +4339,9 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
     router.exact("/permission", cmd_permission)
+    # Priority: the turn waiting for this answer holds the dispatch lock.
+    router.priority_with_args("/approve", cmd_approve)
+    router.priority_with_args("/deny", cmd_approve)
     router.prefix("/permission ", cmd_permission)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)

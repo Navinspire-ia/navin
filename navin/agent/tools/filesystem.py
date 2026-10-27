@@ -725,7 +725,9 @@ class ReadFileTool(_FsTool):
 
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
-                return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
+                return await asyncio.to_thread(
+                    build_image_content_blocks, raw, mime, str(fp), f"(Image file: {path})"
+                )
 
             # Reuse the bytes already read for MIME detection, deduplication
             # and edit freshness. Reopening and hashing the same file four
@@ -752,7 +754,9 @@ class ReadFileTool(_FsTool):
                 # Binary file - return error message
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
                 if mime and mime.startswith("image/"):
-                    return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
+                    return await asyncio.to_thread(
+                        build_image_content_blocks, raw, mime, str(fp), f"(Image file: {path})"
+                    )
                 return ToolResult.error(f"Error: Unsupported binary file {path} (MIME: {mime or 'unknown'}).")
 
             text_content = decoded.text

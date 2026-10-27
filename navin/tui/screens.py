@@ -108,6 +108,7 @@ class PickerScreen(ModalScreen[str | None]):
         hint: str = "",
         current: str | None = None,
         renamable: bool = False,
+        searchable: bool = True,
     ) -> None:
         super().__init__()
         self._title = title
@@ -115,6 +116,8 @@ class PickerScreen(ModalScreen[str | None]):
         self._hint = hint
         self._current = current
         self._renamable = renamable
+        # A short action menu or a yes / no question has nothing to search.
+        self._searchable = searchable
         self._filtered: list[PickItem] = items
         self._query = ""
         self._mode = "search"
@@ -125,7 +128,8 @@ class PickerScreen(ModalScreen[str | None]):
             yield Static(self._title, classes="picker-title", markup=False)
             if self._hint:
                 yield Static(self._hint, classes="picker-hint", markup=False)
-            yield Static("Search  name or date", id="filter", markup=False)
+            if self._searchable:
+                yield Static("Search  name or date", id="filter", markup=False)
             yield OptionList(id="options")
 
     def on_mount(self) -> None:
@@ -265,6 +269,8 @@ class PickerScreen(ModalScreen[str | None]):
             else:
                 options.action_cursor_up()
             event.stop()
+            return
+        if not self._searchable and self._mode != "rename":
             return
         if event.key == "backspace":
             self._query = self._query[:-1]

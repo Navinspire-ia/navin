@@ -109,6 +109,15 @@ class EventLoopStaysResponsiveTest(unittest.TestCase):
         with mock.patch.object(testing_mod, "run_tests", _SlowStub([outcome])):
             self._assert_loop_kept_beating(tool.execute(action="run"))
 
+    def test_detecting_the_test_suites_does_not_freeze_other_sessions(self) -> None:
+        """detect walks every sub-project (1.3 s on the loop in the Desktop log)."""
+        tool = quality_tools.TestRunTool(workspace=str(self.root))
+        rows = [{"runner": "pytest", "language": "python", "available": True, "reason": ""}]
+        with mock.patch.object(testing_mod, "detect_suites", _SlowStub(rows)):
+            self._assert_loop_kept_beating(tool.execute(action="detect"))
+            out = asyncio.run(tool.execute(action="detect"))
+        self.assertIn("[yes] pytest (python)", str(out))
+
     def test_missing_test_action_runs_the_requested_target(self) -> None:
         from navin.agent.tools.registry import ToolRegistry
 

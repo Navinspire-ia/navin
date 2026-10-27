@@ -2136,7 +2136,8 @@ class AgentsPanel(Static):
 
     ``● main``, then per agent its own name, what it is doing now, and on the
     right how long it has run and the tokens it has used. Six agents at most;
-    finished agents stay a few seconds with their outcome, then leave.
+    finished agents (succeeded, failed, cancelled) stay with their outcome
+    until dismissed (F8 Dismiss, F9 dismiss finished) or a new conversation.
     """
 
     DEFAULT_CSS = """
@@ -2150,8 +2151,8 @@ class AgentsPanel(Static):
     """
 
     MAX_VISIBLE_AGENTS = 6
-    MAX_ROWS = MAX_VISIBLE_AGENTS + 2  # main, agents, optional More row
-    DONE_LINGER_S = 4.0
+    MAX_ROWS = MAX_VISIBLE_AGENTS + 3  # main, agents, optional More row, hint row
+    HINT = "  F8 relaunch, cancel or dismiss · F9 dismiss finished"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__("", *args, markup=False, **kwargs)
@@ -2159,6 +2160,9 @@ class AgentsPanel(Static):
         self._history: dict[str, dict[str, Any]] = {}
         self._main: tuple[bool, float] = (False, 0.0)
         self._painted: tuple | None = None
+        self._dismissed: set[str] = set()
+        # Task id of each painted line (None for main, more and hint lines).
+        self._line_ids: list[str | None] = []
         self.expanded = False
 
     @property
@@ -2178,6 +2182,12 @@ class AgentsPanel(Static):
         steps: list[dict[str, str]] | None = None, model: str | None = None,
     ) -> None:
         now = time.monotonic()
+        if task_id in self._dismissed:
+            if done:
+                # A late duplicate final frame: kept for F8, not in the panel.
+                return
+            # Resumed after being dismissed: it works again, show it.
+            self._dismissed.discard(task_id)
         row = self._agents.setdefault(task_id, {"started": now, "tokens": 0})
         if started_ms_ago is not None:
             row["started"] = now - started_ms_ago / 1000
@@ -2206,9 +2216,33 @@ class AgentsPanel(Static):
     def reset(self) -> None:
         self._agents.clear()
         self._history.clear()
+        self._dismissed.clear()
         self._painted = None
         self.display = False
         self.update("")
+
+    def dismiss(self, task_id: str) -> bool:
+        """Take one finished agent off the panel (it stays in F8). True if removed."""
+        row = self._agents.get(task_id)
+        if row is None or "done_at" not in row:
+            return False
+        del self._agents[task_id]
+        self._dismissed.add(task_id)
+        self._painted = None
+        if self.is_attached:
+            self.tick(*self._main)
+        return True
+
+    def dismiss_finished(self) -> int:
+        """Take every finished agent off the panel; running ones stay."""
+        ids = [key for key, row in self._agents.items() if "done_at" in row]
+        for task_id in ids:
+            del self._agents[task_id]
+            self._dismissed.add(task_id)
+        self._painted = None
+        if self.is_attached:
+            self.tick(*self._main)
+        return len(ids)
 
     def forget_finished(self) -> None:
         """A new conversation starts: the previous one's finished agents leave.
@@ -2225,18 +2259,21 @@ class AgentsPanel(Static):
     def on_click(self, event: Any = None) -> None:
         lines = str(self.content).splitlines()
         y = getattr(event, "y", None)
-        if lines and y is not None and y == len(lines) - 1 and (
-                "show more" in lines[-1] or "show less" in lines[-1]):
+        if lines and y is not None and 0 <= y < len(lines) and (
+                "show more" in lines[y] or "show less" in lines[y]):
             self.toggle_expanded()
             return
-        self.app.call_later(self.app.run_action, "inspect_agents")
+        task_id = None
+        if y is not None and 0 <= y < len(self._line_ids):
+            task_id = self._line_ids[y]
+        if task_id:
+            self.app.call_later(self.app.run_action, f"inspect_agents({task_id!r})")
+        else:
+            self.app.call_later(self.app.run_action, "inspect_agents")
 
     def tick(self, main_active: bool, main_elapsed: float) -> None:
         self._main = (main_active, main_elapsed)
         now = time.monotonic()
-        for task_id in [key for key, row in self._agents.items()
-                        if "done_at" in row and now - row["done_at"] > self.DONE_LINGER_S]:
-            del self._agents[task_id]
         if not self._agents:
             if self.display:
                 self.display = False
@@ -2246,7 +2283,7 @@ class AgentsPanel(Static):
         self.display = True
         width = content_width(self) or max(20, self.app.size.width - 2)
         key = (width, int(main_elapsed), main_active, int(now), self.expanded,
-               tuple((k, r["status"], r["tokens"], "done_at" in r) for k, r in self._agents.items()))
+               tuple((k, r["status"], r["tokens"], r.get("phase"), "done_at" in r) for k, r in self._agents.items()))
         if key != self._painted:
             self.update(self._render_rows(width, main_active, main_elapsed, now))
             self._painted = key
@@ -2282,7 +2319,14 @@ class AgentsPanel(Static):
         del main_elapsed
         state = "working" if main_active else "waiting for agents"
         out.append(f"  {state}", style=palette["muted"])
-        rows = sorted(self._agents.items(), key=lambda item: ("done_at" in item[1], item[1]["started"]))
+        self._line_ids = [None]
+
+        def rank(row: dict[str, Any]) -> int:
+            if "done_at" in row:
+                return 0 if row["error"] else 2
+            return 0 if row.get("phase") == "awaiting_approval" else 1
+
+        rows = sorted(self._agents.items(), key=lambda item: (rank(item[1]), item[1]["started"]))
         shown, hidden = rows[:self.MAX_VISIBLE_AGENTS], rows[self.MAX_VISIBLE_AGENTS:]
         overflow = bool(hidden)
         if self.expanded and hidden:
@@ -2300,8 +2344,11 @@ class AgentsPanel(Static):
                 # Short name: "openrouter/anthropic/claude-x" reads as "claude-x".
                 meta = f"{model_name.rsplit('/', 1)[-1][:32]} · {meta}"
             # Finished agents: green check, or red cross and a short reason.
+            waiting = not finished and row.get("phase") == "awaiting_approval"
             if finished:
                 glyph, ink = ("×", palette["coral"]) if row["error"] else ("✓", palette["green"])
+            elif waiting:
+                glyph, ink = ("!", palette["coral"])
             else:
                 glyph, ink = ("◯", palette["blue"])
             name = names[task_id]
@@ -2309,6 +2356,8 @@ class AgentsPanel(Static):
                 name = name[: max(1, name_width - 1)] + "…"
             if finished:
                 status = (row["status"] or "Stopped") if row["error"] else "Done"
+            elif waiting:
+                status = "Waiting for your approval (answer above)"
             else:
                 status = row["status"] or "Working…"
             left = 2 + name_width + 2
@@ -2317,6 +2366,7 @@ class AgentsPanel(Static):
                 status = status[: max(0, room - 1)] + "…" if room > 1 else ""
             gap = max(1, width - left - cell_len(status) - cell_len(meta))
             out.append("\n")
+            self._line_ids.append(task_id)
             out.append(f"{glyph} ", style=ink)
             out.append(name.ljust(name_width), style=f"bold {palette['text']}")
             out.append("  ")
@@ -2331,6 +2381,9 @@ class AgentsPanel(Static):
         elif overflow:
             out.append("\n")
             out.append("  ▴ show less · F7 or click to collapse", style=palette["muted"])
+        if any("done_at" in row for row in self._agents.values()):
+            out.append("\n")
+            out.append(self.HINT, style=palette["muted"])
         return out
 
 

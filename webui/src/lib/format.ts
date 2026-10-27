@@ -29,7 +29,7 @@ function isLowInformationTitlePreview(text: string): boolean {
 }
 
 /** A chat name is a label: at most this many words (same rule as the engine). */
-export const TITLE_MAX_WORDS = 3;
+export const TITLE_MAX_WORDS = 5;
 
 export function limitTitleWords(text: string, max = TITLE_MAX_WORDS): string {
   const words = text.trim().split(/\s+/).filter(Boolean);

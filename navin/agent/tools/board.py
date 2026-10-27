@@ -584,7 +584,10 @@ class BoardTool(Tool):
             verified = ""
             if action == "move" and status == "done" and task_id:
                 try:
-                    verified = await self._verify_before_done(store, store.get_task(task_id))
+                    # The board file is parsed whole: with thousands of tasks
+                    # that read belongs in a thread, like every other board read.
+                    task = await asyncio.to_thread(store.get_task, task_id)
+                    verified = await self._verify_before_done(store, task)
                 except BoardError:
                     verified = ""  # unknown task: let _dispatch report it
                 if verified.startswith(("Error", "Validation pending")):

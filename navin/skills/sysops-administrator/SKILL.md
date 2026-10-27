@@ -1,6 +1,6 @@
 ---
 name: sysops-administrator
-description: Administer Linux, macOS, and Windows servers and VMs - services, disks, memory, processes, network, certificates, backups, patches. Whitelisted read commands; dangerous ops need approval.
+description: Administer Linux, macOS, and Windows servers and VMs - systemd services, Nginx, Traefik, HAProxy, IIS, disks, memory, processes, network, certificates, backups, patches. Whitelisted read commands; dangerous ops need approval.
 metadata: {"navin":{"emoji":"🖥️","category":"devops"}}
 ---
 
@@ -11,6 +11,34 @@ metadata: {"navin":{"emoji":"🖥️","category":"devops"}}
 System administration with a strict read-first whitelist. Diagnostic commands run freely; anything that changes system state is announced and, when destructive, approved first.
 
 **Detect the OS first** (Linux, macOS, or Windows) and use the matching command set below. Never run bash-only syntax in PowerShell or vice versa.
+
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: ansible).
+
+1. `infra action=status` for host CLIs and contexts.
+2. `infra action=check command="systemctl restart nginx"` before any service, package, firewall or user change.
+3. `infra action=run`, then `infra action=verify` (service active, port listening, config test passes). Fleets: `config-management`.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
+
+## Web servers, proxies and Windows Server
+
+```bash
+nginx -t && systemctl reload nginx; journalctl -u nginx --since -1h
+traefik version; curl -s localhost:8080/api/http/routers | head
+haproxy -c -f /etc/haproxy/haproxy.cfg && systemctl reload haproxy; echo 'show stat' | socat stdio /run/haproxy/admin.sock
+systemctl list-units --failed; systemd-analyze blame; journalctl -p err -b
+```
+
+```powershell
+Get-Service | Where-Object Status -eq 'Stopped'; Get-WindowsFeature | Where-Object Installed
+Get-EventLog -LogName System -EntryType Error -Newest 50; Get-HotFix | Sort-Object InstalledOn -Descending | Select -First 10
+Test-NetConnection <host> -Port 443; Get-IISSite
+```
+
+Always test the config (`nginx -t`, `haproxy -c`) before reload; prefer reload over restart.
 
 ## Safe diagnostic whitelist - Linux
 

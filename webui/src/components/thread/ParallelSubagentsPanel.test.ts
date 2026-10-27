@@ -2,17 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { TFunction } from "i18next";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseSubagentSteps, type SubagentProgressUpdate } from "@/lib/navin-client";
 
 import {
-  FINISHED_CARD_LINGER_MS,
   formatElapsed,
   formatTokens,
   createSubagentCardStore,
-  nextSubagentPruneAt,
-  pruneFinishedSubagentCards,
+  subagentDismissedKey,
   subagentStatusLine,
   subagentStepLabel,
   upsertSubagentCard,
@@ -141,68 +139,71 @@ describe("upsertSubagentCard", () => {
   });
 });
 
-describe("pruneFinishedSubagentCards", () => {
-  it("keeps running cards and recently finished ones", () => {
-    const now = Date.now();
-    const cards: ParallelSubagentCard[] = [
-      {
-        ...base({ taskId: "old", label: "Old", done: true, phase: "done" }),
-        updatedAt: now - FINISHED_CARD_LINGER_MS - 1000,
-        startedAt: now - 60_000,
-      },
-      {
-        ...base({ taskId: "fresh", label: "Fresh", done: true, phase: "done" }),
-        updatedAt: now - 1000,
-        startedAt: now - 30_000,
-      },
-      {
-        ...base({ taskId: "run", label: "Run" }),
-        updatedAt: now,
-        startedAt: now - 5000,
-      },
-    ];
-    expect(pruneFinishedSubagentCards(cards, now).map((c) => c.taskId)).toEqual([
-      "fresh",
-      "run",
-    ]);
-  });
-});
-
-describe("finished card linger", () => {
-  it("counts from the finish, not from later duplicate frames", () => {
+describe("finished cards stay until dismissed", () => {
+  it("keeps the first finish time across duplicate frames", () => {
     let cards = upsertSubagentCard([], base({ taskId: "a", label: "A" }), 1_000);
-    cards = upsertSubagentCard(
-      cards,
-      base({ taskId: "a", label: "A", done: true, phase: "done" }),
-      2_000,
-    );
-    cards = upsertSubagentCard(
-      cards,
-      base({ taskId: "a", label: "A", done: true, phase: "done" }),
-      9_000,
-    );
+    cards = upsertSubagentCard(cards, base({ taskId: "a", label: "A", done: true, phase: "done" }), 2_000);
+    cards = upsertSubagentCard(cards, base({ taskId: "a", label: "A", done: true, phase: "done" }), 9_000);
     expect(cards[0]?.finishedAt).toBe(2_000);
-    expect(pruneFinishedSubagentCards(cards, 2_000 + FINISHED_CARD_LINGER_MS)).toEqual([]);
   });
 
-  it("keeps the deadline when a sibling still running sends frames", () => {
-    let cards = upsertSubagentCard(
-      [],
-      base({ taskId: "done", label: "D", done: true, phase: "done" }),
-      5_000,
-    );
-    cards = upsertSubagentCard(cards, base({ taskId: "run", label: "R" }), 5_100);
-    const due = nextSubagentPruneAt(cards);
-    for (let t = 6_000; t < 16_000; t += 400) {
-      cards = upsertSubagentCard(
-        cards,
-        base({ taskId: "run", label: "R", phase: "awaiting_tools", iteration: t }),
-        t,
-      );
-      expect(nextSubagentPruneAt(cards)).toBe(due);
+  it("store keeps finished cards (ok, failed, cancelled)", () => {
+    const store = createSubagentCardStore();
+    store.upsert(base({ taskId: "ok", label: "Ok", done: true, phase: "done" }));
+    store.upsert(base({ taskId: "ko", label: "Ko", done: true, phase: "error", error: "boom" }));
+    store.upsert(base({ taskId: "st", label: "St", done: true, phase: "error", errorKind: "cancelled" }));
+    expect(store.getSnapshot().cards.map((c) => c.taskId)).toEqual(["ok", "ko", "st"]);
+  });
+
+  it("dismiss hides a card, ignores a late done frame, shows a resumed one", () => {
+    const store = createSubagentCardStore();
+    store.upsert(base({ taskId: "a", label: "A", done: true, phase: "error", error: "x" }));
+    store.setExpanded(new Set(["a"]));
+    store.dismiss("a");
+    expect(store.getSnapshot().cards).toEqual([]);
+    expect(store.getSnapshot().expanded.has("a")).toBe(false);
+    expect(store.isDismissed("a")).toBe(true);
+    store.upsert(base({ taskId: "a", label: "A", done: true, phase: "error", error: "x" }));
+    expect(store.getSnapshot().cards).toEqual([]);
+    store.upsert(base({ taskId: "a", label: "A", phase: "awaiting_tools" }));
+    expect(store.getSnapshot().cards.map((c) => c.taskId)).toEqual(["a"]);
+    expect(store.isDismissed("a")).toBe(false);
+  });
+
+  it("dismissFinished keeps only the cards still in flight", () => {
+    const store = createSubagentCardStore();
+    store.upsert(base({ taskId: "run", label: "Run" }));
+    store.upsert(base({ taskId: "ok", label: "Ok", done: true, phase: "done" }));
+    store.upsert(base({ taskId: "ko", label: "Ko", done: true, phase: "error" }));
+    store.dismissFinished();
+    expect(store.getSnapshot().cards.map((c) => c.taskId)).toEqual(["run"]);
+  });
+
+  it("persists dismissed ids per chat", () => {
+    const data = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+      },
+    });
+    try {
+      const store = createSubagentCardStore();
+      store.reset("chat-9");
+      store.upsert(base({ taskId: "a", label: "A", done: true, phase: "error" }));
+      store.dismiss("a");
+      expect(subagentDismissedKey("chat-9")).toBe("navin.subagents.dismissed.chat-9");
+      expect(JSON.parse(data.get("navin.subagents.dismissed.chat-9") ?? "[]")).toEqual(["a"]);
+      const fresh = createSubagentCardStore();
+      fresh.reset("chat-9");
+      fresh.upsert(base({ taskId: "a", label: "A", done: true, phase: "error" }));
+      expect(fresh.getSnapshot().cards).toEqual([]);
+      fresh.reset("chat-other");
+      fresh.upsert(base({ taskId: "a", label: "A", done: true, phase: "error" }));
+      expect(fresh.getSnapshot().cards).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
     }
-    expect(due).toBe(5_000 + FINISHED_CARD_LINGER_MS);
-    expect(nextSubagentPruneAt(cards, new Set(["done"]))).toBeNull();
   });
 
   it("store notifies on frames and resets on chat switch", () => {
@@ -213,10 +214,6 @@ describe("finished card linger", () => {
     });
     store.upsert(base({ taskId: "a", label: "A" }));
     expect(store.getSnapshot().cards).toHaveLength(1);
-    // Nothing to prune: no notification, same snapshot.
-    const before = store.getSnapshot();
-    store.prune();
-    expect(store.getSnapshot()).toBe(before);
     store.reset();
     expect(store.getSnapshot().cards).toEqual([]);
     off();
@@ -237,21 +234,6 @@ describe("formatElapsed", () => {
 
   it("never shows a negative duration for a clock skew", () => {
     expect(formatElapsed(-5000)).toBe("0s");
-  });
-});
-
-describe("pruneFinishedSubagentCards with an opened card", () => {
-  it("keeps a finished card the user has expanded", () => {
-    const now = Date.now();
-    const cards: ParallelSubagentCard[] = [
-      {
-        ...base({ taskId: "open", label: "Open", done: true, phase: "error" }),
-        updatedAt: now - FINISHED_CARD_LINGER_MS - 1000,
-        startedAt: now - 60_000,
-      },
-    ];
-    expect(pruneFinishedSubagentCards(cards, now, new Set(["open"]))).toBe(cards);
-    expect(pruneFinishedSubagentCards(cards, now)).toEqual([]);
   });
 });
 

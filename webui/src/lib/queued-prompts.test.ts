@@ -472,6 +472,27 @@ describe("queued messages panel (composer source lock)", () => {
     expect(composer).not.toContain("multitaskCount > 0 ? (\n            <Button");
   });
 
+  it("leaves the folder and session import buttons to the sidebar, never in the chat input", () => {
+    expect(composer).not.toContain("<DevProjectSelector");
+    expect(composer).not.toContain("sidebar.sessionImport.short");
+    expect(composer).not.toContain("onClick={onImportSessions}");
+  });
+
+  it("shows the voice conversation as an icon right of the microphone, without the Live word", () => {
+    const mic = composer.indexOf('<Mic className="h-3.5 w-3.5" />');
+    const live = composer.indexOf("data-live-voice-toggle");
+    const send = composer.indexOf('type={primaryAction === "send" ? "submit" : "button"}');
+    expect(mic).toBeGreaterThan(-1);
+    expect(live).toBeGreaterThan(mic);
+    expect(send).toBeGreaterThan(live);
+    expect(composer.split("data-live-voice-toggle").length - 1).toBe(1);
+    expect(composer).not.toContain("thread.composer.liveVoice.short");
+    const button = composer.slice(live - 400, live + 600);
+    expect(button).toContain('size="icon"');
+    expect(button).toContain("h-7 w-7");
+    expect(button).toContain("aria-label={liveVoiceLabel}");
+  });
+
   it("sits above the composer card as its own card, not inside the focus ring", () => {
     const slot = composer.indexOf('data-testid="composer-queue-slot"');
     const card = composer.indexOf('"group/composer relative mx-auto flex w-full flex-col');

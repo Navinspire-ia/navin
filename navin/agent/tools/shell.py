@@ -2004,11 +2004,17 @@ class ExecTool(Tool):
             # Chunked yield so background installs keep updating the progress bar
             # instead of freezing on a single "Elapsed: 1.0s" snapshot.
             chunk_ms = 500 if total_yield > 0 else 0
+            # No deadline: ``timeout`` is how long a foreground call waits, and
+            # a session exists to outlive the call (dev server, watcher, a long
+            # test suite). With the foreground default copied here, the next
+            # poll past it killed the process: "Command timed out; session was
+            # terminated" on a 30 min pytest run after 5 min. Same policy as
+            # the foreground-to-background hand-over in ``_keep_running``.
             session_id, poll = await self._session_manager.start(
                 command=prepared.command,
                 cwd=prepared.cwd,
                 env=prepared.env,
-                timeout=prepared.timeout,
+                timeout=None,
                 shell_program=prepared.shell_program,
                 login=prepared.login,
                 yield_time_ms=min(chunk_ms, total_yield) if total_yield else 0,
@@ -2185,6 +2191,13 @@ class ExecTool(Tool):
             refusal = await self._ask_to_run(command, cwd)
             if refusal is not None:
                 return _refusal_result(refusal)
+        # Infrastructure tools follow the same policy here as through the
+        # infra broker, so typing the command in a shell bypasses nothing.
+        refusal = await self._infra_gate(
+            command, cwd, workspace_root, already_asked=verdict is not None or self.ask_every_command
+        )
+        if refusal is not None:
+            return _refusal_result(refusal)
 
         applied_sandbox = ""
         sandbox_lifted = False
@@ -2791,6 +2804,58 @@ class ExecTool(Tool):
         except Exception:  # noqa: BLE001 - policy errors never break exec
             logger.exception("Managed policy env could not be applied")
         return env
+
+    async def _infra_gate(
+        self, command: str, cwd: str, workspace_root: str | None, *, already_asked: bool
+    ) -> str | None:
+        """Apply the project's infrastructure policy to a shell line; refusal text or None.
+
+        ``deny`` (a change at the observe level) is refused; ``ask`` (a
+        critical operation, a change outside the authorized scope, a change at
+        the prepare level, a secret read) asks the user, unless this command
+        was just approved through another rule. Lines without infrastructure
+        tools are not touched.
+        """
+        from navin.infra.gate import approval_scope, exec_decision
+
+        try:
+            decision = await asyncio.to_thread(exec_decision, command, workspace_root or cwd, cwd)
+        except (OSError, ValueError) as exc:
+            # Fail closed: only lines that call an infrastructure tool get this far.
+            logger.warning("exec: infrastructure policy check failed for {}: {}", command, exc)
+            return (
+                f"Error: the infrastructure policy could not be evaluated ({exc}). Nothing ran. "
+                "Check .navin/infra/policy.json and the kube / cloud config files, then retry."
+            )
+        if decision is None or decision.action == "allow":
+            return None
+        reasons = "; ".join(decision.reasons) or decision.risk
+        if decision.action == "deny":
+            return (
+                f"Error: refused by the infrastructure policy (level {decision.level}): {reasons}. "
+                "Nothing ran. Check the operation with infra action=check, or ask the user to change the level."
+            )
+        if already_asked:
+            return None
+        from navin.agent.approval import ApprovalRequest, request_approval
+
+        targets = ", ".join(f"{key} {value}" for key, value in decision.targets.items()) or "the current context"
+        approval = await request_approval(ApprovalRequest(
+            tool="exec",
+            action=f"Run a {decision.risk} infrastructure command",
+            reason=f"{reasons} (on {targets}).",
+            detail=f"$ {command.strip()}\nin {cwd}",
+            consequence=(
+                "It acts on real infrastructure with your credentials. Prefer infra action=run: "
+                "it captures the state first, verifies the result and logs it."
+            ),
+            scope=approval_scope(command, decision),
+            allow_when_unattended=False,
+        ))
+        if approval.allowed:
+            logger.warning("exec: user approved infrastructure command ({}): {}", decision.risk, command)
+            return None
+        return f"Error: the infrastructure command was not approved ({reasons}).\n{approval.reason}"
 
     async def _ask_to_lift(
         self,

@@ -3,7 +3,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createSubagentCardStore,
@@ -32,6 +32,16 @@ const failedCard: ParallelSubagentCard = {
   updatedAt: 60_000,
   startedAt: 0,
 };
+
+function gAction(action: string, scope?: string): HTMLElement {
+  const el = qAction(action, scope);
+  if (!el) throw new Error(`no ${action} button`);
+  return el;
+}
+function qAction(action: string, scope?: string): HTMLElement | null {
+  const buttons = Array.from(document.querySelectorAll<HTMLElement>(`button[data-action="${action}"]`));
+  return buttons.find((b) => !scope || b.closest(`[data-testid$="-${scope}"]`)) ?? null;
+}
 
 describe("ParallelSubagentsPanel", () => {
   afterEach(cleanup);
@@ -135,5 +145,49 @@ describe("ParallelSubagentsPanel", () => {
     expect(screen.getByTestId("subagent-card-live")).toBeTruthy();
     act(() => store.upsert({ chatId: "c", taskId: "live", label: "Audit", phase: "running", statusLine: "Writing report", iteration: 2, done: false }));
     expect(screen.getByTestId("subagent-card-live").textContent).toContain("Writing report");
+  });
+
+  it("offers Relaunch and Dismiss on a failed card, as siblings of the toggle", async () => {
+    const onAction = vi.fn(async () => ({ ok: true }));
+    render(<ParallelSubagentsPanel cards={[failedCard]} onAction={onAction} />);
+    const retry = gAction("retry", "t1");
+    const dismiss = gAction("dismiss", "t1");
+    expect(retry.getAttribute("aria-label")).toMatch(/^Relaunch/);
+    expect(retry.closest("button")?.parentElement?.closest("button")).toBeNull();
+    expect(document.querySelector("button button")).toBeNull();
+    await act(async () => fireEvent.click(retry));
+    expect(onAction).toHaveBeenCalledWith(failedCard, "retry");
+    await act(async () => fireEvent.click(dismiss));
+    expect(onAction).toHaveBeenLastCalledWith(failedCard, "dismiss");
+  });
+
+  it("offers Cancel while running and Dismiss once done ok", () => {
+    const running = { ...failedCard, taskId: "r", label: "Run", done: false, phase: "awaiting_model", error: undefined, errorKind: undefined };
+    const ok = { ...failedCard, taskId: "o", label: "Ok", phase: "done", error: undefined, errorKind: undefined };
+    render(<ParallelSubagentsPanel cards={[running, ok]} onAction={() => undefined} />);
+    expect(gAction("cancel", "r")).toBeTruthy();
+    expect(gAction("dismiss", "o")).toBeTruthy();
+    expect(qAction("retry", "o")).toBeNull();
+  });
+
+  it("hides Relaunch and Cancel when the user cannot manage", () => {
+    render(<ParallelSubagentsPanel cards={[failedCard]} onAction={() => undefined} canManage={false} />);
+    expect(qAction("retry", "t1")).toBeNull();
+    expect(gAction("dismiss", "t1")).toBeTruthy();
+  });
+
+  it("shows the returned error under the row", async () => {
+    render(<ParallelSubagentsPanel cards={[failedCard]} onAction={async () => ({ ok: false, error: "Cannot relaunch: agent is still active." })} />);
+    await act(async () => fireEvent.click(gAction("retry", "t1")));
+    expect(screen.getByRole("alert").textContent).toBe("Cannot relaunch: agent is still active.");
+  });
+
+  it("draws an agent waiting for approval in amber", () => {
+    const waiting = { ...failedCard, taskId: "w", done: false, phase: "awaiting_approval", statusLine: "Waiting for your approval", error: undefined, errorKind: undefined };
+    render(<ParallelSubagentsPanel cards={[waiting]} onAction={() => undefined} />);
+    const row = screen.getByTestId("subagent-card-w");
+    expect(row.querySelector(".text-amber-500")).toBeTruthy();
+    expect(row.textContent).toContain("Waiting for your approval");
+    expect(gAction("cancel", "w")).toBeTruthy();
   });
 });

@@ -532,6 +532,30 @@ class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
             options = screen.query_one("#options", OptionList)
             self.assertEqual(len(options.options), 1)
 
+    async def test_an_action_menu_has_no_search_field(self) -> None:
+        from textual.app import App
+        from textual.widgets import OptionList
+
+        from navin.tui.screens import PickerScreen, PickItem
+        from navin.tui.theme import NAVIN_DARK
+
+        items = [PickItem("open", "Open"), PickItem("fork", "Fork")]
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(PickerScreen("Session", items, searchable=False))
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as pilot:
+            screen = app.screen
+            assert isinstance(screen, PickerScreen)
+            self.assertEqual(len(screen.query("#filter")), 0)
+            await pilot.press("f")
+            self.assertEqual(screen._query, "")
+            self.assertEqual(len(screen.query_one("#options", OptionList).options), 2)
+
     async def test_f2_asks_to_rename_the_highlighted_chat(self) -> None:
         from textual.app import App
 

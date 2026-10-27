@@ -60,6 +60,12 @@ async def handle_runtime_control(state: Any, msg: InboundMessage, tools: ToolReg
     # so it is the control message whose latency the user can feel.
     if await handle_approval_decision(state, msg, tools):
         return True
+    from navin.agent.remote_channels import handle_remote_message
+
+    # "OUI ab12cd" from WhatsApp/Telegram/Teams/email, or a channel whose
+    # prompts the user turned off in the channels panel.
+    if await handle_remote_message(state, msg):
+        return True
     if await handle_approvals_query(state, msg, tools):
         return True
     if await handle_choice_answer(state, msg, tools):

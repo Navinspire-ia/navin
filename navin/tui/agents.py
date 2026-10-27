@@ -75,6 +75,7 @@ def agent_state(row: dict[str, Any]) -> str:
 _UI_SELECTOR = ", ".join(f"#{name}" for name in (
     "agents-heading", "agent-filter", "agent-table", "agent-detail",
     "agents-more", "agents-resume", "agents-relaunch",
+    "agents-cancel", "agents-dismiss", "agents-dismiss-finished",
     "agents-show-all", "agents-show-running", "agents-show-succeeded", "agents-show-errors",
 ))
 _UI_COUNT = _UI_SELECTOR.count("#")
@@ -108,8 +109,14 @@ class AgentsScreen(ModalScreen[None]):
         list_loader: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
         history_loader: Callable[[str, int], Awaitable[dict[str, Any]]] | None = None,
         operation_loader: Callable[[str, str], Awaitable[dict[str, Any]]] | None = None,
+        dismiss: Callable[[str], Any] | None = None,
+        dismiss_finished: Callable[[], Any] | None = None,
+        select: str | None = None,
     ) -> None:
         super().__init__()
+        self._dismiss_row = dismiss
+        self._dismiss_finished = dismiss_finished
+        self._select = select
         self._snapshot = snapshot
         self._rows: dict[str, dict[str, Any]] = {}
         self._signature: str | None = None
@@ -123,6 +130,7 @@ class AgentsScreen(ModalScreen[None]):
         self._has_more = False
         self._history_error = ""
         self._state_filter = "all"
+        self._notice = ""
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -140,15 +148,18 @@ class AgentsScreen(ModalScreen[None]):
                 yield Button("Load more actions", id="agents-more")
                 yield Button("Resume agent", id="agents-resume")
                 yield Button("Relaunch agent", id="agents-relaunch")
+                yield Button("Cancel agent", id="agents-cancel", variant="error")
+                yield Button("Dismiss", id="agents-dismiss")
+                yield Button("Dismiss finished", id="agents-dismiss-finished")
 
     def on_mount(self) -> None:
         self.query_one(DataTable).add_columns("ID", "Agent", "State", "Current action", "Tokens")
+        for button in ("agents-more", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
+            self.query_one(f"#{button}", Button).display = False
+        self.query_one("#agents-dismiss-finished", Button).display = self._dismiss_finished is not None
         self._refresh_rows()
         self.set_interval(0.5, self._refresh_rows)
         self.query_one(Input).focus()
-        self.query_one("#agents-more", Button).display = False
-        self.query_one("#agents-resume", Button).display = False
-        self.query_one("#agents-relaunch", Button).display = False
         if self._list_loader is not None:
             self._reload_durable()
             self.set_interval(2, self._reload_durable)
@@ -233,9 +244,13 @@ class AgentsScreen(ModalScreen[None]):
                           str(row.get("tokens", 0)), key=key)
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
+        if self._select and self._select in table.rows:
+            table.move_cursor(row=table.get_row_index(self._select))
+            self._select = None
         counts = {name: sum(1 for state in states.values() if state in group)
                   for name, _label, group in _FILTERS if group is not None}
         self.query_one("#agents-heading", Static).update(
+            (f"{self._notice} - " if self._notice else "") +
             f"Agents of this conversation: {len(rows)} shown / {len(self._rows)} - "
             f"{counts['running']} running, {counts['succeeded']} succeeded, {counts['errors']} with errors - "
             "Ctrl+R resume or relaunch, Escape to close"
@@ -244,7 +259,7 @@ class AgentsScreen(ModalScreen[None]):
             self._show_detail(str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))
         else:
             self._selected = None
-            for button in ("agents-more", "agents-resume", "agents-relaunch"):
+            for button in ("agents-more", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
                 self.query_one(f"#{button}", Button).display = False
             self.query_one("#agent-detail", Static).update("No matching agents.")
 
@@ -278,6 +293,9 @@ class AgentsScreen(ModalScreen[None]):
         self.query_one("#agents-more", Button).display = self._has_more
         self.query_one("#agents-resume", Button).display = bool(self._operation_loader and row.get("recoverable"))
         self.query_one("#agents-relaunch", Button).display = bool(self._operation_loader and row.get("requires_relaunch"))
+        state = agent_state(row)
+        self.query_one("#agents-cancel", Button).display = bool(self._operation_loader and state == "running")
+        self.query_one("#agents-dismiss", Button).display = bool(self._dismiss_row and state != "running")
 
     def _request_history(self) -> None:
         if self._history_loader is not None and self._selected is not None and not self._leaving():
@@ -324,6 +342,27 @@ class AgentsScreen(ModalScreen[None]):
     def _relaunch(self) -> None:
         self.run_worker(partial(self._operate, "relaunch"), group="agent-operation", exclusive=True)
 
+    @on(Button.Pressed, "#agents-cancel")
+    def _cancel(self) -> None:
+        self.run_worker(partial(self._operate, "cancel"), group="agent-operation", exclusive=True)
+
+    @on(Button.Pressed, "#agents-dismiss")
+    def _dismiss_selected(self) -> None:
+        if self._dismiss_row is None or self._selected is None or self._leaving():
+            return
+        label = self._rows.get(self._selected, {}).get("label", self._selected)
+        removed = self._dismiss_row(self._selected)
+        self.query_one("#agents-heading", Static).update(
+            f"{label} dismissed from the panel." if removed is not False
+            else f"{label} is not on the panel.")
+
+    @on(Button.Pressed, "#agents-dismiss-finished")
+    def _dismiss_all_finished(self) -> None:
+        if self._dismiss_finished is None or self._leaving():
+            return
+        count = self._dismiss_finished()
+        self.query_one("#agents-heading", Static).update(f"Dismissed {count or 0} finished agents from the panel.")
+
     def action_restart_selected(self) -> None:
         """Ctrl+R: resume the selected agent where it stopped, else relaunch it.
 
@@ -346,7 +385,7 @@ class AgentsScreen(ModalScreen[None]):
     async def _operate(self, operation: str) -> None:
         if self._operation_loader is None or self._selected is None:
             return
-        for button in ("agents-resume", "agents-relaunch"):
+        for button in ("agents-resume", "agents-relaunch", "agents-cancel"):
             self.query_one(f"#{button}", Button).disabled = True
         try:
             result = await self._operation_loader(self._selected, operation)
@@ -355,8 +394,10 @@ class AgentsScreen(ModalScreen[None]):
         if self._leaving():
             return
         detail = str(result.get("detail") or result.get("error") or result.get("result") or result)
+        # Kept in the heading: the refresh that follows rewrites it.
+        self._notice = detail
         self.query_one("#agents-heading", Static).update(detail)
-        for button in ("agents-resume", "agents-relaunch"):
+        for button in ("agents-resume", "agents-relaunch", "agents-cancel"):
             self.query_one(f"#{button}", Button).disabled = False
         if result.get("ok"):
             self._signature = None

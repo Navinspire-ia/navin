@@ -343,5 +343,66 @@ class WebsocketFrameTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["level"], "error")
 
 
+class RemoteForwardTest(unittest.TestCase):
+    """Errors, blocks and finished work reach the remote channels; info and the notify tool do not."""
+
+    def setUp(self):
+        from navin.bus import notify as notify_mod
+
+        self.mod = notify_mod
+        self.calls: list[tuple[str, str, str, str]] = []
+        notify_mod.set_remote_forwarder(lambda *args: self.calls.append(args) or 1)
+
+    def tearDown(self):
+        self.mod.set_remote_forwarder(None)
+
+    def test_warning_error_success_are_forwarded_with_their_key(self):
+        bus = _Bus()
+        publish_notification(bus, title="Task t-1 is blocked", detail="deploy", level="warning", source="board", key="board:t-1")
+        publish_notification(bus, title="Build failed", level="error", source="cron")
+        publish_notification(bus, title="PR opened", level="success", source="board")
+        self.assertEqual(
+            self.calls,
+            [("Task t-1 is blocked", "deploy", "warning", "board:t-1"), ("Build failed", "", "error", ""),
+             ("PR opened", "", "success", "")],
+        )
+
+    def test_info_agent_and_undelivered_notifications_are_not_forwarded(self):
+        publish_notification(_Bus(), title="Heartbeat", source="heartbeat")
+        publish_notification(_Bus(), title="Deploy needs approval", level="warning", source="agent")
+        publish_notification(None, title="no bus", level="error")
+        self.assertEqual(self.calls, [])
+
+    def test_a_failing_forwarder_never_fails_the_caller(self):
+        def boom(*_args):
+            raise RuntimeError("smtp down")
+
+        self.mod.set_remote_forwarder(boom)
+        self.assertTrue(publish_notification(_Bus(), title="Build failed", level="error", source="cron"))
+
+    def test_on_the_event_loop_the_copy_runs_in_a_worker_thread(self):
+        import asyncio
+        import threading
+
+        threads: list[str] = []
+        done = threading.Event()
+
+        def record(*_args):
+            threads.append(threading.current_thread().name)
+            done.set()
+            return 1
+
+        self.mod.set_remote_forwarder(record)
+
+        async def scenario():
+            publish_notification(_Bus(), title="Build failed", level="error", source="cron")
+            await asyncio.to_thread(done.wait, 5)
+            return threading.current_thread().name
+
+        loop_thread = asyncio.run(scenario())
+        self.assertEqual(len(threads), 1)
+        self.assertNotEqual(threads[0], loop_thread)
+
+
 if __name__ == "__main__":
     unittest.main()

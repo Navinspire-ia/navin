@@ -43,7 +43,7 @@ def test_all_two_hundred_agents_can_be_inspected_without_expanding_chat(tmp_path
             await app._on_runtime_event(UiSubagent(
                 "agent-199", "Developer 199", "done", "Completed", "test-model", 3, True, None,
             ))
-            panel._agents["agent-199"]["done_at"] -= panel.DONE_LINGER_S + 1
+            panel.dismiss("agent-199")
             panel.tick(False, 0)
             assert "agent-199" not in panel._agents
             await pilot.click(panel)
@@ -270,5 +270,99 @@ def test_a_new_chat_drops_the_finished_agents_of_the_previous_one(tmp_path):
             await pilot.pause()
             panel.forget_finished()
             assert set(panel.inspection_rows()) == {"live"}
+
+    asyncio.run(run())
+
+
+def test_finished_rows_persist_until_dismissed_with_hint(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(140, 40)) as pilot:
+            panel = app.query_one(AgentsPanel)
+            await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
+            await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
+            await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
+            await app._on_runtime_event(UiSubagent("ask", "Asker", "awaiting_approval",
+                                                   "Waiting for your approval", None, 1, False, None))
+            await pilot.pause()
+            lines = str(panel.content).splitlines()
+            assert len(lines) <= AgentsPanel.MAX_ROWS
+            assert lines[1].startswith("×") and "Tester" in lines[1]
+            assert lines[2].startswith("!") and "Waiting for your approval (answer above)" in lines[2]
+            assert lines[3].startswith("◯") and "Runner" in lines[3]
+            assert lines[4].startswith("✓") and "Writer" in lines[4]
+            assert lines[-1] == AgentsPanel.HINT
+            assert "F9 dismiss finished" in lines[-1]
+            assert panel.dismiss("ok")
+            assert not panel.dismiss("run"), "a running agent is not dismissed"
+            await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
+            assert "Writer" not in str(panel.content), "late done frame stays hidden"
+            await pilot.press("f9")
+            await pilot.pause()
+            content = str(panel.content)
+            assert "Tester" not in content and AgentsPanel.HINT not in content
+            assert "Runner" in content and "Asker" in content
+            await app._on_runtime_event(UiSubagent("bad", "Tester", "awaiting_model", "Resumed", None, 1, False, None))
+            assert "Resumed" in str(panel.content), "a resumed agent shows again"
+            assert "ok" in panel.inspection_rows()
+
+    asyncio.run(run())
+
+
+def test_f8_cancel_and_dismiss_buttons(tmp_path):
+    async def run():
+        operations = []
+
+        async def operate(task, operation):
+            operations.append((task, operation))
+            return {"ok": True, "detail": f"{operation} {task} done"}
+
+        app = make_app(tmp_path)
+        async with app.run_test(size=(160, 44)) as pilot:
+            panel = app.query_one(AgentsPanel)
+            app.runtime.subagent_operation = operate
+            await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
+            await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
+            await pilot.pause()
+            app.action_inspect_agents("run")
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, AgentsScreen)
+            assert screen._selected == "run"
+            cancel = screen.query_one("#agents-cancel", Button)
+            assert cancel.display
+            assert not screen.query_one("#agents-dismiss", Button).display
+            cancel.press()
+            await pilot.pause()
+            await pilot.pause()
+            assert operations == [("run", "cancel")]
+            assert "cancel run done" in str(screen.query_one("#agents-heading", Static).content)
+            table = screen.query_one(DataTable)
+            table.move_cursor(row=table.get_row_index("bad"))
+            await pilot.pause()
+            assert not screen.query_one("#agents-cancel", Button).display
+            screen.query_one("#agents-dismiss", Button).press()
+            await pilot.pause()
+            assert "bad" not in panel._agents
+            assert "Tester" not in str(panel.content)
+
+    asyncio.run(run())
+
+
+def test_clicking_a_failed_row_opens_f8_on_it(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(140, 40)) as pilot:
+            panel = app.query_one(AgentsPanel)
+            await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
+            await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
+            await pilot.pause()
+            lines = str(panel.content).splitlines()
+            assert "Tester" in lines[1]
+            await pilot.click(panel, offset=(4, 1))
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, AgentsScreen)
+            assert app.screen._selected == "bad"
 
     asyncio.run(run())

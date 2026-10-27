@@ -1,7 +1,7 @@
 ---
 name: helm-operator
 description: Inspect, template, install, and upgrade Helm releases safely; author and lint charts. Use for anything chart- or release-related.
-metadata: {"navin":{"emoji":"⎈","category":"devops","requires":{"bins":["helm"]}}}
+metadata: {"navin":{"emoji":"⎈","category":"devops"}}
 ---
 
 # Helm Operator
@@ -9,6 +9,17 @@ metadata: {"navin":{"emoji":"⎈","category":"devops","requires":{"bins":["helm"
 ## Overview
 
 Manage Helm charts and releases with dry-run-first habits. Rendered output is inspected before anything reaches the cluster.
+
+## Engine
+
+Drive these CLIs through the `infra` tool (providers: helm).
+
+1. `infra action=discover provider=helm` and `provider=kubernetes`.
+2. `infra action=check command="helm upgrade ..."`; preview with `helm diff upgrade` or `helm template | kubectl diff -f -` through `infra action=run`.
+3. `infra action=run command="helm upgrade --install ... --atomic --wait"`, `infra action=verify`; `infra action=recover` maps to `helm rollback`.
+
+- Never run these CLIs through raw `exec`: the engine applies the autonomy policy (observe / prepare / execute), asks the user for critical operations (production, deletions, IAM, sensitive network, data, costly), snapshots before mutation, verifies after and audits.
+- Multi-domain missions start from `infra-orchestrator`.
 
 ## Common commands
 

@@ -67,9 +67,22 @@ class CommandRouter:
         self._priority: dict[str, Handler] = {}
         self._exact: dict[str, Handler] = {}
         self._prefix: list[tuple[str, Handler]] = []
+        # Priority commands that take one argument (e.g. "/approve <id>").
+        self._priority_args: dict[str, Handler] = {}
 
     def priority(self, cmd: str, handler: Handler) -> None:
         self._priority[cmd] = handler
+
+    def priority_with_args(self, cmd: str, handler: Handler) -> None:
+        """Priority command matched on its first word, arguments allowed."""
+        self._priority_args[cmd] = handler
+
+    def _priority_handler(self, text: str) -> Handler | None:
+        cmd = normalize_command_text(text).lower()
+        handler = self._priority.get(cmd)
+        if handler is None and cmd:
+            handler = self._priority_args.get(cmd.split()[0])
+        return handler
 
     def exact(self, cmd: str, handler: Handler) -> None:
         self._exact[cmd] = handler
@@ -79,7 +92,7 @@ class CommandRouter:
         self._prefix.sort(key=lambda p: len(p[0]), reverse=True)
 
     def is_priority(self, text: str) -> bool:
-        return normalize_command_text(text).lower() in self._priority
+        return self._priority_handler(text) is not None
 
     def is_dispatchable_command(self, text: str) -> bool:
         """Check whether *text* matches any non-priority command tier (exact or prefix).
@@ -98,7 +111,7 @@ class CommandRouter:
     async def dispatch_priority(self, ctx: CommandContext) -> OutboundMessage | None:
         """Dispatch a priority command. Called from run() without the lock."""
         ctx.raw = normalize_command_text(ctx.raw)
-        handler = self._priority.get(ctx.raw.lower())
+        handler = self._priority_handler(ctx.raw)
         if handler:
             return await handler(ctx)
         return None

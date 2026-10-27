@@ -1127,8 +1127,10 @@ def _default_collab_members() -> list[CollabMemberConfig]:
 
 
 # Bump when the default tool sets grow: saved teams get the new tools on load
-# (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing).
-COLLAB_TOOLS_VERSION = 3
+# (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing,
+# v4: mobile and appfactory for everyone, infra for DevOps, Infra, Architect
+# and Security).
+COLLAB_TOOLS_VERSION = 4
 
 
 class CollabTeamConfig(Base):

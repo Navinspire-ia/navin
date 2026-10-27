@@ -1233,10 +1233,26 @@ class AgentLoop:
         route: dict[str, Any],
     ) -> None:
         """Put the question in front of the user, on the chat that asked."""
+        channel = str(route.get("channel") or "")
+        text: str | None = None
+        if channel != "websocket":
+            # Text-only channels (Telegram, WhatsApp, Teams, email...) get a
+            # readable request with the reply commands.
+            short = request_id[:8]
+            lines = [f"Navin needs your approval: {request.action or request.tool}"]
+            if request.reason:
+                lines.append(f"Why: {request.reason}")
+            if request.detail:
+                lines.append(f"Detail: {request.detail[:500]}")
+            if request.consequence:
+                lines.append(f"Impact: {request.consequence}")
+            lines.append(f"Reply /approve {short} or /deny {short}")
+            text = "\n".join(lines)
         await self.bus.publish_outbound(
             outbound_message_for_event(
-                channel=str(route.get("channel") or ""),
+                channel=channel,
                 chat_id=str(route.get("chat_id") or ""),
+                content=text,
                 event=ApprovalRequestedEvent(
                     request_id=request_id,
                     tool=request.tool,
@@ -1252,6 +1268,14 @@ class AgentLoop:
                 ),
             )
         )
+        try:
+            from navin.agent.remote_channels import publish_approval
+
+            # A text channel was already asked above ("/approve <id>"): the
+            # remote panel only adds the other chats set for approvals.
+            await publish_approval(self.bus, request_id, request, route, origin_asked=channel != "websocket")
+        except Exception:  # noqa: BLE001 - the WebUI card is already out
+            logger.exception("could not mirror approval request to remote channels")
 
     async def _publish_choice_request(
         self,

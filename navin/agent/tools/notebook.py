@@ -13,6 +13,7 @@ cells it touches.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -174,7 +175,7 @@ class NotebookEditTool(_FsTool):
             if not fp.exists():
                 return self._missing_path_msg("Notebook", path, fp)
             try:
-                nb = json.loads(fp.read_text(encoding="utf-8"))
+                nb = json.loads(await asyncio.to_thread(fp.read_text, encoding="utf-8"))
             except ValueError as e:
                 return ToolResult.error(f"Error: {path} is not valid notebook JSON: {e}")
             if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
@@ -214,7 +215,8 @@ class NotebookEditTool(_FsTool):
                 cells.insert(position, _new_cell(new_type, source or "", like))
                 summary = f"Inserted {new_type} cell as cell {position + 1} in {fp} ({len(cells)} cells now)"
 
-            fp.write_text(
+            await asyncio.to_thread(
+                fp.write_text,
                 json.dumps(nb, indent=1, ensure_ascii=False) + "\n", encoding="utf-8",
             )
             self._file_states.record_write(fp)

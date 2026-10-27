@@ -87,6 +87,19 @@ same name and are included in the agent skills summary automatically.
 | `cicd-agent` | Actions / CI pipelines |
 | `pr-autopilot` | Keep a PR merge-ready: conflicts, review threads, CI (`/autopilot`) |
 | `observability-agent` | Metrics/logs/traces |
+| `infra-orchestrator` | Entry point for infra missions: discover, graph, plan, run, verify, recover via the `infra` engine (`/ops`) |
+| `aws-architect` | HA AWS architectures (VPC, EKS, RDS, Redis, ALB) with Well-Architected checks |
+| `kubernetes-platform` | Build, extend and upgrade EKS/GKE/AKS/K3s/RKE2 clusters |
+| `openshift-operator` | OpenShift: projects, routes, SCC, OLM, oc adm |
+| `network-engineer` | VPC/VNet, routing, VPN, DNS, firewalls, TLS debugging |
+| `cloud-security-posture` | IAM/RBAC/KMS/policy audit, then gated remediation |
+| `finops-analyst` | Cost breakdown, rightsizing, budgets, cleanup |
+| `database-reliability` | DB HA, backups, PITR, restore drills, migrations |
+| `storage-operator` | S3/GCS/MinIO/EBS/Ceph/NFS posture and protection |
+| `private-cloud-operator` | OpenStack, vSphere (govc), Proxmox |
+| `config-management` | Ansible, cloud-init, Helm values, Kustomize with check/diff |
+| `resilience-tester` | Load (k6), chaos, DR drills, availability |
+| `platform-engineer` | Golden paths: CI/CD, GitOps, environments, secrets |
 | `api-engineer` | OpenAPI & connectors |
 | `shell-sandbox` | Safe `exec` habits |
 | `performance-auditor` | Profiling & optimization (`/turbo`) |

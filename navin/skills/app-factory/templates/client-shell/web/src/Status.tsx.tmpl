@@ -1,0 +1,27 @@
+import { useEffect, useState } from "react";
+import { API_BASE, api } from "./api";
+
+type State = { kind: "checking" } | { kind: "ok" } | { kind: "error"; message: string };
+
+// First screen of the app until the site's screens are ported: it proves the
+// app reaches the backend, which is the first thing the device tests check.
+export function Status() {
+  const [state, setState] = useState<State>({ kind: "checking" });
+  const check = () => {
+    setState({ kind: "checking" });
+    api("{{HEALTH_PATH}}")
+      .then(() => setState({ kind: "ok" }))
+      .catch((error: unknown) => setState({ kind: "error", message: error instanceof Error ? error.message : String(error) }));
+  };
+  useEffect(check, []);
+  return (
+    <main className="status">
+      <h1>{{APP_NAME}}</h1>
+      <p data-testid="backend-status">
+        {state.kind === "checking" ? "Connecting to the server..." : state.kind === "ok" ? "Connected" : `Cannot reach the server: ${state.message}`}
+      </p>
+      <p className="muted">{API_BASE || "No server address configured"}</p>
+      {state.kind === "error" ? <button type="button" onClick={check}>Try again</button> : null}
+    </main>
+  );
+}

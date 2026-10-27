@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -155,8 +156,8 @@ class AppTemplateTool(Tool):
             installed = "yes" if is_installed(workspace, row["slug"]) else "no"
             playbook_path = package_dir(row["slug"]) / "install.json"
             playbook = ""
-            if playbook_path.is_file():
-                playbook = playbook_path.read_text(encoding="utf-8")
+            if await asyncio.to_thread(playbook_path.is_file):
+                playbook = await asyncio.to_thread(playbook_path.read_text, encoding="utf-8")
             return (
                 f"# {row['name']} (`{row['slug']}`)\n"
                 f"{row['description']}\n\n"

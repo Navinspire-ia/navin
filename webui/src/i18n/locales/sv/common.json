@@ -1914,7 +1914,32 @@
     "toolsRowToggle": "Tools",
     "unsaved": "Unsaved changes",
     "workspace": "Workspace",
-    "terminalSearch": "Sök i terminalen"
+    "terminalSearch": "Sök i terminalen",
+    "appsMobile": "Mobilappar",
+    "appsDesktop": "Skrivbordsappar",
+    "appFactory": {
+      "title": "Gör om projektet till en app",
+      "intro": "Navin gör om det aktuella projektet till appar för Windows, macOS, Linux, Android och iOS. Webbprojektet och backend lämnas orörda: allt skrivs i en egen mapp os/<plattform>.",
+      "learnMore": "Vad är det här?",
+      "honest": "Navin rapporterar vilka tester som kördes och vilka som inte kunde köras på den här datorn.",
+      "steps": {
+        "analyze": "Projektanalys",
+        "adapt": "Anpassning",
+        "build": "Bygge",
+        "test": "Tester",
+        "deliver": "Leverans"
+      },
+      "confirm": {
+        "title": "Skapa {{platform}}-appen för ditt projekt?",
+        "body": "Navin analyserar ditt projekt, anpassar det, bygger appen, testar den och ger dig paketet. Allt skrivs i {{folder}}: din webbplats och din backend ändras inte.",
+        "project": "Projekt",
+        "package": "Paket",
+        "folder": "Mapp",
+        "tools": "Saknade byggverktyg installeras bara med ditt godkännande. Om den här datorn inte kan bygga appen säger Navin det och förbereder ett bygge i molnet.",
+        "start": "Skapa {{platform}}-appen",
+        "cancel": "Avbryt"
+      }
+    }
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -3623,7 +3648,39 @@
     "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
     "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateManual": "Update it with your package manager.",
+    "channels": {
+      "tab": "Kanaler",
+      "loading": "Läser in kanaler...",
+      "unavailable": "Kanalerna är inte tillgängliga",
+      "saveFailed": "Det gick inte att spara",
+      "sending": "Skickar...",
+      "testSent": "Test skickat till {{count}} kanal(er)",
+      "testNone": "Ingen redo kanal med aviseringar på",
+      "testFailed": "Testet misslyckades",
+      "status": {
+        "ready": "redo",
+        "offline": "frånkopplad",
+        "setup": "ska konfigureras"
+      },
+      "configure": "Konfigurera i Inställningar > Kanaler",
+      "recipient": "Mottagare {{channel}}",
+      "placeholder": {
+        "email": "du@exempel.se",
+        "telegram": "Chatt-ID (t.ex. 123456789)",
+        "teams": "Teams-konversations-ID"
+      },
+      "flags": {
+        "notify": "Aviseringar",
+        "notifyTitle": "Fel, blockeringar och slutförda uppgifter skickas till den här kanalen",
+        "approve": "Godkännanden",
+        "approveTitle": "Godkännandebegäranden: svara YES eller NO med koden",
+        "chat": "Utbyte",
+        "chatTitle": "Skicka promptar till Navin från den här kanalen"
+      },
+      "sendTest": "Skicka ett test",
+      "help": "Godkännanden: svara \"YES kod\", \"NO kod\" eller \"ALWAYS kod\" (eller /approve och /deny i chatten som frågade). Inloggningsuppgifter (SMTP, bot, WhatsApp-QR-kod, Teams-app) anges i Inställningar > Kanaler eller via MCP."
+    }
   },
   "onboarding": {
     "omniroute": {
@@ -9657,7 +9714,23 @@
       "queued_other": "{{count}} queued, waiting for a slot",
       "waiting": "Waiting for subagent",
       "waiting_other": "Waiting for {{count}} subagents",
-      "working": "Working…"
+      "working": "Working…",
+      "awaitingApproval": "Väntar på ditt godkännande",
+      "answerInChat": "Svara på förfrågan i chatten",
+      "actionRetry": "Starta om",
+      "actionCancel": "Avbryt",
+      "actionDismiss": "Ta bort",
+      "actionRetryAria": "Starta om {{name}}",
+      "actionCancelAria": "Avbryt {{name}}",
+      "actionDismissAria": "Ta bort {{name}}",
+      "barTitle": "Underagenter",
+      "chipRunning": "{{count}} körs",
+      "chipQueued": "{{count}} i kö",
+      "chipApproval": "{{count}} väntar på godkännande",
+      "chipFailed": "{{count}} misslyckades",
+      "chipDone": "{{count}} klara",
+      "dismissFinished": "Ta bort klara",
+      "moreCount": "+{{count}} till"
     },
     "taskStatusAudit": "Audit",
     "taskStatusFix": "Fix",
@@ -9707,5 +9780,134 @@
     "loadingDiff": "Läser in diff...",
     "open": "Inspektera",
     "openTests": "Testrapport ({{passed}} ok, {{failed}} misslyckade)"
+  },
+  "infra": {
+    "loading": "Laddar...",
+    "error": "Kunde inte läsa in infrastrukturdata",
+    "retry": "Försök igen",
+    "empty": "Inga data ännu.",
+    "level": {
+      "title": "Autonominivå",
+      "observe": "Observera",
+      "observeHelp": "Endast läsning: inspektera, lista och beskriva, aldrig ändra något.",
+      "prepare": "Förbereda",
+      "prepareHelp": "Planer och testkörningar; ändringar förbereds för ditt godkännande.",
+      "execute": "Utföra",
+      "executeHelp": "Tillämpar auktoriserade ändringar inom omfånget, med verifiering och återställning.",
+      "criticalNote": "Kritiska operationer (produktion, borttagningar, IAM, känsligt nätverk, data, kostsamma) frågar dig alltid först"
+    },
+    "scopes": {
+      "title": "Omfång",
+      "placeholder": "Kommaseparerat, tomt = inga",
+      "production_markers": "Produktionsmarkörer",
+      "save": "Spara",
+      "aws_profiles": "AWS-profiler",
+      "kube_contexts": "Kubernetes-kontexter",
+      "namespaces": "Namnrymder",
+      "gcp_projects": "GCP-projekt",
+      "azure_subscriptions": "Azure-prenumerationer"
+    },
+    "contexts": {
+      "title": "Kontexter",
+      "empty": "Ingen kontext upptäckt."
+    },
+    "none": "ingen",
+    "production": "produktion",
+    "warnings": "Varningar",
+    "catalog": {
+      "counters": "Register",
+      "noProviders": "Inget upptäckt ännu. Kör en upptäckt.",
+      "back": "Tillbaka till resultaten",
+      "search": "Sök operationer (t.ex. lista pods, s3-bucket)",
+      "allProviders": "Alla leverantörer",
+      "risk": "Risk",
+      "allRisks": "Alla risker",
+      "tier": "Nivå",
+      "allTiers": "Alla nivåer",
+      "total": "{{shown}} av {{total}} operationer",
+      "empty": "Ingen operation matchar. Prova en annan sökning eller kör en upptäckt."
+    },
+    "tools": {
+      "title": "Verktyg",
+      "available": "tillgängligt",
+      "missing": "saknas",
+      "empty": "Inget verktyg upptäckt."
+    },
+    "discover": {
+      "title": "Upptäckt",
+      "all": "Upptäck allt",
+      "running": "Upptäckt pågår, det kan ta några minuter...",
+      "result": "{{count}} operationer, {{ms}} ms",
+      "none": "Upptäckten gav inga resultat."
+    },
+    "op": {
+      "provider": "Leverantör",
+      "version": "Version",
+      "endpoint": "Slutpunkt",
+      "source": "Källa",
+      "effects": "Effekter",
+      "required": "Obligatoriska parametrar",
+      "optional": "Valfria parametrar",
+      "permissions": "Behörigheter",
+      "examples": "Exempel",
+      "verify": "Verifiering",
+      "rollback": "Återställning",
+      "compat": "Kompatibilitet",
+      "decision": "Beslut"
+    },
+    "graph": {
+      "buildFrom": "Bygg från",
+      "summary": "Sammanfattning",
+      "counts": "{{nodes}} resurser, {{edges}} relationer",
+      "empty": "Grafen är tom. Bygg den från en källa ovan.",
+      "search": "Sök en resurs",
+      "noMatch": "Ingen resurs matchar.",
+      "impact": "Påverkan (vad som beror på den)",
+      "noImpact": "Inget beror på den här resursen.",
+      "edges": "Relationer",
+      "noEdges": "Ingen relation."
+    },
+    "refresh": "Uppdatera",
+    "audit": {
+      "title": "Granskning",
+      "time": "Tid",
+      "command": "Kommando",
+      "ok": "OK",
+      "verified": "Verifierad",
+      "duration": "Varaktighet",
+      "empty": "Inget infrastrukturkommando registrerat ännu."
+    },
+    "runs": {
+      "title": "Körningar",
+      "noSteps": "Inget steg.",
+      "empty": "Ingen körning ännu."
+    },
+    "tab": {
+      "overview": "Översikt",
+      "catalog": "Katalog",
+      "graph": "Graf",
+      "audit": "Granskning och körningar"
+    },
+    "title": "Infrastruktur",
+    "subtitle": "Register, policy, resursgraf och granskning",
+    "risk": {
+      "read": "Läsning",
+      "plan": "Plan",
+      "change": "Ändring",
+      "critical": "Kritisk"
+    },
+    "tier": {
+      "known": "Känd",
+      "available": "Tillgänglig",
+      "authorized": "Auktoriserad",
+      "tested": "Testad"
+    },
+    "decision": {
+      "allow": "Tillåt",
+      "ask": "Fråga",
+      "deny": "Neka"
+    },
+    "yes": "ja",
+    "no": "nej"
   }
 }

@@ -117,6 +117,90 @@ class BackgroundAliasTest(unittest.TestCase):
         self.assertNotIn("Process running", out)
 
 
+class BackgroundSessionsLiveTest(unittest.TestCase):
+    """A background session is never cut by a timer.
+
+    ``timeout`` is how long a foreground call waits; a session exists to
+    outlive the call. The foreground default used to be copied as a hard
+    deadline, so a 30 min pytest run polled after 5 min came back as "Command
+    timed out; session was terminated", and the idle sweep killed a dev server
+    the user was still testing after 30 min without a poll.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.manager = session_mod.ExecSessionManager(idle_timeout=1)
+
+    @unittest.skipIf(WINDOWS, "uses a POSIX sleep")
+    def test_the_foreground_timeout_is_not_a_deadline_for_a_background_session(self) -> None:
+        # Config default of 1 s: a foreground call would hand over after 1 s.
+        tool = ExecTool(working_dir=str(self.root), session_manager=self.manager, timeout=1)
+
+        async def run() -> tuple[str, list[session_mod.ExecSessionInfo]]:
+            result = str(await tool.execute(command="sleep 30", background=True, timeout=1))
+            session_id = result.split("session_id:")[1].strip().split()[0]
+            await asyncio.sleep(1.2)
+            poll = await self.manager.write(
+                session_id=session_id, chars=None, close_stdin=False, terminate=False,
+                yield_time_ms=0, max_output_chars=1000,
+            )
+            infos = await self.manager.list()
+            await self.manager.kill_session(session_id)
+            return ("timed out" if poll.timed_out else "alive"), infos
+
+        verdict, infos = asyncio.run(run())
+        self.assertEqual(verdict, "alive")
+        self.assertEqual(len(infos), 1)
+        self.assertIsNone(infos[0].returncode)
+
+    @unittest.skipIf(WINDOWS, "uses a POSIX sleep")
+    def test_the_idle_sweep_forgets_finished_sessions_but_never_kills_a_live_one(self) -> None:
+        tool = ExecTool(working_dir=str(self.root), session_manager=self.manager)
+
+        async def run() -> tuple[int, int | None, list[str]]:
+            live = str(await tool.execute(command="sleep 30", background=True))
+            live_id = live.split("session_id:")[1].strip().split()[0]
+            done = str(await tool.execute(command="sleep 0.2", yield_time_ms=50))
+            done_id = done.split("session_id:")[1].strip().split()[0]
+            await asyncio.sleep(1.3)  # past idle_timeout for both, done one has exited
+            infos = await self.manager.list()  # runs the sweep
+            ids = [info.session_id for info in infos]
+            returncode = next(i.returncode for i in infos if i.session_id == live_id)
+            await self.manager.kill_session(live_id)
+            return len(ids), returncode, [done_id] if done_id in ids else []
+
+        count, live_returncode, finished_still_listed = asyncio.run(run())
+        self.assertEqual(count, 1)
+        self.assertIsNone(live_returncode)
+        self.assertEqual(finished_still_listed, [])
+
+    def test_the_session_cap_is_per_conversation_with_a_global_ceiling(self) -> None:
+        manager = session_mod.ExecSessionManager(max_sessions=2, max_total_sessions=3)
+
+        def running(owner: str) -> _ExecSession:
+            process = _idle_process()
+            return _ExecSession(
+                session_id=owner, process=process, command="cmd", cwd=".", timeout=None,
+                owner_session_key=owner,
+            )
+
+        def check() -> None:
+            manager._sessions = {"a1": running("a"), "a2": running("a")}
+            with self.assertRaisesRegex(RuntimeError, "2 for this conversation"):
+                manager._check_capacity_locked("a")
+            manager._check_capacity_locked("b")  # another conversation still has room
+            manager._sessions["b1"] = running("b")
+            with self.assertRaisesRegex(RuntimeError, "3 in this engine"):
+                manager._check_capacity_locked("c")
+
+        async def run() -> None:  # _ExecSession starts its reader tasks on the loop
+            check()
+
+        asyncio.run(run())
+
+
 class ForegroundKeepsRunningTest(unittest.TestCase):
     """A foreground command that outlives its window is handed over, not killed.
 
