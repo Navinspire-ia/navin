@@ -37,10 +37,12 @@ class _FakeProvider:
     def __init__(self, responses: list[LLMResponse]) -> None:
         self._responses = list(responses)
         self.calls = 0
+        self.requests: list[list[dict[str, Any]]] = []
 
-    async def chat_with_retry(self, **_kwargs: Any) -> LLMResponse:
+    async def chat_with_retry(self, **kwargs: Any) -> LLMResponse:
         idx = min(self.calls, len(self._responses) - 1)
         self.calls += 1
+        self.requests.append(list(kwargs.get("messages") or []))
         return self._responses[idx]
 
     async def chat_stream_with_retry(self, **kwargs: Any) -> LLMResponse:
@@ -58,13 +60,15 @@ def _runtime(provider: Any) -> LLMRuntime:
 
 def _spec(provider: Any, **overrides: Any) -> AgentRunSpec:
     return AgentRunSpec(
-        initial_messages=[{"role": "user", "content": "go"}],
-        tools=ToolRegistry(),
-        runtime=_runtime(provider),
-        max_iterations=12,
-        max_tool_result_chars=2000,
-        hook=AgentHook(),
-        **overrides,
+        **{
+            "initial_messages": [{"role": "user", "content": "go"}],
+            "tools": ToolRegistry(),
+            "runtime": _runtime(provider),
+            "max_iterations": 12,
+            "max_tool_result_chars": 2000,
+            "hook": AgentHook(),
+            **overrides,
+        }
     )
 
 
@@ -139,6 +143,38 @@ class EmptyRetryLimitTest(unittest.IsolatedAsyncioTestCase):
         result = await AgentRunner().run(_spec(provider, session_key="cli:empty-unknown"))
         self.assertEqual(result.final_content, EMPTY_FINAL_RESPONSE_MESSAGE)
         self.assertNotIn("completed the tool steps", result.final_content or "")
+
+    async def test_navins_relaunches_remind_the_model_of_the_chat_language(self) -> None:
+        # The blank reply makes the runner relaunch the model with its own
+        # English "Please provide your response" message: the request carries
+        # the chat's language, the stored history does not change.
+        from navin.agent.reply_language import reply_language
+
+        reply_language("cli:relaunch-fr", "corrige le bug dans le fichier de config stp")
+        provider = _FakeProvider([LLMResponse(content="", finish_reason="stop")])
+        # The user's message as the loop sends it: the language line is already in it.
+        own = {"role": "user", "content": "go\n\n[Runtime Context]\nReply language: French.\n[/Runtime Context]"}
+        result = await AgentRunner().run(
+            _spec(provider, session_key="cli:relaunch-fr", initial_messages=[dict(own)]),
+        )
+        relaunches = [
+            request[-1] for request in provider.requests[1:]
+            if request and request[-1]["role"] == "user"
+        ]
+        self.assertTrue(relaunches)
+        for message in relaunches:
+            self.assertIn("Reply language: French", message["content"])
+            self.assertEqual(message["content"].count("Reply language"), 1)
+        # The user's own message is sent as it is: it is not Navin's.
+        self.assertEqual(provider.requests[0][-1], own)
+        for message in result.messages[1:]:
+            self.assertNotIn("Reply language", str(message.get("content")))
+
+        # A chat with no known language sends its relaunches unchanged.
+        provider = _FakeProvider([LLMResponse(content="", finish_reason="stop")])
+        await AgentRunner().run(_spec(provider, session_key="cli:relaunch-unknown"))
+        for request in provider.requests:
+            self.assertNotIn("Reply language", str(request[-1].get("content")))
 
 
 class LengthRecoveryLimitTest(unittest.IsolatedAsyncioTestCase):

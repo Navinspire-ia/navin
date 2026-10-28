@@ -42,6 +42,7 @@ from navin.agent.integration_check import (
 )
 from navin.agent.prompt_profile import log_request_profile
 from navin.agent.reasoning_router import fit_effort_to_output, route_reasoning_effort
+from navin.agent.reply_language import with_reply_language
 from navin.agent.run_policy import TurnPolicy, bind_turn_policy, reset_turn_policy
 from navin.agent.scope_anchor import (
     calls_touch_targets,
@@ -2529,7 +2530,10 @@ class AgentRunner:
         empty_retry: bool = False,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
-            "messages": messages,
+            # A relaunch Navin wrote (wrap-up, verify, remaining work...) is an
+            # English user message: it carries the chat's language or models
+            # answer it in English. The history itself is not touched.
+            "messages": with_reply_language(messages, spec.session_key),
             "tools": tools,
             "model": spec.runtime.model,
             "retry_mode": spec.provider_retry_mode,

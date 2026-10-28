@@ -159,3 +159,28 @@ def test_rich_interim_messages_are_kept_as_markdown():
     assert is_rich_narration("- un\n- deux")
     assert is_rich_narration("Je lis **app.py** maintenant.")
     assert not is_rich_narration("Je vais lancer les tests.")
+
+
+def test_a_relaunch_navin_writes_mid_turn_carries_the_chats_language():
+    # Navin's own relaunches reach the model as English user messages; the
+    # reminder is added on a copy for the request only, never in the history.
+    rl.reply_language("cli:r", "corrige le bug dans le fichier de config stp")
+    nudge = {"role": "user", "content": "Wrap-up check: your latest edit is validated (checks green)."}
+    history = [{"role": "system", "content": "s"}, {"role": "assistant", "content": "ok"}, nudge]
+    sent = rl.with_reply_language(history, "cli:r")
+    assert sent[-1]["content"].startswith(nudge["content"])
+    assert "Reply language: French" in sent[-1]["content"]
+    assert sent[:-1] == history[:-1]
+    assert history[-1] is nudge and "Reply language" not in nudge["content"]
+    # The user's own message already carries the line: nothing is added twice.
+    own = [{"role": "user", "content": "vasy\n\n[Runtime Context]\nReply language: French.\n[/Runtime Context]"}]
+    assert rl.with_reply_language(own, "cli:r") is own
+    # Tool results, assistant turns, image messages and unknown chats are left alone.
+    for untouched in (
+        [{"role": "tool", "content": "exit 0"}],
+        [{"role": "assistant", "content": "done"}],
+        [{"role": "user", "content": [{"type": "text", "text": "look"}]}],
+        [],
+    ):
+        assert rl.with_reply_language(untouched, "cli:r") is untouched
+    assert rl.with_reply_language([nudge], "cli:unknown") == [nudge]

@@ -267,6 +267,46 @@ def _block(language: str | None) -> RuntimeContextBlock | None:
     return RuntimeContextBlock(source="reply_language", content=content)
 
 
+REMINDER_MARK = "Reply language:"
+
+
+def reply_language_reminder(language: str) -> str:
+    """The line stuck to a message Navin writes to the model mid-turn."""
+    return (
+        f"{REMINDER_MARK} {language}. This note is Navin's and is in English like the "
+        f"tool output; the user reads {language}. Keep every word meant for the user "
+        f"(progress notes, questions, summaries, errors) in {language}."
+    )
+
+
+def with_reply_language(
+    messages: list[dict[str, Any]], session_key: str | None, sessions: Any = None,
+) -> list[dict[str, Any]]:
+    """The request's messages, Navin's trailing relaunch reminded of the chat's language.
+
+    Mid-turn, Navin speaks to the model in the user's seat: "Wrap-up check",
+    "Shortcut check", "You edited code but have not verified", "Please provide
+    your response"... all in English and without a language line. Models answer
+    the last user message in its language, so the journal of a French chat
+    switched to English right there. The user's own message already carries the
+    line (the runtime context); a Navin-written one gets it here, on a copy: the
+    stored history never changes, tool results and assistant turns are left alone.
+    """
+    if not messages:
+        return messages
+    last = messages[-1]
+    if not isinstance(last, dict) or last.get("role") != "user":
+        return messages
+    content = last.get("content")
+    if not isinstance(content, str) or not content.strip() or REMINDER_MARK in content:
+        return messages
+    language = remembered_language(session_key, sessions)
+    if not language:
+        return messages
+    reminded = {**last, "content": f"{content}\n\n{reply_language_reminder(language)}"}
+    return [*messages[:-1], reminded]
+
+
 def reply_language_provider(sessions: Any = None) -> Callable[[RequestContext], Any]:
     """The runtime-context provider, remembering each chat's language in its session."""
 
