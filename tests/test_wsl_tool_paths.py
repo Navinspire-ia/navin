@@ -387,30 +387,38 @@ def test_a_file_written_after_a_miss_is_found_on_the_retry(tmp_path, monkeypatch
 
 
 def test_the_wsl_listing_is_one_find_for_every_name(tmp_path, monkeypatch):
-    import shutil as _shutil
+    # find's own output is replayed, so the test needs no find binary and
+    # checks the exact parsing of "%T@\t%d\t%p\0" rows.
+    from types import SimpleNamespace
 
     from navin.webui import file_preview
 
-    if not _shutil.which("find"):
-        pytest.skip("find not installed")
-    linux_root = _basename_root(tmp_path)
-    (linux_root / "backend" / "other.py").write_text("x\n")
+    linux_root = tmp_path / "proj"
     unc = file_preview.Path("\\\\wsl.localhost\\Ubuntu" + str(linux_root).replace("/", "\\"))
     monkeypatch.setattr(wsl, "wsl_executable", lambda: "wsl.exe")
     monkeypatch.setattr(wsl, "resolve_distro", lambda name: "Ubuntu")
-    monkeypatch.setattr(wsl, "command_prefix", lambda distro, cwd=None: [])
+    monkeypatch.setattr(wsl, "command_prefix", lambda distro, cwd=None: ["wsl.exe", "-d", distro, "--"])
     calls = []
-    real_run = file_preview.subprocess.run
+    listing = (
+        f"1700000000.5\t2\t{linux_root}/backend/ocr.py\0"
+        f"1700000900.0\t3\t{linux_root}/backend/deep/ocr.py\0"
+        f"1700000100.0\t2\t{linux_root}/backend/other.py\0"
+        "garbage-without-tabs\0"
+    )
 
-    def counted_run(argv, **kwargs):
+    def fake_run(argv, **kwargs):
         calls.append(argv)
-        return real_run(argv, **kwargs)
+        return SimpleNamespace(returncode=0, stdout=listing, stderr="")
 
-    monkeypatch.setattr(file_preview.subprocess, "run", counted_run)
+    monkeypatch.setattr(file_preview.subprocess, "run", fake_run)
     monkeypatch.setattr(file_preview.sys, "platform", "win32")
     file_preview._BASENAME_WALK_CACHE.clear()
     file_preview._BASENAME_INDEX_CACHE.clear()
-    assert file_preview._walk_unique_basename(unc, "ocr.py") == (unc / "backend" / "ocr.py", True)
+    # Two files share the name: the newest one (find's mtime) wins without a stat.
+    assert file_preview._walk_unique_basename(unc, "ocr.py") == (unc / "backend" / "deep" / "ocr.py", True)
     assert file_preview._walk_unique_basename(unc, "other.py") == (unc / "backend" / "other.py", True)
     assert file_preview._walk_unique_basename(unc, "absent.py") == (None, True)
-    assert len(calls) == 1 and "-iname" not in calls[0]
+    # One wsl.exe for the three names, listing every file (no -iname filter).
+    assert len(calls) == 1
+    assert calls[0][:4] == ["wsl.exe", "-d", "Ubuntu", "--"]
+    assert "find" in calls[0] and "-iname" not in calls[0]
