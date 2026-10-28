@@ -254,6 +254,16 @@
           "replied": "Navin replied",
           "question": "The agent asks a question",
           "approval": "An action waits for the host's approval"
+        },
+        "full": "Şu anda tüm yerler dolu. Yeniden deneniyor...",
+        "retry": "Yeniden dene",
+        "more": "Diğer işlemler",
+        "closed": {
+          "inactive": "Ev sahibi bu bağlantıyı iptal etti veya süresi doldu.",
+          "revoked": "Ev sahibi paylaşımı durdurdu.",
+          "removed": "Ev sahibi sizi bu oturumdan çıkardı.",
+          "expired": "Bu bağlantının süresi doldu.",
+          "busy": "Ağınızdan çok fazla bağlantı var. Bir dakika sonra yeniden deneyin."
         }
       },
       "access": {

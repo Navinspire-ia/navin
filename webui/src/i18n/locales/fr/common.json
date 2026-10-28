@@ -331,6 +331,16 @@
           "tooLarge": "Ce fichier est trop lourd pour passer par le partage (40 Mo max).",
           "failed": "Ce fichier n'a pas pu être envoyé. Réessayez.",
           "truncated": "Gros projet : seuls les 5 000 fichiers les plus récents sont listés."
+        },
+        "full": "Toutes les places sont prises pour le moment. Nouvelle tentative...",
+        "retry": "Réessayer",
+        "more": "Plus d'actions",
+        "closed": {
+          "inactive": "L'hôte a révoqué ce lien ou il a expiré.",
+          "revoked": "L'hôte a arrêté le partage.",
+          "removed": "L'hôte vous a retiré de cette session.",
+          "expired": "Ce lien a expiré.",
+          "busy": "Trop de connexions depuis votre réseau. Réessayez dans une minute."
         }
       },
       "access": {

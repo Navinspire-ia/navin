@@ -136,11 +136,24 @@ class CliShareChannel:
 
 
 def frame_from_outbound(msg: Any) -> dict[str, Any] | None:
-    """The guest frame for one CLI outbound message, as the desktop sends it."""
+    """The guest frame for one CLI outbound message, as the desktop sends it.
+
+    Text only used to cross: a guest on a phone saw the replies and nothing of
+    the work between them (tools running, subagents, a question waiting for an
+    answer), while the desktop share shows all of it. The frames below are the
+    ones the desktop channel emits for the same events, so the guest page
+    renders them unchanged.
+    """
     from navin.bus.outbound_events import (
+        ApprovalClosedEvent,
+        ApprovalRequestedEvent,
+        ChoiceClosedEvent,
+        ChoiceRequestedEvent,
+        ProgressEvent,
         StreamDeltaEvent,
         StreamedResponseEvent,
         StreamEndEvent,
+        SubagentProgressEvent,
         TurnEndEvent,
         outbound_event_from_message,
     )
@@ -165,7 +178,34 @@ def frame_from_outbound(msg: Any) -> dict[str, Any] | None:
         if latency is not None:
             frame["latency_ms"] = int(latency)
         return frame
+    if isinstance(event, ProgressEvent):
+        if event.reasoning or event.reasoning_delta or event.reasoning_end:
+            return None  # the desktop keeps reasoning out of the guest page too
+        frame = {"event": "message", "text": text, "kind": "tool_hint" if event.tool_hint else "progress"}
+        if event.tool_events:
+            from navin.webui.transcript import compact_tool_events_for_ui
+
+            frame["tool_events"] = compact_tool_events_for_ui(event.tool_events)
+        if event.file_edit_events:
+            frame["file_edit_events"] = event.file_edit_events
+        return frame
+    if isinstance(event, SubagentProgressEvent):
+        return {"event": "subagent_progress", **_event_fields(event)}
+    if isinstance(event, ChoiceRequestedEvent):
+        return {"event": "choice_request", **_event_fields(event)}
+    if isinstance(event, ChoiceClosedEvent):
+        return {"event": "choice_closed", **_event_fields(event)}
+    if isinstance(event, ApprovalRequestedEvent):
+        return {"event": "approval_request", **_event_fields(event)}
+    if isinstance(event, ApprovalClosedEvent):
+        return {"event": "approval_closed", **_event_fields(event)}
     return None
+
+
+def _event_fields(event: Any) -> dict[str, Any]:
+    """The event's own fields, as the desktop channel writes them, JSON-safe."""
+    fields = {key: value for key, value in vars(event).items() if not key.startswith("_") and value is not None}
+    return json.loads(json.dumps(fields, ensure_ascii=False, default=str))
 
 
 class CliLiveShare:

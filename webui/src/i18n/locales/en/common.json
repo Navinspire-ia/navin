@@ -331,6 +331,16 @@
           "tooLarge": "This file is too large to send through the share (40 MB max).",
           "failed": "This file could not be sent. Try again.",
           "truncated": "Large project: only the 5,000 most recent files are listed."
+        },
+        "full": "Every seat is taken right now. Retrying...",
+        "retry": "Try again",
+        "more": "More actions",
+        "closed": {
+          "inactive": "The host revoked this link or it expired.",
+          "revoked": "The host stopped sharing.",
+          "removed": "The host removed you from this session.",
+          "expired": "This link has expired.",
+          "busy": "Too many connections from your network. Try again in a minute."
         }
       },
       "access": {

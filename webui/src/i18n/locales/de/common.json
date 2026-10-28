@@ -331,6 +331,16 @@
           "tooLarge": "Diese Datei ist zu groß, um über die Freigabe gesendet zu werden (max. 40 MB).",
           "failed": "Diese Datei konnte nicht gesendet werden. Versuchen Sie es erneut.",
           "truncated": "Großes Projekt: Es werden nur die 5.000 neuesten Dateien aufgelistet."
+        },
+        "full": "Alle Plätze sind gerade belegt. Neuer Versuch...",
+        "retry": "Erneut versuchen",
+        "more": "Weitere Aktionen",
+        "closed": {
+          "inactive": "Der Host hat diesen Link widerrufen oder er ist abgelaufen.",
+          "revoked": "Der Host hat die Freigabe beendet.",
+          "removed": "Der Host hat Sie aus dieser Sitzung entfernt.",
+          "expired": "Dieser Link ist abgelaufen.",
+          "busy": "Zu viele Verbindungen aus Ihrem Netzwerk. Versuchen Sie es in einer Minute erneut."
         }
       },
       "access": {

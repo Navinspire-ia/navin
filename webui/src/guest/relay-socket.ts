@@ -72,12 +72,15 @@ export interface RelaySessionHooks {
   /** Host-side payloads that are not chat events: rights, refused, bundle_*. */
   onPayload: (payload: Record<string, unknown>) => void;
   onHostOnline: (online: boolean) => void;
-  /** The relay closed the share for good: revoked, expired, removed, full. A
-   *  ``closed`` carrying ``retry`` (host not connected yet) only reports the
-   *  host offline and lets the client reconnect. */
+  /** The relay closed the share for good: revoked, expired, removed. A
+   *  ``closed`` carrying ``retry`` (host not connected yet, or every seat
+   *  taken by a socket about to time out) only reports the host offline or
+   *  the room full and lets the client reconnect. */
   onClosed: (reason: string) => void;
   /** Real join steps, in order, until the snapshot shows the session. */
   onJoinStage?: (stage: JoinStage) => void;
+  /** The room is full for now (retrying): true until a welcome arrives. */
+  onRoomFull?: (full: boolean) => void;
 }
 
 /**
@@ -103,6 +106,10 @@ export const JOIN_STAGE_PERCENT: Record<JoinStage, number> = {
 export class RelaySession {
   private current: RelaySocket | null = null;
   closedReason: string | null = null;
+  /** The seat the relay gave us: a reconnection takes it back instead of a
+   *  new one, so a phone changing network never fills the room with ghosts
+   *  and the host keeps our name and rights. */
+  seat: string | null = null;
 
   constructor(
     readonly url: string,
@@ -110,6 +117,12 @@ export class RelaySession {
     readonly name: string,
     readonly hooks: RelaySessionHooks,
   ) {}
+
+  /** The relay address, naming our seat once we hold one. */
+  socketUrl(): string {
+    if (!this.seat) return this.url;
+    return `${this.url}${this.url.includes("?") ? "&" : "?"}seat=${encodeURIComponent(this.seat)}`;
+  }
 
   socketFactory = (): WebSocket => {
     if (this.closedReason) throw new Error(this.closedReason);
@@ -137,7 +150,7 @@ export class RelaySocket {
   private eventParts: { id: string; total: number; parts: string[] } | null = null;
 
   constructor(private readonly session: RelaySession) {
-    this.ws = new WebSocket(session.url);
+    this.ws = new WebSocket(session.socketUrl());
     this.ws.onmessage = (ev) => {
       const raw = typeof ev.data === "string" ? ev.data : "";
       this.inbound = this.inbound.then(() => this.handle(raw)).catch(() => undefined);
@@ -161,6 +174,8 @@ export class RelaySocket {
     const { hooks } = this.session;
     switch (msg.type) {
       case "welcome":
+        if (typeof msg.guest === "string" && msg.guest) this.session.seat = msg.guest;
+        hooks.onRoomFull?.(false);
         hooks.onJoinStage?.("relay");
         hooks.onHostOnline(Boolean(msg.host_online));
         await this.sendSealed({ type: "hello", name: this.session.name });
@@ -176,9 +191,11 @@ export class RelaySocket {
         return;
       case "closed":
         if (msg.retry) {
-          // The relay has no room for this id right now (host reconnecting,
-          // relay restarted): the socket closes and NavinClient dials again.
-          hooks.onHostOnline(false);
+          // Not final: the relay has no room for this id right now (host
+          // reconnecting, relay restarted) or every seat is taken by a socket
+          // about to time out. The socket closes and NavinClient dials again.
+          if (msg.full) hooks.onRoomFull?.(true);
+          else hooks.onHostOnline(false);
           return;
         }
         this.session.closedReason = String(msg.reason || "closed");

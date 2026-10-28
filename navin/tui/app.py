@@ -67,6 +67,7 @@ from navin.tui.hubs import (
     skill_set_enabled,
     tool_rows,
 )
+from navin.tui.live_share_line import LiveShareLine
 from navin.tui.models import ModelPickerScreen, model_pick_items
 from navin.tui.modes import MODES, ROUTING_COMMANDS, display_user_text, get_mode, inbound_for_submit
 from navin.tui.prefs import TuiPrefs
@@ -343,6 +344,11 @@ class NavinActions(Provider):
                 "Share live (link)",
                 "Share this chat live with a navin.live link, same relay as the desktop",
                 "share_live",
+            ),
+            (
+                "Copy live link",
+                "Copy the live link to the clipboard",
+                "copy_live_link",
             ),
             (
                 "Stop live share",
@@ -856,6 +862,7 @@ class NavinApp(App[None]):
                 yield AgentsPanel(id="agents")
                 yield WorkingLine(id="working")
                 yield LivePresenceLine(id="live-presence")
+                yield LiveShareLine(id="live-share")
                 yield PromptQueue(id="prompt-queue")
                 yield SlashMenu(id="slash-menu")
                 yield FindBar(id="find")
@@ -959,6 +966,8 @@ class NavinApp(App[None]):
             if self._live is not None:
                 self._live_frame += 1
                 self._refresh_live_presence()
+            if getattr(self, "_live_share", None) is not None:
+                self._refresh_live_share_line()
         key = self.runtime.session_key
         projects_panel = self._projects_panel() if visible and self._projects_shown() else None
         if projects_panel is not None:
@@ -1473,6 +1482,7 @@ class NavinApp(App[None]):
         live_share = getattr(self, "_live_share", None)
         if live_share is not None:
             self._live_share = None
+            self._refresh_live_share_line()
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(live_share.stop(), 3)
         # Also covers driver shutdown paths which do not call action_quit.
@@ -3798,6 +3808,31 @@ class NavinApp(App[None]):
     def action_stop_live_share(self) -> None:
         self._spawn(self._stop_live_share())
 
+    def action_copy_live_link(self) -> None:
+        self._spawn(self._copy_live_link())
+
+    async def _copy_live_link(self) -> None:
+        share = getattr(self, "_live_share", None)
+        if share is None or not share.active:
+            await self._flash("no live share on this chat", "info")
+            return
+        self.copy_to_clipboard(share.link, quiet=True)
+        await self._flash("live link copied", "success")
+
+    def _refresh_live_share_line(self) -> None:
+        """Paint or hide the persistent live line from the current share (cheap when unchanged)."""
+        try:
+            line = self.query_one("#live-share", LiveShareLine)
+        except Exception:  # not composed yet or no screen: nothing to paint
+            return
+        share = getattr(self, "_live_share", None)
+        if share is None or not share.active:
+            line.set_share(None)
+            return
+        channel = getattr(share, "channel", None)
+        guests = getattr(channel, "guest_count", 0) if channel is not None else 0
+        line.set_share(share.link, int(guests or 0))
+
     async def _share_live(self) -> None:
         if not self._engine_ready:
             return
@@ -3835,10 +3870,9 @@ class NavinApp(App[None]):
             return
         self._live_share = share
         self.runtime.share_observer = share
+        self._refresh_live_share_line()
         self.copy_to_clipboard(share.link, quiet=True)
-        await self._note(
-            f"live link (copied): [b]{escape(share.link)}[/b], palette Stop live share to revoke", "success",
-        )
+        await self._note(f"live link (copied): [b]{escape(share.link)}[/b]", "success")
 
     async def _on_guest_message(self, text: str, meta: dict) -> None:
         guest = (meta or {}).get("guest") or {}
@@ -3850,6 +3884,7 @@ class NavinApp(App[None]):
         share = getattr(self, "_live_share", None)
         self._live_share = None
         self.runtime.share_observer = None
+        self._refresh_live_share_line()
         if share is None:
             await self._flash("no live share on this chat", "info")
             return

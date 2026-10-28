@@ -2137,7 +2137,9 @@ class AgentsPanel(Static):
     ``● main``, then per agent its own name, what it is doing now, and on the
     right how long it has run and the tokens it has used. Six agents at most;
     finished agents (succeeded, failed, cancelled) stay with their outcome
-    until dismissed (F8 Dismiss, F9 dismiss finished) or a new conversation.
+    until dismissed (F8 Dismiss, F9 dismiss finished), a new conversation, or
+    on their own: 10 minutes after a success, 15 minutes after a failure.
+    Each finished row carries its own hint ("· F9 dismiss" / "· F8 details").
     """
 
     DEFAULT_CSS = """
@@ -2151,8 +2153,17 @@ class AgentsPanel(Static):
     """
 
     MAX_VISIBLE_AGENTS = 6
-    MAX_ROWS = MAX_VISIBLE_AGENTS + 3  # main, agents, optional More row, hint row
+    # main, agents, optional More row, plus one spare: the bottom hint line is
+    # no longer painted (each finished row carries its own hint); kept for
+    # callers that size the panel from it.
+    MAX_ROWS = MAX_VISIBLE_AGENTS + 3
+    # Legacy shared hint, not rendered any more; kept for compatibility.
     HINT = "  F8 relaunch, cancel or dismiss · F9 dismiss finished"
+    DONE_HINT = " · F9 dismiss"
+    ERROR_HINT = " · F8 details"
+    # Finished rows leave the panel by themselves (they stay in F8).
+    AUTO_DISMISS_DONE_S = 10 * 60
+    AUTO_DISMISS_ERROR_S = 15 * 60
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__("", *args, markup=False, **kwargs)
@@ -2271,9 +2282,26 @@ class AgentsPanel(Static):
         else:
             self.app.call_later(self.app.run_action, "inspect_agents")
 
+    def _auto_dismiss(self, now: float) -> None:
+        """Finished rows older than their grace period leave, like ``dismiss()``."""
+        expired = []
+        for task_id, row in self._agents.items():
+            done_at = row.get("done_at")
+            if done_at is None:
+                continue  # running agents are never auto-dismissed
+            grace = self.AUTO_DISMISS_ERROR_S if row["error"] else self.AUTO_DISMISS_DONE_S
+            if now - done_at >= grace:
+                expired.append(task_id)
+        for task_id in expired:
+            del self._agents[task_id]
+            self._dismissed.add(task_id)
+        if expired:
+            self._painted = None
+
     def tick(self, main_active: bool, main_elapsed: float) -> None:
         self._main = (main_active, main_elapsed)
         now = time.monotonic()
+        self._auto_dismiss(now)
         if not self._agents:
             if self.display:
                 self.display = False
@@ -2307,6 +2335,20 @@ class AgentsPanel(Static):
                 name = row["task"].splitlines()[0]
             names[task_id] = name
         return names
+
+    @staticmethod
+    def _fit_status(status: str, hint: str, room: int) -> tuple[str, str]:
+        """Fit ``status + hint`` in ``room`` cells: cut the status first, keep the
+        hint while it leaves at least a few cells of status, else drop the hint."""
+        if cell_len(status) + cell_len(hint) <= room:
+            return status, hint
+        min_status = min(cell_len(status), 8)
+        if hint and room - cell_len(hint) >= min_status:
+            room_status = room - cell_len(hint)
+            return status[: max(0, room_status - 1)] + "…", hint
+        if cell_len(status) <= room:
+            return status, ""
+        return (status[: max(0, room - 1)] + "…" if room > 1 else ""), ""
 
     def _render_rows(self, width: int, main_active: bool, main_elapsed: float, now: float) -> Text:
         palette = {"blue": "#5EA8FF", "green": "#8FBC8F", "coral": "#E39B91", "muted": "#8A8A8A", "text": "#E6E6E6"}
@@ -2354,23 +2396,29 @@ class AgentsPanel(Static):
             name = names[task_id]
             if cell_len(name) > name_width:
                 name = name[: max(1, name_width - 1)] + "…"
-            if finished:
-                status = (row["status"] or "Stopped") if row["error"] else "Done"
+            # Finished rows: "✓ Done" in green or "× reason" in coral, each
+            # followed by its own muted key hint.
+            hint, status_ink = "", palette["muted"]
+            if finished and row["error"]:
+                status, hint, status_ink = f"× {row['status'] or 'Stopped'}", self.ERROR_HINT, palette["coral"]
+            elif finished:
+                status, hint, status_ink = "✓ Done", self.DONE_HINT, palette["green"]
             elif waiting:
                 status = "Waiting for your approval (answer above)"
             else:
                 status = row["status"] or "Working…"
             left = 2 + name_width + 2
             room = max(0, width - left - cell_len(meta) - 2)
-            if cell_len(status) > room:
-                status = status[: max(0, room - 1)] + "…" if room > 1 else ""
-            gap = max(1, width - left - cell_len(status) - cell_len(meta))
+            status, hint = self._fit_status(status, hint, room)
+            gap = max(1, width - left - cell_len(status) - cell_len(hint) - cell_len(meta))
             out.append("\n")
             self._line_ids.append(task_id)
             out.append(f"{glyph} ", style=ink)
             out.append(name.ljust(name_width), style=f"bold {palette['text']}")
             out.append("  ")
-            out.append(status, style=palette["muted"])
+            out.append(status, style=status_ink)
+            if hint:
+                out.append(hint, style=palette["muted"])
             out.append(" " * gap)
             out.append(meta, style=palette["muted"])
         if hidden:
@@ -2381,9 +2429,6 @@ class AgentsPanel(Static):
         elif overflow:
             out.append("\n")
             out.append("  ▴ show less · F7 or click to collapse", style=palette["muted"])
-        if any("done_at" in row for row in self._agents.values()):
-            out.append("\n")
-            out.append(self.HINT, style=palette["muted"])
         return out
 
 

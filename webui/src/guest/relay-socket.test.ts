@@ -137,4 +137,34 @@ describe("RelaySocket join stages", () => {
     expect(closed).toEqual(["this link is not active"]);
     expect(() => session.socketFactory()).toThrow("this link is not active");
   });
+
+  it("takes its seat back on reconnection and treats a full room as a retry, not an end", async () => {
+    // A phone changing network used to dial as a brand-new guest while its
+    // dead socket still held a seat: a few retries filled a 5-seat room and
+    // the page showed "This share has ended: this session is full".
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const cipher = await ShareCipher.create(KEY, SHARE);
+    const full: boolean[] = [];
+    const closed: string[] = [];
+    const session = new RelaySession("wss://relay.test/guest/abc", cipher, "Ana", {
+      onSnapshot: () => {}, onPayload: () => {}, onHostOnline: () => {}, onClosed: (reason) => closed.push(reason),
+      onRoomFull: (value) => full.push(value),
+    });
+    session.socketFactory();
+    expect(FakeWebSocket.last!.url).toBe("wss://relay.test/guest/abc");
+    FakeWebSocket.last!.open();
+    FakeWebSocket.last!.receive({ type: "welcome", guest: "seat-42", host_online: true });
+    await settleUntil(() => session.seat === "seat-42");
+    expect(full).toEqual([false]);
+
+    // The next dial names the seat; a full room is reported, never final.
+    session.socketFactory();
+    expect(FakeWebSocket.last!.url).toBe("wss://relay.test/guest/abc?seat=seat-42");
+    FakeWebSocket.last!.receive({ type: "closed", reason: "this session is full", retry: true, full: true });
+    await settleUntil(() => full.length > 1);
+    expect(full).toEqual([false, true]);
+    expect(closed).toEqual([]);
+    expect(session.closedReason).toBeNull();
+    expect(() => session.socketFactory()).not.toThrow();
+  });
 });

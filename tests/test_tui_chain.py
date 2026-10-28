@@ -197,7 +197,9 @@ def test_agents_panel_shows_humanized_status_and_red_cross_only_when_done(tmp_pa
             ))
             await pilot.pause()
             text = str(panel.content)
-            assert "× auditor" in text and "Rate limited" in text
+            assert "× auditor" in text and "× Rate limited" in text
+            assert "· F8 details" in text and "F9 dismiss" not in text
+            assert AgentsPanel.HINT not in text
             assert app._activity[-1].startswith("×")
 
     asyncio.run(run())

@@ -431,9 +431,9 @@ def test_parallel_agents_show_under_the_chat_in_at_most_ten_rows(tmp_path):
                     f"t{index}", "general-purpose", "done", "Completed", None, 2, True, None,
                 ))
             for row in panel._agents.values():
-                row["done_at"] -= 3600
+                row["done_at"] -= 60
             panel.tick(False, 0)
-            assert panel.display, "finished agents stay until dismissed"
+            assert panel.display, "finished agents stay until dismissed (or 10 minutes pass)"
             assert panel.dismiss_finished() == 12
             assert not panel.display
     asyncio.run(run())

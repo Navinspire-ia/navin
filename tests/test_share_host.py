@@ -107,6 +107,10 @@ def test_a_guest_follows_live_reads_only_then_drives_once_allowed(tmp_path):
         guest = await _join(manager, base, info)
         snapshot = await guest.next("snapshot")
         assert snapshot["chat_id"] == "chat-1" and snapshot["rights"] == {"drive": False, "download": False}
+        # The first paint waits for nothing but the last page of the chat; the
+        # context (dates, project, git) arrives right behind on its own frame.
+        assert snapshot["context"] is None
+        assert (await guest.next("context", timeout=10))["context"] is not None
         await _wait(lambda: channel.attached)
         conn, chat = channel.attached[0]
         assert chat == "chat-1" and channel._conn_identity[conn]["role"] == "viewer"
@@ -257,7 +261,10 @@ def test_a_cli_session_is_shared_under_its_own_key(tmp_path):
                 guest = await _join(manager, f"ws://127.0.0.1:{port}", info)
                 snapshot = await guest.next("snapshot")
                 assert snapshot["rights"] == {"drive": True, "download": True}
-                assert snapshot["context"] is not None
+                # The snapshot no longer waits for git log/status: the context
+                # follows on its own frame, built from the CLI session.
+                context = await guest.next("context", timeout=10)
+                assert context["context"] is not None
                 await guest.send({"type": "request_download"})
                 await guest.next("bundle_start", timeout=10)
                 chunks = []

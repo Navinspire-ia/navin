@@ -84,7 +84,36 @@ def test_expired_links_and_full_rooms_are_refused():
         first = await connect(f"{base}/guest/{SHARE}")
         assert (await _recv(first))["type"] == "welcome"
         second = await connect(f"{base}/guest/{SHARE}")
-        assert (await _recv(second)) == {"type": "closed", "reason": "this session is full"}
+        # Not final: a seat frees up when a stale socket times out, the page retries.
+        assert (await _recv(second)) == {"type": "closed", "reason": "this session is full", "retry": True, "full": True}
+        await host.close()
+    _run(scenario)
+
+
+def test_a_reconnecting_guest_takes_its_seat_back_instead_of_filling_the_room():
+    # A phone changing network dials again while its dead socket still holds
+    # the seat (the ping timeout is 40 s): with one seat it was told "this
+    # session is full" every time. Naming its seat gives it back, closes the
+    # ghost, and the host keeps the same guest id (name and rights with it).
+    async def scenario(relay, base):
+        host, _ = await _register(base, max_guests=1)
+        first = await connect(f"{base}/guest/{SHARE}")
+        welcome = await _recv(first)
+        seat = welcome["guest"]
+        assert (await _recv(host)) == {"type": "guest_join", "guest": seat}
+        again = await connect(f"{base}/guest/{SHARE}?seat={seat}")
+        assert await _recv(again) == {"type": "welcome", "guest": seat, "host_online": True, "resumed": True}
+        # The ghost is closed by the relay; the host sees neither a leave nor a new join.
+        await asyncio.wait_for(first.wait_closed(), 2)
+        await host.send(json.dumps({"type": "send", "guest": seat, "data": "Y2lwaGVy"}))
+        assert await _recv(again) == {"type": "data", "data": "Y2lwaGVy"}
+        await asyncio.sleep(0.1)
+        assert relay.rooms[SHARE].guests == {seat: relay.rooms[SHARE].guests[seat]}
+        # An unknown or malformed seat is a plain new guest, refused here since the room is full.
+        stranger = await connect(f"{base}/guest/{SHARE}?seat=nobody-here-123")
+        assert (await _recv(stranger))["full"] is True
+        await again.close()
+        assert (await _recv(host)) == {"type": "guest_leave", "guest": seat}
         await host.close()
     _run(scenario)
 

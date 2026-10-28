@@ -254,6 +254,16 @@
           "replied": "Navin replied",
           "question": "The agent asks a question",
           "approval": "An action waits for the host's approval"
+        },
+        "full": "Alla platser är upptagna just nu. Försöker igen...",
+        "retry": "Försök igen",
+        "more": "Fler åtgärder",
+        "closed": {
+          "inactive": "Värden har återkallat den här länken eller så har den gått ut.",
+          "revoked": "Värden har slutat dela.",
+          "removed": "Värden tog bort dig från den här sessionen.",
+          "expired": "Den här länken har gått ut.",
+          "busy": "För många anslutningar från ditt nätverk. Försök igen om en minut."
         }
       },
       "access": {

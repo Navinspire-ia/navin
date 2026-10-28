@@ -254,6 +254,16 @@
           "replied": "Navin replied",
           "question": "The agent asks a question",
           "approval": "An action waits for the host's approval"
+        },
+        "full": "Tutti i posti sono occupati al momento. Nuovo tentativo...",
+        "retry": "Riprova",
+        "more": "Altre azioni",
+        "closed": {
+          "inactive": "L'host ha revocato questo link o è scaduto.",
+          "revoked": "L'host ha interrotto la condivisione.",
+          "removed": "L'host ti ha rimosso da questa sessione.",
+          "expired": "Questo link è scaduto.",
+          "busy": "Troppe connessioni dalla tua rete. Riprova tra un minuto."
         }
       },
       "access": {

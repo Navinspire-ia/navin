@@ -254,6 +254,16 @@
           "replied": "Navin replied",
           "question": "The agent asks a question",
           "approval": "An action waits for the host's approval"
+        },
+        "full": "現在すべての席が使用中です。再試行しています...",
+        "retry": "再試行",
+        "more": "その他の操作",
+        "closed": {
+          "inactive": "ホストがこのリンクを取り消したか、期限が切れました。",
+          "revoked": "ホストが共有を停止しました。",
+          "removed": "ホストがあなたをこのセッションから削除しました。",
+          "expired": "このリンクは期限切れです。",
+          "busy": "ネットワークからの接続が多すぎます。1分後にもう一度お試しください。"
         }
       },
       "access": {

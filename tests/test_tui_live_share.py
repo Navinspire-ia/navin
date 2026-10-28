@@ -89,6 +89,36 @@ def test_outbound_events_become_the_desktop_guest_frames() -> None:
     assert frame_from_outbound(_msg(TurnEndEvent(latency_ms=12))) == {"event": "turn_end", "latency_ms": 12}
 
 
+def test_tools_subagents_choices_and_approvals_reach_the_guest_like_the_desktop() -> None:
+    # Text only used to cross: a guest on a phone saw the replies and nothing of
+    # the work between them. These are the desktop channel's own frames.
+    from navin.bus.outbound_events import (
+        ApprovalClosedEvent,
+        ApprovalRequestedEvent,
+        ChoiceClosedEvent,
+        ChoiceRequestedEvent,
+        ProgressEvent,
+        SubagentProgressEvent,
+    )
+
+    tool = frame_from_outbound(_msg(ProgressEvent(content="Ran pytest", tool_hint=True, tool_events=[{"tool": "exec", "phase": "end"}]), "Ran pytest"))
+    assert tool["event"] == "message" and tool["kind"] == "tool_hint" and tool["text"] == "Ran pytest"
+    assert tool["tool_events"][0]["tool"] == "exec"
+    assert frame_from_outbound(_msg(ProgressEvent(content="Reading files"), "Reading files")) == {
+        "event": "message", "text": "Reading files", "kind": "progress",
+    }
+    assert frame_from_outbound(_msg(ProgressEvent(content="thinking", reasoning_delta=True), "thinking")) is None
+    sub = frame_from_outbound(_msg(SubagentProgressEvent(task_id="t1", label="Writer", phase="running", status_line="Editing", model="m")))
+    assert sub["event"] == "subagent_progress" and sub["task_id"] == "t1" and sub["label"] == "Writer" and sub["done"] is False
+    choice = frame_from_outbound(_msg(ChoiceRequestedEvent(request_id="r1", question="Which?", options=[{"id": "a", "label": "A"}])))
+    assert choice["event"] == "choice_request" and choice["request_id"] == "r1" and choice["options"] == [{"id": "a", "label": "A"}]
+    assert frame_from_outbound(_msg(ChoiceClosedEvent(request_id="r1", option_id="a")))["event"] == "choice_closed"
+    approval = frame_from_outbound(_msg(ApprovalRequestedEvent(request_id="p1", tool="exec", action="rm", reason="deletes")))
+    assert approval["event"] == "approval_request" and approval["tool"] == "exec" and approval["request_id"] == "p1"
+    closed = frame_from_outbound(_msg(ApprovalClosedEvent(request_id="p1", allowed=False)))
+    assert closed["event"] == "approval_closed" and closed["request_id"] == "p1" and closed["allowed"] is False
+
+
 def test_live_share_uses_the_cli_session_key_and_forwards_events(tmp_path: Path) -> None:
     async def scenario() -> tuple[CliLiveShare, _Guest]:
         share = CliLiveShare(
@@ -148,10 +178,89 @@ def test_runtime_forwards_to_the_share_observer() -> None:
     assert "on_user_text" in send
 
 
-def test_cli_palette_offers_live_share_and_stop() -> None:
+def test_cli_palette_offers_live_share_copy_and_stop() -> None:
     from navin.tui.app import NavinActions, NavinApp
 
     source = inspect.getsource(NavinActions._entries)
-    for action in ("share_live", "stop_live_share"):
+    for action in ("share_live", "copy_live_link", "stop_live_share"):
         assert f'"{action}"' in source
         assert callable(getattr(NavinApp, f"action_{action}", None))
+
+
+def test_fit_link_keeps_head_and_tail_within_width() -> None:
+    from navin.tui.live_share_line import fit_link
+
+    link = "https://relay.navin.live/s/abcdef123456#verylongsecretkey0123456789"
+    assert fit_link(link, 200) == link
+    short = fit_link(link, 40)
+    assert len(short) == 40
+    assert "\u2026" in short
+    assert short.startswith("https://relay.navin.live/s/")
+    assert short.endswith(link[-8:])
+    for width in range(0, 90):
+        assert len(fit_link(link, width)) <= width
+    assert fit_link(link, 0) == ""
+    assert fit_link("", 10) == ""
+
+
+class _FakeShare:
+    def __init__(self, link: str, guests: int = 0) -> None:
+        self.link, self.active = link, True
+        self.channel = _Channel(guests)
+
+    async def stop(self) -> None:
+        self.active = False
+
+
+class _Channel:
+    def __init__(self, guests: int) -> None:
+        self.guest_count = guests
+
+
+def test_live_share_line_shows_the_link_with_copy_and_stop(tmp_path: Path) -> None:
+    from navin.tui.live_share_line import LiveShareLine
+    from tests.test_tui_queue import make_app
+
+    link = "https://relay.navin.live/s/abc123#key456"
+
+    async def run() -> None:
+        app = make_app(tmp_path)
+        copied: list[str] = []
+        flashes: list[str] = []
+        app.copy_to_clipboard = lambda text, **kwargs: copied.append(text) or True
+
+        async def flash(text: str, level: str = "info") -> None:
+            flashes.append(text)
+
+        app._flash = flash
+        async with app.run_test(size=(160, 32)) as pilot:
+            line = app.query_one("#live-share", LiveShareLine)
+            assert line.display is False and not line.has_class("-visible")
+            app._live_share = _FakeShare(link)
+            app._refresh_live_share_line()
+            await pilot.pause()
+            assert line.display is True and line.has_class("-visible")
+            assert str(line.query_one("#live-share-link").content) == link
+            assert line.link == link
+            assert str(line.query_one("#live-share-copy").content) == "copy"
+            assert str(line.query_one("#live-share-stop").content) == "stop"
+            assert str(line.query_one("#live-share-guests").content) == ""
+            app._live_share.channel.guest_count = 2
+            app._refresh_live_share_line()
+            await pilot.pause()
+            assert str(line.query_one("#live-share-guests").content) == "2 guests"
+            await app.run_action("copy_live_link")
+            await pilot.pause()
+            assert copied == [link]
+            assert flashes[-1] == "live link copied"
+            await app.run_action("stop_live_share")
+            await pilot.pause()
+            assert app._live_share is None
+            assert line.display is False and not line.has_class("-visible")
+            assert flashes[-1] == "live link revoked"
+            await app.run_action("copy_live_link")
+            await pilot.pause()
+            assert copied == [link]
+            assert flashes[-1] == "no live share on this chat"
+
+    asyncio.run(run())

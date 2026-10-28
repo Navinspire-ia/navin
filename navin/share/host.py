@@ -55,6 +55,11 @@ BUNDLE_CHUNK_BYTES = 512 * 1024
 HISTORY_PAGE = 120
 # The relay drops a connection on frames over 1 MB; sealing and base64 add ~80%.
 MAX_PAGE_BYTES = 450 * 1024
+# What a guest gets first, on a phone over mobile data: enough to read the end
+# of the chat at once. Older pages follow on request, the context (git, dates,
+# prompts) is pushed right after instead of delaying the first paint.
+FIRST_PAGE = 40
+FIRST_PAGE_BYTES = 160 * 1024
 # Query results include complete tool output. Split text before encryption so
 # even one large action fits through the relay without losing its contents.
 EVENT_PART_CHARS = 16 * 1024
@@ -82,6 +87,31 @@ for _agent_kind in AGENT_READ_ENVELOPES | AGENT_DRIVE_ENVELOPES:
 MAX_GUEST_MESSAGE_CHARS = 20_000
 MAX_GUEST_BUNDLE_BYTES = 150 * 1024 * 1024
 CONTEXT_CACHE_S = 5.0
+
+
+def _fit_context(context: Any, max_bytes: int = MAX_PAGE_BYTES) -> Any:
+    """The context, its heaviest fields dropped until the frame fits the relay.
+
+    git log and prompts of a big project can weigh more than the relay carries;
+    the frame was then not sent at all and the guest's side panel stayed empty.
+    What fits is sent, the rest named in ``truncated``.
+    """
+    if not isinstance(context, dict):
+        return context
+    fitted = dict(context)
+    dropped: list[str] = []
+    while len(json.dumps(fitted, ensure_ascii=False, default=str)) > max_bytes:
+        droppable = [key for key, value in fitted.items() if value not in (None, "", [], {})]
+        if not droppable:
+            break
+        heaviest = max(droppable, key=lambda key: len(json.dumps(fitted[key], ensure_ascii=False, default=str)))
+        fitted[heaviest] = None
+        dropped.append(heaviest)
+    if dropped:
+        fitted["truncated"] = dropped
+    return fitted
+
+
 # Frames already seen per share: a replayed guest frame is ignored.
 SEEN_NONCES_PER_SHARE = 4096
 # A site page loads many files at once (a dev server: hundreds of modules).
@@ -540,8 +570,13 @@ class ShareManager:
             return
         raw = json.dumps(payload)
         if len(raw) > MAX_RELAY_FRAME:
-            # The relay would drop the whole link: skip this one frame instead.
-            logger.debug("share {}: frame of {} bytes not relayed", share_id[:6], len(raw))
+            # The relay would drop the whole link: skip this one frame instead,
+            # and say so. A guest missing its snapshot stays on "Loading" with
+            # no clue otherwise.
+            logger.warning(
+                "share {}: a {} frame of {} bytes exceeds the relay limit and was not sent",
+                share_id[:6], payload.get("type"), len(raw),
+            )
             return
         with contextlib.suppress(Exception):
             await ws.send(raw)
@@ -555,7 +590,9 @@ class ShareManager:
         kind = msg.get("type")
         guest_id = str(msg.get("guest") or "")
         if kind == "guest_join":
-            self.guests.setdefault(share.share_id, {})[guest_id] = self._new_guest(share, guest_id)
+            # A guest taking its seat back after a reconnection keeps its name
+            # and rights: the relay reuses the id and no new Guest is made.
+            self.guests.setdefault(share.share_id, {}).setdefault(guest_id, self._new_guest(share, guest_id))
         elif kind == "guest_leave":
             await self._drop_guest(share.share_id, guest_id)
         elif kind == "from_guest":
@@ -674,27 +711,36 @@ class ShareManager:
         }
         ch._conn_default[conn] = share.chat_id
         guest.pump = asyncio.create_task(self._pump(share, guest))
+        # The snapshot leaves as soon as the last page is read: it used to wait
+        # for git log/status as well, seconds on a large project, during which
+        # a phone showed "Loading the conversation". The context follows on
+        # its own frame; a cached one goes with the snapshot since it is free.
+        cached = self._context_cache.get(share.chat_id)
+        context = cached[1] if cached and time.monotonic() - cached[0] < CONTEXT_CACHE_S else None
         await self._to_guest(share.share_id, guest.guest_id, {
             "type": "snapshot",
             "chat_id": share.chat_id,
-            "thread": await asyncio.to_thread(self._transcript, share.chat_id),
-            "context": await self._cached_context(share.chat_id, CONTEXT_CACHE_S),
+            "thread": await asyncio.to_thread(self._transcript, share.chat_id, None, FIRST_PAGE, FIRST_PAGE_BYTES),
+            "context": context,
             "rights": {"drive": guest.drive, "download": guest.download},
             "expires_at": share.expires_at,
             "site": bool(share.site_url),
             "scope": "session",
         })
+        if context is None:
+            self._background(self._push_context(share, guest))
         ch._attach(conn, share.chat_id)
         await ch._presence_join(conn, share.chat_id)
         await ch._hydrate_after_subscribe(share.chat_id)
         self._notify(share.share_id)
 
-    def _transcript(self, chat_id: str, before: str | None = None) -> Any:
+    def _transcript(
+        self, chat_id: str, before: str | None = None, limit: int = HISTORY_PAGE, max_bytes: int = MAX_PAGE_BYTES,
+    ) -> Any:
         """One page of history (latest first, older on request): a frame stays far below the relay's limit."""
         try:
             from navin.webui.transcript import build_webui_thread_response
 
-            limit = HISTORY_PAGE
             while True:
                 if self.thread_for is not None:
                     page = self.thread_for(chat_id, limit, before)
@@ -702,7 +748,7 @@ class ShareManager:
                     page = build_webui_thread_response(
                         self.session_key_for(chat_id), limit=limit, direction=None if before else "latest", before=before,
                     )
-                if limit <= 8 or len(json.dumps(page, ensure_ascii=False)) <= MAX_PAGE_BYTES:
+                if limit <= 8 or len(json.dumps(page, ensure_ascii=False)) <= max_bytes:
                     return page
                 limit //= 2
         except Exception as exc:  # noqa: BLE001 - a guest still gets the live events
@@ -738,7 +784,7 @@ class ShareManager:
 
     async def _push_context(self, share: Share, guest: Guest, max_age_s: float = CONTEXT_CACHE_S) -> None:
         context = await self._cached_context(share.chat_id, max_age_s)
-        await self._to_guest(share.share_id, guest.guest_id, {"type": "context", "context": context})
+        await self._to_guest(share.share_id, guest.guest_id, {"type": "context", "context": _fit_context(context)})
 
     async def _pump(self, share: Share, guest: Guest) -> None:
         conn = guest.conn

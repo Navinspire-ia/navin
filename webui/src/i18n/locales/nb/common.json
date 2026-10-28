@@ -254,6 +254,16 @@
           "replied": "Navin replied",
           "question": "The agent asks a question",
           "approval": "An action waits for the host's approval"
+        },
+        "full": "Alle plassene er opptatt akkurat nå. Prøver igjen...",
+        "retry": "Prøv igjen",
+        "more": "Flere handlinger",
+        "closed": {
+          "inactive": "Verten har trukket tilbake denne lenken, eller den har utløpt.",
+          "revoked": "Verten har stoppet delingen.",
+          "removed": "Verten fjernet deg fra denne sesjonen.",
+          "expired": "Denne lenken har utløpt.",
+          "busy": "For mange tilkoblinger fra nettverket ditt. Prøv igjen om et minutt."
         }
       },
       "access": {

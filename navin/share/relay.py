@@ -34,6 +34,7 @@ until it would have expired.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import hashlib
 import hmac
@@ -236,7 +237,7 @@ class Relay:
 
     # -- guest -----------------------------------------------------------------
 
-    async def guest(self, ws: ServerConnection, share_id: str) -> None:
+    async def guest(self, ws: ServerConnection, share_id: str, seat: str = "") -> None:
         self._prune()
         room = self.rooms.get(share_id)
         if room is None and share_id not in self.revoked:
@@ -250,14 +251,29 @@ class Relay:
             await self._send(ws, {"type": "closed", "reason": "this link is not active"})
             await ws.close(1008, "inactive")
             return
-        if len(room.guests) >= room.max_guests:
-            await self._send(ws, {"type": "closed", "reason": "this session is full"})
-            await ws.close(1008, "full")
-            return
-        guest_id = secrets.token_urlsafe(9)
-        room.guests[guest_id] = ws
-        await self._send(ws, {"type": "welcome", "guest": guest_id, "host_online": room.host is not None})
-        await self._send(room.host, {"type": "guest_join", "guest": guest_id})
+        previous = room.guests.get(seat) if seat else None
+        if previous is not None:
+            # The same guest dialing again (a phone changing network, a tab
+            # waking up): it takes its own seat back. Its dead socket is closed
+            # here instead of holding the seat until the ping timeout, so a
+            # few reconnections no longer fill a 5-seat room with ghosts and
+            # answer the real guest "this session is full". The host sees the
+            # same guest id and keeps its name and rights.
+            guest_id = seat
+            room.guests[guest_id] = ws
+            with contextlib.suppress(ConnectionClosed, OSError, RuntimeError):
+                await previous.close(1000, "replaced by a reconnection")
+        else:
+            if len(room.guests) >= room.max_guests:
+                # Not final: a seat frees up when a stale socket times out.
+                await self._send(ws, {"type": "closed", "reason": "this session is full", "retry": True, "full": True})
+                await ws.close(1008, "full")
+                return
+            guest_id = secrets.token_urlsafe(9)
+            room.guests[guest_id] = ws
+        await self._send(ws, {"type": "welcome", "guest": guest_id, "host_online": room.host is not None, "resumed": previous is not None})
+        if previous is None:
+            await self._send(room.host, {"type": "guest_join", "guest": guest_id})
         window_start, count = time.monotonic(), 0
         try:
             async for raw in ws:
@@ -286,11 +302,18 @@ class Relay:
     # -- routing -----------------------------------------------------------------
 
     async def handler(self, ws: ServerConnection) -> None:
-        path = ws.request.path.split("?", 1)[0] if ws.request else ""
+        full_path = ws.request.path if ws.request else ""
+        path, _, query = full_path.partition("?")
         match = re.fullmatch(r"/guest/([A-Za-z0-9_-]{16,64})", path)
         if path != "/host" and not match:
             await ws.close(1008, "unknown path")
             return
+        # A reconnecting guest names the seat it held: /guest/<id>?seat=<guest id>.
+        seat = ""
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "seat" and re.fullmatch(r"[A-Za-z0-9_-]{8,32}", value):
+                seat = value
         role, limit = ("host", MAX_HOSTS_PER_IP) if path == "/host" else ("guest", MAX_GUESTS_PER_IP)
         ip = self.client_ip(ws)
         if not self._enter(ip, role, limit):
@@ -299,7 +322,7 @@ class Relay:
             return
         try:
             if match:
-                await self.guest(ws, match.group(1))
+                await self.guest(ws, match.group(1), seat)
             else:
                 await self.host(ws)
         finally:

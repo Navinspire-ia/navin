@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 
 from textual.widgets import Button, DataTable, Input, Static
@@ -291,8 +292,11 @@ def test_finished_rows_persist_until_dismissed_with_hint(tmp_path):
             assert lines[2].startswith("!") and "Waiting for your approval (answer above)" in lines[2]
             assert lines[3].startswith("◯") and "Runner" in lines[3]
             assert lines[4].startswith("✓") and "Writer" in lines[4]
-            assert lines[-1] == AgentsPanel.HINT
-            assert "F9 dismiss finished" in lines[-1]
+            assert "✓ Done" in lines[4] and "· F9 dismiss" in lines[4]
+            assert "× Model timed out" in lines[1] and "· F8 details" in lines[1]
+            assert "F8 details" not in lines[4] and "F9 dismiss" not in lines[1]
+            assert "F9 dismiss" not in lines[2] and "F8 details" not in lines[3], "running rows carry no hint"
+            assert AgentsPanel.HINT not in lines, "the shared bottom hint line is gone"
             assert panel.dismiss("ok")
             assert not panel.dismiss("run"), "a running agent is not dismissed"
             await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
@@ -300,11 +304,61 @@ def test_finished_rows_persist_until_dismissed_with_hint(tmp_path):
             await pilot.press("f9")
             await pilot.pause()
             content = str(panel.content)
-            assert "Tester" not in content and AgentsPanel.HINT not in content
+            assert "Tester" not in content and "F8 details" not in content and "F9 dismiss" not in content
             assert "Runner" in content and "Asker" in content
             await app._on_runtime_event(UiSubagent("bad", "Tester", "awaiting_model", "Resumed", None, 1, False, None))
             assert "Resumed" in str(panel.content), "a resumed agent shows again"
             assert "ok" in panel.inspection_rows()
+
+    asyncio.run(run())
+
+
+def test_finished_rows_auto_dismiss_after_grace_period(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(140, 40)) as pilot:
+            panel = app.query_one(AgentsPanel)
+            await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
+            await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
+            await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
+            await pilot.pause()
+            assert panel.AUTO_DISMISS_DONE_S == 10 * 60 and panel.AUTO_DISMISS_ERROR_S == 15 * 60
+            assert {"ok", "bad", "run"} <= set(panel._agents)
+
+            def age(seconds: float) -> None:
+                for row in panel._agents.values():
+                    if "done_at" in row:
+                        row["done_at"] = time.monotonic() - seconds
+                    else:
+                        row["started"] = time.monotonic() - seconds
+
+            age(9 * 60)
+            panel.tick(False, 0)
+            assert {"ok", "bad", "run"} <= set(panel._agents), "nothing leaves before 10 minutes"
+            age(10 * 60)
+            panel.tick(False, 0)
+            assert "ok" not in panel._agents and "ok" in panel._dismissed
+            assert "bad" in panel._agents and "run" in panel._agents
+            content = str(panel.content)
+            assert "Writer" not in content and "Tester" in content and "Runner" in content
+            age(15 * 60)
+            panel.tick(False, 0)
+            assert "bad" not in panel._agents and "bad" in panel._dismissed
+            assert "run" in panel._agents, "a running agent is never auto-dismissed"
+            assert "Tester" not in str(panel.content) and "Runner" in str(panel.content)
+            assert {"ok", "bad"} <= set(panel.inspection_rows()), "auto-dismissed agents stay in F8"
+            assert panel.display is True
+            # A late duplicate done frame of an auto-dismissed agent stays hidden.
+            await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
+            assert "Writer" not in str(panel.content)
+            # The last running agent finishes and ages out: the panel hides itself.
+            await app._on_runtime_event(UiSubagent("run", "Runner", "done", "Completed", None, 1, True, None))
+            await pilot.pause()
+            assert panel.display is True and "✓ Done" in str(panel.content)
+            age(10 * 60)
+            panel.tick(False, 0)
+            assert not panel._agents and panel.display is False
+            assert str(panel.content) == ""
 
     asyncio.run(run())
 

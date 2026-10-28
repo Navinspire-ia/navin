@@ -4,9 +4,15 @@
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowDown, Bell, BellOff, ChevronUp, Download, Globe2, Hand, Loader2, Lock, Moon, PanelLeft, Radio, Send, ShieldCheck, SquareTerminal, Sun } from "lucide-react";
+import { ArrowDown, Bell, BellOff, ChevronUp, Download, Globe2, Hand, Loader2, Lock, Moon, MoreHorizontal, PanelLeft, Radio, RefreshCw, Send, ShieldCheck, SquareTerminal, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ChoicePrompt } from "@/components/thread/ChoicePrompt";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
 import { userPromptAnchors } from "@/components/thread/promptNavigation";
@@ -166,6 +172,9 @@ function GuestSession({
   const [snapshot, setSnapshot] = useState<ShareSnapshot | null>(null);
   const [rights, setRights] = useState<Rights>({ drive: false, download: false });
   const [hostOnline, setHostOnline] = useState(true);
+  // Every seat is taken by a socket about to time out: the relay said so
+  // with a retry, the client dials again by itself. Shown, never final.
+  const [roomFull, setRoomFull] = useState(false);
   // Join progress from real steps; never moves back on a reconnect.
   const [joinPercent, setJoinPercent] = useState(0);
   const [closed, setClosed] = useState<string | null>(null);
@@ -247,6 +256,7 @@ function GuestSession({
             );
           }
         },
+        onRoomFull: setRoomFull,
         onClosed: (reason) => {
           setClosed(reason);
           guestNotify(t("chat.liveShare.guest.ended", { defaultValue: "This share has ended." }), reason, "navin-closed");
@@ -352,28 +362,48 @@ function GuestSession({
     void session?.request(what === "drive" ? "request_control" : "request_download");
   };
 
+  const downloadLabel = bundle
+    ? t("chat.liveShare.guest.downloading", {
+        defaultValue: "Downloading {{done}}/{{total}}",
+        done: bundle.received,
+        total: bundle.total || "?",
+      })
+    : rights.download
+      ? t("chat.liveShare.guest.download", { defaultValue: "Download the session" })
+      : requested.download
+        ? t("chat.liveShare.guest.asked", { defaultValue: "Request sent" })
+        : t("chat.liveShare.guest.askDownload", { defaultValue: "Ask to download" });
+
   if (closed) {
     return (
       <Centered>
         <Lock className="h-6 w-6 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium">{t("chat.liveShare.guest.ended", { defaultValue: "This share has ended." })}</p>
-        <p className="text-[13px] text-muted-foreground">{closed}</p>
+        <p className="text-[13px] text-muted-foreground">{closedReasonText(closed, t)}</p>
+        {/* A link the host did not revoke may well be alive again (relay
+            restarted, host back): one tap tries it, the page is not a dead end. */}
+        <Button size="sm" variant="outline" className="mt-1 gap-1.5" onClick={() => window.location.reload()}>
+          <RefreshCw className="h-4 w-4" aria-hidden />
+          {t("chat.liveShare.guest.retry", { defaultValue: "Try again" })}
+        </Button>
       </Centered>
     );
   }
 
   if (!client || !snapshot) {
-    const stageLabel = !hostOnline
-      ? t("chat.liveShare.guest.hostAway", { defaultValue: "The host is offline. Waiting for them..." })
-      : joinPercent >= JOIN_STAGE_PERCENT.data
-        ? t("chat.liveShare.guest.progress.loading", { defaultValue: "Loading the conversation..." })
-        : joinPercent >= JOIN_STAGE_PERCENT.hello
-          ? t("chat.liveShare.guest.progress.host", { defaultValue: "Waiting for the host's reply..." })
-          : joinPercent >= JOIN_STAGE_PERCENT.socket
-            ? t("chat.liveShare.guest.progress.relay", { defaultValue: "Connecting to the share..." })
-            : appLink
-              ? t("chat.liveShare.guest.app.opening", { defaultValue: "Opening the app..." })
-              : t("chat.liveShare.guest.joining", { defaultValue: "Joining the session..." });
+    const stageLabel = roomFull
+      ? t("chat.liveShare.guest.full", { defaultValue: "Every seat is taken right now. Retrying..." })
+      : !hostOnline
+        ? t("chat.liveShare.guest.hostAway", { defaultValue: "The host is offline. Waiting for them..." })
+        : joinPercent >= JOIN_STAGE_PERCENT.data
+          ? t("chat.liveShare.guest.progress.loading", { defaultValue: "Loading the conversation..." })
+          : joinPercent >= JOIN_STAGE_PERCENT.hello
+            ? t("chat.liveShare.guest.progress.host", { defaultValue: "Waiting for the host's reply..." })
+            : joinPercent >= JOIN_STAGE_PERCENT.socket
+              ? t("chat.liveShare.guest.progress.relay", { defaultValue: "Connecting to the share..." })
+              : appLink
+                ? t("chat.liveShare.guest.app.opening", { defaultValue: "Opening the app..." })
+                : t("chat.liveShare.guest.joining", { defaultValue: "Joining the session..." });
     return (
       <Centered>
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
@@ -501,7 +531,7 @@ function GuestSession({
           <Button
             size="icon"
             variant="ghost"
-            className="h-9 w-9 shrink-0"
+            className="hidden h-9 w-9 shrink-0 sm:inline-flex"
             onClick={toggleTheme}
             aria-label={theme === "dark"
               ? t("chat.liveShare.guest.themeLight", { defaultValue: "Day mode" })
@@ -516,7 +546,7 @@ function GuestSession({
             <Button
               size="icon"
               variant="ghost"
-              className="h-9 w-9 shrink-0"
+              className="hidden h-9 w-9 shrink-0 sm:inline-flex"
               aria-pressed={notifyOn}
               aria-label={
                 notifyOn
@@ -537,13 +567,13 @@ function GuestSession({
             <Button
               size="sm"
               variant="outline"
-              className="h-9 shrink-0 max-sm:w-9 max-sm:px-0"
+              className="hidden h-9 shrink-0 sm:inline-flex"
               disabled={requested.drive}
               onClick={() => ask("drive")}
               aria-label={t("chat.liveShare.guest.askControl", { defaultValue: "Ask to drive" })}
             >
               <Hand className="h-4 w-4" aria-hidden />
-              <span className="max-sm:sr-only">
+              <span>
                 {requested.drive
                   ? t("chat.liveShare.guest.asked", { defaultValue: "Request sent" })
                   : t("chat.liveShare.guest.askControl", { defaultValue: "Ask to drive" })}
@@ -553,26 +583,60 @@ function GuestSession({
           <Button
             size="sm"
             variant="outline"
-            className="h-9 shrink-0 max-sm:w-9 max-sm:px-0"
+            className="hidden h-9 shrink-0 sm:inline-flex"
             disabled={Boolean(bundle) || (!rights.download && requested.download)}
             onClick={() => ask("download")}
             aria-label={t("chat.liveShare.guest.download", { defaultValue: "Download the session" })}
           >
             {bundle ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
-            <span className="max-sm:sr-only">
-            {bundle
-              ? t("chat.liveShare.guest.downloading", {
-                  defaultValue: "Downloading {{done}}/{{total}}",
-                  done: bundle.received,
-                  total: bundle.total || "?",
-                })
-              : rights.download
-                ? t("chat.liveShare.guest.download", { defaultValue: "Download the session" })
-                : requested.download
-                  ? t("chat.liveShare.guest.asked", { defaultValue: "Request sent" })
-                  : t("chat.liveShare.guest.askDownload", { defaultValue: "Ask to download" })}
-            </span>
+            <span>{downloadLabel}</span>
           </Button>
+          {/* On a phone the nine header controls overflowed and the useful ones
+              (the live tabs, the session state) were pushed off screen. The
+              secondary actions sit in one menu there; the desktop keeps them inline. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 shrink-0 sm:hidden"
+                aria-label={t("chat.liveShare.guest.more", { defaultValue: "More actions" })}
+              >
+                {bundle ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <MoreHorizontal className="h-4 w-4" aria-hidden />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[220px]">
+              {!rights.drive ? (
+                <DropdownMenuItem disabled={requested.drive} onSelect={() => ask("drive")}>
+                  <Hand className="me-2 h-4 w-4" aria-hidden />
+                  {requested.drive
+                    ? t("chat.liveShare.guest.asked", { defaultValue: "Request sent" })
+                    : t("chat.liveShare.guest.askControl", { defaultValue: "Ask to drive" })}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                disabled={Boolean(bundle) || (!rights.download && requested.download)}
+                onSelect={() => ask("download")}
+              >
+                <Download className="me-2 h-4 w-4" aria-hidden />
+                {downloadLabel}
+              </DropdownMenuItem>
+              {notificationsSupported() ? (
+                <DropdownMenuItem onSelect={() => void toggleNotifications().then(setNotifyOn)}>
+                  {notifyOn ? <Bell className="me-2 h-4 w-4" aria-hidden /> : <BellOff className="me-2 h-4 w-4" aria-hidden />}
+                  {notifyOn
+                    ? t("chat.liveShare.guest.notifyOff", { defaultValue: "Turn notifications off" })
+                    : t("chat.liveShare.guest.notifyOn", { defaultValue: "Notify me (replies, questions, rights)" })}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem onSelect={toggleTheme}>
+                {theme === "dark" ? <Sun className="me-2 h-4 w-4" aria-hidden /> : <Moon className="me-2 h-4 w-4" aria-hidden />}
+                {theme === "dark"
+                  ? t("chat.liveShare.guest.themeLight", { defaultValue: "Day mode" })
+                  : t("chat.liveShare.guest.themeDark", { defaultValue: "Night mode" })}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </header>
         <GuestThread
           chatId={snapshot.chat_id}
@@ -664,6 +728,18 @@ function refusalText(reason: string, t: ReturnType<typeof useTranslation>["t"]):
     too_large: t("chat.liveShare.guest.refused.tooLarge", { defaultValue: "This session is too heavy to download in a browser: ask the host to send you the exported file." }),
     granted_drive: t("chat.liveShare.guest.granted.drive", { defaultValue: "You can now drive the agent" }),
     granted_download: t("chat.liveShare.guest.granted.download", { defaultValue: "You can now download the session" }),
+  };
+  return known[reason] ?? reason;
+}
+
+/** The relay's final close reasons, in the guest's language. */
+function closedReasonText(reason: string, t: ReturnType<typeof useTranslation>["t"]): string {
+  const known: Record<string, string> = {
+    "this link is not active": t("chat.liveShare.guest.closed.inactive", { defaultValue: "The host revoked this link or it expired." }),
+    revoked: t("chat.liveShare.guest.closed.revoked", { defaultValue: "The host stopped sharing." }),
+    removed: t("chat.liveShare.guest.closed.removed", { defaultValue: "The host removed you from this session." }),
+    expired: t("chat.liveShare.guest.closed.expired", { defaultValue: "This link has expired." }),
+    "too many connections": t("chat.liveShare.guest.closed.busy", { defaultValue: "Too many connections from your network. Try again in a minute." }),
   };
   return known[reason] ?? reason;
 }
