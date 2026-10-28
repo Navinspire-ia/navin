@@ -5025,7 +5025,7 @@ export function DevWorkbench({
         onCancel={() => setAppFactoryConfirm(null)}
         onConfirm={(id) => {
           setAppFactoryConfirm(null);
-          if (collapsed) onMaximizeChat?.();
+          // The build runs in the chat: the workbench column stays as it is.
           onRunAction(appFactoryCommand(id));
         }}
       />
@@ -5212,6 +5212,7 @@ export function DevWorkbench({
                   title: tx("dev.teamHint", "Set up your team: opens Settings > Team"),
                 },
                 active: false,
+                keepLayout: true,
                 go: () => openSettingsSection("team"),
               },
               {
@@ -5232,6 +5233,7 @@ export function DevWorkbench({
                   ),
                 },
                 active: false,
+                keepLayout: true,
                 go: () => requestCyberLaunch(),
               },
               {
@@ -5250,6 +5252,7 @@ export function DevWorkbench({
                   ),
                 },
                 active: false,
+                keepLayout: true,
                 go: () => requestReverseLaunch(),
               },
               ...appFactoryMenuItems().map((item) => ({
@@ -5431,6 +5434,11 @@ export function DevWorkbench({
               onBadgeClick?: () => void;
               /** Sub menu shown when the entry is clicked (app targets). */
               menu?: DevOtherMenuItem[];
+              /**
+               * The action lives in the chat or in Settings (Cyber, Reverse,
+               * Team): do not restore the workbench column when clicked.
+               */
+              keepLayout?: boolean;
               active: boolean;
               go: () => void;
             } | null>
@@ -5499,7 +5507,7 @@ export function DevWorkbench({
               <button
                 key={entry.key}
                 type="button"
-                onClick={restoreAnd(entry.go)}
+                onClick={entry.keepLayout ? entry.go : restoreAnd(entry.go)}
                 className={cn(railItem(entry.active), "relative")}
                 title={railIconsOnly ? entry.label : undefined}
                 aria-label={railIconsOnly ? entry.label : undefined}

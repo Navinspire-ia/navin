@@ -4506,6 +4506,10 @@ class GatewayHTTPHandler:
             return await self._handle_webui_diagnostics(request)
         if got == "/api/webui/project-audit":
             return await self._handle_webui_project_audit(request)
+        if got == "/api/webui/security-scan":
+            return await self._handle_webui_security_scan(request)
+        if got == "/api/webui/security-scan/report":
+            return await self._handle_webui_security_report(request)
         if got == "/api/webui/plugins":
             return self._handle_webui_plugins(request)
         if got == "/api/webui/plugins/install":
@@ -5791,6 +5795,50 @@ class GatewayHTTPHandler:
         except ProjectAuditError as exc:
             return _http_error(exc.status, exc.message)
         return _http_json_response(payload)
+
+    async def _handle_webui_security_scan(self, request: WsRequest) -> Response:
+        """Deep security scan of a project for the Code > Cyber panel."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui.security_scan_api import SecurityScanError, security_scan_payload
+
+        query = _parse_query(request.path)
+        raw_path = _query_first(query, "path") or ""
+        kind = _query_first(query, "kind") or "full"
+        subpath = _query_first(query, "subpath") or None
+        try:
+            # Walks the tree and may spawn host scanners: keep it off the loop.
+            payload = await asyncio.to_thread(
+                security_scan_payload, raw_path, kind=kind, subpath=subpath
+            )
+        except SecurityScanError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
+
+    async def _handle_webui_security_report(self, request: WsRequest) -> Response:
+        """HTML or PDF report of a stored security scan, as a download."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui.security_scan_api import SecurityScanError, security_report_payload
+
+        query = _parse_query(request.path)
+        scan_id = _query_first(query, "scan_id") or ""
+        fmt = _query_first(query, "format") or "html"
+        try:
+            body, content_type, filename = await asyncio.to_thread(
+                security_report_payload, scan_id, fmt
+            )
+        except SecurityScanError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_response(
+            body,
+            content_type=content_type,
+            extra_headers=[
+                ("Content-Disposition", content_disposition_attachment(filename)),
+                ("X-Content-Type-Options", "nosniff"),
+                ("Cache-Control", "private, no-store"),
+            ],
+        )
 
     def _handle_webui_plugins(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):

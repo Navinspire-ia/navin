@@ -89,4 +89,33 @@ describe("App factory entries", () => {
     expect(overflow).not.toContain('key: "mobile"');
     expect(source).not.toContain("onSeed={onSeedChat}\n");
   });
+
+  it("starts the build in the chat without reopening the workbench column", () => {
+    const confirm = source.slice(
+      source.indexOf("<AppFactoryConfirmDialog"),
+      source.indexOf("appFactoryCommand(id)"),
+    );
+    expect(confirm).not.toContain("onMaximizeChat");
+  });
+});
+
+describe("Collapsed rail launchers", () => {
+  const rail = source.slice(source.indexOf('key: "team"'), source.indexOf('key: "agi"', source.indexOf('key: "team"')));
+
+  it("keeps the layout for Team, Cyber and Reverse: the action lives in the chat or Settings", () => {
+    for (const key of ['key: "team"', 'key: "cyber"', 'key: "reverse"']) {
+      const entry = rail.slice(rail.indexOf(key), rail.indexOf("go: () =>", rail.indexOf(key)));
+      expect(entry, key).toContain("keepLayout: true");
+    }
+  });
+
+  it("only restores the workbench for entries that render in it", () => {
+    expect(source).toContain("onClick={entry.keepLayout ? entry.go : restoreAnd(entry.go)}");
+    expect(source).not.toContain("onClick={restoreAnd(entry.go)}");
+    const agi = source.slice(
+      source.indexOf('key: "agi"', source.indexOf('key: "team"')),
+      source.indexOf('key: "guardrails"', source.indexOf('key: "team"')),
+    );
+    expect(agi).not.toContain("keepLayout");
+  });
 });

@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from navin.security.findings import dedupe_findings, normalize_finding, severity_counts
+from navin.security.findings import dedupe_findings, severity_counts
 from navin.security.fp_filter import apply_fp_filter
 from navin.security.poc import enrich_findings_with_poc
 from navin.security.scan import _SKIP_DIRS, _is_test_path, run_security_scan
@@ -176,7 +176,7 @@ CODE_RULES: tuple[Rule, ...] = (
     ),
     _r(
         id="weak-hash-password",
-        pattern=r"(?i)(password|passwd|pwd|secret|token)\w*[^\n]{0,60}(hashlib\.(md5|sha1)\(|createHash\(\s*[\"'](md5|sha1)[\"']|\bmd5\(|\bsha1\()",
+        pattern=r"(?i)(?:(password|passwd|pwd|secret|token)\w*[^\n]{0,60}(hashlib\.(md5|sha1)\(|createHash\(\s*[\"'](md5|sha1)[\"']|\bmd5\(|\bsha1\()|(hashlib\.(md5|sha1)\(|createHash\(\s*[\"'](md5|sha1)[\"']|\bmd5\(|\bsha1\()[^\n]{0,60}(password|passwd|pwd|secret|token))",
         severity="high", category="Cryptography", cwe="CWE-328",
         summary="Password or secret hashed with MD5 / SHA-1",
         recommendation="Hash credentials with bcrypt, scrypt or argon2 and a per-user salt.",
@@ -193,7 +193,7 @@ CODE_RULES: tuple[Rule, ...] = (
         payload="collision pair (md5)",
         sketch="MD5 and SHA-1 collisions are practical; acceptable only for non-security checksums, flagged usedforsecurity=False.",
         exts=_WEB,
-        exclude=r"usedforsecurity\s*=\s*False",
+        exclude=r"(?i)(usedforsecurity\s*=\s*False|password|passwd|pwd|secret|token)",
     ),
     _r(
         id="yaml-load",
@@ -287,7 +287,7 @@ CODE_RULES: tuple[Rule, ...] = (
     ),
     _r(
         id="insecure-random-token",
-        pattern=r"(?i)\b(token|secret|password|nonce|salt|otp|session_?id|reset_?code|api_?key)\w*\s*=[^\n]{0,80}\b(random\.(random|randint|choice|choices|randrange|getrandbits)|Math\.random)\(",
+        pattern=r"(?i)\b[\w$]*?(token|secret|password|nonce|salt|otp|session_?id|reset_?code|api_?key)\w*\s*=[^\n]{0,80}\b(random\.(random|randint|choice|choices|randrange|getrandbits)|Math\.random)\(",
         severity="high", category="Cryptography", cwe="CWE-338",
         summary="Security token generated with a non-cryptographic random",
         recommendation="Use secrets.token_urlsafe / crypto.randomBytes for tokens and codes.",
@@ -395,7 +395,7 @@ IAC_RULES: tuple[Rule, ...] = (
     # Dockerfile
     _r(
         id="docker-latest-tag",
-        pattern=r"^\s*FROM\s+(?!scratch\b)[^\s:@]+(:latest)?\s*(AS\s+\w+)?\s*$",
+        pattern=r"^\s*FROM\s+(?!scratch\b|\$)[^\s:@]+(:latest)?\s*(AS\s+\w+)?\s*$",
         severity="low", category="Container", cwe="CWE-1104",
         summary="Base image not pinned (latest or no tag)",
         recommendation="Pin the base image to a version tag or a digest.",
@@ -925,7 +925,7 @@ def _git_tracked(root: Path, patterns: list[str]) -> list[str]:
     if not git or not (root / ".git").exists():
         return []
     try:
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             [git, "ls-files", "-z", "--", *patterns],
             cwd=str(root),
             capture_output=True,
@@ -1203,6 +1203,15 @@ def run_deep_security_scan(
 
     checks, check_findings = _project_checks(root, files)
     extra.extend(check_findings)
+    # A Secret manifest named *.example / *.sample / *.template is documentation.
+    extra = [
+        f
+        for f in extra
+        if not (
+            f.get("id") == "k8s-secret-manifest"
+            and re.search(r"(?i)(example|sample|template)", str(f.get("file_path") or "").rsplit("/", 1)[-1])
+        )
+    ]
     tools.append({"tool": "navin-deep", "available": True, "count": len(extra)})
 
     # normalize_finding drops cwe; keep it by location key and re-attach.
