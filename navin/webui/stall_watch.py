@@ -398,8 +398,11 @@ def freeze_startup_heap() -> bool:
 # over the unfrozen objects only: cheap once the previous pass froze the rest.
 IDLE_HEAP_PASS_MIN_INTERVAL_S = 60.0
 # Frozen objects may hold cycles that died since (a finished turn's tasks and
-# tracebacks). Once the frozen set grew this much, the next idle pass thaws
-# everything first, collects it all and freezes again: rare, and idle only.
+# tracebacks). Once the frozen set grew this much past the last baseline, the
+# next idle pass thaws everything first, collects it all and freezes again:
+# rare, and idle only. The baseline is set by the first ordinary pass (which
+# puts away whatever the engine built up before its first idle minute) and by
+# every deep pass.
 IDLE_HEAP_DEEP_GROWTH = 500_000
 # A pass at least this long is logged with its kind, for the next audit.
 SLOW_HEAP_PASS_S = 0.5
@@ -430,7 +433,12 @@ class IdleHeapPass:
         self._min_interval_s = min_interval_s
         self._deep_growth = deep_growth
         self._last_pass_at = float("-inf")
-        self.frozen_after_deep = gc.get_freeze_count()
+        # Frozen count the growth is measured from: after the first ordinary
+        # pass, then after each deep pass. Not the count at construction:
+        # ``freeze_startup_heap`` and the first pass itself freeze the whole
+        # live heap, which is size, not growth (a deep pass over it right
+        # after would only repeat the walk the first pass just did).
+        self.frozen_after_deep: int | None = None
         self.passes = 0
         self.deep_passes = 0
         self.last_pass_s = 0.0
@@ -443,7 +451,8 @@ class IdleHeapPass:
         if now - self._last_pass_at < self._min_interval_s:
             return False
         self._last_pass_at = now
-        deep = gc.get_freeze_count() - self.frozen_after_deep >= self._deep_growth
+        base = self.frozen_after_deep
+        deep = base is not None and gc.get_freeze_count() - base >= self._deep_growth
         started = time.perf_counter()
         if deep:
             gc.unfreeze()
@@ -453,6 +462,7 @@ class IdleHeapPass:
         self.passes += 1
         if deep:
             self.deep_passes += 1
+        if deep or base is None:
             self.frozen_after_deep = gc.get_freeze_count()
         if self.last_pass_s >= SLOW_HEAP_PASS_S:
             from loguru import logger

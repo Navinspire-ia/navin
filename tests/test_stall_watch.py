@@ -612,14 +612,19 @@ def thawed_heap():
 
 def test_idle_heap_pass_runs_only_idle_and_once_an_interval(thawed_heap) -> None:
     clock = _Clock()
-    keeper = IdleHeapPass(clock, min_interval_s=60.0)
+    # deep_growth=1: the first pass freezes the whole live heap (far more than
+    # one object in a full test run) and that is the baseline, not growth. On
+    # the CI runner the whole suite's heap made the second pass deep once.
+    keeper = IdleHeapPass(clock, min_interval_s=60.0, deep_growth=1)
+    assert keeper.frozen_after_deep is None
     assert keeper.tick(idle=False) is False
     assert keeper.passes == 0
     assert keeper.tick(idle=True) is True
     assert gc.get_freeze_count() > 0  # the survivors are out of the next collections
+    assert keeper.frozen_after_deep is not None
     assert keeper.tick(idle=True) is False  # same minute
     clock.now += 60.0
-    assert keeper.tick(idle=True) is True
+    assert keeper.tick(idle=True) is True  # nothing frozen since the baseline: ordinary
     assert keeper.passes == 2
     assert keeper.deep_passes == 0
 
@@ -627,11 +632,13 @@ def test_idle_heap_pass_runs_only_idle_and_once_an_interval(thawed_heap) -> None
 def test_idle_heap_pass_thaws_everything_once_the_frozen_set_grew(thawed_heap) -> None:
     clock = _Clock()
     keeper = IdleHeapPass(clock, min_interval_s=0.0, deep_growth=1)
-    assert keeper.tick(idle=True) is True  # ordinary: nothing frozen by it yet
-    assert keeper.deep_passes == 0
-    kept = [[i] for i in range(1000)]  # cycles-free containers: they survive and get frozen
+    assert keeper.tick(idle=True) is True  # first pass: the baseline
+    kept = [[i] for i in range(1000)]  # survivors the next ordinary pass freezes
     clock.now += 1.0
-    assert keeper.tick(idle=True) is True
+    assert keeper.tick(idle=True) is True  # ordinary: the frozen set grows by them
+    assert keeper.deep_passes == 0
+    clock.now += 1.0
+    assert keeper.tick(idle=True) is True  # grown past the bound: thaw, collect all, freeze
     assert keeper.deep_passes == 1
     # The growth baseline moved to the thawed-and-refrozen heap (the kept
     # lists included); objects freed by refcount since may lower the live count.
