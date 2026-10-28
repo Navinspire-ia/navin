@@ -235,6 +235,11 @@ def test_checklist_lists_the_asks_and_the_full_stack_chain(tmp_path: Path) -> No
     assert "its route and its menu or navigation entry" in block.content
     assert "file them first as a board plan, one step per ask" in block.content
     assert "claim_next=true" in block.content
+    # Three or more asks: the independent ones start as subagents in the same
+    # reply as the plan, instead of being worked one after another.
+    assert "start one subagent per independent ask with spawn" in block.content
+    assert "in the SAME reply as the board plan" in block.content
+    assert "relaunched, never left for the user" in block.content
 
 
 def test_checklist_skips_the_chain_without_frontend_and_plain_questions(tmp_path: Path) -> None:
@@ -248,6 +253,7 @@ def test_checklist_skips_the_chain_without_frontend_and_plain_questions(tmp_path
     assert "2 separate asks" in backend_only.content
     assert "user-facing part" not in backend_only.content
     assert "board plan" not in backend_only.content
+    assert "subagent" not in backend_only.content
     question = asyncio.run(
         request_checklist_context_provider(_request("pourquoi le build echoue ?", tmp_path))
     )

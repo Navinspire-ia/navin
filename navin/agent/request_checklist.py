@@ -124,6 +124,15 @@ def checklist_lines(
                 "a step, close it with its evidence and claim the next in one call (move "
                 "status=done claim_next=true). The turn is not finished while a step is open."
             )
+            lines.append(
+                "Asks that do not depend on each other run in parallel: in the SAME reply "
+                "as the board plan, start one subagent per independent ask with spawn "
+                "(disjoint files, or isolate=true), each told its task ids, the checks to "
+                "run and to close its steps on the board; keep one share for yourself, "
+                "integrate their results, run the final verification and build. Only "
+                "asks that need another's result stay sequential. A subagent that stops "
+                "before its step is done is relaunched, never left for the user."
+            )
     if terms and has_frontend:
         lines.append(
             f"This request has a user-facing part ({', '.join(terms)}). A backend alone "

@@ -55,8 +55,15 @@ class InstallKindTests(unittest.TestCase):
     def test_the_shell_names_the_kind(self):
         for kind in ("linux-appimage", "linux-package", "macos-app", "windows-setup"):
             with self.subTest(kind=kind):
-                with mock.patch.dict(os.environ, {"NAVIN_INSTALL_KIND": kind}):
+                service._linux_package_kind.cache_clear()
+                with (
+                    mock.patch.dict(os.environ, {"NAVIN_INSTALL_KIND": kind}),
+                    # "linux-package" is refined from the package database; on a
+                    # host where the .deb is installed it would read linux-deb.
+                    mock.patch.object(service, "_linux_package_manager", return_value=None),
+                ):
                     self.assertEqual(service._install_kind(), kind)
+        service._linux_package_kind.cache_clear()
 
     def test_an_unknown_kind_is_ignored(self):
         with mock.patch.dict(os.environ, {"NAVIN_INSTALL_KIND": "linux-flatpak"}):

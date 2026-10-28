@@ -516,6 +516,70 @@ def _saved_checkout(checkpoint: dict[str, Any] | None) -> dict[str, Any] | None:
     return saved if Path(saved["path"]).is_dir() else None
 
 
+_INTERRUPTED_CALL_NOTICE = (
+    "Interrupted by a restart before this call finished: its effect is unknown. "
+    "Check the current state (read the file, run a status command) before redoing it, "
+    "then continue the task."
+)
+
+
+def _resume_after_interrupted_batch(
+    messages: list[dict[str, Any]], checkpoint: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Conversation a run stopped in ``awaiting_tools`` can continue from.
+
+    The assistant message carrying the pending tool calls becomes the last
+    assistant message (taken from the checkpoint when the journal does not
+    already end with it), then every pending call without a result gets a
+    tool message saying the restart cut it short, so the model checks the
+    state before redoing anything instead of hanging on an unanswered call.
+    """
+    checkpoint = checkpoint or {}
+    result = [dict(m) for m in messages if isinstance(m, dict)]
+    if checkpoint.get("phase") != "awaiting_tools":
+        return result
+    pending = [c for c in (checkpoint.get("pending_tool_calls") or []) if isinstance(c, dict)]
+    if not pending:
+        # Older checkpoints only carry the assistant message: its calls are the batch.
+        assistant = checkpoint.get("assistant_message")
+        if isinstance(assistant, dict):
+            pending = [c for c in (assistant.get("tool_calls") or []) if isinstance(c, dict)]
+    if not pending:
+        return result
+    pending_ids = {str(c.get("id")) for c in pending if c.get("id")}
+
+    def _carries_batch(message: dict[str, Any]) -> bool:
+        if message.get("role") != "assistant":
+            return False
+        ids = {str(tc.get("id")) for tc in (message.get("tool_calls") or []) if isinstance(tc, dict)}
+        return bool(ids & pending_ids)
+
+    batch_index = next((i for i in range(len(result) - 1, -1, -1) if _carries_batch(result[i])), None)
+    if batch_index is None:
+        assistant = checkpoint.get("assistant_message")
+        if isinstance(assistant, dict):
+            result.append(dict(assistant))
+        else:
+            result.append({"role": "assistant", "content": "", "tool_calls": [dict(c) for c in pending]})
+        batch_index = len(result) - 1
+    answered = {
+        str(m.get("tool_call_id")) for m in result[batch_index + 1:]
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+    for call in pending:
+        call_id = call.get("id")
+        if not call_id or str(call_id) in answered:
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        result.append({
+            "role": "tool", "tool_call_id": call_id,
+            "name": str(function.get("name") or "tool"),
+            "content": _INTERRUPTED_CALL_NOTICE,
+        })
+        answered.add(str(call_id))
+    return result
+
+
 def _agent_allowed(base: Any, workspace: Path | None, agent_name: str | None) -> Any:
     """Narrow the allowlist to the ``tools`` an agent definition declares.
 
@@ -1248,8 +1312,6 @@ class SubagentManager:
         abandoned = not metadata.get("done") and not alive
         cancelled = metadata.get("done") and str(metadata.get("error") or "").lower() in {"cancelled", "canceled"}
         interrupted = abandoned or cancelled
-        checkpoint_phase = (record.get("checkpoint") or {}).get("phase")
-        ambiguous = checkpoint_phase == "awaiting_tools"
         if abandoned:
             metadata.update(phase="interrupted", status_line="Interrupted by restart", done=False)
         isolated = record["descriptor"].get("isolate", False)
@@ -1257,10 +1319,14 @@ class SubagentManager:
         # still on disk; without it the work has to be reviewed and relaunched.
         if isolated and _saved_checkout(record.get("checkpoint")) is not None:
             isolated = False
-        metadata["recoverable"] = bool(interrupted and not ambiguous and not isolated)
+        # A run cut during a tool batch resumes too: the pending calls get an
+        # "effect unknown" result (see _resume_after_interrupted_batch) and
+        # the model checks the state itself. Left aside, such an agent was
+        # re-evaluated at every restart and never came back.
+        metadata["recoverable"] = bool(interrupted and not isolated)
         failed = metadata.get("done") and metadata.get("phase") == "error"
         metadata["requires_relaunch"] = bool(
-            (interrupted and (ambiguous or isolated)) or (failed and not metadata["recoverable"])
+            (interrupted and isolated) or (failed and not metadata["recoverable"])
         )
         return metadata
 
@@ -1306,7 +1372,7 @@ class SubagentManager:
             if resume_checkout is None:
                 return "Cannot resume: isolated workspace needs explicit review and relaunch."
         if metadata["requires_relaunch"]:
-            return "Cannot resume: a tool batch was interrupted; inspect its effects and explicitly relaunch."
+            return "Cannot resume: this run needs review; inspect its effects and explicitly relaunch."
         if not metadata["recoverable"]:
             return "Cannot resume: agent is active or already finished."
         saved_model = metadata.get("model")
@@ -1350,6 +1416,11 @@ class SubagentManager:
             _journal_executor(), self._journal_io, "messages", session_key, task_id,
         )
         checkpoint = record.get("checkpoint") or {}
+        resumed_after_batch = False
+        if checkpoint.get("phase") == "awaiting_tools":
+            continued = _resume_after_interrupted_batch(messages, checkpoint)
+            resumed_after_batch = continued != messages
+            messages = continued
         pending = _QueuedSpawn(
             task_id=task_id, task=descriptor["task"], label=descriptor["label"],
             agent_name=descriptor["agent"], origin=descriptor["origin"], runtime=runtime,
@@ -1412,31 +1483,46 @@ class SubagentManager:
                 status.phase = "queued"
                 self._queued.setdefault(session_key, deque()).append(pending)
         self._publish_progress(status, force=True)
+        if resumed_after_batch:
+            return f"Subagent [{status.label}] resumed after restart (id: {task_id})."
         return f"Subagent [{status.label}] resumed (id: {task_id})."
 
     async def auto_recover(self, *, runtime: LLMRuntime, scope_for: Callable[[str], WorkspaceScope | None]) -> dict[str, int]:
-        """After a restart, resume every agent left at a safe durable boundary.
+        """After a restart, resume every agent left at a durable boundary.
 
-        Agents that need human review (interrupted tool batch, isolated
-        checkout) are left for an explicit relaunch, exactly like the manual
-        path: auto-recovery uses ``recover_agent`` and its checks verbatim.
+        A run cut during a tool batch resumes with its pending calls marked
+        "effect unknown". Only agents that truly need human review (isolated
+        checkout gone, failed run) are left for an explicit relaunch; any
+        other refusal (model, workspace, queue) is counted as skipped and
+        logged with its reason. Auto-recovery uses ``recover_agent`` and its
+        checks verbatim, exactly like the manual path.
         """
         candidates = await asyncio.get_running_loop().run_in_executor(
             _journal_executor(), self._journal_io, "unfinished",
         )
-        counts = {"resumed": 0, "skipped": 0}
+        counts = {"resumed": 0, "review": 0, "skipped": 0}
         for session_key, task_id in candidates:
             try:
                 detail = await self.recover_agent(
                     session_key, task_id, runtime=runtime, workspace_scope=scope_for(session_key),
                 )
-            except Exception:
+            except Exception:  # one broken record must not stop the others from resuming
                 logger.exception("Subagent auto-recovery failed for {}", task_id)
                 counts["skipped"] += 1
                 continue
-            counts["resumed" if not detail.startswith("Cannot") else "skipped"] += 1
+            if not detail.startswith("Cannot"):
+                counts["resumed"] += 1
+            elif "relaunch" in detail:
+                counts["review"] += 1
+                logger.info("Subagent auto-recovery: {} left for review: {}", task_id, detail)
+            else:
+                counts["skipped"] += 1
+                logger.info("Subagent auto-recovery: {} skipped: {}", task_id, detail)
         if candidates:
-            logger.info("Subagent auto-recovery: {resumed} resumed, {skipped} left for review", **counts)
+            logger.info(
+                "Subagent auto-recovery: {resumed} resumed, {review} left for review, {skipped} skipped",
+                **counts,
+            )
         return counts
 
     async def relaunch_agent(

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import functools
 import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import stat
@@ -108,6 +110,9 @@ _INSTALL_KINDS = frozenset(
         "linux",
         "linux-appimage",
         "linux-package",
+        "linux-deb",
+        "linux-rpm",
+        "linux-pacman",
         "macos",
         "macos-app",
     }
@@ -115,8 +120,30 @@ _INSTALL_KINDS = frozenset(
 
 # Installs owned by something else: a distribution package manager put these
 # files there, and replacing them behind its back leaves a machine whose
-# package database disagrees with its disk.
+# package database disagrees with its disk. Only the manager nobody could
+# name stays here: a .deb, .rpm or pacman install hands back to its own
+# manager (see _PACKAGE_MANAGER_KINDS).
 _MANAGED_KINDS = frozenset({"linux-package"})
+
+# A Linux install the package manager owns, and that it can update itself: the
+# matching package is downloaded and installed with the same tool through
+# polkit, the way the Windows setup runs the new installer with elevation. A
+# user on Debian, Fedora or Arch had the Windows experience minus the update:
+# "use your package manager" named a repository that does not exist.
+_PACKAGE_MANAGER_KINDS: dict[str, str] = {
+    "linux-deb": "deb",
+    "linux-rpm": "rpm",
+    "linux-pacman": "pacman",
+}
+# What each manager runs as root; $1 is the downloaded package.
+_PACKAGE_COMMANDS: dict[str, str] = {
+    "deb": 'dpkg -i "$1"',
+    "rpm": 'rpm -Uvh --replacepkgs "$1"',
+    "pacman": 'pacman -U --noconfirm "$1"',
+}
+_PACKAGE_NAME = "navin"
+# Where distribution packages put the sidecar (usr/lib/Navin/navin-dist).
+_SYSTEM_PREFIXES = ("/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share", "/opt")
 
 # The directory PyInstaller builds and every install ships: the CLI archives
 # (curl https://navin.live/install), the desktop bundles, all of them.
@@ -170,11 +197,65 @@ def _cli_tree() -> Path | None:
     return tree
 
 
+def _linux_package_manager(root: Path = Path("/")) -> str | None:
+    """Which package manager owns the installed navin package: deb, rpm, pacman or None.
+
+    The databases are read directly: no subprocess on every status poll, and
+    the answer does not depend on the tool being on PATH. rpm has no plain
+    file to look at, so it alone is asked, once (see _linux_package_kind).
+    """
+    if (root / "var/lib/dpkg/info" / f"{_PACKAGE_NAME}.list").is_file():
+        return "deb"
+    pacman_db = root / "var/lib/pacman/local"
+    if pacman_db.is_dir():
+        with contextlib.suppress(OSError):
+            for entry in pacman_db.iterdir():
+                # Entries read navin-2.3.12-1: name, version, release.
+                if entry.is_dir() and entry.name.rsplit("-", 2)[0] == _PACKAGE_NAME:
+                    return "pacman"
+    if (root / "var/lib/rpm").is_dir() and shutil.which("rpm"):
+        try:
+            result = subprocess.run(
+                ["rpm", "-q", _PACKAGE_NAME],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode == 0:
+            return "rpm"
+    return None
+
+
+@functools.lru_cache(maxsize=1)
+def _linux_package_kind() -> str:
+    """The kind of a Linux system install: linux-deb, linux-rpm, linux-pacman, else linux-package."""
+    manager = _linux_package_manager()
+    for kind, name in _PACKAGE_MANAGER_KINDS.items():
+        if name == manager:
+            return kind
+    return "linux-package"
+
+
+def _under_system_prefix(executable: Path) -> bool:
+    """True when the sidecar runs from a directory a distribution package owns."""
+    try:
+        resolved = executable.resolve()
+    except OSError:
+        return False
+    return any(resolved.is_relative_to(prefix) for prefix in _SYSTEM_PREFIXES)
+
+
 def _install_kind() -> str:
     # The desktop shell knows what the user actually installed, which this
     # process cannot see: its own path is a sidecar inside the app. It states
     # the kind when it spawns the gateway.
     explicit = os.environ.get("NAVIN_INSTALL_KIND", "").strip().lower()
+    if explicit == "linux-package":
+        # The shell only knows "a package"; the package database says which.
+        return _linux_package_kind()
     if explicit in _INSTALL_KINDS:
         return explicit
     # The AppImage runtime sets this even when an older shell forgot to name
@@ -190,6 +271,10 @@ def _install_kind() -> str:
     if sys.platform == "win32":
         return "windows-portable" if "portable" in stem else "windows-setup"
     if sys.platform.startswith("linux"):
+        # A sidecar under /usr/lib was put there by a package: swapping the
+        # bare binary (kind "linux") would fail on the read-only prefix.
+        if _under_system_prefix(Path(sys.executable)):
+            return _linux_package_kind()
         return "linux"
     if sys.platform == "darwin":
         # The two macOS shapes are updated differently: the DMG installs an
@@ -559,6 +644,13 @@ def _download_path(version: str, kind: str) -> Path:
         suffix = ".dmg"
     elif kind == "linux-appimage":
         suffix = ".AppImage"
+    elif kind == "linux-deb":
+        suffix = ".deb"
+    elif kind == "linux-rpm":
+        suffix = ".rpm"
+    elif kind == "linux-pacman":
+        # pacman reads the compression from the name.
+        suffix = ".pkg.tar.zst"
     else:
         suffix = ""
     root = Path.home() / ".navin" / "updates" / version
@@ -764,6 +856,20 @@ _FILE_SWAP_INSTALL_SCRIPT = (
     'else rm -f "$4"; mv -f "$5" "$4"; "$4" >/dev/null 2>&1 & fi'
 )
 
+# A system package: the manager that installed Navin installs the new one,
+# through polkit (pkexec asks for the password the way the Windows setup asks
+# for elevation). The application is closed first: dpkg, rpm and pacman replace
+# files a running PyInstaller tree still loads lazily. A cancelled prompt or a
+# failed install replaces nothing, and the version in place is brought back.
+# $3 the downloaded package, $4 what to relaunch, $5 the manager command.
+_PACKAGE_INSTALL_SCRIPT = (
+    "trap '" + _CLEAR_MARKER.strip() + "' EXIT; "
+    + _UPDATE_HANDOFF + _WAIT_FOR_APP +
+    'if pkexec sh -c "$5" navin-package-update "$3"; then ' + _MARK_DONE +
+    '"$4" >/dev/null 2>&1 & exit 0; fi; '
+    '"$4" >/dev/null 2>&1 & exit 1'
+)
+
 
 def _updater_environment() -> dict[str, str]:
     # The new application outlives the old frozen process and must load its
@@ -926,6 +1032,57 @@ def _install_appimage(image: Path, *, pid: int, desktop_pid: int) -> None:
         target=target,
         pid=pid,
         desktop_pid=desktop_pid,
+    )
+
+
+def _desktop_executable(desktop_pid: int) -> Path | None:
+    """The window to bring back after a package install: what the desktop PID runs.
+
+    A package puts the shell in /usr/bin under the product's binary name; the
+    running window is the exact file the user starts, so it is read from the
+    process first and the known names are only a fallback.
+    """
+    if desktop_pid > 0:
+        with contextlib.suppress(OSError):
+            exe = Path(f"/proc/{desktop_pid}/exe").resolve()
+            if exe.is_file():
+                return exe
+    for name in ("navin-desktop", "Navin"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    return None
+
+
+def _manual_package_command(kind: str, package: Path) -> str:
+    """The one line a user types to install the downloaded package themselves."""
+    manager = _PACKAGE_MANAGER_KINDS[kind]
+    return "sudo " + _PACKAGE_COMMANDS[manager].replace('"$1"', shlex.quote(str(package)))
+
+
+def _install_linux_package(package: Path, kind: str, *, pid: int, desktop_pid: int) -> None:
+    """Install the downloaded .deb, .rpm or .pkg.tar.zst with the manager that owns Navin."""
+    manager = _PACKAGE_MANAGER_KINDS[kind]
+    if not shutil.which("pkexec"):
+        raise UpdateError(
+            "Navin cannot ask for administrator rights (pkexec is missing). "
+            f"Install the downloaded version by hand: {_manual_package_command(kind, package)}",
+            status=409,
+        )
+    relaunch = _desktop_executable(desktop_pid) or Path(sys.executable)
+    _start_desktop_updater(
+        [
+            "/bin/sh",
+            "-c",
+            _PACKAGE_INSTALL_SCRIPT,
+            "navin-updater",
+            str(pid),
+            str(desktop_pid),
+            _os_path(package),
+            _os_path(relaunch),
+            _PACKAGE_COMMANDS[manager],
+        ],
+        markers=True,
     )
 
 
@@ -1365,6 +1522,8 @@ def _install_update() -> dict[str, Any]:
         _install_macos_app(Path(path), pid=pid, desktop_pid=desktop_pid)
     elif kind == "linux-appimage":
         _install_appimage(Path(path), pid=pid, desktop_pid=desktop_pid)
+    elif kind in _PACKAGE_MANAGER_KINDS:
+        _install_linux_package(Path(path), kind, pid=pid, desktop_pid=desktop_pid)
     elif kind in {"linux", "macos"}:
         _install_posix_app(
             _FILE_SWAP_INSTALL_SCRIPT,

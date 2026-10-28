@@ -13,6 +13,7 @@ from navin.agent.runner import AgentRunResult
 from navin.agent.subagent import (
     SubagentManager,
     SubagentStatus,
+    _resume_after_interrupted_batch,
     _SubagentHook,
     request_subagent_operation,
 )
@@ -276,10 +277,11 @@ def test_restart_recovers_complete_boundary_without_replaying_tool_batch(tmp_pat
         entries = {item["task_id"]: item for item in fresh.list_agents("cli:one")}
         assert entries["safe"]["recoverable"]
         assert entries["queued"]["recoverable"]
-        assert entries["unsafe"]["requires_relaunch"]
+        # Cut during a tool batch: resumable too, the pending call is answered
+        # with an "effect unknown" notice instead of being left for review.
+        assert entries["unsafe"]["recoverable"] and not entries["unsafe"]["requires_relaunch"]
         assert "interrupted" in entries["unsafe"]["phase"]
         assert "Cannot resume" in await fresh.recover_agent("cli:other", "safe", runtime=runtime())
-        assert "tool batch" in await fresh.recover_agent("cli:one", "unsafe", runtime=runtime())
         assert not fresh.runner.specs
         assert "resumed" in await fresh.recover_agent("cli:one", "safe", runtime=runtime())
         await asyncio.gather(*fresh._running_tasks.values())
@@ -293,13 +295,22 @@ def test_restart_recovers_complete_boundary_without_replaying_tool_batch(tmp_pat
         await fresh.flush_journal()
         assert fresh.agent_history("cli:one", "safe")["agent"]["done"]
         assert "recovery" in repr(fresh.agent_history("cli:one", "safe")["events"])
-        assert "started" in await fresh.relaunch_agent("cli:one", "unsafe", runtime=runtime())
+        assert "resumed after restart" in await fresh.recover_agent("cli:one", "unsafe", runtime=runtime())
         await asyncio.gather(*fresh._running_tasks.values())
         assert len(fresh.runner.specs) == 2
-        assert fresh.agent_history("cli:one", "unsafe")["agent"]["requires_relaunch"]
+        unsafe_messages = fresh.runner.specs[1].initial_messages
+        assert unsafe_messages[-2]["role"] == "assistant"
+        assert unsafe_messages[-2]["tool_calls"][0]["id"] == "read"
+        assert unsafe_messages[-1]["role"] == "tool" and unsafe_messages[-1]["tool_call_id"] == "read"
+        assert "Interrupted by a restart" in unsafe_messages[-1]["content"]
+        await fresh.flush_journal()
+        assert fresh.agent_history("cli:one", "unsafe")["agent"]["done"]
+        assert "started" in await fresh.relaunch_agent("cli:one", "unsafe", runtime=runtime())
+        await asyncio.gather(*fresh._running_tasks.values())
+        assert len(fresh.runner.specs) == 3
         assert "resumed" in await fresh.recover_agent("cli:one", "final", runtime=runtime())
         await asyncio.gather(*fresh._running_tasks.values())
-        assert len(fresh.runner.specs) == 2, "Durable final response must not run the model again"
+        assert len(fresh.runner.specs) == 3, "Durable final response must not run the model again"
         history = fresh.agent_history("cli:one", "final")
         assert history["agent"]["done"]
         assert history["events"][-1]["payload"]["content"] == "Already finished result"
@@ -517,7 +528,7 @@ def test_admission_keeps_queue_when_completion_removes_old_deque(tmp_path, monke
     asyncio.run(run())
 
 
-def test_auto_recover_resumes_safe_agents_and_leaves_unsafe_for_review(tmp_path, monkeypatch):
+def test_auto_recover_resumes_interrupted_batches_and_leaves_lost_checkouts_for_review(tmp_path, monkeypatch):
     async def run():
         monkeypatch.setattr("navin.agent.subagent._outcomes_dir", lambda: tmp_path / "history")
         manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
@@ -529,16 +540,23 @@ def test_auto_recover_resumes_safe_agents_and_leaves_unsafe_for_review(tmp_path,
                           "locked_denied_tools": [], "allowed_tools": None,
                       }}
         for task_id, phase, done in (("safe", "tools_completed", False),
-                                     ("unsafe", "awaiting_tools", False),
+                                     ("midbatch", "awaiting_tools", False),
+                                     ("lost", "awaiting_tools", False),
                                      ("over", "done", True)):
             manager.journal.create("cli:one", task_id, {
                 "task_id": task_id, "label": "Worker", "done": done, "phase": phase,
-            }, descriptor)
+            }, {**descriptor, "isolate": task_id == "lost"})
             manager.journal.checkpoint("cli:one", task_id, {
                 "phase": phase, "iteration": 1,
                 "assistant_message": {"role": "assistant", "content": "x", "tool_calls": [
                     {"id": "r", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
-                "completed_tool_results": [{"role": "tool", "tool_call_id": "r", "content": "ok"}],
+                "completed_tool_results": [] if phase == "awaiting_tools" else [
+                    {"role": "tool", "tool_call_id": "r", "content": "ok"}],
+                "pending_tool_calls": [
+                    {"id": "r", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]
+                if phase == "awaiting_tools" else [],
+                **({"checkout": {"path": str(tmp_path / "missing"), "origin": str(tmp_path), "base": "abc"}}
+                   if task_id == "lost" else {}),
             })
         with manager.journal._lock, manager.journal._db:
             manager.journal._db.execute("UPDATE agents SET owner_pid=-1")
@@ -546,20 +564,102 @@ def test_auto_recover_resumes_safe_agents_and_leaves_unsafe_for_review(tmp_path,
         fresh.runner = Runner()
         fresh._build_tools = Mock()
         fresh._build_subagent_prompt = Mock(return_value="Agent")
-        assert sorted(t for _, t in fresh.journal.unfinished()) == ["safe", "unsafe"]
+        assert sorted(t for _, t in fresh.journal.unfinished()) == ["lost", "midbatch", "safe"]
         counts = await fresh.auto_recover(runtime=runtime(), scope_for=lambda _key: None)
-        assert counts == {"resumed": 1, "skipped": 1}
+        assert counts == {"resumed": 2, "review": 1, "skipped": 0}
         await asyncio.gather(*fresh._running_tasks.values())
-        assert len(fresh.runner.specs) == 1
+        assert len(fresh.runner.specs) == 2
+        tails = [s.initial_messages[-1] for s in fresh.runner.specs]
+        assert sum(1 for m in tails if m["role"] == "tool" and "Interrupted by a restart" in m["content"]) == 1
         await fresh.flush_journal()
         assert fresh.agent_history("cli:one", "safe")["agent"]["done"]
-        assert fresh.agent_history("cli:one", "unsafe")["agent"]["requires_relaunch"]
+        assert fresh.agent_history("cli:one", "midbatch")["agent"]["done"]
+        lost = fresh.agent_history("cli:one", "lost")["agent"]
+        assert lost["requires_relaunch"] and not lost["recoverable"]
         # A second pass is a no-op: nothing is resumed twice.
-        assert (await fresh.auto_recover(runtime=runtime(), scope_for=lambda _k: None))["resumed"] == 0
+        again = await fresh.auto_recover(runtime=runtime(), scope_for=lambda _k: None)
+        assert again == {"resumed": 0, "review": 1, "skipped": 0}
         fresh._watchdog_task.cancel()
         await asyncio.gather(fresh._watchdog_task, return_exceptions=True)
 
     asyncio.run(run())
+
+
+def _record(phase, *, isolate=False, checkout=None, done=False, error=None):
+    checkpoint = {"phase": phase, "pending_tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}]}
+    if checkout is not None:
+        checkpoint["checkout"] = {"path": str(checkout), "origin": "/origin", "base": "abc"}
+    metadata = {"task_id": "t1", "done": done, "phase": "error" if error else phase}
+    if error:
+        metadata["error"] = error
+    return {"metadata": metadata, "descriptor": {"isolate": isolate},
+            "checkpoint": checkpoint, "owner_pid": -1, "owner_identity": ""}
+
+
+def test_stored_metadata_makes_an_interrupted_tool_batch_recoverable_unless_checkout_is_lost(tmp_path):
+    manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
+    plain = manager._stored_metadata(_record("awaiting_tools"), alive=False)
+    assert plain["recoverable"] and not plain["requires_relaunch"]
+    assert plain["phase"] == "interrupted"
+    kept = tmp_path / "wt"
+    kept.mkdir()
+    saved = manager._stored_metadata(_record("awaiting_tools", isolate=True, checkout=kept), alive=False)
+    assert saved["recoverable"] and not saved["requires_relaunch"]
+    lost = manager._stored_metadata(
+        _record("awaiting_tools", isolate=True, checkout=tmp_path / "missing"), alive=False,
+    )
+    assert lost["requires_relaunch"] and not lost["recoverable"]
+    failed = manager._stored_metadata(_record("awaiting_tools", done=True, error="boom"), alive=False)
+    assert failed["requires_relaunch"] and not failed["recoverable"]
+    running = manager._stored_metadata(_record("awaiting_tools"), alive=True)
+    assert not running["recoverable"] and not running["requires_relaunch"]
+
+
+_BATCH = {"role": "assistant", "content": "Doing two things", "tool_calls": [
+    {"id": "a", "type": "function", "function": {"name": "write_file", "arguments": "{}"}},
+    {"id": "b", "type": "function", "function": {"name": "exec", "arguments": "{}"}},
+]}
+_CHECKPOINT = {"phase": "awaiting_tools", "assistant_message": _BATCH,
+               "pending_tool_calls": list(_BATCH["tool_calls"])}
+_HEAD = [{"role": "user", "content": "Build it"}]
+
+
+def test_resume_helper_answers_each_pending_call_when_journal_ends_with_the_batch():
+    out = _resume_after_interrupted_batch([*_HEAD, _BATCH], _CHECKPOINT)
+    assert out[:2] == [*_HEAD, _BATCH]
+    tail = out[2:]
+    assert [(m["role"], m["tool_call_id"], m["name"]) for m in tail] == [
+        ("tool", "a", "write_file"), ("tool", "b", "exec")]
+    assert all("Interrupted by a restart before this call finished" in m["content"] for m in tail)
+    assert all("\u2014" not in m["content"] and "\u2013" not in m["content"] for m in tail)
+    assert sum(1 for m in out if m["role"] == "assistant") == 1
+
+
+def test_resume_helper_appends_the_batch_message_when_the_journal_lacks_it():
+    out = _resume_after_interrupted_batch(list(_HEAD), _CHECKPOINT)
+    assert out[1] == _BATCH
+    assert [m["tool_call_id"] for m in out[2:]] == ["a", "b"]
+    assert all(m["role"] == "tool" for m in out[2:])
+
+
+def test_resume_helper_skips_calls_that_already_have_a_result_and_other_phases():
+    done = {"role": "tool", "tool_call_id": "a", "name": "write_file", "content": "written"}
+    out = _resume_after_interrupted_batch([*_HEAD, _BATCH, done], _CHECKPOINT)
+    assert out[:3] == [*_HEAD, _BATCH, done]
+    assert [m["tool_call_id"] for m in out[3:]] == ["b"]
+    # Applying it twice adds nothing: a second restart before the next
+    # checkpoint sees the same conversation.
+    assert _resume_after_interrupted_batch(out, _CHECKPOINT) == out
+    untouched = [*_HEAD, _BATCH]
+    assert _resume_after_interrupted_batch(untouched, {**_CHECKPOINT, "phase": "tools_completed"}) == untouched
+    assert _resume_after_interrupted_batch(untouched, None) == untouched
+
+
+def test_resume_helper_falls_back_to_the_assistant_calls_without_pending_list():
+    checkpoint = {"phase": "awaiting_tools", "assistant_message": _BATCH}
+    out = _resume_after_interrupted_batch([*_HEAD, _BATCH], checkpoint)
+    assert [m["tool_call_id"] for m in out[2:]] == ["a", "b"]
 
 
 def test_an_isolated_run_resumes_in_its_saved_checkout(tmp_path, monkeypatch):

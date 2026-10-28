@@ -124,10 +124,14 @@ class InstallKindTest(unittest.TestCase):
     def test_explicit_kind_from_the_desktop_shell_wins(self):
         exe = self.tmp / "pkg" / "navin-dist" / service._cli_binary_name()
         frozen, executable = self._frozen_at(exe)
+        service._linux_package_kind.cache_clear()
+        self.addCleanup(service._linux_package_kind.cache_clear)
         with (
             frozen,
             executable,
             mock.patch.dict(os.environ, {"NAVIN_INSTALL_KIND": "linux-package"}),
+            # No package database owns navin here: the shell's word stands as is.
+            mock.patch.object(service, "_linux_package_manager", return_value=None),
         ):
             self.assertEqual(service._install_kind(), "linux-package")
 
