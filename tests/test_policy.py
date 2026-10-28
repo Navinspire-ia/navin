@@ -209,6 +209,10 @@ class _Workspace(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
+        # The live rows and the journal are appended by a daemon thread: let it
+        # finish before the tempdir goes, or rmtree races the append ("Directory
+        # not empty: .navin/policy" once on the CI runner, 2026-10-28).
+        self.addCleanup(flush_recorder, 5.0)
         self.addCleanup(clear_settings_cache)
         self.addCleanup(live_tracker().reset)
         self.addCleanup(ck.clear_checkpoint_cache)
