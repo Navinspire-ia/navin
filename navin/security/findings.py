@@ -51,6 +51,8 @@ def normalize_finding(raw: dict[str, Any]) -> dict[str, Any]:
         "poc_sketch": str(raw.get("poc_sketch") or "")[:1200],
         "confidence": raw.get("confidence"),
         "exploit_scenario": str(raw.get("exploit_scenario") or "")[:1000],
+        "cwe": str(raw.get("cwe") or "")[:40],
+        "owasp": str(raw.get("owasp") or "")[:80],
     }
 
 

@@ -78,6 +78,64 @@ describe("stream delivery", () => {
   });
 });
 
+describe("stop then send", () => {
+  const inbound = (event: Record<string, unknown>) => event as unknown as InboundEvent;
+
+  it("late events of the stopped turn do not switch Working back on", () => {
+    // Regression: after Stop, the tool that was still unwinding kept sending
+    // tool_hint / delta frames; each one set isStreaming back to true, so the
+    // composer believed a turn was live, Enter queued the next message and
+    // the queue never drained (no turn_end ever came for a cancelled turn).
+    const app = setup();
+    act(() => app.result.current.send("long job"));
+    app.event(inbound({ event: "message", chat_id: "test", kind: "tool_hint", text: "Running tests" }));
+    expect(app.result.current.isStreaming).toBe(true);
+    act(() => app.result.current.stop());
+    expect(app.sendMessage).toHaveBeenLastCalledWith("test", "/stop");
+    expect(app.result.current.isStreaming).toBe(false);
+    app.event(inbound({ event: "message", chat_id: "test", kind: "tool_hint", text: "Running tests" }));
+    app.event({ event: "delta", chat_id: "test", text: "partial" });
+    app.event({ event: "reasoning_delta", chat_id: "test", text: "thinking" });
+    app.event({ event: "stream_end", chat_id: "test" });
+    app.event(inbound({ event: "goal_status", chat_id: "test", status: "running", started_at: 12 }));
+    frame();
+    expect(app.result.current.isStreaming).toBe(false);
+    expect(app.result.current.messages.some((m) => m.content === "partial")).toBe(false);
+    // The server closes the stopped turn: the guard lifts and the next send is a normal turn.
+    app.event({ event: "turn_end", chat_id: "test" });
+    act(() => app.result.current.send("next job"));
+    expect(app.sendMessage).toHaveBeenLastCalledWith("test", "next job", undefined, expect.anything());
+    expect(app.result.current.isStreaming).toBe(true);
+    app.event({ event: "delta", chat_id: "test", text: "Working on next job." });
+    frame();
+    expect(app.result.current.messages.some((m) => m.content === "Working on next job.")).toBe(true);
+  });
+
+  it("a new send after Stop lifts the guard even before the server closes the old turn", () => {
+    const app = setup();
+    act(() => app.result.current.send("first"));
+    act(() => app.result.current.stop());
+    act(() => app.result.current.send("second"));
+    expect(app.result.current.isStreaming).toBe(true);
+    app.event({ event: "delta", chat_id: "test", text: "Second answer." });
+    frame();
+    expect(app.result.current.messages.filter((m) => m.role === "assistant").map((m) => m.content))
+      .toEqual(["Second answer."]);
+  });
+
+  it("goal_status idle after Stop releases the turn at once", () => {
+    const app = setup();
+    act(() => app.result.current.send("job"));
+    act(() => app.result.current.stop());
+    app.event(inbound({ event: "message", chat_id: "test", kind: "progress", text: "Still unwinding" }));
+    app.event(inbound({ event: "goal_status", chat_id: "test", status: "idle" }));
+    expect(app.result.current.isStreaming).toBe(false);
+    // A regular tool event afterwards is a live turn again (gateway reused the chat).
+    app.event(inbound({ event: "message", chat_id: "test", kind: "tool_hint", text: "Running" }));
+    expect(app.result.current.isStreaming).toBe(true);
+  });
+});
+
 describe("mid-stream retry", () => {
   it("drops the abandoned partial segment so the answer shows once", () => {
     const app = setup();

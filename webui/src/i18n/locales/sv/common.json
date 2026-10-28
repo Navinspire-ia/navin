@@ -9167,10 +9167,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Model is responding…",
+      "placeholderStreaming": "Modellen arbetar. Retur skickar meddelandet nu; Alt+Retur köar det.",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "Queue this message",
+        "add": "Köa detta meddelande till nästa runda (Alt+Retur). Retur skickar det till agenten nu.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

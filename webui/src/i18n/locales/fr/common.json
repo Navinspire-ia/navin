@@ -2068,7 +2068,9 @@
       }
     },
     "cyberTab": "Cyber",
-    "cyberHint": "Audit de sécurité du projet : passe le chat en mode Sécurité"
+    "cyberHint": "Audit de sécurité du projet : passe le chat en mode Sécurité",
+    "reviewTab": "Review",
+    "reviewHint": "Revue de code des changements : passe le chat en mode Review"
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -9810,7 +9812,8 @@
         "reviewHelp": "Expert review: correctness, SQL/data, API, frontend, tests, perf + fix plan.",
         "security": "Security",
         "securityHelp": "Full AppSec: SQLi, XSS, authz, network, secrets, IaC, privacy + hardening plan.",
-        "securityIntro": "**Mode Sécurité actif.** Que veux-tu que j'audite : tout le projet, un dossier, un fichier, une pull request ou un diff ? Je peux scanner le code (filtre de faux positifs, preuve source → sink, rapport HTML), vérifier les dépendances, les secrets, les API, mener un test d'intrusion et une modélisation des menaces, relire le code et les PR avec commentaires en ligne, auditer Terraform / IaC, la posture cloud (AWS, Azure, GCP), les mauvaises configurations Kubernetes et Docker et la protection des données, puis proposer des correctifs et les appliquer en code, vérifiés par tests et CI et suivis sur le tableau de tâches. Rien n'est modifié sans ton accord."
+        "securityIntro": "**Mode Sécurité actif.** Que veux-tu que j'audite : tout le projet, un dossier, un fichier, une pull request ou un diff ? Je peux scanner le code (filtre de faux positifs, preuve source → sink, rapport HTML), vérifier les dépendances, les secrets, les API, mener un test d'intrusion et une modélisation des menaces, relire le code et les PR avec commentaires en ligne, auditer Terraform / IaC, la posture cloud (AWS, Azure, GCP), les mauvaises configurations Kubernetes et Docker et la protection des données, puis proposer des correctifs et les appliquer en code, vérifiés par tests et CI et suivis sur le tableau de tâches. Rien n'est modifié sans ton accord.",
+        "reviewIntro": "**Mode Review actif.** Que veux-tu que je relise : les changements en cours (working tree), une branche, une pull request, une plage de commits ou un dossier ? Je lis le change-set, vérifie la justesse, les régressions, les tests manquants, la gestion d'erreurs, la performance, la sécurité et la maintenabilité, filtre les faux positifs, puis donne un verdict (approve / request changes) avec commentaires en ligne sur la PR et un rapport HTML. Je peux aussi appliquer les correctifs une fois ton accord donné. Rien n'est modifié sans ton accord."
       },
       "modelAuto": "Routage auto",
       "modelAutoRow": "Routage auto (par tâche)",
@@ -9829,10 +9832,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Qu’avez-vous en tête ?",
       "placeholderOpening": "Ouverture d’une nouvelle discussion…",
-      "placeholderStreaming": "Le modèle est en train de répondre…",
+      "placeholderStreaming": "Le modèle travaille. Entrée lui envoie votre message tout de suite ; Alt+Entrée le met en file pour plus tard.",
       "placeholderThread": "Saisissez votre message…",
       "queued": {
-        "add": "Mettre ce message en file",
+        "add": "Mettre ce message en file pour le tour suivant (Alt+Entrée). Entrée l'envoie à l'agent tout de suite.",
         "attachmentOnly": "Fichier joint",
         "attachments": "Pièces jointes conservées avec ce message",
         "clearAll": "Tout vider",

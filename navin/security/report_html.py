@@ -42,6 +42,15 @@ def _chip(severity: str) -> str:
     )
 
 
+def _refs(item: dict[str, Any]) -> str:
+    parts = []
+    if item.get("cwe"):
+        parts.append(f"<strong>{esc(item.get('cwe'))}</strong>")
+    if item.get("owasp"):
+        parts.append(esc(item.get("owasp")))
+    return (" · " + " · ".join(parts)) if parts else ""
+
+
 def render_security_report_html(
     *,
     findings: list[dict[str, Any]],
@@ -96,7 +105,7 @@ def render_security_report_html(
   <p class="muted"><strong>Location:</strong> <code>{esc(loc_s)}</code>
     · <strong>Category:</strong> {esc(item.get('category'))}
     · <strong>Source:</strong> {esc(item.get('source'))}
-    · <strong>Rule:</strong> <code>{esc(item.get('id'))}</code></p>
+    · <strong>Rule:</strong> <code>{esc(item.get('id'))}</code>{_refs(item)}</p>
   <p><strong>Impact:</strong> {esc(item.get('explanation'))}</p>
   <div class="proof">
     <p><strong>Real example</strong></p>

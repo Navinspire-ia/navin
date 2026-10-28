@@ -78,7 +78,7 @@ describe("reverse launch", () => {
     expect(entry).toContain('go: () => openSettingsSection("team")');
   });
 
-  it("draws the Team, Cyber and Reverse NEW markers as quiet dots, not yellow text pills", () => {
+  it("draws the Team, Cyber, Review and Reverse NEW markers as quiet dots, not yellow text pills", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../components/dev/DevWorkbench.tsx"),
       "utf8",
@@ -86,8 +86,8 @@ describe("reverse launch", () => {
     const team = source.indexOf('key: "team"');
     const reverse = source.indexOf("go: () => requestReverseLaunch()");
     const entries = source.slice(team, reverse);
-    // Every launcher (Team, Cyber, Reverse) asks for the dot, and the loud yellow pill is gone.
-    expect(entries.match(/dot: true/g)).toHaveLength(3);
+    // Every launcher (Team, Cyber, Review, Reverse) asks for the dot, and the loud yellow pill is gone.
+    expect(entries.match(/dot: true/g)).toHaveLength(4);
     expect(source).not.toContain("bg-yellow-400 text-yellow-950");
     // The dot keeps the NEW label for assistive tech and renders a small round marker.
     const render = source.slice(source.indexOf("entry.badge?.dot ?"));

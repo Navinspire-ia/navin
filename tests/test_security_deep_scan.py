@@ -152,10 +152,25 @@ class DeepScanTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write(root, "app.py", "import json\nprint(json.dumps({'ok': True}))\n")
+            _write(
+                root,
+                "Dockerfile",
+                "FROM python:3.12-slim@sha256:abc\nUSER app\n"
+                "HEALTHCHECK CMD [\"python\", \"-c\", \"print(1)\"]\nCMD [\"python\"]\n",
+            )
+            result = run_deep_security_scan(root, kind="quick")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["finding_count"], 0, [f["id"] for f in result["findings"]])
+        self.assertEqual((result["score"], result["grade"]), (100, "A"))
+
+    def test_info_findings_do_not_cost_points(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Pinned, non-root, but no HEALTHCHECK: one info-level hygiene note.
             _write(root, "Dockerfile", "FROM python:3.12-slim@sha256:abc\nUSER app\nCMD [\"python\"]\n")
             result = run_deep_security_scan(root, kind="quick")
         self.assertTrue(result["ok"])
-        self.assertEqual(result["finding_count"], 0)
+        self.assertEqual({f["severity"] for f in result["findings"]}, {"info"})
         self.assertEqual((result["score"], result["grade"]), (100, "A"))
 
     def test_score_grades(self):

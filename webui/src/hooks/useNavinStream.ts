@@ -770,6 +770,9 @@ export function useNavinStream(
   /** If history ends in unfinished agent activity, keep the loading spinner alive. */
   const initialStreaming = hasPendingAgentActivity(initialMessages);
   const [isStreaming, setIsStreaming] = useState(initialStreaming || hasPendingToolCalls);
+  /** Mirrors ``isStreaming`` for event handlers (avoids stale closures). */
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
   /** Unix epoch seconds when the current user turn started; cleared on ``idle``. */
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
@@ -786,6 +789,10 @@ export function useNavinStream(
   const pendingStreamEventsRef = useRef<PendingStreamEvent[]>([]);
   const streamFrameRef = useRef<number | null>(null);
   const suppressStreamUntilTurnEndRef = useRef(false);
+  /** Set by stop(): the cancelled turn's late events (a tool that was still
+   * running, a buffered delta) must not switch Working back on. Cleared by the
+   * server's turn_end / goal_status idle, or by the next send. */
+  const stoppedTurnRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   /** Mirrors ``runStartedAt`` for the stream_end idle timer (avoids stale closures). */
   const runStartedAtRef = useRef<number | null>(null);
@@ -1139,6 +1146,7 @@ export function useNavinStream(
     clearPendingStreamWork();
     sideChannelTurnIdsRef.current.clear();
     suppressStreamUntilTurnEndRef.current = false;
+    stoppedTurnRef.current = false;
     cancelStreamEndTimer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, client, cancelStreamEndTimer, clearActivitySegment, clearPendingStreamWork]);
@@ -1202,6 +1210,27 @@ export function useNavinStream(
     const handle = (ev: InboundEvent) => {
       lastChatEventAtRef.current = Date.now();
       const sideChannelEvent = isSideChannelEvent(ev);
+      if (stoppedTurnRef.current) {
+        // The user pressed Stop. The turn's own tail (a tool still unwinding,
+        // deltas already on the wire) must not revive Working: that is what
+        // made the composer queue the next message and never send it. Only
+        // the server closing the turn, or a new run, ends the stopped state.
+        if (ev.event === "turn_end" || (ev.event === "goal_status" && ev.status !== "running")) {
+          stoppedTurnRef.current = false;
+        } else if (ev.event === "user_message") {
+          stoppedTurnRef.current = false;
+        } else if (
+          ev.event === "delta"
+          || ev.event === "reasoning_delta"
+          || ev.event === "reasoning_end"
+          || ev.event === "stream_end"
+          || ev.event === "file_edit"
+          || (ev.event === "message" && (ev.kind === "tool_hint" || ev.kind === "progress" || ev.kind === "reasoning"))
+          || (ev.event === "goal_status" && ev.status === "running")
+        ) {
+          return;
+        }
+      }
       // Any live agent activity (tools, file edits, progress, approvals…)
       // must keep/revive the Working spinner - not only cancel a pending
       // stream_end timer. Long tools otherwise look finished after 1s.
@@ -1313,9 +1342,16 @@ export function useNavinStream(
           const wasRunning = runStartedAtRef.current != null;
           runStartedAtRef.current = null;
           setRunStartedAt(null);
-          // Soft-release if turn_end is delayed/missing after the server
-          // marks the turn idle (avoids a stuck Working spinner).
-          if (wasRunning) {
+          if (isStreamingRef.current && !wasRunning) {
+            // Idle after a Stop (stop() already cleared the run clock) or
+            // after a turn the server never dated: release right away, a
+            // turn_end may never come for a cancelled turn.
+            cancelStreamEndTimer();
+            setIsStreaming(false);
+            setMessages((prev) => finalizeStreamedTurn(prev));
+          } else if (wasRunning) {
+            // Soft-release if turn_end is delayed/missing after the server
+            // marks the turn idle (avoids a stuck Working spinner).
             scheduleStreamEndTimer(turnFieldsFromEvent(ev as { turn_id?: string }));
           }
         }
@@ -1730,6 +1766,7 @@ export function useNavinStream(
       if (!hasAttachments && !content.trim()) return;
 
       const sideChannel = options?.sideChannel === true;
+      if (!sideChannel) stoppedTurnRef.current = false;
       if (!sideChannel && content.trim()) {
         onUserMessage?.(chatId, content.trim());
       }
@@ -1831,6 +1868,7 @@ export function useNavinStream(
     if (!chatId) return;
     flushPendingStreamEvents();
     cancelStreamEndTimer();
+    stoppedTurnRef.current = true;
     runStartedAtRef.current = null;
     setRunStartedAt(null);
     setActiveTaskProgress(null);

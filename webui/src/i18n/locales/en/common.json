@@ -2068,7 +2068,9 @@
       }
     },
     "cyberTab": "Cyber",
-    "cyberHint": "Security audit of the project: switches the chat to Security mode"
+    "cyberHint": "Security audit of the project: switches the chat to Security mode",
+    "reviewTab": "Review",
+    "reviewHint": "Code review of the changes: switches the chat to Review mode"
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -9810,7 +9812,8 @@
         "reviewHelp": "Expert review: correctness, SQL/data, API, frontend, tests, perf + fix plan.",
         "security": "Security",
         "securityHelp": "Full AppSec: SQLi, XSS, authz, network, secrets, IaC, privacy + hardening plan.",
-        "securityIntro": "**Security mode is on.** What do you want me to audit: this whole project, a folder, a file, a pull request or a diff? I can scan the code (false-positive filter, source to sink proof, HTML report), check dependencies, secrets, APIs, run a penetration test and a threat model, review code and PRs with inline comments, audit Terraform / IaC, cloud posture (AWS, Azure, GCP), Kubernetes and Docker misconfigurations and data protection, then propose fixes and apply them in code, verified by tests and CI and tracked on the task board. Nothing is modified without your approval."
+        "securityIntro": "**Security mode is on.** What do you want me to audit: this whole project, a folder, a file, a pull request or a diff? I can scan the code (false-positive filter, source to sink proof, HTML report), check dependencies, secrets, APIs, run a penetration test and a threat model, review code and PRs with inline comments, audit Terraform / IaC, cloud posture (AWS, Azure, GCP), Kubernetes and Docker misconfigurations and data protection, then propose fixes and apply them in code, verified by tests and CI and tracked on the task board. Nothing is modified without your approval.",
+        "reviewIntro": "**Review mode is on.** What do you want me to review: the current changes (working tree), a branch, a pull request, a commit range or a folder? I read the change-set, check correctness, regressions, missing tests, error handling, performance, security and maintainability, filter out false positives, then give a verdict (approve / request changes) with inline comments on the PR and an HTML report. I can also apply the fixes once you agree. Nothing is modified without your approval."
       },
       "modelAuto": "Auto-route",
       "modelAutoRow": "Auto-route (by task)",
@@ -9829,10 +9832,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Model is responding…",
+      "placeholderStreaming": "Model is working. Enter sends your message to it now; Alt+Enter queues it for later.",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "Queue this message",
+        "add": "Queue this message for the next turn (Alt+Enter). Enter sends it to the agent now.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

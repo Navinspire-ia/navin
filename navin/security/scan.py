@@ -21,6 +21,12 @@ from typing import Any, Callable
 from navin.security.findings import dedupe_findings, normalize_finding, severity_counts
 from navin.security.fp_filter import apply_fp_filter
 from navin.security.poc import enrich_findings_with_poc
+from navin.security.rules import (
+    LINE_RULES,
+    file_checks,
+    is_dependency_manifest,
+    scan_dependencies,
+)
 from navin.utils.proc import no_window_kwargs
 
 _SKIP_DIRS = frozenset(
@@ -95,121 +101,49 @@ _CODE_EXTS = frozenset(
         ".toml",
         ".pem",
         ".key",
+        ".tf",
+        ".tfvars",
+        ".hcl",
+        ".xml",
+        ".properties",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".gradle",
+        ".kts",
+        ".html",
+        ".erb",
+        ".ejs",
+        ".dockerfile",
+        ".p12",
+        ".pfx",
+        ".ppk",
     }
 )
 
-_PLACEHOLDER = re.compile(
-    r"(?i)(example|sample|placeholder|changeme|your[_-]?|xxx|todo|dummy|fake|test[_-]?(key|token|secret))"
-)
-_KEY_PLACEHOLDER = re.compile(r"(?i)(BEGIN.*EXAMPLE|REPLACE_ME)")
+_KEY_FILE_NAMES = frozenset({"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "Jenkinsfile"})
 
-_HEURISTICS: list[dict[str, Any]] = [
-    {
-        "id": "private-key",
-        "pattern": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-        "severity": "critical",
-        "category": "Secrets",
-        "summary": "Private key material in the repository",
-        "recommendation": "Remove the key, rotate it, store it in a secrets manager.",
-        "exclude": _KEY_PLACEHOLDER,
-    },
-    {
-        "id": "aws-key",
-        "pattern": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-        "severity": "critical",
-        "category": "Secrets",
-        "summary": "Hardcoded AWS access key id",
-        "recommendation": "Revoke the key and use IAM roles or env vars.",
-    },
-    {
-        "id": "hardcoded-secret",
-        "pattern": re.compile(
-            r"(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*[\"'][^\"']{8,}[\"']"
-        ),
-        "severity": "high",
-        "category": "Secrets",
-        "summary": "Possible hardcoded secret",
-        "recommendation": "Move the value to env vars or a secrets vault.",
-        "exclude": _PLACEHOLDER,
-    },
-    {
-        "id": "sql-injection",
-        "pattern": re.compile(
-            r"(f[\"'][^\"']*(SELECT\s[^\"']*\sFROM\s|INSERT\s+INTO\s|UPDATE\s+\w+\s+SET\s|DELETE\s+FROM\s)[^\"']*\{"
-            r"|[\"'][^\"']*(SELECT\s[^\"']*\sFROM\s|INSERT\s+INTO\s|UPDATE\s+\w+\s+SET\s|DELETE\s+FROM\s)[^\"']*[\"']\s*(%|\+|\.format\())"
-        ),
-        "severity": "critical",
-        "category": "Injection",
-        "summary": "SQL built via string interpolation",
-        "recommendation": "Use parameterized queries or an ORM.",
-    },
-    {
-        "id": "eval-exec",
-        "pattern": re.compile(r"(?<![\w.])(eval|exec)\s*\("),
-        "severity": "high",
-        "category": "Code execution",
-        "summary": "eval/exec on potentially controlled input",
-        "recommendation": "Prefer explicit parsers (ast.literal_eval, JSON).",
-        "exts": {".py", ".js", ".ts", ".jsx", ".tsx"},
-    },
-    {
-        "id": "pickle",
-        "pattern": re.compile(r"\bpickle\.loads?\("),
-        "severity": "high",
-        "category": "Deserialization",
-        "summary": "Unsafe pickle deserialization",
-        "recommendation": "Never unpickle untrusted data; prefer JSON.",
-        "exts": {".py"},
-    },
-    {
-        "id": "shell-true",
-        "pattern": re.compile(r"shell\s*=\s*True"),
-        "severity": "high",
-        "category": "Command injection",
-        "summary": "subprocess with shell=True",
-        "recommendation": "Pass an argv list without shell=True.",
-        "exts": {".py"},
-    },
-    {
-        "id": "tls-verify-off",
-        "pattern": re.compile(
-            r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true"
-        ),
-        "severity": "high",
-        "category": "TLS",
-        "summary": "TLS certificate verification disabled",
-        "recommendation": "Re-enable verification; use a custom CA bundle if needed.",
-    },
-    {
-        "id": "inner-html",
-        "pattern": re.compile(r"dangerouslySetInnerHTML|\.innerHTML\s*=|document\.write\("),
-        "severity": "medium",
-        "category": "XSS",
-        "summary": "Direct HTML injection sink",
-        "recommendation": "Sanitize (DOMPurify) or use safe framework rendering.",
-        "exts": {".ts", ".tsx", ".js", ".jsx"},
-    },
-    {
-        "id": "jwt-none",
-        "pattern": re.compile(
-            r"(?i)(algorithms?\s*[:=]\s*\[?\s*[\"']none[\"']|verify_signature[\"']?\s*[:=]\s*False)"
-        ),
-        "severity": "high",
-        "category": "Authentication",
-        "summary": "Weakened JWT verification",
-        "recommendation": "Always verify signatures with an explicit strong algorithm.",
-    },
-    {
-        "id": "cors-wildcard",
-        "pattern": re.compile(
-            r"(Access-Control-Allow-Origin[\"']?\s*[:,]\s*[\"']\*|allow_origins\s*=\s*\[?\s*[\"']\*)"
-        ),
-        "severity": "medium",
-        "category": "CORS",
-        "summary": "CORS allows any origin (*)",
-        "recommendation": "Restrict allowed origins to an explicit allow-list.",
-    },
-]
+
+def _logical_ext(name: str) -> str:
+    """Extension used for rule matching; Dockerfile* and .env* get a stable one."""
+    lower = name.lower()
+    if lower == "dockerfile" or lower.startswith("dockerfile.") or lower.endswith(".dockerfile"):
+        return ".dockerfile"
+    if lower == ".env" or lower.startswith(".env."):
+        return ".env"
+    return Path(name).suffix.lower()
+
+
+def _wanted(name: str) -> bool:
+    ext = _logical_ext(name)
+    return (
+        ext in _CODE_EXTS
+        or name in _KEY_FILE_NAMES
+        or is_dependency_manifest(name)
+    )
+
+
+_IGNORE_MARK = re.compile(r"(?i)(#|//|/\*|<!--)\s*(nosec|noqa:\s*S\d+|navin-security:\s*ignore|nosemgrep)")
 
 _MAX_FILES = 2500
 _MAX_FILE_BYTES = 400_000
@@ -250,7 +184,10 @@ def _iter_files(root: Path, subpath: str | None) -> list[tuple[str, Path]]:
             if d not in _SKIP_DIRS and (not d.startswith(".") or d == ".github")
         )
         for name in sorted(filenames):
-            if ".min." in name.lower():
+            if ".min." in name.lower() or name.endswith((".lock", "-lock.json")):
+                continue
+            # Our own HTML deliverables quote every payload they report on.
+            if name.startswith(("security-report-", "review-report-")) and name.endswith(".html"):
                 continue
             full = Path(dirpath) / name
             try:
@@ -258,8 +195,7 @@ def _iter_files(root: Path, subpath: str | None) -> list[tuple[str, Path]]:
                     continue
             except OSError:
                 continue
-            ext = full.suffix.lower()
-            if ext not in _CODE_EXTS and full.name not in {".env", "Dockerfile"}:
+            if not _wanted(full.name):
                 continue
             try:
                 rel = str(full.relative_to(root)).replace("\\", "/")
@@ -273,27 +209,95 @@ def _iter_files(root: Path, subpath: str | None) -> list[tuple[str, Path]]:
     return out
 
 
+_BLOCK_COMMENT_EXTS = frozenset(
+    {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".java", ".kt", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".php", ".swift", ".rs", ".scala"}
+)
+_REGEX_LINE = re.compile(r"\\[sbwd][*+(?]|\(\?:|\(\?i\)|\(\?<!")
+_COMMENT_LINE = re.compile(r"^\s*(?:#|//|/\*|\*|--|<!--|\"\"\"|''')|^\s*\*/")
+
+
+def _redact_secret(excerpt: str, match: re.Match[str]) -> str:
+    """Keep the shape of a leaked value (first 4 chars) so the report never re-leaks it."""
+    value = match.group(0)
+    quoted = re.findall(r"[\"']([^\"']{6,})[\"']", value)
+    if quoted:
+        secret = quoted[-1]
+    elif re.search(r"[:=]\s*\S", value):
+        secret = re.split(r"[:=]\s*", value, maxsplit=1)[-1]
+    elif "://" in value:
+        secret = value.split("://", 1)[1]
+    else:
+        secret = value
+    secret = secret.strip()
+    if len(secret) < 8:
+        return excerpt
+    masked = secret[:4] + "*" * min(len(secret) - 4, 12)
+    return excerpt.replace(secret, masked)
+
+
+def _inside_string(line: str, pos: int) -> bool:
+    """True when ``pos`` sits inside a quoted literal (odd number of quotes before it)."""
+    head = line[:pos]
+    dq = len(re.findall(r'(?<!\\)"', head))
+    sq = len(re.findall(r"(?<!\\)'", head))
+    return dq % 2 == 1 or sq % 2 == 1 or head.count("`") % 2 == 1
+
+
 def scan_heuristics(root: Path, *, subpath: str | None = None) -> list[dict[str, Any]]:
+    """Line rules + whole-file checks + offline dependency pins."""
     findings: list[dict[str, Any]] = []
     for rel, full in _iter_files(root, subpath):
-        ext = full.suffix.lower()
+        ext = _logical_ext(full.name)
         try:
             text = full.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if is_dependency_manifest(rel):
+            findings.extend(normalize_finding(f) for f in scan_dependencies(rel, text))
+        findings.extend(normalize_finding(f) for f in file_checks(rel, text))
+        if ext not in _CODE_EXTS and full.name not in _KEY_FILE_NAMES:
+            continue
+        in_doc = False
+        in_block = False
         for idx, line in enumerate(text.splitlines(), start=1):
-            if len(line) > 500:
+            # Docstrings (""" / ''') and /* */ blocks: their lines count as
+            # comments for the code-only rules, so prose about `shell=True`
+            # or `eval(` does not become a finding.
+            was_comment = in_doc or in_block
+            if ext == ".py":
+                if (line.count('"""') + line.count("'''")) % 2 == 1:
+                    in_doc = not in_doc
+                    was_comment = True
+            elif ext in _BLOCK_COMMENT_EXTS:
+                opens, closes = line.count("/*"), line.count("*/")
+                if opens != closes:
+                    in_block = opens > closes
+                    was_comment = True
+            if len(line) > 500 or _IGNORE_MARK.search(line):
                 continue
-            for check in _HEURISTICS:
+            is_comment = was_comment or bool(_COMMENT_LINE.match(line))
+            # Regex sources (a scanner's own rules, validators) mention sinks by name.
+            is_regex_line = bool(_REGEX_LINE.search(line))
+            for check in LINE_RULES:
                 exts = check.get("exts")
                 if exts and ext not in exts:
+                    continue
+                code_only = bool(check.get("code_only"))
+                if code_only and is_comment:
+                    continue
+                if is_regex_line and check.get("category") != "Secrets":
                     continue
                 match = check["pattern"].search(line)
                 if not match:
                     continue
+                if code_only and _inside_string(line, match.start()):
+                    continue
                 exclude = check.get("exclude")
                 if exclude and exclude.search(line):
                     continue
+                excerpt = line.strip()[:160]
+                if check["category"] == "Secrets":
+                    excerpt = _redact_secret(excerpt, match)
                 findings.append(
                     normalize_finding(
                         {
@@ -301,11 +305,16 @@ def scan_heuristics(root: Path, *, subpath: str | None = None) -> list[dict[str,
                             "severity": check["severity"],
                             "category": check["category"],
                             "summary": check["summary"],
-                            "explanation": f"{check['summary']}: `{line.strip()[:160]}`",
+                            "explanation": f"{check['summary']}: `{excerpt}`",
                             "recommendation": check["recommendation"],
                             "file_path": rel,
                             "line": idx,
                             "source": "heuristic",
+                            "cwe": check.get("cwe"),
+                            "owasp": check.get("owasp"),
+                            "confidence": check.get("confidence"),
+                            "malicious_input_example": check.get("malicious_input_example"),
+                            "poc_sketch": check.get("poc_sketch"),
                         }
                     )
                 )
@@ -594,6 +603,33 @@ _SCANNERS: dict[str, Callable[..., tuple[list[dict[str, Any]], dict[str, Any]]]]
 }
 
 
+# Generic rules that step aside when a more specific one fired on the same line.
+_GENERIC_RULES = {
+    "hardcoded-secret": "Secrets",
+    "hardcoded-secret-env": "Secrets",
+    "sql-concat-call": "Injection",
+    "path-traversal-var": "Path traversal",
+    "weak-hash": None,
+}
+
+
+def _collapse_overlaps(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One finding per line and category: the specific rule wins over the generic one."""
+    specific: set[tuple[str, Any, str]] = set()
+    for item in findings:
+        if item.get("id") not in _GENERIC_RULES:
+            specific.add((str(item.get("file_path")), item.get("line"), str(item.get("category"))))
+    out: list[dict[str, Any]] = []
+    for item in findings:
+        rid = str(item.get("id"))
+        if rid in _GENERIC_RULES:
+            cat = _GENERIC_RULES[rid] or str(item.get("category"))
+            if (str(item.get("file_path")), item.get("line"), cat) in specific:
+                continue
+        out.append(item)
+    return out
+
+
 def run_security_scan(
     root: Path,
     *,
@@ -637,7 +673,7 @@ def run_security_scan(
             tools.append(meta)
 
     merged = enrich_findings_with_poc(
-        dedupe_findings(findings)[: max(1, min(int(max_findings) * 2, 400))]
+        dedupe_findings(_collapse_overlaps(findings))[: max(1, min(int(max_findings) * 2, 400))]
     )
     # Default confidence for heuristic/CLI before FP filter.
     for item in merged:

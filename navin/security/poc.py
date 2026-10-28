@@ -136,6 +136,42 @@ _POC_BY_CATEGORY: dict[str, tuple[str, str]] = {
 }
 
 
+def _rule_pocs() -> dict[str, tuple[str, str]]:
+    from navin.security.rules import LINE_RULES  # local: rules has no poc import
+
+    out: dict[str, tuple[str, str]] = {}
+    for rule in LINE_RULES:
+        ex, sketch = rule.get("malicious_input_example"), rule.get("poc_sketch")
+        if ex and sketch:
+            out[str(rule["id"])] = (str(ex), str(sketch))
+    return out
+
+
+_POC_BY_ID.update({k: v for k, v in _rule_pocs().items() if k not in _POC_BY_ID})
+_POC_BY_CATEGORY.update(
+    {
+        "Command injection": ("; id #", "Inject a shell metacharacter in a lab, then switch to an argv list."),
+        "Code execution": ("__import__('os').system('id')", "Pass a benign marker and observe execution."),
+        "Deserialization": ("gadget chain payload", "Craft a sandboxed gadget that runs a no-op marker; switch to JSON."),
+        "Cryptography": ("offline brute force / known-plaintext", "Show the primitive is broken for this use; migrate to a modern one."),
+        "Path traversal": ("../../../../etc/passwd", "Traverse out of the base directory and read a known file."),
+        "SSRF": ("http://169.254.169.254/latest/meta-data/", "Reach the metadata endpoint from the server."),
+        "Redirect": ("//evil.example", "Follow the Location header to a foreign host."),
+        "XXE": ('<!ENTITY e SYSTEM "file:///etc/passwd">', "Post the DOCTYPE and read the file back."),
+        "Session": ("stolen or forged cookie", "Replay the cookie over HTTP or from injected JS."),
+        "Access control": ('{"role":"admin"}', "Submit privileged fields or call the route unauthenticated."),
+        "Configuration": ("default / debug exposure", "Hit the exposed surface and show what it leaks."),
+        "IaC": ("terraform plan + public endpoint probe", "Confirm the resource is reachable or unencrypted after apply."),
+        "Kubernetes": ("kubectl exec + nsenter", "Show the container can reach the host from the privileged context."),
+        "Docker": ("docker history <image>", "Read the layer that carries the secret or the root user."),
+        "CI/CD": ("fork PR / crafted issue title", "Run a marker command inside the workflow runner."),
+        "Logging": ("credential in log search", "Grep the logs for the credential."),
+        "Upload": ("shell.php", "Upload an executable file and request it."),
+        "Memory safety": ("oversized input under ASan", "Crash the binary with a long input."),
+    }
+)
+
+
 def poc_for_finding(finding: dict[str, Any]) -> dict[str, str]:
     """Return malicious_input_example + poc_sketch for a finding."""
     rule_id = str(finding.get("id") or "").strip()
@@ -156,7 +192,9 @@ def poc_for_finding(finding: dict[str, Any]) -> dict[str, str]:
 
     loc = str(finding.get("file_path") or "")
     line = finding.get("line")
-    if loc and isinstance(line, int):
+    if sketch.startswith("Location `"):
+        pass  # already enriched (scan + report both call this)
+    elif loc and isinstance(line, int):
         sketch = f"Location `{loc}:{line}`. {sketch}"
     elif loc:
         sketch = f"Location `{loc}`. {sketch}"

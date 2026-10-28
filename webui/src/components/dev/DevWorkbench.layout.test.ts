@@ -76,8 +76,19 @@ describe("App factory entries", () => {
     expect(source).not.toContain("onRunAction(appFactoryCommand(target.id))");
     expect(source).toContain("onStart={setAppFactoryConfirm}");
     expect(source.split("<AppFactoryConfirmDialog").length - 1).toBe(1);
-    // Real platform marks and the yellow NEW pill on both entries.
+    // Real platform marks; no NEW pill on the Mobile/Desktop apps entries,
+    // the "What is this?" item stays in their menu instead.
     expect(source).toContain('icon: <PlatformLogo id={target.id} className="h-3.5 w-3.5" />');
+    const appFactoryItems = source.slice(
+      source.indexOf('key: kind === "mobile" ? "appsMobile" : "appsDesktop"'),
+      source.indexOf('key: "learnMore"'),
+    );
+    expect(appFactoryItems).not.toContain("reverseNew");
+    const appEntriesStart = source.indexOf("...appFactoryMenuItems().map((item) => ({");
+    const appEntries = source.slice(appEntriesStart, appEntriesStart + 400);
+    expect(appEntries).not.toContain("reverseNew");
+    expect(appEntries).not.toContain("onBadgeClick");
+    expect(appEntries).toContain("menu: item.children ?? []");
     const railBadge = source.slice(source.indexOf("dev-rail-${entry.key}-badge"), source.indexOf("dev-rail-${entry.key}-badge") + 700);
     expect(railBadge).toContain("{entry.badge.text}");
     expect(railBadge).not.toContain("h-1.5 w-1.5");
@@ -100,7 +111,22 @@ describe("App factory entries", () => {
 });
 
 describe("Collapsed rail launchers", () => {
-  const rail = source.slice(source.indexOf('key: "team"'), source.indexOf('key: "agi"', source.indexOf('key: "team"')));
+  const railStart = source.indexOf('key: "team"');
+  const railEnd = source.indexOf("<DevOtherMenu", railStart);
+  const rail = source.slice(railStart, railEnd);
+
+  it("shows a single Other entry: no inline sub menu next to DevOtherMenu", () => {
+    // Regression: an inline `key: "other"` rail entry duplicated the Other button.
+    expect(rail).not.toContain('key: "other"');
+    expect(source.split('key: "other"').length - 1).toBe(0);
+    // The rail's DevOtherMenu keeps Install skill / Rules / Guardrails / Graph,
+    // only hiding the modules that already have their own rail tab.
+    const railOther = source.slice(railEnd, source.indexOf("/>", railEnd));
+    expect(railOther).toContain('["evolve", "bench", "board"]');
+    for (const key of ["skills", "rules", "guardrails", "graph"]) {
+      expect(railOther, key).toContain(`mode === "${key}"`);
+    }
+  });
 
   it("keeps the layout for Team, Cyber and Reverse: the action lives in the chat or Settings", () => {
     for (const key of ['key: "team"', 'key: "cyber"', 'key: "reverse"']) {
@@ -113,8 +139,8 @@ describe("Collapsed rail launchers", () => {
     expect(source).toContain("onClick={entry.keepLayout ? entry.go : restoreAnd(entry.go)}");
     expect(source).not.toContain("onClick={restoreAnd(entry.go)}");
     const agi = source.slice(
-      source.indexOf('key: "agi"', source.indexOf('key: "team"')),
-      source.indexOf('key: "guardrails"', source.indexOf('key: "team"')),
+      source.indexOf('key: "agi"'),
+      source.indexOf('key: "computer"', source.indexOf('key: "agi"')),
     );
     expect(agi).not.toContain("keepLayout");
   });

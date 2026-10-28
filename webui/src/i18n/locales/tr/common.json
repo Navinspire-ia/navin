@@ -9167,10 +9167,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Model is responding…",
+      "placeholderStreaming": "Model çalışıyor. Enter mesajı hemen gönderir; Alt+Enter sıraya alır.",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "Queue this message",
+        "add": "Bu mesajı sonraki tur için sıraya al (Alt+Enter). Enter onu ajana hemen gönderir.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

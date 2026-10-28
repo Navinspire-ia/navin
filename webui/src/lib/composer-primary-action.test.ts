@@ -27,9 +27,11 @@ describe("composerPrimaryAction", () => {
     ).toBe("stop");
   });
 
-  it("a typed ordinary message never turns into a stop", () => {
+  it("a typed ordinary message never turns into a stop: it is sent to the live turn", () => {
     // Regression: "salut" + click on the round button used to send /stop and
-    // kill the running mission ("Stopped 1 task(s).").
+    // kill the running mission ("Stopped 1 task(s)."). Then it parked the
+    // message in the queue until the turn ended, so the agent never saw it
+    // mid-run. Now the message is sent: the gateway injects it into the turn.
     expect(
       composerPrimaryAction({
         ...base,
@@ -37,7 +39,17 @@ describe("composerPrimaryAction", () => {
         hasComposerContent: true,
         canQueueGuidance: true,
       }),
-    ).toBe("queue");
+    ).toBe("send");
+  });
+
+  it("the queue is never the implicit action of the round button", () => {
+    expect(
+      composerPrimaryAction({
+        ...base,
+        isStreaming: true,
+        hasComposerContent: true,
+      }),
+    ).toBe("send");
   });
 
   it("a slash command typed mid-run submits (explicit /stop stays possible)", () => {

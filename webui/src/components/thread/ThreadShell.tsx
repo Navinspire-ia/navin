@@ -85,6 +85,11 @@ import {
   buildCyberIntroMessage,
   onCyberLaunch,
 } from "@/lib/cyber-launch";
+import {
+  appendReviewIntro,
+  buildReviewIntroMessage,
+  onReviewLaunch,
+} from "@/lib/review-launch";
 import { useSessionHistory } from "@/hooks/useSessions";
 import { AppShareHint } from "@/components/thread/AppShareHint";
 import { LIVE_START_EVENT } from "@/lib/live-events";
@@ -2236,6 +2241,17 @@ export function ThreadShell({
       handleComposerTurnModeChange("security");
       const intro = buildCyberIntroMessage((key, options) => String(t(key, options)));
       setMessages((prev) => appendCyberIntro(prev, intro));
+      setScrollToBottomSignal((value) => value + 1);
+    });
+  }, [handleComposerTurnModeChange, setMessages, t]);
+
+  // Review button of the Code rail: switch to Review mode, then ask in the
+  // journal what to review (changes, branch, PR, commits, folder).
+  useEffect(() => {
+    return onReviewLaunch(() => {
+      handleComposerTurnModeChange("review");
+      const intro = buildReviewIntroMessage((key, options) => String(t(key, options)));
+      setMessages((prev) => appendReviewIntro(prev, intro));
       setScrollToBottomSignal((value) => value + 1);
     });
   }, [handleComposerTurnModeChange, setMessages, t]);

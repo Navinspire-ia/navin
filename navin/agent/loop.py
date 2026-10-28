@@ -3212,6 +3212,26 @@ class AgentLoop:
                             session_key,
                             exc_info=True,
                         )
+                    # A stopped turn is a finished turn for the UI: without this
+                    # frame the WebUI kept its Working state from the last tool
+                    # event that arrived after Stop, so the composer queued the
+                    # next message instead of sending it, and the queue never
+                    # drained because no turn_end ever came.
+                    try:
+                        await asyncio.shield(
+                            self._runtime_events().turn_completed(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                session_key=session_key,
+                                metadata=msg.metadata,
+                            )
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Could not publish turn_end for cancelled session {}",
+                            session_key,
+                            exc_info=True,
+                        )
                     raise
                 except Exception as exc:
                     logger.exception("Error processing message for session {}", session_key)

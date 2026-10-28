@@ -62,6 +62,7 @@ import {
   RefreshCw,
   Save,
   ScanSearch,
+  SearchCheck,
   Scissors,
   Search,
   ShieldCheck,
@@ -245,6 +246,7 @@ import {
 import { railWidthFor, type DevRailDensity } from "@/lib/dev-rail-layout";
 import { cn } from "@/lib/utils";
 import { requestCyberLaunch } from "@/lib/cyber-launch";
+import { requestReviewLaunch } from "@/lib/review-launch";
 import { requestReverseLaunch } from "@/lib/reverse-launch";
 import { openSettingsSection } from "@/lib/settings-events";
 import { isDesktopShell } from "@/lib/desktop";
@@ -4800,7 +4802,6 @@ export function DevWorkbench({
               kind === "mobile"
                 ? tx("dev.appsMobile", "Mobile apps")
                 : tx("dev.appsDesktop", "Desktop apps"),
-            badge: tx("dev.reverseNew", "NEW"),
             onSelect: () => {},
             children: [
               {
@@ -4863,6 +4864,8 @@ export function DevWorkbench({
       key: "rules",
       icon: <BookMarked className="h-3.5 w-3.5 shrink-0" aria-hidden />,
       label: tx("dev.panel.rules", "Rules"),
+      // Rules count shows as the item's hint, since Rules lives under Other.
+      hint: railCounts.rules != null && railCounts.rules > 0 ? railCountText(railCounts.rules) : undefined,
       active: mode === "rules",
       onSelect: wrap(() => showMode("rules")),
     },
@@ -5237,6 +5240,27 @@ export function DevWorkbench({
                 go: () => requestCyberLaunch(),
               },
               {
+                // Review launcher, right under Cyber: switches the chat to the
+                // Review mode (gated change-set, correctness / regressions /
+                // tests / perf / security, FP filter, inline PR comments, HTML
+                // report) and asks what to review.
+                key: "review",
+                icon: <SearchCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.reviewTab", "Review"),
+                badge: {
+                  text: tx("dev.reverseNew", "NEW"),
+                  tone: "bg-amber-400/80",
+                  dot: true,
+                  title: tx(
+                    "dev.reviewHint",
+                    "Code review of the changes: switches the chat to Review mode",
+                  ),
+                },
+                active: false,
+                keepLayout: true,
+                go: () => requestReviewLaunch(),
+              },
+              {
                 // Reverse launcher, right above AGI: switches the chat to the
                 // Reverse mode and asks which app to reverse engineer.
                 key: "reverse",
@@ -5259,32 +5283,10 @@ export function DevWorkbench({
                 key: item.key,
                 icon: item.icon,
                 label: item.label,
-                badge: {
-                  text: tx("dev.reverseNew", "NEW"),
-                  tone: "bg-amber-400/80",
-                  title: tx("dev.appFactory.learnMore", "What is this?"),
-                },
-                onBadgeClick: () =>
-                  setAppFactoryDialog(item.key === "appsMobile" ? "mobile" : "desktop"),
-                menu: (item.children ?? []).filter((child) => child.key !== "learnMore"),
+                menu: item.children ?? [],
                 active: false,
                 go: () => {},
               })),
-              {
-                // First module after the project folder picker.
-                key: "agi",
-                icon: <BrainCircuit className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.agiTab", "AGI"),
-                active: mode === "agi",
-                go: () => showMode("agi"),
-              },
-              {
-                key: "guardrails",
-                icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.guardrailsTab", "Guardrails"),
-                active: mode === "guardrails",
-                go: () => showMode("guardrails"),
-              },
               reviewChanges.length > 0
                 ? {
                     key: "changes",
@@ -5361,39 +5363,11 @@ export function DevWorkbench({
                 },
               },
               {
-                key: "skills",
-                icon: <PackagePlus className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.installSkill", "Install skill"),
-                active: mode === "skills",
-                go: () => showMode("skills"),
-              },
-              {
                 key: "evolve",
                 icon: <FlaskConical className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.evolveTab", "Evolve"),
                 active: mode === "evolve",
                 go: () => showMode("evolve"),
-              },
-              {
-                key: "rules",
-                icon: <BookMarked className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.panel.rules", "Rules"),
-                badge: railCountBadge(
-                  railCounts.rules,
-                  t("dev.rail.rulesCount", {
-                    defaultValue: "{{n}} rule(s)",
-                    n: railCounts.rules ?? 0,
-                  }),
-                ),
-                active: mode === "rules",
-                go: () => showMode("rules"),
-              },
-              {
-                key: "graph",
-                icon: <Waypoints className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.graphTab", "Graph"),
-                active: mode === "graph",
-                go: () => showMode("graph"),
               },
               {
                 key: "board",
@@ -5550,17 +5524,17 @@ export function DevWorkbench({
               </button>
             ))}
           <DevOtherMenu
-            triggerClassName={railItem(moreMenuActive || mode === "agi" || mode === "computer")}
+            triggerClassName={railItem(
+              moreMenuActive ||
+                mode === "skills" ||
+                mode === "rules" ||
+                mode === "guardrails" ||
+                mode === "graph" ||
+                mode === "agi" ||
+                mode === "computer",
+            )}
             showTriggerLabel={!railIconsOnly}
-            items={overflowMenuItems((action) => restoreAnd(action), [
-              "skills",
-              "evolve",
-              "rules",
-              "guardrails",
-              "graph",
-              "bench",
-              "board",
-            ])}
+            items={overflowMenuItems((action) => restoreAnd(action), ["evolve", "bench", "board"])}
           />
           {onToggleRailDensity ? (
             // Closes the list, a small gap under Other so it reads as a control

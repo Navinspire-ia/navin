@@ -9738,10 +9738,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (automatisch)",
       "placeholderHero": "Fragen Sie alles...",
       "placeholderOpening": "Neuer Chat wird geöffnet…",
-      "placeholderStreaming": "Modell antwortet…",
+      "placeholderStreaming": "Das Modell arbeitet. Enter sendet die Nachricht sofort; Alt+Enter reiht sie für später ein.",
       "placeholderThread": "Nachricht eingeben…",
       "queued": {
-        "add": "Diese Nachricht einreihen",
+        "add": "Nachricht für den nächsten Durchlauf einreihen (Alt+Enter). Enter sendet sie dem Agenten sofort.",
         "attachmentOnly": "Dateianhang",
         "attachments": "Anhänge werden mit dieser Nachricht aufbewahrt",
         "clearAll": "Alle löschen",

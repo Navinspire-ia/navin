@@ -9167,10 +9167,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Model is responding…",
+      "placeholderStreaming": "Modellen jobber. Enter sender meldingen nå; Alt+Enter legger den i kø.",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "Queue this message",
+        "add": "Legg denne meldingen i kø for neste runde (Alt+Enter). Enter sender den til agenten nå.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

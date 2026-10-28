@@ -41,17 +41,21 @@ class SecurityScanTool(_QualityTool):
     @property
     def description(self) -> str:
         return (
-            "Run a structured security scan on the project: code heuristics "
-            "(secrets, injection sinks, XSS, weak JWT, CORS, shell=True, pickle, "
-            "weak hashing, tainted SQL / shell / path / redirect / outbound sinks), "
+            "Run a structured security scan on the project: 110+ always-on offline "
+            "code rules with CWE + OWASP Top 10 tags (secrets and tokens, SQL/NoSQL/"
+            "LDAP/XPath/command/template injection, XSS, deserialization, path "
+            "traversal, SSRF, XXE, weak crypto, JWT/session/CSRF/CORS, debug and bind "
+            "misconfig, known-vulnerable pinned dependencies) across Python, JS/TS, Go, "
+            "Java, PHP, Ruby, C#, C, shell, SQL and YAML; a deep layer for "
             "infrastructure (Dockerfile, Compose, Kubernetes, Terraform, GitHub "
-            "Actions, env files), project hygiene (tracked .env, lockfiles, helmet, "
-            "CI scanners) plus host CLIs when installed (gitleaks, bandit, semgrep, "
-            "npm audit, pip-audit). Returns a 0-100 score, OWASP 2021 and CWE tags, "
-            "a PoC per finding and an ordered remediation plan. write_report=true "
-            "writes security-report-*.html (and opens File Preview), write_pdf=true "
-            "also writes the PDF. kind=full|quick|secrets|sast|sca; deep=false keeps "
-            "the code-only pass."
+            "Actions, env files) and project hygiene (tracked .env, lockfiles, helmet, "
+            "CI scanners); plus host CLIs when installed (gitleaks, bandit, semgrep, "
+            "npm audit, pip-audit). Comments, docstrings, regex sources, placeholders "
+            "and test paths are filtered out; `# nosec` silences a line. Returns a "
+            "0-100 score, a lab payload + PoC sketch per finding and an ordered "
+            "remediation plan. write_report=true writes security-report-*.html (and "
+            "opens File Preview), write_pdf=true also writes the PDF. "
+            "kind=full|quick|secrets|sast|sca; deep=false keeps the code-only pass."
         )
 
     @property

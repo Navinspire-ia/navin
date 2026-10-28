@@ -1042,7 +1042,6 @@ function ThreadComposerImpl({
   const draggedQueuedPromptIdRef = useRef<string | null>(null);
   const previousPendingQueueKeyRef = useRef(pendingQueueKey);
   const wasStreamingRef = useRef(isStreaming);
-  const skipNextQueuedFlushRef = useRef(false);
   const multitaskInFlightRef = useRef(false);
   const skipQueuedPromptPersistRef = useRef(false);
   const voiceShortcutDownRef = useRef(false);
@@ -2075,9 +2074,8 @@ function ThreadComposerImpl({
     const targetIds = new Set(targets.map((prompt) => prompt.id));
     secondEnterPromptIdRef.current = null;
     // Leave the queue before the HTTP round-trips so the 150ms sequential
-    // drain cannot also send the same prompt as a normal turn. Do not set
-    // skipNextQueuedFlushRef: leftover attachment prompts must still flush
-    // when the current turn ends, and a Stop already paused the queue.
+    // drain cannot also send the same prompt as a normal turn. Leftover
+    // attachment prompts still flush when the current turn ends.
     multitaskInFlightRef.current = true;
     setQueuedPrompts((items) => items.filter((item) => !targetIds.has(item.id)));
     setMultitaskBusy(true);
@@ -2122,26 +2120,22 @@ function ThreadComposerImpl({
   // Drain the queue one prompt per turn, and keep draining until it is empty:
   // each send starts a new turn, whose end re-runs this effect. The delay is a
   // safety net for a send that never starts a turn, so the queue cannot stall.
+  // Stop does not pause the queue any more: messages queued on purpose were
+  // meant to run, and a queue that waits for a manual click after every Stop
+  // is what the user reported as "the queue stops working".
   useEffect(() => {
     wasStreamingRef.current = isStreaming;
-    if (isStreaming) {
-      // A new turn re-arms the queue after a Stop paused it.
-      skipNextQueuedFlushRef.current = false;
-      return;
-    }
+    if (isStreaming) return;
     secondEnterPromptIdRef.current = null;
-    if (queuedPrompts.length === 0 || skipNextQueuedFlushRef.current) return;
+    if (queuedPrompts.length === 0) return;
     const timer = window.setTimeout(sendNextQueuedPrompt, QUEUED_PROMPT_FLUSH_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [isStreaming, queuedPrompts, sendNextQueuedPrompt]);
 
   const handleStop = useCallback(() => {
     secondEnterPromptIdRef.current = null;
-    if (queuedPrompts.length > 0) {
-      skipNextQueuedFlushRef.current = true;
-    }
     onStop?.();
-  }, [onStop, queuedPrompts.length]);
+  }, [onStop]);
 
   const submit = useCallback(() => {
     const live = textareaRef.current?.value ?? value;
@@ -2317,7 +2311,11 @@ function ThreadComposerImpl({
       e.preventDefault();
       const live = e.currentTarget.value;
       if (live !== value) setValue(live);
-      if (canQueueGuidance) {
+      // Alt+Enter while the agent works: park the message in the queue for
+      // the next turn. Plain Enter sends it into the live turn (the gateway
+      // injects it at the agent's next step), so nothing typed mid-run is
+      // held back until the turn ends.
+      if (canQueueGuidance && e.altKey) {
         if (!e.repeat) queueGuidancePrompt();
         return;
       }

@@ -9167,10 +9167,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Model is responding…",
+      "placeholderStreaming": "Il modello sta lavorando. Invio gli manda subito il messaggio; Alt+Invio lo mette in coda.",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "Queue this message",
+        "add": "Metti in coda questo messaggio per il turno successivo (Alt+Invio). Invio lo manda subito all'agente.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

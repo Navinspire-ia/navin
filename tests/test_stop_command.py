@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 from navin.agent.loop import AgentLoop
 from navin.bus.events import InboundMessage
@@ -408,6 +408,11 @@ def _dispatch_stub(bus: _FakeBus, process_message) -> SimpleNamespace:
     )
     stub._effective_session_key = lambda msg: msg.session_key
     stub._runtime_events = lambda: ensure_runtime_event_publisher(stub)
+    # The real per-session lock wrapper (slow-lock notice): _dispatch holds the
+    # lock through it, so the stand-in carries the state it reads and writes.
+    stub._session_lock_holders = {}
+    stub._SESSION_LOCK_NOTICE_S = AgentLoop._SESSION_LOCK_NOTICE_S
+    stub._session_turn_lock = MethodType(AgentLoop._session_turn_lock, stub)
 
     async def _noop_deferred(session_key: str) -> None:
         return None
@@ -440,7 +445,17 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         stub = _dispatch_stub(bus, fake_process)
         task = asyncio.create_task(AgentLoop._dispatch(stub, _msg("do the audit")))
-        await started.wait()
+        # Race the turn against its own start: a dispatch that dies before
+        # _process_message surfaces its error here instead of hanging the
+        # suite on started.wait() until the CI job timeout.
+        waiter = asyncio.ensure_future(started.wait())
+        done, _ = await asyncio.wait(
+            {task, waiter}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        if task in done:
+            waiter.cancel()
+            task.result()
+        self.assertIn(waiter, done, "the turn never reached _process_message")
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
@@ -452,6 +467,32 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(m.session_key == "websocket:chat-1" for m in bus.inbound))
         self.assertEqual(stub._pending_queues, {})
         self.assertEqual(stub._loop_guards, {})
+
+    async def test_cancelled_turn_publishes_turn_completed(self) -> None:
+        """Stop closes the turn for the UI: without TurnCompleted the WebUI kept
+        its Working state from the last tool event, queued the next message
+        and never drained the queue (no turn_end for a cancelled turn)."""
+        from navin.bus.runtime_events import TurnCompleted
+
+        bus = _FakeBus()
+        started = asyncio.Event()
+
+        async def fake_process(msg, on_stream=None, on_stream_end=None, pending_queue=None):
+            started.set()
+            await asyncio.Event().wait()
+
+        stub = _dispatch_stub(bus, fake_process)
+        completed: list[TurnCompleted] = []
+        stub._runtime_events().bus.subscribe(completed.append, TurnCompleted)
+        task = asyncio.create_task(AgentLoop._dispatch(stub, _msg("do the audit")))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].context.session_key, "websocket:chat-1")
+        self.assertEqual(completed[0].context.chat_id, "chat-1")
 
     async def test_normal_turn_still_republishes_leftovers(self) -> None:
         bus = _FakeBus()

@@ -84,7 +84,8 @@ describe("rail pills in the workbench", () => {
     expect(workbench).toContain("useRailCounts({");
     expect(workbench).toContain("railCountBadge(\n                  visibleTerminals.length");
     expect(workbench).toContain("railCountBadge(\n                  browserSrc ? 1 : 0");
-    expect(workbench).toContain("railCountBadge(\n                  railCounts.rules");
+    // Rules moved under the rail's Other menu: the count shows as the item's hint.
+    expect(workbench).toContain("hint: railCounts.rules");
     expect(workbench).toContain("railCountText(railCounts.tasks.open)");
     expect(workbench).toContain('data-testid="dev-rail-files-badge"');
   });
