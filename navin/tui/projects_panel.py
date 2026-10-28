@@ -6,10 +6,11 @@
 Folder names in bold, sessions in grey under them, three at first and three more
 per "more", a spinner in front of every session that is working (in any project:
 the CLI runs a project left while it worked in the background) and next to its
-folder, a small menu on the right of each session. The panel scrolls when the
-list outgrows the screen. It only draws and reports clicks
-(:class:`ProjectsPanel.Hit`); the app decides what a click does, because opening
-a session of another project moves the engine to that folder.
+folder, and on the right of each session an arrow that opens it in a new tab of
+the terminal plus a small menu. The panel scrolls when the list outgrows the
+screen. It only draws and reports clicks (:class:`ProjectsPanel.Hit`); the app
+decides what a click does, because opening a session of another project moves
+the engine to that folder.
 """
 
 from __future__ import annotations
@@ -33,6 +34,9 @@ from navin.tui.textmarkup import escape
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _PIN = "◆"
 _QUIET = "·"
+# Opens the session in a new terminal tab (an arrow every terminal font has).
+TERMINAL_MARK = "↗"
+TERMINAL_TIP = "Open in a new terminal tab"
 
 # Hit kinds the panel handles itself (they only change what is folded open).
 LOCAL_KINDS = frozenset({"toggle", "more", "less"})
@@ -47,11 +51,13 @@ class _Hit(Static):
 
     can_focus = True
 
-    def __init__(self, text: str, kind: str, path: str = "", key: str = "", *, classes: str = "") -> None:
+    def __init__(self, text: str, kind: str, path: str = "", key: str = "", *, classes: str = "", tooltip: str | None = None) -> None:
         super().__init__(text, markup=True, classes=f"proj-hit {classes}".strip())
         self.kind = kind
         self.path = path
         self.key = key
+        if tooltip:
+            self.tooltip = tooltip
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
@@ -317,6 +323,7 @@ class ProjectsPanel(VerticalScroll):
             rows.append(
                 Horizontal(
                     label,
+                    _Hit(TERMINAL_MARK, "terminal", project.path, entry.key, classes="proj-menu proj-terminal", tooltip=TERMINAL_TIP),
                     _Hit("⋯", "menu", project.path, entry.key, classes="proj-menu"),
                     classes="proj-row proj-session",
                 )

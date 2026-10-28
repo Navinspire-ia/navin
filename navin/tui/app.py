@@ -590,6 +590,8 @@ class NavinApp(App[None]):
 
     # ctrl+p shows the panel, as ctrl+s shows the sessions; the palette moves.
     COMMAND_PALETTE_BINDING = "ctrl+shift+p"
+    # The navin-cli the user started, when known: what a new terminal tab runs.
+    cli_executable: Path | None = None
 
     async def _process_messages(self, *args, **kwargs) -> None:
         with terminal_gc_policy():
@@ -3022,6 +3024,8 @@ class NavinApp(App[None]):
             self._spawn(self._new_agent(path))
         elif kind == "open":
             self._spawn(self._open_project_session(path, key))
+        elif kind == "terminal":
+            self._spawn(self._open_in_terminal(path, key))
         elif kind == "menu":
             self._spawn(self._session_menu(path, key))
 
@@ -3166,6 +3170,7 @@ class NavinApp(App[None]):
                 title or "Session",
                 [
                     PickItem("open", "Open"),
+                    PickItem("terminal", "Open in a new terminal tab", "a second navin-cli on this chat, next to this one"),
                     PickItem("fork", "Fork", "a copy of this chat to go on from here"),
                     PickItem("rename", "Rename"),
                     PickItem("pin", "Unpin" if pinned else "Pin"),
@@ -3186,6 +3191,8 @@ class NavinApp(App[None]):
             live = getattr(self.runtime.agent_loop, "sessions", None)
         if choice == "open":
             await self._open_project_session(path, key)
+        elif choice == "terminal":
+            await self._open_in_terminal(path, key)
         elif choice == "fork":
             await self._fork_session(path, key, title, live)
         elif choice == "rename":
@@ -3236,6 +3243,34 @@ class NavinApp(App[None]):
                 await self._switch_session(projects.new_session_key())
             self._reload_projects(force=True)
             await self._flash("session deleted", "success")
+
+    async def _open_in_terminal(self, path: str, key: str) -> None:
+        """A second navin-cli on this chat, in a new tab of the terminal in use.
+
+        The tab is asked of the terminal this CLI runs in (tmux, Windows
+        Terminal also from WSL, kitty, WezTerm, iTerm2, GNOME Terminal,
+        Konsole); when none can be driven the command is copied instead.
+        """
+        from navin.tui.exit_summary import resume_command
+        from navin.tui.open_terminal import NoTerminalError, cli_argv, open_in_terminal_tab
+        from navin.tui.projects import same_path
+
+        panel = self._projects_panel()
+        title = (panel.title_of(path, key) if panel is not None else "") or key
+        command = cli_argv(Path(path), key, config_path=self.config_path, executable=self.cli_executable)
+        try:
+            where = await asyncio.to_thread(open_in_terminal_tab, Path(path), command, title=title)
+        except NoTerminalError as exc:
+            self.copy_to_clipboard(resume_command(Path(path), key, self.config_path, self.cli_executable), quiet=True)
+            await self._note(f"{escape(str(exc))} The command that opens it is copied: paste it in a terminal.", "warning")
+            return
+        text = f"[b]{escape(title)}[/b] opened in a new {escape(where)}"
+        session_busy = getattr(self.runtime, "session_busy", None)
+        open_here = same_path(path, self.runtime.workspace) and key == self.runtime.session_key
+        if open_here or (callable(session_busy) and session_busy(path, key)):
+            # Two CLIs on one chat each keep their own copy of it.
+            text += ". It is open here too: send messages from one place at a time"
+        await self._flash(text, "success")
 
     async def _fork_session(self, path: str, key: str, title: str, live: Any = None) -> None:
         """Copy a chat and open the copy, like Fork chat in the desktop."""
@@ -4946,6 +4981,8 @@ def run_tui(
             with contextlib.suppress(ValueError, OSError):
                 previous_signals[signum] = signal.signal(signum, signal.SIG_IGN)
     app = NavinApp(config, session_id=session_id, prefs=prefs, config_path=config_path)
+    # The sidebar's "open in a new terminal tab" starts the same navin-cli.
+    app.cli_executable = cli_executable
     from navin.tui.shutdown import TerminalGuard, run_app_fast_exit
 
     guard = TerminalGuard()
