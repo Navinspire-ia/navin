@@ -177,9 +177,16 @@ _JOURNAL_EXECUTOR: ThreadPoolExecutor | None = None
 _OutcomeArgs = tuple[str, str, str, str, str, str | None]
 
 
+def _live_executor(current: ThreadPoolExecutor | None) -> bool:
+    """False once the pool was shut down (the interpreter's atexit hook, or a
+    test loop that closed and took the pool with it): a fresh pool must replace
+    it instead of raising ``cannot schedule new futures after shutdown``."""
+    return current is not None and not getattr(current, "_shutdown", False)
+
+
 def _prepare_executor() -> ThreadPoolExecutor:
     global _PREPARE_EXECUTOR
-    if _PREPARE_EXECUTOR is None:
+    if not _live_executor(_PREPARE_EXECUTOR):
         workers = max(2, min(_PREPARE_WORKERS, (os.cpu_count() or 4) + 2))
         _PREPARE_EXECUTOR = ThreadPoolExecutor(
             max_workers=workers,
@@ -191,7 +198,7 @@ def _prepare_executor() -> ThreadPoolExecutor:
 def _persist_executor() -> ThreadPoolExecutor:
     """Keep durable result writes off the UI and its general-purpose pool."""
     global _PERSIST_EXECUTOR
-    if _PERSIST_EXECUTOR is None:
+    if not _live_executor(_PERSIST_EXECUTOR):
         _PERSIST_EXECUTOR = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="navin-subagent-save",
         )
@@ -201,7 +208,7 @@ def _persist_executor() -> ThreadPoolExecutor:
 def _journal_executor() -> ThreadPoolExecutor:
     """One ordered durable writer keeps fsync and SQLite off the event loop."""
     global _JOURNAL_EXECUTOR
-    if _JOURNAL_EXECUTOR is None:
+    if not _live_executor(_JOURNAL_EXECUTOR):
         _JOURNAL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="navin-agent-journal")
     return _JOURNAL_EXECUTOR
 

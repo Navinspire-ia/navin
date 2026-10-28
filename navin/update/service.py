@@ -221,6 +221,7 @@ def _linux_package_manager(root: Path = Path("/")) -> str | None:
                 text=True,
                 timeout=10,
                 check=False,
+                **no_window_kwargs(),
             )
         except (OSError, subprocess.SubprocessError):
             return None

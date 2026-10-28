@@ -33,6 +33,7 @@ from navin.host.packages import (
     install_hint,
     install_plan,
 )
+from navin.utils.proc import no_window_kwargs
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,9 @@ RunInstall = Callable[[list[str]], int]
 def _run_install(argv: list[str]) -> int:
     """Run a package manager in the terminal, its output visible, and return its exit code."""
     try:
-        return subprocess.call(argv, timeout=_INSTALL_TIMEOUT_S)
+        # ``navin doctor --install`` runs from a console the user is watching;
+        # the flags are a no-op there and keep the desktop build flicker-free.
+        return subprocess.call(argv, timeout=_INSTALL_TIMEOUT_S, **no_window_kwargs())
     except subprocess.TimeoutExpired:
         return 124
     except OSError:
