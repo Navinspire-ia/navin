@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Terminal capability hints applied before Textual is imported.
+"""Terminal capability hints applied before Textual is imported, and the tab title.
 
 Rich (and therefore Textual) only trusts ``COLORTERM=truecolor`` or a
 ``*-256color`` ``TERM``. WSL sessions, ssh hops and some Windows consoles ship
@@ -94,3 +94,37 @@ def forces_synchronized_output(env: Mapping[str, str] | None = None) -> bool:
     if env.get("TMUX") or env.get("STY"):
         return False
     return any(env.get(marker) for marker in _SYNC_OUTPUT_MARKERS)
+
+
+# -- the terminal's tab or window title -------------------------------------
+
+TITLE_PREFIX = "navin-"
+# xterm's title stack: pushed once before the first title, popped at exit, so
+# the shell's own title comes back on terminals that keep one (xterm, kitty,
+# WezTerm, foot, Ghostty). The others ignore both, and their shell prompt
+# names the tab again at the next prompt.
+TITLE_PUSH = "\x1b[22;0t"
+TITLE_POP = "\x1b[23;0t"
+
+
+def project_title(workspace: str | os.PathLike[str]) -> str:
+    """The tab or window title of a navin-cli working in ``workspace``: ``navin-<folder>``."""
+    text = str(workspace).replace("\\", "/").rstrip("/")
+    name = text.rsplit("/", 1)[-1].strip() or "cli"
+    return TITLE_PREFIX + name
+
+
+def title_sequence(title: str, env: Mapping[str, str] | None = None) -> str:
+    """The bytes that name the terminal tab (or window) ``title``.
+
+    OSC 0 sets the icon name and the window title together; Windows Terminal,
+    conhost, iTerm2, Terminal.app, kitty, WezTerm, GNOME Terminal and Konsole
+    read it. Inside tmux or screen it only names the pane, so the screen-style
+    rename follows it: tmux applies that one when ``allow-rename`` is on.
+    """
+    env = os.environ if env is None else env
+    safe = "".join(ch for ch in title if ch.isprintable())
+    out = f"\x1b]0;{safe}\x07"
+    if env.get("TMUX") or env.get("STY"):
+        out += f"\x1bk{safe}\x1b\\"
+    return out

@@ -166,6 +166,23 @@ def test_synchronized_output_is_forced_on_terminals_that_draw_frames_whole():
     assert not forces_synchronized_output({"WT_SESSION": "x", "NAVIN_SYNC_OUTPUT": "0"})
 
 
+def test_the_terminal_tab_title_is_navin_and_the_project_folder():
+    from navin.tui.terminal import project_title, title_sequence
+
+    assert project_title("/home/me/projects/my-app") == "navin-my-app"
+    assert project_title("/home/me/projects/my-app/") == "navin-my-app"
+    assert project_title("C:\\Users\\me\\my app") == "navin-my app"
+    assert project_title("/") == "navin-cli"
+    # OSC 0 names the tab (Windows Terminal, iTerm2, kitty, GNOME...); inside
+    # tmux the screen-style rename follows, since OSC 0 only names the pane.
+    assert title_sequence("navin-my-app", {}) == "\x1b]0;navin-my-app\x07"
+    assert title_sequence("navin-my-app", {"TMUX": "/tmp/tmux-1000/default,1,0"}) == (
+        "\x1b]0;navin-my-app\x07\x1bknavin-my-app\x1b\\"
+    )
+    # control characters in a folder name never reach the terminal
+    assert title_sequence("navin-a\x1b]0;evil\x07b", {}) == "\x1b]0;navin-a]0;evilb\x07"
+
+
 def test_windows_terminal_gets_whole_frames_without_a_decrqm_answer(tmp_path, monkeypatch):
     """Windows Terminal through WSL: frames are wrapped in mode 2026 from the first one."""
     monkeypatch.setenv("WT_SESSION", "session")

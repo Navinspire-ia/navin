@@ -430,6 +430,7 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
                 await render
             await pilot.pause()
             self.assertEqual(app.runtime.session_key, "cli:other")
+            self.assertEqual(str(app.transcript.styles.visibility), "visible")
             self.assertEqual(
                 [row.raw_text for row in app.query(UserMessage)],
                 ["hello other"],
@@ -438,6 +439,61 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
                 [row.text for row in app.query(AssistantMessage)],
                 ["hi from other"],
             )
+
+    async def test_the_chat_left_is_off_screen_from_the_start_of_the_switch(self):
+        app = self.app
+        first = [
+            {"role": "user", "content": "hello first", "metadata": {}, "tools": []},
+            {"role": "assistant", "content": "hi first", "metadata": {}, "tools": []},
+        ]
+        other = [
+            {"role": "user", "content": "hello other", "metadata": {}, "tools": []},
+            {"role": "assistant", "content": "hi other", "metadata": {}, "tools": []},
+        ]
+        app.runtime.history_snapshot = lambda: other if app.runtime.session_key == "cli:other" else first
+        seen: list[tuple[str, list[str]]] = []
+        real_switch = app.runtime.switch_session
+
+        async def switch_session(key):
+            # The engine's part of the switch: what is on screen meanwhile?
+            seen.append((str(app.transcript.styles.visibility), [row.raw_text for row in app.query(UserMessage)]))
+            await real_switch(key)
+
+        app.runtime.switch_session = switch_session
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app._render_history()
+            await pilot.pause()
+            self.assertEqual([row.raw_text for row in app.query(UserMessage)], ["hello first"])
+            self.assertEqual(str(app.transcript.styles.visibility), "visible")
+            await app._switch_session("cli:other")
+            await pilot.pause()
+            # The rows of the chat left were still there while the engine
+            # switched, but hidden: the user never sees the old chat wait.
+            self.assertEqual(seen, [("hidden", ["hello first"])])
+            self.assertEqual(str(app.transcript.styles.visibility), "visible")
+            self.assertEqual([row.raw_text for row in app.query(UserMessage)], ["hello other"])
+            self.assertEqual([row.text for row in app.query(AssistantMessage)], ["hi other"])
+
+    async def test_a_switch_that_fails_shows_the_chat_kept_again(self):
+        app = self.app
+        rows = [
+            {"role": "user", "content": "hello first", "metadata": {}, "tools": []},
+            {"role": "assistant", "content": "hi first", "metadata": {}, "tools": []},
+        ]
+        app.runtime.history_snapshot = lambda: rows
+
+        async def switch_session(key):
+            raise RuntimeError("engine gone")
+
+        app.runtime.switch_session = switch_session
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app._render_history()
+            await pilot.pause()
+            with self.assertRaises(RuntimeError):
+                await app._switch_session("cli:other")
+            await pilot.pause()
+            self.assertEqual(str(app.transcript.styles.visibility), "visible")
+            self.assertEqual([row.raw_text for row in app.query(UserMessage)], ["hello first"])
 
     async def test_switch_reveals_latest_rows_first_then_keeps_order(self):
         app = self.app

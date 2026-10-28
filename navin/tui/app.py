@@ -828,6 +828,11 @@ class NavinApp(App[None]):
         remembered = Path(self.prefs.project_root).expanduser() if self.prefs.project_root else None
         self.project_root: Path = remembered if remembered and remembered.is_dir() else Path.cwd()
         self._account_service: Any = None
+        # The title written on the terminal tab, None until the first one.
+        self._terminal_title: str | None = None
+        # True from a session switch's start to its end: the chat left is off
+        # screen, and a history paint that ends meanwhile leaves it so.
+        self._chat_hidden = False
 
     # -- layout -----------------------------------------------------------
 
@@ -881,6 +886,7 @@ class NavinApp(App[None]):
         if self.prefs.theme in self.available_themes:
             self.theme = self.prefs.theme
         self.watch(self, "theme", self._sync_terminal_background)
+        self._name_terminal_tab()
         self._one(Sidebar).set_class(self.prefs.sidebar, "-visible")
         self._paint_sessions_bar()
         self._render_mode()
@@ -1463,6 +1469,7 @@ class NavinApp(App[None]):
 
     async def on_unmount(self) -> None:
         self._restore_terminal_background()
+        self._restore_terminal_title()
         live_share = getattr(self, "_live_share", None)
         if live_share is not None:
             self._live_share = None
@@ -1507,6 +1514,52 @@ class NavinApp(App[None]):
             self._driver.write("\x1b]111\x1b\\")
             self._driver.flush()
             self._terminal_background_set = False
+
+    def _name_terminal_tab(self) -> None:
+        """The terminal tab (or window) reads ``navin-<project>`` while this CLI runs.
+
+        Written at start and again when the engine moves to another project,
+        so a terminal with several navin-cli tabs says which project each is.
+        """
+        driver = self._driver
+        if driver is None or driver.is_headless:
+            return
+        from navin.tui.terminal import TITLE_PUSH, project_title, title_sequence
+
+        title = project_title(self.project_root)
+        if title == self._terminal_title:
+            return
+        data = title_sequence(title)
+        if self._terminal_title is None:
+            # Once: the shell's own title comes back at exit (title stack).
+            data = TITLE_PUSH + data
+        self._terminal_title = title
+        driver.write(data)
+
+    def _restore_terminal_title(self) -> None:
+        if self._terminal_title is not None and self._driver is not None:
+            from navin.tui.terminal import TITLE_POP
+
+            self._driver.write(TITLE_POP)
+            self._driver.flush()
+            self._terminal_title = None
+
+    def _hide_chat(self) -> None:
+        """Take the chat off screen, its space kept, until :meth:`_show_chat`.
+
+        A session switch starts here: the rows on screen are the chat left,
+        and the engine's part of the switch (reading the other chat, moving
+        to another project's engine) takes a moment. Nothing is removed, so a
+        switch that fails only has to show the chat again.
+        """
+        self._chat_hidden = True
+        with contextlib.suppress(NoMatches):
+            self.transcript.styles.visibility = "hidden"
+
+    def _show_chat(self) -> None:
+        self._chat_hidden = False
+        with contextlib.suppress(NoMatches):
+            self.transcript.styles.visibility = "visible"
 
     # Toasts sit above the prompt; none may linger there.
     TOAST_MAX_S = {"information": 2.0, "warning": 3.0, "error": 4.0}
@@ -1893,7 +1946,6 @@ class NavinApp(App[None]):
         transcript.has_older = cursor is not None
         transcript.loading_history = True
         transcript.auto_follow = False
-        was_visible = transcript.styles.visibility
         transcript.styles.visibility = "hidden"
         try:
             # Show the latest exchanges first: a page of tool-heavy rows takes
@@ -1903,7 +1955,7 @@ class NavinApp(App[None]):
             await self._paint_history_rows(token, tail)
             if token == self._render_token:
                 with self.batch_update():
-                    transcript.styles.visibility = was_visible
+                    transcript.styles.visibility = "visible"
                     self._place_composer()
                     transcript.screen._refresh_layout()
                     transcript.scroll_end(animate=False, immediate=True)
@@ -1922,7 +1974,10 @@ class NavinApp(App[None]):
                             )
                         transcript.screen.refresh(layout=True)
         finally:
-            transcript.styles.visibility = was_visible
+            # A paint cut short by a session switch leaves the chat hidden:
+            # the switch shows it once the other session is drawn.
+            if not self._chat_hidden:
+                transcript.styles.visibility = "visible"
             if token == self._render_token:
                 transcript.loading_history = False
                 transcript.auto_follow = True
@@ -3091,11 +3146,15 @@ class NavinApp(App[None]):
         leaving = Path(leaving_path).name or leaving_path
         await self._flush_unsent_work()
         self._engine_ready = False
+        # The chat of the project left goes off screen now, not once the other
+        # engine is up: the switch used to show it until then.
+        self._hide_chat()
         self._set_status(f"opening {escape(name)}…")
         try:
             await self.runtime.switch_workspace(path, key)
         except WorkspaceSwitchError as exc:
             self._engine_ready = self.runtime.agent_loop is not None
+            self._show_chat()  # still the chat of the project kept
             self._set_status()
             await self._note(f"[$error]{escape(str(exc))}[/]", "error")
             return
@@ -3105,6 +3164,7 @@ class NavinApp(App[None]):
         self.config = self.runtime.config
         self.project_root = Path(self.runtime.workspace)
         self.prefs.project_root = str(self.project_root)
+        self._name_terminal_tab()
         self._load_engine_commands()
         self._engine_ready = True
         try:
@@ -3370,6 +3430,7 @@ class NavinApp(App[None]):
         self.project_root = path.resolve()
         self.prefs.project_root = str(self.project_root)
         self._save_prefs_in_background()
+        self._name_terminal_tab()
         self._load_git()
         with contextlib.suppress(Exception):
             self.query_one("#dock", DockBar).set_path(str(self.project_root))
@@ -4170,10 +4231,20 @@ class NavinApp(App[None]):
         # Opening another session while the first one is still loading used to
         # crash with NoMatches on .assistant-preview / .assistant-foot.
         self._invalidate_history()
+        # The chat on screen is the session left: off screen at once. It used
+        # to stay through the engine's part of the switch and vanish only when
+        # the other chat was read, which read as "the old session, then nothing,
+        # then the new one".
+        self._hide_chat()
         async with self._history_lock:
+            # A switch that just ended under the lock showed its chat again.
+            self._hide_chat()
             try:
                 await self._show_session(key)
             finally:
+                # Shown whatever happened: the new chat, or the old one again
+                # when the switch failed before it was cleared.
+                self._show_chat()
                 # Never leave its live messages waiting if drawing it failed.
                 if getattr(self.runtime, "_holding", False):
                     await self.runtime.release_held()
@@ -4215,6 +4286,9 @@ class NavinApp(App[None]):
         self._current = None
         self._parked_bubbles = []
         self._last_speaker = None
+        # Empty now: back on screen, so the history paint that follows reveals
+        # its latest rows first, as it does at start.
+        self._show_chat()
 
     async def action_open_tools(self) -> None:
         if not self._engine_ready:

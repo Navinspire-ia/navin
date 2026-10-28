@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -437,6 +438,8 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             app.runtime.config.agents.defaults.workspace = str(path)
 
         app.runtime.switch_workspace = switch_workspace
+        named: list[str] = []
+        app._name_terminal_tab = lambda: named.append(str(app.project_root))
         with patch("navin.tui.projects.register_project") as register:
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
@@ -450,6 +453,8 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(Path(app.project_root), Path(other.name))
                 self.assertEqual(app.prefs.project_root, str(app.project_root))
                 register.assert_called_once_with(str(app.project_root))
+                # the terminal tab is named after the project now on screen
+                self.assertEqual([Path(p) for p in named], [Path(other.name)])
                 # another session of the same project: no engine move at all
                 await app._open_project_session(other.name, "cli:43")
                 self.assertEqual(len(moved), 1)
@@ -476,8 +481,39 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app._engine_ready)
             self.assertEqual(Path(app.project_root), before)
             self.assertEqual(switched, [])
+            # the chat of the project kept is back on screen
+            self.assertEqual(str(app.transcript.styles.visibility), "visible")
             notes = " ".join(str(note.content) for note in app.query(SystemNote))
             self.assertIn("boom", notes)
+
+    async def test_the_terminal_tab_is_named_navin_and_the_project(self):
+        from unittest.mock import patch
+
+        from navin.tui.terminal import TITLE_POP, TITLE_PUSH
+
+        app, _switched = await self._project_host()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause()
+            # headless (tests, a pipe): no title is written at all
+            app._name_terminal_tab()
+            self.assertIsNone(app._terminal_title)
+            writes: list[str] = []
+            terminal = SimpleNamespace(is_headless=False, is_inline=False, write=writes.append, flush=lambda: None)
+            name = Path(app.project_root).name
+            with patch.object(app, "_driver", terminal), patch.dict(os.environ, {"TMUX": "", "STY": ""}):
+                app._name_terminal_tab()
+                # the shell's title is saved once, then the tab reads navin-<project>
+                self.assertEqual(writes, [TITLE_PUSH + f"\x1b]0;navin-{name}\x07"])
+                app._name_terminal_tab()  # same project: nothing written twice
+                self.assertEqual(len(writes), 1)
+                app.project_root = Path(self.directory.name) / "other-proj"
+                app._name_terminal_tab()
+                self.assertEqual(writes[-1], "\x1b]0;navin-other-proj\x07")
+                app._restore_terminal_title()
+                self.assertEqual(writes[-1], TITLE_POP)
+                self.assertIsNone(app._terminal_title)
+                app._restore_terminal_title()  # nothing to restore twice
+                self.assertEqual(len(writes), 3)
 
     async def test_switching_project_while_work_runs_asks_nothing_and_says_it_goes_on(self):
         from unittest.mock import patch
