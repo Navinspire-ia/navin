@@ -57,7 +57,7 @@ from navin.agent.likely_locations import likely_locations_context_provider
 from navin.agent.memory import Consolidator
 from navin.agent.model_runtime import ModelRuntimeResolver
 from navin.agent.project_runbook import project_runbook_context_provider
-from navin.agent.reply_language import reply_language_context_provider
+from navin.agent.reply_language import reply_language_provider
 from navin.agent.request_checklist import (
     explicit_asks,
     request_checklist_context_provider,
@@ -1047,7 +1047,8 @@ class AgentLoop:
             continuity_context_provider,
             project_runbook_context_provider,
             voice_mode_context_provider,
-            reply_language_context_provider,
+            # The chat's language lives in its session: a restart keeps it.
+            reply_language_provider(lambda: self.sessions),
         ]
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         # Gateway only (set by the gateway command): puts the long-lived heap
