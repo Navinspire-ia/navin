@@ -4655,6 +4655,10 @@ class NavinApp(App[None]):
             self._spawn(self._confirm_quit(count))
             return
         self._quitting = True
+        from navin.tui.shutdown import release_input_thread
+
+        # The terminal's input thread ends while the engine closes, not after.
+        release_input_thread(self)
         if self._live is not None:
             with contextlib.suppress(Exception):
                 await self._live.stop()
@@ -5064,6 +5068,12 @@ def run_tui(
         run_app_fast_exit(app)
     finally:
         guard.restore()
+        # Textual's driver puts this back when it joins its input thread; the
+        # early release (release_input_thread) skips that path.
+        winch = getattr(signal, "SIGWINCH", None)
+        if winch is not None:
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(winch, signal.SIG_DFL)
         for signum, handler in previous_signals.items():
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(signum, handler)

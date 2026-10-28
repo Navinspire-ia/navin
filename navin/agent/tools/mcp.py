@@ -36,6 +36,7 @@ from navin.security.network import (
     resolve_url_target,
     validate_url_target,
 )
+from navin.utils.child_processes import tagged
 
 # Transient connection errors that warrant a single retry.
 # These typically happen when an MCP server restarts or a network
@@ -1226,9 +1227,12 @@ async def connect_mcp_servers(
                 # dies before the pipe closes and the reader gets its EOF. Swap
                 # these two and every shutdown waits out the reader's timeout.
                 errlog = server_stack.enter_context(_server_stderr(name))
-                read, write = await server_stack.enter_async_context(
-                    stdio_client(params, errlog=errlog)
-                )
+                # Tagged: at quit the CLI signals these children at once instead
+                # of waiting for each to notice its closed stdin.
+                with tagged(f"mcp:{name}"):
+                    read, write = await server_stack.enter_async_context(
+                        stdio_client(params, errlog=errlog)
+                    )
             elif transport_type == "sse":
                 if not await _probe_http_url(cfg.url):
                     _log_unreachable(name, cfg.url)

@@ -74,6 +74,28 @@ class TerminalGuard:
                 import termios
 
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, self._attrs)
+                # Keys typed during the exit never reach the shell prompt.
+                termios.tcflush(self._fd, termios.TCIFLUSH)
+
+
+def release_input_thread(app) -> None:
+    """Let the terminal input thread end now, in parallel with the engine's shutdown.
+
+    Textual's driver stops that thread in ``disable_input`` by joining it,
+    and the thread polls stdin in 100 ms selects, twice on the way out: up
+    to 200 ms with the event loop blocked, measured at 32 percent of a quit.
+    Setting its exit flag the moment the user quits lets it finish while the
+    engine closes; the later ``disable_input`` sees the flag and skips the
+    join. What that skip leaves out (the mouse modes, the terminal
+    attributes, the pending input) :class:`TerminalGuard` restores anyway.
+    """
+    driver = getattr(app, "_driver", None)
+    event = getattr(driver, "exit_event", None)
+    if driver is None or event is None or getattr(driver, "is_headless", False):
+        return
+    with suppress(Exception):
+        driver._disable_mouse_support()
+    event.set()
 
 
 def _cancel_leftovers(loop: asyncio.AbstractEventLoop, timeout: float) -> None:
@@ -94,17 +116,27 @@ def close_subprocess_transports(loop: asyncio.AbstractEventLoop) -> int:
     printed "Exception ignored ... RuntimeError: Event loop is closed" under
     the exit summary. A child still running is killed with its process group
     (commands start their own session), not just its shell.
+
+    The loop's child registry (``child_processes.install``) lists them in
+    microseconds. Without one, the whole heap is walked: 200 to 400 ms on a
+    long chat, and the attribute reads woke the OpenAI SDK's lazy modules.
     """
-    import gc
     from asyncio.base_subprocess import BaseSubprocessTransport
 
+    from navin.utils import child_processes
     from navin.utils.proc import kill_posix_process_group, kill_windows_process_tree
 
-    leftovers = [
-        obj for obj in gc.get_objects()
-        if isinstance(obj, BaseSubprocessTransport)
-        and getattr(obj, "_loop", None) is loop and not obj.is_closing()
-    ]
+    registry = child_processes.registry_of(loop)
+    if registry is not None:
+        leftovers = registry.transports()
+    else:
+        import gc
+
+        leftovers = [
+            obj for obj in gc.get_objects()
+            if isinstance(obj, BaseSubprocessTransport)
+            and getattr(obj, "_loop", None) is loop and not obj.is_closing()
+        ]
     for transport in leftovers:
         with suppress(Exception):
             pid = transport.get_pid()
@@ -134,6 +166,10 @@ def run_app_fast_exit(app, *, leftover_timeout: float = 1.0):
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    from navin.utils import child_processes
+
+    # Every child the CLI starts is known by name at exit: no heap walk then.
+    child_processes.install(loop)
     try:
         return loop.run_until_complete(app.run_async())
     finally:
@@ -150,19 +186,71 @@ def run_app_fast_exit(app, *, leftover_timeout: float = 1.0):
             loop.close()
 
 
-def exit_if_threads_linger(grace: float = 1.0) -> None:
-    """Exit now when non-daemon threads would otherwise hold the process.
+def wake_idle_executor_workers() -> int:
+    """Tell every idle thread-pool worker to finish; returns how many were told.
 
-    Sessions are already flushed by the runtime. Python joins executor and
-    non-daemon threads at exit with no limit; the shell must come back.
+    A ``ThreadPoolExecutor`` worker (the agent journal's, a tool's) is a
+    non-daemon thread waiting on its queue: the interpreter joins it at exit
+    with no limit, and :func:`exit_if_threads_linger` used to spend its whole
+    second on it before giving up. This does now what ``concurrent.futures``
+    does a moment later at interpreter exit: mark the pools as shutting down
+    and post each queue its end marker. A worker finishes the items already
+    queued (a journal line is never lost), then exits. Only for the very end
+    of the process: no pool accepts work after it.
     """
+    from concurrent.futures import thread as pool_thread
+
+    lock = getattr(pool_thread, "_global_shutdown_lock", None)
+    queues = []
+    with lock if lock is not None else suppress():
+        pool_thread._shutdown = True
+        queues = list(getattr(pool_thread, "_threads_queues", {}).values())
+    for queue in queues:
+        with suppress(Exception):
+            queue.put(None)
+    return len(queues)
+
+
+def exit_if_threads_linger(grace: float = 1.0) -> None:
+    """Leave the process now that the exit summary is printed.
+
+    Sessions are already flushed by the runtime. The idle pool workers are
+    told to finish and joined for at most ``grace`` (milliseconds once told;
+    a queued journal line is written first). The terminal input thread is
+    not waited for: it only waits out its last 100 ms poll of stdin. Then the
+    atexit hooks run (log sinks, journal writers) and the process ends with
+    ``os._exit``: the interpreter's own teardown walks and frees the whole
+    heap, seconds on a long chat, for nothing the user can see.
+    """
+    join_background_threads(grace)
+    exit_now()
+
+
+# Threads that need no join before the process ends: they only wait out a poll.
+INPUT_THREADS = frozenset({"textual-input"})
+
+
+def join_background_threads(grace: float = 1.0) -> list[str]:
+    """Wake the pool workers, join the other non-daemon threads; names still alive."""
+    wake_idle_executor_workers()
     deadline = time.monotonic() + grace
     for thread in threading.enumerate():
-        if thread is threading.main_thread() or thread.daemon:
+        if thread is threading.main_thread() or thread.daemon or thread.name in INPUT_THREADS:
             continue
         thread.join(max(0.0, deadline - time.monotonic()))
-    if any(t.is_alive() and not t.daemon and t is not threading.main_thread() for t in threading.enumerate()):
-        with suppress(Exception):
-            sys.stdout.flush()
-            sys.stderr.flush()
-        os._exit(0)
+    return [
+        t.name for t in threading.enumerate()
+        if t.is_alive() and not t.daemon and t is not threading.main_thread() and t.name not in INPUT_THREADS
+    ]
+
+
+def exit_now(code: int = 0) -> None:
+    """Run the atexit hooks, flush the streams and end the process at once."""
+    import atexit
+
+    with suppress(Exception):
+        atexit._run_exitfuncs()
+    with suppress(Exception):
+        sys.stdout.flush()
+        sys.stderr.flush()
+    os._exit(code)

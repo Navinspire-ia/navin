@@ -969,6 +969,13 @@ class TuiRuntime:
         if loop is not None:
             with contextlib.suppress(Exception):
                 loop.stop()
+        # Its MCP servers are told to stop now. Left to notice their closed
+        # stdin, each took 300 ms or more of the quit (the SDK waits up to
+        # 2 s per server before it signals them itself).
+        from navin.utils import child_processes
+
+        with contextlib.suppress(Exception):
+            child_processes.terminate(asyncio.get_running_loop(), "mcp:")
         tasks = [t for t in (loop_task, consumer_task) if t and not t.done()]
         for active in getattr(loop, "_active_tasks", {}).values():
             tasks.extend(t for t in active if not t.done())

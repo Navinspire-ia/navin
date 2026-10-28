@@ -278,6 +278,88 @@ def test_loop_close_does_not_wait_for_a_stuck_worker_thread():
         release.set()
 
 
+def test_idle_pool_workers_are_woken_and_the_input_thread_is_not_waited_for():
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import thread as pool_thread
+
+    from navin.tui.shutdown import join_background_threads
+
+    # An idle journal worker held the exit for its whole grace (1 s) before:
+    # a worker only leaves its queue when its pool is shutting down.
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="navin-agent-journal")
+    pool.submit(lambda: None).result()
+    written = []
+    pool.submit(lambda: (time.sleep(0.05), written.append("journal line")))
+    workers = [t for t in threading.enumerate() if t.name.startswith("navin-agent-journal")]
+    assert workers
+    # The terminal input thread only waits out its last poll: no join for it.
+    polling = threading.Event()
+    reader = threading.Thread(target=polling.wait, args=(5,), name="textual-input")
+    reader.start()
+    try:
+        started = time.monotonic()
+        lingering = join_background_threads(grace=1.0)
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.8, elapsed
+        assert written == ["journal line"]  # queued work is finished, not dropped
+        assert not any(t.is_alive() for t in workers)
+        assert "textual-input" not in lingering
+        assert reader.is_alive()
+    finally:
+        polling.set()
+        reader.join(1)
+        pool_thread._shutdown = False  # the test process goes on
+        pool.shutdown(wait=False)
+
+
+def test_quit_lets_the_terminal_input_thread_end_while_the_engine_closes():
+    from navin.tui.shutdown import release_input_thread
+
+    driver = SimpleNamespace(exit_event=threading.Event(), is_headless=False, _disable_mouse_support=Mock())
+    release_input_thread(SimpleNamespace(_driver=driver))
+    assert driver.exit_event.is_set()
+    driver._disable_mouse_support.assert_called_once()
+    headless = SimpleNamespace(exit_event=threading.Event(), is_headless=True, _disable_mouse_support=Mock())
+    release_input_thread(SimpleNamespace(_driver=headless))
+    assert not headless.exit_event.is_set()
+    release_input_thread(SimpleNamespace(_driver=None))  # before the driver exists
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_quit_signals_the_mcp_servers_instead_of_waiting_for_them(tmp_path):
+    from navin.tui.shutdown import run_app_fast_exit
+    from navin.utils import child_processes
+
+    seen = {}
+
+    class App:
+        async def run_async(self):
+            loop = asyncio.get_running_loop()
+            assert child_processes.registry_of(loop) is not None  # installed by run_app_fast_exit
+            with child_processes.tagged("mcp:time"):
+                server = await asyncio.create_subprocess_exec(
+                    "sleep", "30", stdin=asyncio.subprocess.PIPE, start_new_session=True,
+                )
+            tool = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
+            runtime = TuiRuntime(SimpleNamespace(workspace_path=tmp_path), on_event=lambda _: None)
+            runtime.agent_loop = SimpleNamespace(stop=Mock(), sessions=Mock(flush_saved=Mock()), close_mcp=AsyncMock())
+            started = time.monotonic()
+            with patch("navin.cli.commands._close_agent_subprocesses", new=AsyncMock()):
+                await runtime.close()
+            seen["close_s"] = time.monotonic() - started
+            await asyncio.wait_for(server.wait(), 1.0)
+            seen["server_rc"] = server.returncode
+            seen["tool_rc"] = tool.returncode  # an ordinary child is not touched
+            tool.kill()
+            await tool.wait()
+            return "done"
+
+    assert run_app_fast_exit(App()) == "done"
+    assert seen["server_rc"] == -15  # SIGTERM at once, not stdin EOF then a 2 s wait
+    assert seen["tool_rc"] is None
+    assert seen["close_s"] < 1.0
+
+
 def test_terminal_guard_restores_tty_modes():
     from unittest.mock import patch
 
@@ -298,16 +380,21 @@ def test_exit_closes_leftover_children_without_a_closed_loop_traceback(tmp_path)
     # summary, and the children kept running as orphans.
     script = """
 import asyncio, gc, os, sys, time
+from unittest.mock import patch
 from navin.tui.shutdown import close_subprocess_transports
+from navin.utils import child_processes
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+child_processes.install(loop)
 procs = []
 async def main():
     procs.append(await asyncio.create_subprocess_exec("sleep", "30", stdout=asyncio.subprocess.PIPE, start_new_session=True))
     procs.append(await asyncio.create_subprocess_exec("sleep", "30", stdout=asyncio.subprocess.PIPE))
 loop.run_until_complete(main())
 pids = [p.pid for p in procs]
-assert close_subprocess_transports(loop) == 2
+# The loop's child registry knows them: the whole heap is never walked.
+with patch("gc.get_objects", side_effect=AssertionError("heap walk")):
+    assert close_subprocess_transports(loop) == 2
 asyncio.set_event_loop(None)
 loop.close()
 del procs
