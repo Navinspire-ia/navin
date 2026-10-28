@@ -58,6 +58,55 @@ class TerminalBackgroundTests(unittest.TestCase):
             NavinApp._sync_terminal_background(host, "navin")
             driver.write.assert_not_called()
 
+    def _background_host(self):
+        driver = Mock(is_headless=False, is_inline=False)
+        host = SimpleNamespace(
+            _driver=driver, ansi_color=False, no_color=False, theme="navin",
+            current_theme=SimpleNamespace(background="#181A1D"), _terminal_background_set=False,
+        )
+        host._sync_terminal_background = lambda theme: NavinApp._sync_terminal_background(host, theme)
+        host._restore_terminal_background = lambda: NavinApp._restore_terminal_background(host)
+        host._reassert_terminal_background = lambda: NavinApp._reassert_terminal_background(host)
+        return host, driver
+
+    def test_a_lost_padding_colour_is_written_again_on_focus_and_after_a_suspend(self):
+        # Windows Terminal puts the profile colour back in its padding when it
+        # reloads its settings: the purple strip beside the CLI. A focus
+        # writes the colour again, and only when this run had set it.
+        host, driver = self._background_host()
+        NavinApp.on_app_focus(host, events.AppFocus())
+        driver.write.assert_not_called()
+        NavinApp._sync_terminal_background(host, "navin")
+        driver.write.reset_mock()
+        NavinApp.on_app_focus(host, events.AppFocus())
+        driver.write.assert_called_once_with("\x1b]11;#181A1D\x1b\\")
+        driver.flush.assert_called()
+        # A suspend hands the shell its own colours; a focus meanwhile writes
+        # nothing; the resume sets the CLI's again.
+        NavinApp._on_terminal_suspend(host, None)
+        self.assertEqual(driver.write.call_args.args[0], "\x1b]111\x1b\\")
+        driver.write.reset_mock()
+        NavinApp.on_app_focus(host, events.AppFocus())
+        driver.write.assert_not_called()
+        NavinApp._on_terminal_resume(host, None)
+        driver.write.assert_called_once_with("\x1b]11;#181A1D\x1b\\")
+        self.assertTrue(host._terminal_background_set)
+
+    def test_start_up_writes_the_colour_once_more_and_follows_suspend_and_resume(self):
+        # A new Windows Terminal tab loads its profile after the program's
+        # first output: one more write shortly after start covers it.
+        host = SimpleNamespace(
+            set_timer=Mock(), app_suspend_signal=Mock(), app_resume_signal=Mock(),
+            _reassert_terminal_background=Mock(), _on_terminal_suspend=Mock(), _on_terminal_resume=Mock(),
+        )
+        NavinApp._keep_terminal_background(host)
+        host.set_timer.assert_called_once_with(
+            NavinApp._BACKGROUND_REASSERT_DELAY_S, host._reassert_terminal_background,
+        )
+        self.assertLessEqual(NavinApp._BACKGROUND_REASSERT_DELAY_S, 3.0)
+        host.app_suspend_signal.subscribe.assert_called_once_with(host, host._on_terminal_suspend)
+        host.app_resume_signal.subscribe.assert_called_once_with(host, host._on_terminal_resume)
+
 
 class FormatWorkingLineTests(unittest.TestCase):
     def test_navin_keys_not_cursor_keys(self) -> None:

@@ -1949,7 +1949,9 @@
         "start": "{{platform}} アプリを作成",
         "cancel": "キャンセル"
       }
-    }
+    },
+    "cyberTab": "Cyber",
+    "cyberHint": "Security audit of the project: switches the chat to Security mode"
   },
   "errors": {
     "fileSaveTooLarge": "File is too large to save from the editor (max {{max}} MB)",
@@ -9145,7 +9147,8 @@
         "review": "Review",
         "reviewHelp": "Expert review: correctness, SQL/data, API, frontend, tests, perf + fix plan.",
         "security": "Security",
-        "securityHelp": "Full AppSec: SQLi, XSS, authz, network, secrets, IaC, privacy + hardening plan."
+        "securityHelp": "Full AppSec: SQLi, XSS, authz, network, secrets, IaC, privacy + hardening plan.",
+        "securityIntro": "**Security mode is on.** What do you want me to audit: this whole project, a folder, a file, a pull request or a diff? I can scan the code (false-positive filter, source to sink proof, HTML report), check dependencies, secrets, APIs, run a penetration test and a threat model, review code and PRs with inline comments, audit Terraform / IaC, cloud posture (AWS, Azure, GCP), Kubernetes and Docker misconfigurations and data protection, then propose fixes and apply them in code, verified by tests and CI and tracked on the task board. Nothing is modified without your approval."
       },
       "modelAuto": "Auto-route",
       "modelAutoRow": "Auto-route (by task)",

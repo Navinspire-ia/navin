@@ -25,13 +25,16 @@ from navin.providers.model_capabilities import supports_vision
 _NOTICE_ONE = (
     "[attachment not delivered: {names} could not be read because the selected "
     "model ({model}) has no image input. Do not describe or guess its content. "
-    "Tell the user to switch to a vision model to analyse it.]"
+    "If a vision or image model is available (a configured vision preset, a "
+    "tool or subagent routed to one), use it to analyse the image; otherwise "
+    "tell the user to switch to a vision model to analyse it.]"
 )
 _NOTICE_MANY = (
     "[attachments not delivered: {count} images ({names}) could not be read "
     "because the selected model ({model}) has no image input. Do not describe "
-    "or guess their content. Tell the user to switch to a vision model to "
-    "analyse them.]"
+    "or guess their content. If a vision or image model is available (a "
+    "configured vision preset, a tool or subagent routed to one), use it to "
+    "analyse them; otherwise tell the user to switch to a vision model.]"
 )
 
 

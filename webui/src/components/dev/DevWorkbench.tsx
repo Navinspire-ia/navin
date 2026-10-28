@@ -244,6 +244,7 @@ import {
 } from "@/lib/tab-telemetry";
 import { railWidthFor, type DevRailDensity } from "@/lib/dev-rail-layout";
 import { cn } from "@/lib/utils";
+import { requestCyberLaunch } from "@/lib/cyber-launch";
 import { requestReverseLaunch } from "@/lib/reverse-launch";
 import { openSettingsSection } from "@/lib/settings-events";
 import { isDesktopShell } from "@/lib/desktop";
@@ -5212,6 +5213,26 @@ export function DevWorkbench({
                 },
                 active: false,
                 go: () => openSettingsSection("team"),
+              },
+              {
+                // Cyber launcher, right above Reverse: switches the chat to the
+                // Security mode (/fortify: code scan, dependencies, secrets, API,
+                // pentest, threat model, code/PR review, IaC/cloud/K8s/Docker
+                // posture, remediation) and asks what to audit.
+                key: "cyber",
+                icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.cyberTab", "Cyber"),
+                badge: {
+                  text: tx("dev.reverseNew", "NEW"),
+                  tone: "bg-amber-400/80",
+                  dot: true,
+                  title: tx(
+                    "dev.cyberHint",
+                    "Security audit of the project: switches the chat to Security mode",
+                  ),
+                },
+                active: false,
+                go: () => requestCyberLaunch(),
               },
               {
                 // Reverse launcher, right above AGI: switches the chat to the

@@ -328,7 +328,9 @@ def _truncate(text: str, limit: int) -> str:
 # Said to the model, not to the user, and only when we are not sure it can see.
 _BLIND_SCREENSHOT_WARNING = (
     "If no image appears above this line, your model received no image: say so "
-    "and suggest switching to a vision model. Never describe or guess what the "
+    "and, if a vision or image model is available (a configured vision preset, "
+    "a tool or subagent routed to one), use it to read the screenshot; otherwise "
+    "suggest switching to a vision model. Never describe or guess what the "
     "screenshot shows."
 )
 

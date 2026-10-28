@@ -80,6 +80,11 @@ import {
   buildReverseIntroMessage,
   onReverseLaunch,
 } from "@/lib/reverse-launch";
+import {
+  appendCyberIntro,
+  buildCyberIntroMessage,
+  onCyberLaunch,
+} from "@/lib/cyber-launch";
 import { useSessionHistory } from "@/hooks/useSessions";
 import { AppShareHint } from "@/components/thread/AppShareHint";
 import { LIVE_START_EVENT } from "@/lib/live-events";
@@ -2223,6 +2228,17 @@ export function ThreadShell({
       handleComposerTurnModeChange(request.mode);
     });
   }, [chatId, client, handleComposerTurnModeChange]);
+
+  // Cyber button of the Code rail: switch to Security mode, then ask in the
+  // journal what to audit, in the user's Navin language.
+  useEffect(() => {
+    return onCyberLaunch(() => {
+      handleComposerTurnModeChange("security");
+      const intro = buildCyberIntroMessage((key, options) => String(t(key, options)));
+      setMessages((prev) => appendCyberIntro(prev, intro));
+      setScrollToBottomSignal((value) => value + 1);
+    });
+  }, [handleComposerTurnModeChange, setMessages, t]);
 
   // Reverse button of the Code rail: switch the mode, then ask in the journal
   // which app to reverse, in the user's Navin language.

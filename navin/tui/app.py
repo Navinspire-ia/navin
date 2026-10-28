@@ -893,6 +893,7 @@ class NavinApp(App[None]):
         if self.prefs.theme in self.available_themes:
             self.theme = self.prefs.theme
         self.watch(self, "theme", self._sync_terminal_background)
+        self._keep_terminal_background()
         self._name_terminal_tab()
         self._one(Sidebar).set_class(self.prefs.sidebar, "-visible")
         self._paint_sessions_bar()
@@ -1524,6 +1525,38 @@ class NavinApp(App[None]):
             self._driver.write("\x1b]111\x1b\\")
             self._driver.flush()
             self._terminal_background_set = False
+
+    # Windows Terminal puts a profile's own colours back when it reloads its
+    # settings, and a new tab loads them after the program's first output: the
+    # padding and the scrollbar gutter then show the profile background, the
+    # purple strip beside the CLI in the user's screenshot of 2026-10-28,
+    # while every cell keeps the CLI's. The colour is written again whenever
+    # it can have been lost: shortly after start-up, when the terminal gets
+    # the focus back, and after a suspend.
+    _BACKGROUND_REASSERT_DELAY_S = 1.5
+
+    def _keep_terminal_background(self) -> None:
+        self.set_timer(NavinApp._BACKGROUND_REASSERT_DELAY_S, self._reassert_terminal_background)
+        self.app_suspend_signal.subscribe(self, self._on_terminal_suspend)
+        self.app_resume_signal.subscribe(self, self._on_terminal_resume)
+
+    def _reassert_terminal_background(self) -> None:
+        """Write the padding colour again; nothing when this run never set it."""
+        if not getattr(self, "_terminal_background_set", False):
+            return
+        self._sync_terminal_background(self.theme)
+        if self._driver is not None:
+            self._driver.flush()
+
+    def _on_terminal_suspend(self, _app: object) -> None:
+        # The shell that runs meanwhile gets its own colours back.
+        self._restore_terminal_background()
+
+    def _on_terminal_resume(self, _app: object) -> None:
+        self._sync_terminal_background(self.theme)
+
+    def on_app_focus(self, _event: events.AppFocus) -> None:
+        self._reassert_terminal_background()
 
     def _name_terminal_tab(self) -> None:
         """The terminal tab (or window) reads ``navin-<project>`` while this CLI runs.
