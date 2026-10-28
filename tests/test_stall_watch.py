@@ -13,12 +13,13 @@ helper thread.
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 import time
 
 import pytest
 
-from navin.webui.stall_watch import LoopLagMonitor, StallReporter, thread_snapshot
+from navin.webui.stall_watch import IdleHeapPass, LoopLagMonitor, StallReporter, thread_snapshot
 
 
 class _Log:
@@ -592,3 +593,85 @@ def test_windows_env_retries_a_miss_after_a_minute(monkeypatch) -> None:
     monkeypatch.setattr(wsl, "_WINDOWS_ENV_CACHE", {"A": (time.monotonic() - 120, None)})
     monkeypatch.setattr(wsl, "_read_windows_env", lambda name: calls.append(name) or "v")
     assert wsl.windows_env("A") == "v" and calls == ["A"]
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def thawed_heap():
+    yield
+    # The passes froze this process's objects: give them back to the collector.
+    gc.unfreeze()
+
+
+def test_idle_heap_pass_runs_only_idle_and_once_an_interval(thawed_heap) -> None:
+    clock = _Clock()
+    keeper = IdleHeapPass(clock, min_interval_s=60.0)
+    assert keeper.tick(idle=False) is False
+    assert keeper.passes == 0
+    assert keeper.tick(idle=True) is True
+    assert gc.get_freeze_count() > 0  # the survivors are out of the next collections
+    assert keeper.tick(idle=True) is False  # same minute
+    clock.now += 60.0
+    assert keeper.tick(idle=True) is True
+    assert keeper.passes == 2
+    assert keeper.deep_passes == 0
+
+
+def test_idle_heap_pass_thaws_everything_once_the_frozen_set_grew(thawed_heap) -> None:
+    clock = _Clock()
+    keeper = IdleHeapPass(clock, min_interval_s=0.0, deep_growth=1)
+    assert keeper.tick(idle=True) is True  # ordinary: nothing frozen by it yet
+    assert keeper.deep_passes == 0
+    kept = [[i] for i in range(1000)]  # cycles-free containers: they survive and get frozen
+    clock.now += 1.0
+    assert keeper.tick(idle=True) is True
+    assert keeper.deep_passes == 1
+    # The growth baseline moved to the thawed-and-refrozen heap (the kept
+    # lists included); objects freed by refcount since may lower the live count.
+    assert keeper.frozen_after_deep >= 1000
+    assert gc.get_freeze_count() <= keeper.frozen_after_deep
+    assert len(kept) == 1000
+
+
+def test_the_gateway_loop_ticks_the_heap_pass_only_when_no_session_is_busy() -> None:
+    from navin.agent.loop import AgentLoop
+
+    class _Keeper:
+        def __init__(self) -> None:
+            self.idle: list[bool] = []
+
+        def tick(self, *, idle: bool) -> bool:
+            self.idle.append(idle)
+            return False
+
+    class _Compact:
+        def expired_candidates(self, active):
+            return []
+
+    class _Loop:
+        heap_keeper = _Keeper()
+        auto_compact = _Compact()
+        busy: set[str] = set()
+
+        def _busy_session_keys(self) -> set[str]:
+            return set(self.busy)
+
+    stub = _Loop()
+
+    async def scenario() -> None:
+        AgentLoop._maybe_check_idle_sessions(stub)
+        await stub._idle_check_task
+        stub._idle_check_at = 0.0
+        stub.busy = {"cli:direct"}
+        AgentLoop._maybe_check_idle_sessions(stub)
+        await stub._idle_check_task
+
+    asyncio.run(scenario())
+    assert stub.heap_keeper.idle == [True, False]

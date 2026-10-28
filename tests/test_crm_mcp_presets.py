@@ -110,3 +110,26 @@ class CrmSkillAndDocsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class McpPresetsSettingsReadTest(unittest.TestCase):
+    def test_the_settings_read_builds_its_payload_off_the_event_loop(self) -> None:
+        # shutil.which over a Windows PATH holding WSL folders took 1.1 s on
+        # the loop (desktop log, 2026-10-27): the read runs in a worker thread.
+        import asyncio
+        import threading
+        from unittest.mock import patch
+
+        from navin.webui import mcp_presets_api
+
+        seen: list[int] = []
+
+        def payload(**_kwargs):
+            seen.append(threading.get_ident())
+            return {"presets": []}
+
+        with patch.object(mcp_presets_api, "mcp_presets_payload", payload):
+            result = asyncio.run(mcp_presets_api.mcp_presets_settings_action(None, {}))
+        self.assertEqual(result, {"presets": []})
+        self.assertEqual(len(seen), 1)
+        self.assertNotEqual(seen[0], threading.get_ident())

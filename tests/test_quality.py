@@ -909,6 +909,10 @@ class WslRoutedToolsTest(unittest.TestCase):
         for table in (wsl_route._probe_cache, wsl_route._probe_threads):
             table.clear()
             self.addCleanup(table.clear)
+        from navin.quality import verification_log
+
+        verification_log._has_tests_cache.clear()
+        self.addCleanup(verification_log._has_tests_cache.clear)
 
     def test_the_tool_probe_is_reused_instead_of_starting_wsl_each_time(self):
         specs = {"ruff": {"binary": {"name": "ruff"}}, "mypy": {"binary": {"name": "mypy"}}}
@@ -1025,3 +1029,49 @@ class WslRoutedToolsTest(unittest.TestCase):
         self.assertIn("bash", argv)
         report = next(arg for arg in argv if arg.startswith("--junit-xml="))
         self.assertNotIn("\\", report)
+
+
+class ProjectHasTestsAnswerTests(unittest.TestCase):
+    """"Does this project have tests" is answered once, and off the loop."""
+
+    def setUp(self) -> None:
+        from navin.quality import verification_log
+
+        self.log = verification_log
+        self.log._has_tests_cache.clear()
+        self.addCleanup(self.log._has_tests_cache.clear)
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_the_answer_is_remembered_per_project_for_a_minute(self) -> None:
+        suites = [{"runner": "pytest", "available": True, "fallback_only": False}]
+        with patch.object(testing_mod, "detect_suites", return_value=suites) as detect:
+            self.assertTrue(self.log._project_has_tests(self.root))
+            self.assertTrue(self.log._project_has_tests(str(self.root)))
+            self.assertEqual(detect.call_count, 1)
+            other = self.root / "other"
+            other.mkdir()
+            detect.return_value = []
+            self.assertFalse(self.log._project_has_tests(other))
+            self.assertEqual(detect.call_count, 2)
+            # Past the TTL the tree is read again: a suite added since counts.
+            stamp, answer = self.log._has_tests_cache[str(self.root)]
+            self.log._has_tests_cache[str(self.root)] = (stamp - self.log._HAS_TESTS_TTL_S - 1, answer)
+            self.assertFalse(self.log._project_has_tests(self.root))
+            self.assertEqual(detect.call_count, 3)
+
+    def test_the_runner_primes_the_answer_before_an_edit_needs_it(self) -> None:
+        from navin.agent.code_validation import CodeValidationState
+
+        state = CodeValidationState(root=self.root)
+        self.assertTrue(state.tests_detection_pending)
+        with patch.object(testing_mod, "detect_suites", return_value=[]) as detect:
+            state.prime_project_has_tests()
+            self.assertFalse(state.tests_detection_pending)
+            state.edited({"app.py"}, require_tests=True)
+        self.assertEqual(detect.call_count, 1)
+        self.assertFalse(state.needs_tests)
+        self.assertIn("No test suite", state.test_result_note)
+        # An unknown project has nothing to detect: tests stay required.
+        self.assertFalse(CodeValidationState().tests_detection_pending)

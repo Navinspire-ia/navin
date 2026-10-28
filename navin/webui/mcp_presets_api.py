@@ -2276,7 +2276,9 @@ async def mcp_presets_settings_action(
 ) -> dict[str, Any]:
     """Run a WebUI MCP preset action and hot-reload the agent when config changes."""
     if action is None:
-        return mcp_presets_payload()
+        # Resolves every preset's command on PATH (shutil.which: 1.1 s on the
+        # loop in the desktop log, with WSL folders on the Windows PATH).
+        return await asyncio.to_thread(mcp_presets_payload)
     if action == "test":
         return await mcp_presets_test_action(query)
     if action in _CUSTOM_ACTIONS:

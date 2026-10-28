@@ -392,3 +392,73 @@ def freeze_startup_heap() -> bool:
     gc.collect()
     gc.freeze()
     return True
+
+
+# Between two idle passes at least this long. A pass is a full collection
+# over the unfrozen objects only: cheap once the previous pass froze the rest.
+IDLE_HEAP_PASS_MIN_INTERVAL_S = 60.0
+# Frozen objects may hold cycles that died since (a finished turn's tasks and
+# tracebacks). Once the frozen set grew this much, the next idle pass thaws
+# everything first, collects it all and freezes again: rare, and idle only.
+IDLE_HEAP_DEEP_GROWTH = 500_000
+# A pass at least this long is logged with its kind, for the next audit.
+SLOW_HEAP_PASS_S = 0.5
+
+
+class IdleHeapPass:
+    """Put the engine's long-lived heap away while nothing runs.
+
+    ``freeze_startup_heap`` covers what exists at start. A day of sessions,
+    indexes and tool results then grows the unfrozen long-lived set, and every
+    automatic full collection walks all of it again: 1.1 s pauses in the
+    desktop log of 2026-10-27, in the middle of turns. The agent loop ticks
+    this once a minute while its inbound queue is quiet; with no turn and no
+    subagent running, the pass collects and freezes the survivors, so the
+    collections Python starts on its own during the next turns only walk the
+    objects created since. Cyclic garbage pinned by a freeze is given back by
+    the deep pass once the frozen set grew by ``IDLE_HEAP_DEEP_GROWTH``.
+    """
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        *,
+        min_interval_s: float = IDLE_HEAP_PASS_MIN_INTERVAL_S,
+        deep_growth: int = IDLE_HEAP_DEEP_GROWTH,
+    ) -> None:
+        self._clock = clock
+        self._min_interval_s = min_interval_s
+        self._deep_growth = deep_growth
+        self._last_pass_at = float("-inf")
+        self.frozen_after_deep = gc.get_freeze_count()
+        self.passes = 0
+        self.deep_passes = 0
+        self.last_pass_s = 0.0
+
+    def tick(self, *, idle: bool) -> bool:
+        """Run a pass when the engine is idle and the interval has passed."""
+        if not idle or not gc.isenabled():
+            return False
+        now = self._clock()
+        if now - self._last_pass_at < self._min_interval_s:
+            return False
+        self._last_pass_at = now
+        deep = gc.get_freeze_count() - self.frozen_after_deep >= self._deep_growth
+        started = time.perf_counter()
+        if deep:
+            gc.unfreeze()
+        gc.collect()
+        gc.freeze()
+        self.last_pass_s = time.perf_counter() - started
+        self.passes += 1
+        if deep:
+            self.deep_passes += 1
+            self.frozen_after_deep = gc.get_freeze_count()
+        if self.last_pass_s >= SLOW_HEAP_PASS_S:
+            from loguru import logger
+
+            logger.info(
+                "engine {} heap pass took {:.1f}s while idle ({} objects frozen)",
+                "deep" if deep else "ordinary", self.last_pass_s, gc.get_freeze_count(),
+            )
+        return True

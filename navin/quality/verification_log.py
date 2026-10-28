@@ -90,6 +90,14 @@ def last_verification_summary(root: Path | str, *, limit: int = 3) -> str:
     return "\n".join(lines)
 
 
+# The detection lists the tree one level down (a UNC listing and a wsl.exe
+# round trip on a WSL project: 1.3 s in the desktop log of 2026-10-27). One
+# answer per project per minute serves the code gate, the board gate and the
+# runner, which asks for it in a worker thread before the first edit.
+_HAS_TESTS_TTL_S = 60.0
+_has_tests_cache: dict[str, tuple[float, bool]] = {}
+
+
 def _project_has_tests(root: Path | str) -> bool:
     """Whether a test runner exists here at all.
 
@@ -98,6 +106,17 @@ def _project_has_tests(root: Path | str) -> bool:
     validation gate already waives tests in that case (no_test_suite); the
     board gate does the same, and a green verify is then enough.
     """
+    key = str(root)
+    now = time.monotonic()
+    hit = _has_tests_cache.get(key)
+    if hit is not None and now - hit[0] < _HAS_TESTS_TTL_S:
+        return hit[1]
+    answer = _detect_project_has_tests(root)
+    _has_tests_cache[key] = (now, answer)
+    return answer
+
+
+def _detect_project_has_tests(root: Path | str) -> bool:
     try:
         from navin.quality.testing import detect_suites
 
@@ -105,7 +124,7 @@ def _project_has_tests(root: Path | str) -> bool:
             suite.get("available") and not suite.get("fallback_only")
             for suite in detect_suites(Path(root))
         )
-    except Exception:
+    except Exception:  # unreadable layout: keep asking for tests, the safe side
         return True
 
 

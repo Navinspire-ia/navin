@@ -486,7 +486,7 @@ class TestRunTool(_QualityTool):
             await _remember_test_run(root, runner, target or None, started, outcomes)
             if outcomes and all(outcome.ran for outcome in outcomes):
                 await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
-            _record_test_outcomes(root, outcomes, target=target)
+            await asyncio.to_thread(_record_test_outcomes, root, outcomes, target=target)
             from navin.quality.evidence import test_evidence
 
             return ToolResult(
@@ -516,7 +516,7 @@ class TestRunTool(_QualityTool):
                 on_output=_test_output_callback(expected, started),
             )
             await _remember_test_run(root, runner, item, started, outcomes)
-            _record_test_outcomes(root, outcomes, target=item)
+            await asyncio.to_thread(_record_test_outcomes, root, outcomes, target=item)
             every_outcome.extend(outcomes)
             sections.append(f"=== {item} ===\n" + "\n\n".join(o.render() for o in outcomes))
         if every_outcome and all(outcome.ran for outcome in every_outcome):
@@ -710,7 +710,9 @@ class VerifyTool(_QualityTool):
                 auto_fix=(action == "fix"),
                 on_test_output=_test_output_callback(),
             )
-            _record_verify_report(root, report)
+            # The verification log is a JSON file under the project: on a WSL
+            # or network drive its read and write held the loop for seconds.
+            await asyncio.to_thread(_record_verify_report, root, report)
             if report.test_outcomes and all(outcome.ran for outcome in report.test_outcomes):
                 await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
             from navin.quality.evidence import verify_evidence

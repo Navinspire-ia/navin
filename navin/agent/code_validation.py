@@ -721,6 +721,21 @@ class CodeValidationState:
             self._has_tests = _project_has_tests(self.root)
         return self._has_tests
 
+    @property
+    def tests_detection_pending(self) -> bool:
+        """Whether "does this project have tests" is still to be answered."""
+        return self.root is not None and self._has_tests is None
+
+    def prime_project_has_tests(self) -> None:
+        """Answer it now, so ``edited`` finds the answer ready.
+
+        The detection lists the tree (a UNC listing and a wsl.exe round trip
+        on a WSL project): 1.3 s on the event loop in the desktop log of
+        2026-10-27. The runner calls this in a worker thread before it
+        observes the tool results of a validating turn.
+        """
+        self._project_has_tests()
+
     def record(self, evidence: VerificationEvidence, *, revision: int | None = None) -> None:
         checked_revision = self.revision if revision is None else revision
         for kind, ok in (("checks", evidence.checks_ok), ("tests", evidence.tests_ok)):

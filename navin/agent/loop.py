@@ -190,6 +190,36 @@ _STICKY_LIFTED_TOOLS: OrderedDict[str, frozenset[str]] = OrderedDict()
 _IDLE_SESSION_CHECK_S = 60.0
 
 SESSION_MODEL_PIN_KEY = "_last_model_preset"
+
+
+def _persist_turn_snapshots(
+    checkpoints: Any,
+    pending_review: Any,
+    session_key: str,
+    auto_checkpoint_name: str | None,
+    files: dict[str, bytes | None],
+    skipped: list[str] | None,
+) -> None:
+    """End of turn: fold the pre-edit snapshots into the checkpoint and the review.
+
+    Blocking (two fsynced JSON writes): the loop reaches it through
+    ``asyncio.to_thread`` only. Each store stays best-effort on its own.
+    """
+    if (files or skipped) and auto_checkpoint_name:
+        with suppress(OSError, ValueError):
+            checkpoints.attach_files(
+                session_key,
+                auto_checkpoint_name,
+                files,
+                # Exclusion manifest: restore_files reports these as
+                # unrestorable instead of silently partial.
+                skipped=skipped,
+            )
+    if files:
+        # Pending review: keep the pre-edit baseline so the WebUI can
+        # highlight agent changes and accept/reject them.
+        with suppress(OSError, ValueError):
+            pending_review.merge_turn(session_key, files)
 # Sentinel a client sends as ``model_preset`` to say "no pin: let task
 # routing choose". It clears the sticky session pin instead of setting one.
 AUTO_MODEL_PIN = "auto"
@@ -1020,6 +1050,10 @@ class AgentLoop:
             reply_language_context_provider,
         ]
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
+        # Gateway only (set by the gateway command): puts the long-lived heap
+        # away at idle minutes so the automatic full collections during turns
+        # stay short. The TUI has its own collector policy (navin.tui.frames).
+        self.heap_keeper: Any = None
         # /stop wall-clock per session: internal continuation slices belonging
         # to a run started before this instant are stale and must be dropped,
         # even when they were already republished to the bus at a slice
@@ -2629,32 +2663,21 @@ class AgentLoop:
                 reset_live_edit_hook(live_hook_token)
             if recorder_token is not None:
                 reset_checkpoint_recorder(recorder_token)
-                if (
-                    turn_recorder is not None
-                    and (turn_recorder.files or turn_recorder.skipped)
-                    and auto_checkpoint_name
-                    and session is not None
+                if turn_recorder is not None and session is not None and (
+                    turn_recorder.files or turn_recorder.skipped
                 ):
-                    with suppress(OSError, ValueError):
-                        self.checkpoints.attach_files(
+                    # Both stores fsync a JSON file: 1 to 4 s per turn end on
+                    # a WSL or network drive in the CLI freeze log, so the
+                    # writes run in a worker thread, never on the shared loop.
+                    with suppress(RuntimeError):  # executor already shut down: the turn ends anyway
+                        await asyncio.to_thread(
+                            _persist_turn_snapshots,
+                            self.checkpoints,
+                            self.pending_review,
                             session.key,
                             auto_checkpoint_name,
                             turn_recorder.files,
-                            # Exclusion manifest: restore_files reports these
-                            # as unrestorable instead of silently partial.
-                            skipped=turn_recorder.skipped,
-                        )
-                if (
-                    turn_recorder is not None
-                    and turn_recorder.files
-                    and session is not None
-                ):
-                    # Pending review: keep the pre-edit baseline so the WebUI
-                    # can highlight agent changes and accept/reject them.
-                    with suppress(OSError, ValueError):
-                        self.pending_review.merge_turn(
-                            session.key,
-                            turn_recorder.files,
+                            turn_recorder.skipped,
                         )
             reset_approval_gate(approval_token)
             reset_choice_broker(choice_token)
@@ -3281,6 +3304,9 @@ class AgentLoop:
             return
         self._idle_check_at = now
         active = self._busy_session_keys()
+        keeper = self.heap_keeper
+        if keeper is not None:
+            keeper.tick(idle=not active)
 
         async def _check() -> None:
             try:

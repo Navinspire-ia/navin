@@ -34,8 +34,11 @@ _SHUTIL = {"rmtree", "copytree", "move", "copy2"}
 _METHODS = {"read_bytes", "write_bytes", "read_text", "write_text"}
 
 
-def _blocking_calls(node: ast.AsyncFunctionDef) -> list[int]:
-    """Lines of blocking calls in an async body, skipping nested defs and to_thread args."""
+def _blocking_calls(node: ast.AsyncFunctionDef, names: set[str] | frozenset[str] = frozenset()) -> list[int]:
+    """Lines of blocking calls in an async body, skipping nested defs and to_thread args.
+
+    ``names`` adds project functions that stat or write on disk themselves.
+    """
     found: list[int] = []
 
     def visit(n: ast.AST) -> None:
@@ -51,8 +54,10 @@ def _blocking_calls(node: ast.AsyncFunctionDef) -> list[int]:
                     and isinstance(func.value, ast.Name)
                     and func.value.id == "shutil"
                 )
-                if is_shutil or func.attr in _METHODS:
+                if is_shutil or func.attr in _METHODS or func.attr in names:
                     found.append(n.lineno)
+            elif isinstance(func, ast.Name) and func.id in names:
+                found.append(n.lineno)
         for child in ast.iter_child_nodes(n):
             visit(child)
 
@@ -71,6 +76,34 @@ def test_no_blocking_disk_calls_in_async_bodies(module: str) -> None:
         for line in _blocking_calls(fn)
     ]
     assert not offenders, "blocking disk call on the event loop:\n" + "\n".join(offenders)
+
+
+_AGENT = _ROOT.parent
+# Disk work the turn itself does: the two fsynced JSON stores of the end of a
+# turn, the verification log, the test-suite detection. 1 to 4 s each in the
+# CLI freeze log of 2026-10-27, so an async body reaches them through
+# to_thread only.
+_OFF_LOOP_CALLEES = {
+    "loop.py": {"attach_files", "merge_turn"},
+    "runner.py": {"prime_project_has_tests"},
+    "tools/quality.py": {"_record_test_outcomes", "_record_verify_report"},
+}
+
+
+@pytest.mark.parametrize("module", sorted(_OFF_LOOP_CALLEES))
+def test_turn_bookkeeping_runs_off_the_loop(module: str) -> None:
+    source = (_AGENT / module).read_text(encoding="utf-8")
+    names = _OFF_LOOP_CALLEES[module]
+    missing = [name for name in names if f"{name}" not in source]
+    assert not missing, f"{module} no longer uses {missing}: move the guard with the code"
+    tree = ast.parse(source)
+    offenders = [
+        f"{module}:{line} in async def {fn.name}"
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.AsyncFunctionDef)
+        for line in _blocking_calls(fn, names=names)
+    ]
+    assert not offenders, "turn bookkeeping on the event loop:\n" + "\n".join(offenders)
 
 
 def test_the_guard_scans_every_tool_module() -> None:

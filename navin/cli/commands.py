@@ -2573,6 +2573,11 @@ def _run_gateway(
         webui_runtime_surface = "native"
     else:
         webui_runtime_surface = desktop_sidecar_surface()
+    # The gateway serves every window and agent from one loop: the heap of a
+    # long day is put away at idle minutes (the TUI has its own policy).
+    from navin.webui.stall_watch import IdleHeapPass
+
+    agent.heap_keeper = IdleHeapPass()
     channels = ChannelManager(
         config,
         bus,

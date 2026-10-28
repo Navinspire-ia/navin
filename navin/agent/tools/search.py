@@ -596,6 +596,91 @@ def _run_rg(cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
+def _git_grep_available() -> bool:
+    """Separate function so tests can force the pure-Python fallback."""
+    return True
+
+
+def _git_grep_scan(
+    root: Path,
+    target: Path,
+    pattern: str,
+    *,
+    fixed_strings: bool,
+    case_insensitive: bool,
+    include_ignored: bool,
+    max_file_bytes: int,
+    multiline: bool = False,
+) -> dict[str, list[tuple[int, str]]] | None:
+    """Match line numbers and text per absolute path through ``git grep``, or None.
+
+    The backend between ripgrep and the pure-Python scan: C speed, honours
+    .gitignore, present wherever git is (every CI runner, every developer
+    machine), so a bare install without ripgrep still answers in tens of
+    milliseconds instead of reading 5 600 files in Python (the 450 ms that
+    failed the search bench on the GitHub runner). Patterns use PCRE (``-P``),
+    the closest dialect to Python's; git without PCRE, a pattern it rejects,
+    an ignored-files search or a spanning pattern return None and the caller
+    falls back to Python, exactly as for ripgrep.
+    """
+    if multiline or include_ignored or not _git_grep_available():
+        return None
+    from navin.utils.git_argv import git_route
+
+    route = git_route(root)
+    if route is None or route.distro:
+        return None  # not a work tree, or a WSL tree seen from Windows (path spellings differ)
+    try:
+        rel = target.relative_to(root).as_posix() if target != root else "."
+    except ValueError:
+        return None
+    cmd = [*route.argv, "grep", "-n", "-z", "-I", "--untracked", "--no-color"]
+    cmd.append("-F" if fixed_strings else "-P")
+    if case_insensitive:
+        cmd.append("-i")
+    cmd.extend(["-e", pattern, "--", rel])
+    try:
+        out = subprocess.run(  # noqa: S603 - argv list, no shell; pattern passed after -e
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_RG_TIMEOUT_S, cwd=str(root), **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode not in (0, 1):  # 1 = no match; 128 = bad pattern or no PCRE
+        return None
+    hits: dict[str, list[tuple[int, str]]] = {}
+    total = 0
+    skip = _SEARCH_SKIP_DIRS
+    too_large: set[str] = set()
+    for line in out.stdout.split("\n"):
+        if total >= _RG_MAX_MATCHES:
+            break
+        if not line:
+            continue
+        rel_path, sep, rest = line.partition("\0")
+        if not sep:
+            continue
+        number, sep, text = rest.partition("\0")
+        if not sep or not number.isdigit():
+            continue
+        parts = rel_path.split("/")
+        if any(part in skip for part in parts[:-1]):
+            continue
+        absolute = str(root / rel_path)
+        if absolute in too_large:
+            continue
+        if absolute not in hits:
+            try:
+                if os.path.getsize(absolute) > max_file_bytes:
+                    too_large.add(absolute)
+                    continue
+            except OSError:
+                continue
+        hits.setdefault(absolute, []).append((int(number), text))
+        total += 1
+    return hits
+
+
 # Runs ripgrep inside the distribution, or exits 127 when it is not installed
 # there: a missing binary through ``wsl.exe --exec`` exits 1, which ripgrep
 # uses for "no matches", and a silent empty answer is the worst outcome.
@@ -1009,7 +1094,7 @@ def _rel_posix(file_path: Path, root: Path) -> str | None:
 
 
 def _read_text_file(
-    file_path: Path, max_file_bytes: int, *, must_contain: bytes | None = None,
+    file_path: Path, max_file_bytes: int, *, must_contain: bytes | None = None, fold_case: bool = False,
 ) -> tuple[str | None, str | None]:
     """Return (content, skip_reason).
 
@@ -1018,6 +1103,11 @@ def _read_text_file(
     bytes, before the decode, which is where most of a grep's time went once
     the file list was free. One C-level ``find`` over the bytes instead of a
     decode plus a regex pass for the 5 500 files out of 5 600 that never match.
+
+    ``fold_case`` compares against the ASCII-lowercased bytes (the literal is
+    lowercase ASCII then). Two non-ASCII letters fold to ASCII under Python's
+    regex: the long s (U+017F) to ``s`` and the Kelvin sign (U+212A) to ``k``;
+    a file holding either keeps the full regex pass, so no match is ever lost.
     """
     try:
         raw = file_path.read_bytes()
@@ -1025,8 +1115,12 @@ def _read_text_file(
         return None, "binary"
     if len(raw) > max_file_bytes:
         return None, "large"
-    if must_contain is not None and raw.find(must_contain) < 0:
-        return None, "miss"
+    if must_contain is not None:
+        if fold_case:
+            if raw.lower().find(must_contain) < 0 and _LONG_S not in raw and _KELVIN not in raw:
+                return None, "miss"
+        elif raw.find(must_contain) < 0:
+            return None, "miss"
     if _is_binary(raw):
         return None, "binary"
     # Same decoder as read_file, so a cp1252 or BOM-prefixed file is searchable
@@ -1042,6 +1136,9 @@ def _read_text_file(
 # prefix scan needs).
 _REGEX_META_CHARS = frozenset("\\.^$*+?{}[]|()")
 _QUANTIFIERS = frozenset("*+?{")
+# UTF-8 of the two non-ASCII letters whose simple case folding is ASCII.
+_LONG_S = "\u017f".encode()
+_KELVIN = "\u212a".encode()
 
 
 def _required_literal(pattern: str, *, fixed_strings: bool, case_insensitive: bool) -> bytes | None:
@@ -1051,12 +1148,13 @@ def _required_literal(pattern: str, *, fixed_strings: bool, case_insensitive: bo
     the first metacharacter is required by every match (``async def (a|b)``
     needs ``async def ``), minus its last character when a quantifier follows
     (``abc*`` needs only ``ab``). Anything less certain (a pattern that starts
-    with a group, a class or an escape) gets no prefilter. Case-insensitive
-    searches get none either: Unicode case folding (the Kelvin sign matches
-    ``k``) is not a byte-level operation. The filter must never lose a match;
-    skipping it only costs time.
+    with a group, a class or an escape) gets no prefilter. A case-insensitive
+    search gets the lowercase ASCII literal, compared against lowercased bytes
+    (see ``_read_text_file``); a literal with non-ASCII letters gets none, their
+    case pairs are different byte sequences. The filter must never lose a
+    match; skipping it only costs time.
     """
-    if case_insensitive or not pattern:
+    if not pattern:
         return None
     if fixed_strings:
         literal = pattern
@@ -1074,6 +1172,10 @@ def _required_literal(pattern: str, *, fixed_strings: bool, case_insensitive: bo
         literal = "".join(prefix)
     if len(literal) < 2:
         return None
+    if case_insensitive:
+        if not literal.isascii():
+            return None
+        literal = literal.lower()
     try:
         return literal.encode("utf-8")
     except UnicodeEncodeError:
@@ -1678,6 +1780,17 @@ class GrepTool(_SearchTool):
                 max_file_bytes=self._MAX_FILE_BYTES,
                 multiline=multiline,
             )
+        if scanned is None:
+            scanned = _git_grep_scan(
+                root,
+                target,
+                pattern,
+                fixed_strings=fixed_strings,
+                case_insensitive=case_insensitive,
+                include_ignored=include_ignored,
+                max_file_bytes=self._MAX_FILE_BYTES,
+                multiline=multiline,
+            )
         # Inside WSL, one stat for every matched file instead of one 9P
         # round trip each (see _wsl_mtimes).
         mtimes = _wsl_mtimes(target, list(scanned)) if scanned else None
@@ -1745,7 +1858,9 @@ class GrepTool(_SearchTool):
             if out_of_time():
                 stopped = True
                 break
-            content, skip_reason = _read_text_file(file_path, self._MAX_FILE_BYTES, must_contain=literal)
+            content, skip_reason = _read_text_file(
+                file_path, self._MAX_FILE_BYTES, must_contain=literal, fold_case=case_insensitive,
+            )
             if content is None:
                 if skip_reason == "large":
                     skipped_large += 1

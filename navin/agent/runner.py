@@ -3198,6 +3198,11 @@ class AgentRunner:
                 validation.note_tree_changes(
                     tree_before, await asyncio.to_thread(workspace_code_snapshot, spec.workspace),
                 )
+            if validating and spec.validate_code_changes and validation.tests_detection_pending:
+                # Whether the project has tests decides if an edit demands
+                # them. The detection lists the tree (UNC and wsl.exe on a WSL
+                # project): off the loop, before observe() needs the answer.
+                await asyncio.to_thread(validation.prime_project_has_tests)
             if validating or listing_changes:
                 for call, (result, event, _) in zip(batch, batch_results):
                     _, params, _ = spec.tools.prepare_call(call.name, call.arguments)
