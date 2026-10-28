@@ -133,3 +133,79 @@ class ReportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InstallMissingToolsTest(unittest.TestCase):
+    """``navin doctor --install`` runs the plan of every MISS line and reports each."""
+
+    def _sections(self, *missing: str) -> list[Section]:
+        from navin.diagnostics import Check
+
+        checks = [Check(name="git", ok=True, detail="/usr/bin/git")]
+        checks.extend(Check(name=name, ok=False, detail="purpose", hint="hint") for name in missing)
+        return [Section("Installation", []), Section("External tools", checks)]
+
+    def test_runs_the_managers_and_reports_installed_failed_and_manual(self):
+        from navin.diagnostics import install_missing_tools
+        from navin.host.packages import InstallPlan
+
+        plans = {
+            "ffmpeg": InstallPlan(argv=["winget", "install", "--id", "Gyan.FFmpeg"], manual="winget install --id Gyan.FFmpeg -e", manager_available=True, kind="winget"),
+            "jq": InstallPlan(argv=["winget", "install", "--id", "jqlang.jq"], manual="winget install --id jqlang.jq -e", manager_available=True, kind="winget"),
+            "docker": InstallPlan(argv=None, manual="sudo apt-get install -y docker.io", manager_available=True, kind="apt-get"),
+            "pandoc": InstallPlan(argv=None, manual="sudo apt-get install -y pandoc", manager_available=True, kind="apt-get"),
+        }
+        ran: list[list[str]] = []
+
+        def run(argv: list[str]) -> int:
+            ran.append(argv)
+            return 0 if "Gyan.FFmpeg" in argv else 1
+
+        present = {"git": "/usr/bin/git", "ffmpeg": "C:/ffmpeg.exe"}
+        with patch("navin.diagnostics.install_plan", side_effect=lambda spec, **kw: plans[_name_of(spec)]):
+            outcomes = install_missing_tools(
+                self._sections("ffmpeg", "jq", "docker", "pandoc"),
+                run=run, interactive=False, which=present.get,
+            )
+        self.assertEqual(ran, [plans["ffmpeg"].argv, plans["jq"].argv])
+        by_name = {outcome.name: outcome for outcome in outcomes}
+        self.assertEqual(by_name["ffmpeg"].status, "installed")
+        self.assertEqual(by_name["jq"].status, "failed")
+        self.assertEqual(by_name["docker"].status, "manual")
+        self.assertEqual(by_name["docker"].command, "sudo apt-get install -y docker.io")
+        from navin.diagnostics import manual_commands
+
+        # What is left to type: the failed winget line and ONE apt line for both packages.
+        self.assertEqual(
+            manual_commands(outcomes),
+            ["winget install --id jqlang.jq -e", "sudo apt-get install -y docker.io pandoc"],
+        )
+
+    def test_a_tool_the_path_does_not_show_yet_is_done_not_failed(self):
+        from navin.diagnostics import install_missing_tools
+        from navin.host.packages import InstallPlan
+
+        plan = InstallPlan(argv=["winget", "install", "--id", "jqlang.jq"], manual="winget install --id jqlang.jq -e", manager_available=True, kind="winget")
+        with patch("navin.diagnostics.install_plan", return_value=plan):
+            (outcome,) = install_missing_tools(self._sections("jq"), run=lambda argv: 0, interactive=False, which=lambda name: None)
+        self.assertEqual(outcome.status, "done")
+        self.assertIn("new terminal", outcome.detail)
+
+    def test_every_listed_tool_has_a_package_on_every_platform(self):
+        from navin.diagnostics import _TOOLS
+
+        for name, _purpose, spec in _TOOLS:
+            if name == "curl":
+                continue  # ships with Windows 10+
+            self.assertTrue(spec.winget, f"{name} has no winget id")
+            self.assertTrue(spec.brew, f"{name} has no brew formula")
+            self.assertTrue(spec.apt and spec.dnf and spec.pacman, f"{name} misses a Linux package")
+
+
+def _name_of(spec) -> str:
+    from navin.diagnostics import _TOOLS
+
+    for name, _purpose, candidate in _TOOLS:
+        if candidate == spec:
+            return name
+    raise AssertionError(f"unknown spec {spec}")

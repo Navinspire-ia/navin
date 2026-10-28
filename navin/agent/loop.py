@@ -11,8 +11,8 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
-from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import partial
@@ -1062,6 +1062,9 @@ class AgentLoop:
         self._stop_requested_at: dict[str, float] = {}
         self._background_tasks: list[asyncio.Task] = []
         self._session_locks: dict[str, asyncio.Lock] = {}
+        # session_key -> (message preview, monotonic start) of the turn that
+        # currently holds the session lock, named in the slow-lock notice.
+        self._session_lock_holders: dict[str, tuple[str, float]] = {}
         self._runtime_checkpoint_saved_at: dict[str, float] = {}
         # Checkpoint writes running in worker threads (kept referenced).
         self._background_saves: set[asyncio.Task[Any]] = set()
@@ -3012,6 +3015,57 @@ class AgentLoop:
             return None
         return self._concurrency_gate
 
+    # After this long on a held session lock the user is told what is running.
+    _SESSION_LOCK_NOTICE_S = 30.0
+
+    @asynccontextmanager
+    async def _session_turn_lock(
+        self, lock: asyncio.Lock, msg: InboundMessage, session_key: str
+    ) -> AsyncIterator[None]:
+        """Hold the per-session lock, telling the user when the wait is long.
+
+        A turn of the same chat that never finished used to leave the next
+        message on a silent spinner for as long as it lasted (34 minutes on a
+        plain "hello"): the model was never called, so no stream timeout could
+        fire. After ``_SESSION_LOCK_NOTICE_S`` the UI gets one status line
+        naming the turn still running and the log records it every window.
+        The wait itself is never cut: the session stays strictly serial.
+        """
+        waited = 0.0
+        notified = False
+        while True:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=self._SESSION_LOCK_NOTICE_S)
+                break
+            except asyncio.TimeoutError:
+                waited += self._SESSION_LOCK_NOTICE_S
+                holder = self._session_lock_holders.get(session_key)
+                holder_preview = holder[0] if holder else "unknown turn"
+                holder_age = time.monotonic() - holder[1] if holder else waited
+                logger.warning(
+                    "Session {} still locked after {:.0f}s by a turn running for {:.0f}s: {!r}",
+                    session_key, waited, holder_age, holder_preview,
+                )
+                if notified:
+                    continue
+                notified = True
+                try:
+                    callback = await self._build_retry_wait_callback(msg)
+                    await callback(
+                        "Waiting for the previous turn of this chat to finish "
+                        f"(running for {max(1, round(holder_age / 60))} min: "
+                        f"{holder_preview!r}). Use /stop to interrupt it."
+                    )
+                except Exception:
+                    logger.debug("session lock wait notice failed", exc_info=True)
+        preview = msg.content[:60] + "..." if len(msg.content) > 60 else msg.content
+        self._session_lock_holders[session_key] = (preview, time.monotonic())
+        try:
+            yield
+        finally:
+            self._session_lock_holders.pop(session_key, None)
+            lock.release()
+
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message: per-session serial, cross-session concurrent."""
         session_key = self._effective_session_key(msg)
@@ -3024,7 +3078,7 @@ class AgentLoop:
         turn_cancelled = False
         dispatch_skipped = False
         try:
-            async with lock, gate:
+            async with self._session_turn_lock(lock, msg, session_key), gate:
                 if not self.turn_recovery.matches(msg, session_key):
                     dispatch_skipped = True
                     return

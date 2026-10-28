@@ -3849,13 +3849,25 @@ def leads_desk(ctx: typer.Context) -> None:
 def doctor(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    install: bool = typer.Option(
+        False,
+        "--install",
+        help="Install the missing external tools with this machine's package manager (winget, brew, apt-get, dnf, pacman)",
+    ),
 ):
     """Report what this installation can do and what is missing.
 
     Works the same from source and from a packaged build, on Linux, macOS and
-    Windows: nothing here needs a shell script or a source checkout.
+    Windows: nothing here needs a shell script or a source checkout. With
+    ``--install`` the missing optional tools are installed on the spot.
     """
-    from navin.diagnostics import doctor_report, missing_required, workspace_note
+    from navin.diagnostics import (
+        doctor_report,
+        install_missing_tools,
+        manual_commands,
+        missing_required,
+        workspace_note,
+    )
 
     _config_path, loaded = _load_inspection_config(config=config, workspace=workspace)
     sections = doctor_report(loaded, workspace=loaded.workspace_path)
@@ -3876,12 +3888,39 @@ def doctor(
             console.print(line)
         console.print("")
 
+    if install:
+        outcomes = install_missing_tools(sections, log=lambda text: console.print(f"[dim]{escape(text)}[/dim]"))
+        if outcomes:
+            console.print("[bold]Installing missing tools[/bold]")
+            marks = {
+                "installed": "[green]OK[/green]    ",
+                "done": "[green]DONE[/green]  ",
+                "failed": "[red]FAIL[/red]  ",
+                "manual": "[yellow]MANUAL[/yellow]",
+                "skipped": "[dim]SKIP[/dim]  ",
+            }
+            for outcome in outcomes:
+                line = f"  {marks.get(outcome.status, outcome.status)} {outcome.name:<22} {escape(outcome.detail)}"
+                console.print(line)
+            left = manual_commands(outcomes)
+            if left:
+                console.print("\n[bold]Run yourself[/bold]")
+                for command in left:
+                    console.print(f"  {escape(command)}")
+            console.print("")
+        else:
+            console.print("[green]Every external tool is already installed.[/green]\n")
+
     blocking = missing_required(sections)
     if blocking:
         names = ", ".join(check.name for check in blocking)
         console.print(f"[red]Missing and needed: {names}[/red]")
         raise typer.Exit(1)
-    console.print("[dim]Missing optional tools only remove the capabilities they serve.[/dim]")
+    if not install:
+        console.print(
+            "[dim]Missing optional tools only remove the capabilities they serve; "
+            "navin doctor --install adds them.[/dim]"
+        )
 
 
 def _download_with_progress(service: Any) -> dict[str, Any]:

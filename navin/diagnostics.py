@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import platform
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,7 +26,13 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-from navin.host.packages import PkgSpec, install_hint
+from navin.host.packages import (
+    InstallPlan,
+    PkgSpec,
+    combined_manual_commands,
+    install_hint,
+    install_plan,
+)
 
 
 @dataclass(frozen=True)
@@ -114,10 +121,137 @@ _TOOLS: tuple[tuple[str, str, PkgSpec], ...] = (
             winget="TheDocumentFoundation.LibreOffice",
         ),
     ),
-    ("docker", "sandboxed execution and containerised MCP servers", PkgSpec()),
+    (
+        "docker",
+        "sandboxed execution and containerised MCP servers",
+        PkgSpec(
+            apt="docker.io",
+            dnf="moby-engine",
+            pacman="docker",
+            brew="--cask docker",
+            winget="Docker.DockerDesktop",
+        ),
+    ),
 )
 
 _REQUIRED_TOOLS = frozenset({"git"})
+_TOOL_SPECS: dict[str, PkgSpec] = {name: spec for name, _purpose, spec in _TOOLS}
+# A system package install of the biggest tools (LibreOffice, Docker Desktop).
+_INSTALL_TIMEOUT_S = 30 * 60
+
+
+@dataclass(frozen=True)
+class InstallOutcome:
+    """What ``navin doctor --install`` did for one missing tool."""
+
+    name: str
+    # installed: the tool answers now; done: the manager succeeded but the tool
+    # is not on this process's PATH yet (a new terminal will see it); failed;
+    # manual: nothing runnable here, ``command`` is what to type; skipped: no
+    # package is known for this tool on this machine.
+    status: str
+    detail: str = ""
+    command: str = ""
+
+
+RunInstall = Callable[[list[str]], int]
+
+
+def _run_install(argv: list[str]) -> int:
+    """Run a package manager in the terminal, its output visible, and return its exit code."""
+    try:
+        return subprocess.call(argv, timeout=_INSTALL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return 124
+    except OSError:
+        return 127
+
+
+def _install_hyperframes() -> InstallOutcome:
+    """The Montage toolchain lives under ~/.navin/montage, not in a package manager."""
+    import asyncio
+
+    from navin.montage.install import install_hyperframes
+
+    try:
+        result = asyncio.run(install_hyperframes())
+    except Exception as exc:  # the installer reports any failure as one outcome line
+        return InstallOutcome("hyperframes", "failed", str(exc))
+    if result.get("ok"):
+        return InstallOutcome("hyperframes", "installed", str(result.get("path") or ""))
+    return InstallOutcome("hyperframes", "failed", str(result.get("fix") or result.get("error") or ""))
+
+
+def install_missing_tools(
+    sections: list[Section],
+    *,
+    run: RunInstall = _run_install,
+    interactive: bool | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    log: Callable[[str], None] | None = None,
+) -> list[InstallOutcome]:
+    """Install every missing external tool the report lists, with this machine's package manager.
+
+    ``navin doctor`` named the commands and left the typing to the user, on
+    Windows (winget), macOS (brew) and Linux (apt-get, dnf, pacman) alike.
+    Each manager runs unattended; a Linux manager asks sudo for its password
+    when a terminal is attached. What cannot run here comes back as
+    ``manual`` with the exact command, so the user types once, not seven times.
+    """
+    if interactive is None:
+        interactive = sys.stdin is not None and sys.stdin.isatty()
+    outcomes: list[InstallOutcome] = []
+    for section in sections:
+        if section.title != "External tools":
+            continue
+        for check in section.checks:
+            if check.ok:
+                continue
+            if check.name == "hyperframes":
+                if log:
+                    log("hyperframes: installing the Montage toolchain under ~/.navin/montage")
+                outcomes.append(_install_hyperframes())
+                continue
+            spec = _TOOL_SPECS.get(check.name)
+            if spec is None:
+                outcomes.append(InstallOutcome(check.name, "manual" if check.hint else "skipped", check.detail, check.hint))
+                continue
+            plan = install_plan(spec, interactive=interactive, which=which)
+            if not plan.runnable:
+                status = "manual" if plan.manual else "skipped"
+                detail = (
+                    "no package manager found" if not plan.manager_available and plan.manual
+                    else "needs a password: run it yourself" if plan.manual else "no package known for this machine"
+                )
+                outcomes.append(InstallOutcome(check.name, status, detail, plan.manual))
+                continue
+            if log:
+                log(f"{check.name}: {' '.join(plan.argv or [])}")
+            code = run(list(plan.argv or []))
+            if code != 0:
+                outcomes.append(InstallOutcome(check.name, "failed", f"exit {code}", plan.manual))
+            elif which(check.name):
+                outcomes.append(InstallOutcome(check.name, "installed", which(check.name) or "", plan.manual))
+            else:
+                outcomes.append(InstallOutcome(check.name, "done", "open a new terminal to pick up the PATH", plan.manual))
+    return outcomes
+
+
+def manual_commands(outcomes: list[InstallOutcome]) -> list[str]:
+    """The commands left to the user after an install run, Linux managers merged on one line."""
+    plans = [
+        InstallPlan(argv=None, manual=outcome.command, manager_available=False, kind=_manager_of(outcome.command))
+        for outcome in outcomes
+        if outcome.status in {"manual", "failed"} and outcome.command
+    ]
+    return combined_manual_commands(plans)
+
+
+def _manager_of(command: str) -> str:
+    words = command.split()
+    if len(words) >= 2 and words[0] == "sudo":
+        return words[1]
+    return words[0] if words else ""
 
 
 def tool_checks() -> list[Check]:

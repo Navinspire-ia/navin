@@ -323,3 +323,94 @@ def test_basename_walk_stops_at_its_time_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(file_preview, "_BASENAME_WALK_BUDGET_S", 30.0)
     found, complete = file_preview._walk_unique_basename(root, "ocr.py", cached=False)
     assert (found, complete) == ((root / "backend" / "ocr.py").resolve(), True)
+
+
+def test_concurrent_chip_probes_share_one_walk_of_the_root(tmp_path, monkeypatch):
+    # A rendered answer probes each of its file chips in its own request: on
+    # the user's Windows desktop twenty probes were twenty concurrent walks
+    # of the same tree, 2 to 5 s each. One walk now serves them all.
+    import threading
+
+    from navin.webui import file_preview
+
+    root = _basename_root(tmp_path)
+    for name in ("a.py", "b.py", "c.py", "d.py"):
+        (root / "backend" / name).write_text("x\n")
+    file_preview._BASENAME_WALK_CACHE.clear()
+    file_preview._BASENAME_INDEX_CACHE.clear()
+    walks = []
+    real_walk = file_preview.os.walk
+
+    def counted_walk(*args, **kwargs):
+        walks.append(args[0])
+        return real_walk(*args, **kwargs)
+
+    monkeypatch.setattr(file_preview.os, "walk", counted_walk)
+    results = {}
+
+    def probe(name):
+        results[name] = file_preview._walk_unique_basename(root.resolve(), name)
+
+    threads = [threading.Thread(target=probe, args=(name,)) for name in ("ocr.py", "a.py", "b.py", "c.py", "d.py", "absent.py")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(walks) == 1
+    assert results["ocr.py"] == ((root / "backend" / "ocr.py").resolve(), True)
+    assert results["d.py"] == ((root / "backend" / "d.py").resolve(), True)
+    assert results["absent.py"] == (None, True)
+    # The next probe, within the index's life, walks nothing at all.
+    assert file_preview._walk_unique_basename(root.resolve(), "c.py") == ((root / "backend" / "c.py").resolve(), True)
+    assert len(walks) == 1
+
+
+def test_a_file_written_after_a_miss_is_found_on_the_retry(tmp_path, monkeypatch):
+    # The agent usually writes the file a chip names right after the chip is
+    # rendered: "Retry" must find it even though the index is shared and cached.
+    from navin.webui import file_preview
+
+    root = _basename_root(tmp_path)
+    file_preview._BASENAME_WALK_CACHE.clear()
+    file_preview._BASENAME_INDEX_CACHE.clear()
+    clock = [1000.0]
+    monkeypatch.setattr(file_preview.time, "monotonic", lambda: clock[0])
+    assert file_preview._walk_unique_basename(root.resolve(), "new.py") == (None, True)
+    (root / "backend" / "new.py").write_text("x\n")
+    # Within the miss cache the answer stands, as before.
+    assert file_preview._walk_unique_basename(root.resolve(), "new.py") == (None, True)
+    clock[0] += file_preview._BASENAME_MISS_TTL_S + 0.5
+    assert file_preview._walk_unique_basename(root.resolve(), "new.py") == ((root / "backend" / "new.py").resolve(), True)
+    # Opening a file (cached=False) always looks again, however fresh the index.
+    (root / "backend" / "late.py").write_text("x\n")
+    assert file_preview._walk_unique_basename(root.resolve(), "late.py", cached=False) == ((root / "backend" / "late.py").resolve(), True)
+
+
+def test_the_wsl_listing_is_one_find_for_every_name(tmp_path, monkeypatch):
+    import shutil as _shutil
+
+    from navin.webui import file_preview
+
+    if not _shutil.which("find"):
+        pytest.skip("find not installed")
+    linux_root = _basename_root(tmp_path)
+    (linux_root / "backend" / "other.py").write_text("x\n")
+    unc = file_preview.Path("\\\\wsl.localhost\\Ubuntu" + str(linux_root).replace("/", "\\"))
+    monkeypatch.setattr(wsl, "wsl_executable", lambda: "wsl.exe")
+    monkeypatch.setattr(wsl, "resolve_distro", lambda name: "Ubuntu")
+    monkeypatch.setattr(wsl, "command_prefix", lambda distro, cwd=None: [])
+    calls = []
+    real_run = file_preview.subprocess.run
+
+    def counted_run(argv, **kwargs):
+        calls.append(argv)
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(file_preview.subprocess, "run", counted_run)
+    monkeypatch.setattr(file_preview.sys, "platform", "win32")
+    file_preview._BASENAME_WALK_CACHE.clear()
+    file_preview._BASENAME_INDEX_CACHE.clear()
+    assert file_preview._walk_unique_basename(unc, "ocr.py") == (unc / "backend" / "ocr.py", True)
+    assert file_preview._walk_unique_basename(unc, "other.py") == (unc / "backend" / "other.py", True)
+    assert file_preview._walk_unique_basename(unc, "absent.py") == (None, True)
+    assert len(calls) == 1 and "-iname" not in calls[0]

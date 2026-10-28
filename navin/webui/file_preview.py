@@ -13,8 +13,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -93,6 +94,34 @@ _MAX_BASENAME_MATCHES = 12
 _BASENAME_WALK_TTL_S = 20.0
 _BASENAME_MISS_TTL_S = 2.0
 _BASENAME_WALK_CACHE: dict[tuple[str, str], tuple[float, str | None]] = {}
+
+
+@dataclass
+class _BasenameIndex:
+    """Every file name under one project root, from a single bounded walk.
+
+    ``names`` maps a case-folded file name to its candidates: the path and,
+    when ``find`` inside WSL listed it, the mtime it reported (a stat through
+    the 9P bridge costs tens of milliseconds; the walk's own files carry None
+    and are stat'ed only when two of them share a name).
+    """
+
+    built_at: float
+    names: dict[str, list[tuple[Path, float | None]]]
+    complete: bool
+
+
+# One index per project root, shared by every chip probe of that root. A
+# rendered answer probes each of its file chips in its own request, and each
+# probe walked the whole tree: twenty chips were twenty concurrent walks of
+# the same 4000 directories (2 to 5 s each on Windows, 10 s through the WSL
+# bridge, as the desktop log of 2026-10-28 shows). Now the first probe walks
+# once and the others wait for that walk, then read the index.
+_BASENAME_INDEX_TTL_S = 20.0
+_BASENAME_INDEX_MAX_ROOTS = 8
+_BASENAME_INDEX_CACHE: dict[str, _BasenameIndex] = {}
+_BASENAME_INDEX_LOCKS: dict[str, threading.Lock] = {}
+_BASENAME_INDEX_GUARD = threading.Lock()
 _OPENABLE_BINARY_EXTS = frozenset(
     {
         ".pdf",
@@ -1139,24 +1168,65 @@ def _walk_unique_basename(
         elif now - cached_at < _BASENAME_MISS_TTL_S:
             return None, True
 
-    matches: list[Path] = []
-    dirs_seen = 0
-    complete = True
+    index = _basename_index(root_resolved, max_age=_BASENAME_INDEX_TTL_S if cached else 0.0)
+    matches = _index_matches(index, root_resolved, wanted)
+    if not matches and cached and time.monotonic() - index.built_at >= _BASENAME_MISS_TTL_S:
+        # The agent usually writes the file a chip names a moment after the
+        # chip is rendered: a miss on an index older than the miss cache looks
+        # again (once per 2 s for the whole root, shared by every probe).
+        index = _basename_index(root_resolved, max_age=_BASENAME_MISS_TTL_S)
+        matches = _index_matches(index, root_resolved, wanted)
+    found = _pick_newest(matches)
+    complete = index.complete
+    if complete or found is not None:
+        _BASENAME_WALK_CACHE[cache_key] = (now, str(found) if found else None)
+    return found, complete
+
+
+def _basename_index(root_resolved: Path, *, max_age: float) -> _BasenameIndex:
+    """The root's index, rebuilt when older than ``max_age`` (0 forces a walk).
+
+    Concurrent callers share one build: the lock makes the second probe wait
+    for the walk in flight instead of starting its own.
+    """
+    key = str(root_resolved)
+    with _BASENAME_INDEX_GUARD:
+        lock = _BASENAME_INDEX_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        entry = _BASENAME_INDEX_CACHE.get(key)
+        if entry is not None and time.monotonic() - entry.built_at < max_age:
+            return entry
+        entry = _build_basename_index(root_resolved)
+        with _BASENAME_INDEX_GUARD:
+            _BASENAME_INDEX_CACHE[key] = entry
+            while len(_BASENAME_INDEX_CACHE) > _BASENAME_INDEX_MAX_ROOTS:
+                oldest = min(_BASENAME_INDEX_CACHE, key=lambda k: _BASENAME_INDEX_CACHE[k].built_at)
+                _BASENAME_INDEX_CACHE.pop(oldest, None)
+                _BASENAME_INDEX_LOCKS.pop(oldest, None)
+        return entry
+
+
+def _build_basename_index(root_resolved: Path) -> _BasenameIndex:
+    """One bounded walk of the root: every file name, skipped and hidden folders pruned."""
+    started = time.monotonic()
+    names: dict[str, list[tuple[Path, float | None]]] = {}
     # A WSL project seen from Windows: ``find`` inside the distribution reads
     # ext4 directly. The walk below would read the same tree through the 9P
     # bridge, and the desktop log of 2026-10-21 shows file-preview requests
     # waiting 29 s at the median (307 s at worst) inside this very walk.
-    wsl_found = _wsl_find_basename(root_resolved, wanted)
-    if wsl_found is not None:
-        found, complete = wsl_found
-        if complete or found is not None:
-            _BASENAME_WALK_CACHE[cache_key] = (now, str(found) if found else None)
-        return found, complete
+    listed = _wsl_list_files(root_resolved)
+    if listed is not None:
+        rows, complete = listed
+        for path, mtime, _depth in rows:
+            names.setdefault(path.name.casefold(), []).append((path, mtime))
+        return _BasenameIndex(built_at=started, names=names, complete=complete)
+    dirs_seen = 0
+    complete = True
     for dirpath, dirnames, filenames in os.walk(root_resolved, followlinks=False):
         dirs_seen += 1
         # Bounded in time as well as in size: on a network or 9P mount the
         # 4000 directories alone can take minutes.
-        if dirs_seen > _MAX_BASENAME_WALK_DIRS or time.monotonic() - now > _BASENAME_WALK_BUDGET_S:
+        if dirs_seen > _MAX_BASENAME_WALK_DIRS or time.monotonic() - started > _BASENAME_WALK_BUDGET_S:
             complete = False
             break
         dirnames[:] = [
@@ -1164,27 +1234,42 @@ def _walk_unique_basename(
             for name in dirnames
             if name not in _SKIP_BASENAME_DIRS and not name.startswith(".")
         ]
+        base = Path(dirpath)
         for filename in filenames:
-            if filename.casefold() != wanted:
-                continue
-            candidate = Path(dirpath) / filename
+            names.setdefault(filename.casefold(), []).append((base / filename, None))
+    return _BasenameIndex(built_at=started, names=names, complete=complete)
+
+
+def _index_matches(index: _BasenameIndex, root_resolved: Path, wanted: str) -> list[tuple[Path, float | None]]:
+    """The index's candidates for ``wanted`` that are real files inside the root."""
+    matches: list[tuple[Path, float | None]] = []
+    for candidate, mtime in index.names.get(wanted, ()):
+        if mtime is not None:
+            # Listed by find a moment ago: trusted as is, no stat through 9P.
+            matches.append((candidate, mtime))
+        else:
             try:
                 resolved = candidate.resolve()
                 resolved.relative_to(root_resolved)
             except (OSError, ValueError):
                 continue
-            if not resolved.is_file():
+            if not resolved.is_file() or is_runtime_secret_path(resolved):
                 continue
-            if is_runtime_secret_path(resolved):
-                continue
-            matches.append(resolved)
+            matches.append((resolved, None))
         if len(matches) >= _MAX_BASENAME_MATCHES:
-            complete = False
             break
-    found = _newest_path(matches)
-    if complete or found is not None:
-        _BASENAME_WALK_CACHE[cache_key] = (now, str(found) if found else None)
-    return found, complete
+    return matches
+
+
+def _pick_newest(matches: list[tuple[Path, float | None]]) -> Path | None:
+    """Most recently modified candidate; find's mtimes when every match has one."""
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0][0]
+    if all(mtime is not None for _path, mtime in matches):
+        return max(matches, key=lambda m: (m[1] or 0.0, -len(m[0].parts), m[0].as_posix()))[0]
+    return _newest_path([path for path, _mtime in matches])
 
 
 _BASENAME_WALK_BUDGET_S = 3.0
@@ -1196,15 +1281,17 @@ def _find_name_pattern(name: str) -> str:
     return "".join("\\" + ch if ch in "\\*?[" else ch for ch in name)
 
 
-def _wsl_find_basename(
-    root_resolved: Path, wanted: str, *, platform: str | None = None,
-) -> tuple[Path | None, bool] | None:
-    """``_walk_unique_basename`` run by ``find`` inside the WSL distribution.
+def _wsl_list_files(
+    root_resolved: Path, *, platform: str | None = None,
+) -> tuple[list[tuple[Path, float, int]], bool] | None:
+    """Every file under a WSL root listed by ``find`` inside the distribution.
 
     None when the root is not a WSL path seen from Windows, or when ``find``
     gave no usable answer, so the caller walks instead. Same rules as the
-    walk: skipped and hidden directories are pruned, the newest match wins,
-    ties go to the shallowest path.
+    walk: skipped and hidden directories are pruned. Rows carry the mtime and
+    depth find printed, so the newest of two same-named files is known without
+    a stat through the bridge. One listing serves every name: the previous
+    one-``find``-per-name spawned wsl.exe once per chip of an answer.
     """
     if (platform or sys.platform) != "win32":
         return None
@@ -1218,13 +1305,12 @@ def _wsl_find_basename(
     argv = [
         *wsl.command_prefix(distro), "find", str(location.path), "-mindepth", "1",
         "(", "-type", "d", "(", *prune, "-name", ".*", ")", ")", "-prune",
-        "-o", "-type", "f", "-iname", _find_name_pattern(wanted),
-        "-printf", "%T@\\t%d\\t%p\\0",
+        "-o", "-type", "f", "-printf", "%T@\\t%d\\t%p\\0",
     ]
     try:
         from navin.utils.proc import no_window_kwargs
 
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_WSL_FIND_TIMEOUT_S, **no_window_kwargs(),
         )
@@ -1234,14 +1320,15 @@ def _wsl_find_basename(
         return None
     except (OSError, subprocess.SubprocessError):
         return None
-    rows: list[tuple[float, int, str]] = []
+    rows: list[tuple[Path, float, int]] = []
     for chunk in proc.stdout.split("\0"):
         mtime, _, rest = chunk.partition("\t")
         depth, _, linux_path = rest.partition("\t")
         if not linux_path:
             continue
         try:
-            rows.append((float(mtime), int(depth), linux_path))
+            relative = PurePosixPath(linux_path).relative_to(location.path)
+            rows.append((root_resolved / relative, float(mtime), int(depth)))
         except ValueError:
             continue
     # Exit 1 is also what wsl.exe returns when it cannot run find at all, so
@@ -1249,14 +1336,25 @@ def _wsl_find_basename(
     if proc.returncode != 0 and not rows:
         return None
     wsl_health.answered(distro)
-    if not rows:
-        return None, True
-    _mtime, _depth, best = max(rows, key=lambda row: (row[0], -row[1], row[2]))
-    try:
-        found = root_resolved / PurePosixPath(best).relative_to(location.path)
-    except ValueError:
+    return rows, proc.returncode == 0
+
+
+def _wsl_find_basename(
+    root_resolved: Path, wanted: str, *, platform: str | None = None,
+) -> tuple[Path | None, bool] | None:
+    """The file named ``wanted`` in the WSL listing: newest first, then shallowest.
+
+    None when the listing is unavailable (not a WSL root, or find failed).
+    """
+    listed = _wsl_list_files(root_resolved, platform=platform)
+    if listed is None:
         return None
-    return found, proc.returncode == 0
+    rows, complete = listed
+    matches = [row for row in rows if row[0].name.casefold() == wanted.casefold()]
+    if not matches:
+        return None, complete
+    _path, _mtime, _depth = max(matches, key=lambda row: (row[1], -row[2], row[0].as_posix()))
+    return _path, complete
 
 
 def _newest_path(paths: list[Path]) -> Path | None:

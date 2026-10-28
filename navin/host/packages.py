@@ -390,3 +390,112 @@ def install_hint(spec: PkgSpec) -> str:
         if (spec.apt or spec.dnf or spec.brew)
         else ""
     )
+
+
+# winget flags that keep an install from stopping on a prompt. A machine-scope
+# package still raises the UAC dialog: that is Windows, not a question.
+_WINGET_UNATTENDED = (
+    "--silent",
+    "--accept-source-agreements",
+    "--accept-package-agreements",
+    "--disable-interactivity",
+)
+
+
+def _terminal_sudo(which_fn: WhichFn) -> list[str] | None:
+    """``sudo`` allowed to ask for its password: the user sits at a terminal."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return []
+    return ["sudo"] if which_fn("sudo") else None
+
+
+def install_plan(
+    spec: PkgSpec,
+    *,
+    platform: str | None = None,
+    which: WhichFn | None = None,
+    flavor: LinuxFlavor | None = None,
+    sudo: list[str] | None | _Unset = _UNSET,
+    interactive: bool = False,
+    os_release: dict[str, str] | None = None,
+    exists: ExistsFn | None = None,
+) -> InstallPlan:
+    """How this machine installs ``spec``: argv to run, or the command to show.
+
+    Windows goes through winget with the agreements accepted up front, macOS
+    through brew (``--cask`` allowed in the package name), Linux through
+    apt-get, dnf/yum or pacman as the distribution dictates. Linux managers
+    need root: ``sudo -n`` when passwordless (the WebUI cannot type a
+    password), plain ``sudo`` when ``interactive`` (a terminal can). Without
+    either, ``argv`` is None and ``manual`` is what the user types.
+    """
+    host = platform or sys.platform
+    which_fn = shutil.which if which is None else which
+    if host == "win32":
+        if not spec.winget:
+            return InstallPlan(argv=None, manual="", manager_available=False, kind="winget")
+        available = bool(which_fn("winget"))
+        argv = ["winget", "install", "--id", spec.winget, "-e", *_WINGET_UNATTENDED] if available else None
+        return InstallPlan(
+            argv=argv,
+            manual=f"winget install --id {spec.winget} -e",
+            manager_available=available,
+            kind="winget",
+        )
+    if host == "darwin":
+        if not spec.brew:
+            return InstallPlan(argv=None, manual="", manager_available=False, kind="brew")
+        available = bool(which_fn("brew"))
+        return InstallPlan(
+            argv=["brew", "install", *spec.brew.split()] if available else None,
+            manual=f"brew install {spec.brew}",
+            manager_available=available,
+            kind="brew",
+        )
+    host_flavor = (
+        linux_package_flavor(os_release=os_release, which=which_fn, exists=exists)
+        if flavor is None
+        else flavor
+    )
+    prefix: list[str] | None | _Unset = sudo
+    if interactive and isinstance(sudo, _Unset):
+        prefix = _terminal_sudo(which_fn)
+    if host_flavor in {"arch", "omarchy"}:
+        return pacman_plan(
+            spec, flavor=host_flavor, which=which_fn, sudo=prefix, os_release=os_release, exists=exists,
+        )
+    if host_flavor == "deb" and spec.apt:
+        return privileged_install("apt-get", ["install", "-y"], spec.apt, which=which_fn, sudo=prefix)
+    if host_flavor == "rpm" and spec.dnf:
+        manager = "dnf" if which_fn("dnf") or not which_fn("yum") else "yum"
+        return privileged_install(manager, ["install", "-y"], spec.dnf, which=which_fn, sudo=prefix)
+    # An unnamed distribution: whichever manager is on the machine decides.
+    if spec.apt and which_fn("apt-get"):
+        return privileged_install("apt-get", ["install", "-y"], spec.apt, which=which_fn, sudo=prefix)
+    if spec.dnf and which_fn("dnf"):
+        return privileged_install("dnf", ["install", "-y"], spec.dnf, which=which_fn, sudo=prefix)
+    if spec.pacman and which_fn("pacman"):
+        return pacman_plan(spec, flavor="arch", which=which_fn, sudo=prefix, os_release=os_release, exists=exists)
+    name = spec.apt or spec.dnf or spec.pacman or spec.brew
+    return InstallPlan(argv=None, manual=f"install {name}" if name else "", manager_available=False, kind="")
+
+
+def combined_manual_commands(plans: list[InstallPlan]) -> list[str]:
+    """The manual commands of several plans, one line per Linux manager.
+
+    ``sudo apt-get install -y ffmpeg jq sqlite3`` reads better than three
+    lines the user runs one by one; winget and brew keep one line per package.
+    """
+    merged: dict[str, list[str]] = {}
+    lines: list[str] = []
+    for plan in plans:
+        if not plan.manual:
+            continue
+        head, _, package = plan.manual.rpartition(" ")
+        if plan.kind in {"apt-get", "dnf", "yum", "pacman"} and head and package:
+            merged.setdefault(head, []).append(package)
+        elif plan.manual not in lines:
+            lines.append(plan.manual)
+    for head, packages in merged.items():
+        lines.append(" ".join([head, *packages]))
+    return lines

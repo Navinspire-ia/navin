@@ -10,9 +10,12 @@ import unittest
 from unittest.mock import patch
 
 from navin.host.packages import (  # pyright: ignore[reportImplicitRelativeImport]
+    InstallPlan,
     PkgSpec,
     WhichFn,
+    combined_manual_commands,
     install_hint,
+    install_plan,
     linux_package_flavor,
     pacman_plan,
     parse_os_release,
@@ -280,3 +283,67 @@ class SetupOptionOrderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())
+
+
+class InstallPlanTest(unittest.TestCase):
+    """``navin doctor --install``: one plan per OS, unattended where the manager allows it."""
+
+    SPEC = PkgSpec(apt="ffmpeg", dnf="ffmpeg", pacman="ffmpeg", brew="ffmpeg", winget="Gyan.FFmpeg")
+
+    def test_windows_runs_winget_with_the_agreements_accepted(self):
+        plan = install_plan(self.SPEC, platform="win32", which=_which("winget"))
+        self.assertEqual(plan.kind, "winget")
+        self.assertEqual(plan.manual, "winget install --id Gyan.FFmpeg -e")
+        self.assertEqual(plan.argv[:5], ["winget", "install", "--id", "Gyan.FFmpeg", "-e"])
+        for flag in ("--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"):
+            self.assertIn(flag, plan.argv)
+        # No winget (an old Windows 10): the command is shown, not run.
+        plan = install_plan(self.SPEC, platform="win32", which=_which())
+        self.assertFalse(plan.runnable)
+        self.assertFalse(plan.manager_available)
+        self.assertEqual(plan.manual, "winget install --id Gyan.FFmpeg -e")
+        self.assertEqual(install_plan(PkgSpec(apt="x"), platform="win32", which=_which("winget")).manual, "")
+
+    def test_macos_runs_brew_and_keeps_a_cask_flag(self):
+        plan = install_plan(self.SPEC, platform="darwin", which=_which("brew"))
+        self.assertEqual(plan.argv, ["brew", "install", "ffmpeg"])
+        cask = install_plan(PkgSpec(brew="--cask libreoffice"), platform="darwin", which=_which("brew"))
+        self.assertEqual(cask.argv, ["brew", "install", "--cask", "libreoffice"])
+        self.assertEqual(cask.manual, "brew install --cask libreoffice")
+        self.assertFalse(install_plan(self.SPEC, platform="darwin", which=_which()).runnable)
+
+    def test_linux_follows_the_distribution_and_sudo_mode(self):
+        debian = install_plan(
+            self.SPEC, platform="linux", flavor="deb", which=_which("apt-get", "sudo"), sudo=["sudo", "-n"],
+        )
+        self.assertEqual(debian.argv, ["sudo", "-n", "apt-get", "install", "-y", "ffmpeg"])
+        self.assertEqual(debian.kind, "apt-get")
+        # No passwordless sudo and no terminal: the command is left to the user.
+        shown = install_plan(self.SPEC, platform="linux", flavor="deb", which=_which("apt-get", "sudo"), sudo=None)
+        self.assertFalse(shown.runnable)
+        self.assertEqual(shown.manual, "sudo apt-get install -y ffmpeg")
+        # A terminal lets sudo ask for its password.
+        with patch("navin.host.packages.os.geteuid", return_value=1000, create=True):
+            typed = install_plan(
+                self.SPEC, platform="linux", flavor="deb", which=_which("apt-get", "sudo"), interactive=True,
+            )
+        self.assertEqual(typed.argv, ["sudo", "apt-get", "install", "-y", "ffmpeg"])
+        fedora = install_plan(self.SPEC, platform="linux", flavor="rpm", which=_which("dnf"), sudo=[])
+        self.assertEqual(fedora.argv, ["dnf", "install", "-y", "ffmpeg"])
+        arch = install_plan(
+            self.SPEC, platform="linux", flavor="arch", which=_which("pacman"), sudo=[],
+        )
+        self.assertEqual(arch.kind, "pacman")
+        self.assertEqual(arch.manual, "sudo pacman -S --needed --noconfirm ffmpeg")
+
+    def test_manual_commands_merge_one_line_per_linux_manager(self):
+        plans = [
+            InstallPlan(argv=None, manual="sudo apt-get install -y ffmpeg", manager_available=True, kind="apt-get"),
+            InstallPlan(argv=None, manual="sudo apt-get install -y jq", manager_available=True, kind="apt-get"),
+            InstallPlan(argv=None, manual="winget install --id jqlang.jq -e", manager_available=False, kind="winget"),
+            InstallPlan(argv=None, manual="", manager_available=False, kind=""),
+        ]
+        self.assertEqual(
+            combined_manual_commands(plans),
+            ["winget install --id jqlang.jq -e", "sudo apt-get install -y ffmpeg jq"],
+        )
