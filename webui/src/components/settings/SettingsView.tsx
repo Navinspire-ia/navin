@@ -97,20 +97,29 @@ import { StudioSettings } from "@/components/settings/StudioSettings";
 import { ToggleButton } from "@/components/settings/ToggleButton";
 import { GitConnectPanel } from "@/components/settings/GitConnectPanel";
 import {
+  CHANNEL_CONNECTOR_TWINS,
+  CHANNEL_GROUPS,
+  CHANNEL_ICONS,
   channelFilterTab,
+  channelGroupCount,
   isHiddenToolsChannel,
   isSocialChannel,
   mergeSocialChannelFeatures,
+  type ChannelBucket,
   type ChannelFilterTab,
+  type ChannelGroup,
 } from "@/components/settings/channels/catalog";
+import {
+  ConnectorsSettings,
+  type ChannelCardEntry,
+} from "@/components/settings/connectors/ConnectorsSettings";
+import { type ConnectorStatusFilter } from "@/lib/connectors-api";
 import {
   channelDisplayName,
   channelSearchText,
+  channelSetup,
 } from "@/components/settings/channels/ChannelIdentity";
-import {
-  ChannelCatalogRow,
-  ChannelSetupPanel,
-} from "@/components/settings/channels/ChannelSetupPanel";
+import { ChannelSetupPanel } from "@/components/settings/channels/ChannelSetupPanel";
 import { Button } from "@/components/ui/button";
 import { TeamSettings } from "@/components/settings/TeamSettings";
 import { SitesSettings } from "@/components/settings/SitesSettings";
@@ -8176,12 +8185,44 @@ function ToolsSettings({
     });
   const channels = showChannels ? allChannels : [];
   const [channelTab, setChannelTab] = useState<ChannelFilterTab>("all");
-  const socialChannels = channels.filter((feature) => isSocialChannel(feature.name) || feature.kind === "social");
-  const chatChannels = channels.filter((feature) => channelFilterTab(feature.name) === "chat");
-  const otherChannels = channels.filter((feature) => channelFilterTab(feature.name) === "other");
-  const visibleSocial = channelTab === "all" || channelTab === "social" ? socialChannels : [];
-  const visibleChat = channelTab === "all" || channelTab === "chat" ? chatChannels : [];
-  const visibleOther = channelTab === "all" || channelTab === "other" ? otherChannels : [];
+  const [channelStatus, setChannelStatus] = useState<ConnectorStatusFilter>("");
+  // Apps per category for the same search and status, reported by the
+  // connector list below; null until it loaded or when it failed (the list
+  // shows that error), the tab badges then count the channels alone.
+  const [connectorCounts, setConnectorCounts] = useState<Record<string, number> | null>(null);
+  const statusChannels = channels.filter((feature) =>
+    channelStatus === "connected" ? feature.ready : channelStatus === "available" ? !feature.ready : true,
+  );
+  const bucketOf = (feature: NavinFeatureInfo): ChannelBucket =>
+    isSocialChannel(feature.name) || feature.kind === "social" ? "social" : channelFilterTab(feature.name);
+  const activeGroup = CHANNEL_GROUPS.find((group) => group.id === channelTab) ?? CHANNEL_GROUPS[0];
+  const channelBuckets = statusChannels.map(bucketOf);
+  const groupCount = (group: ChannelGroup) => channelGroupCount(group, channelBuckets, connectorCounts);
+  const channelKinds: Record<ChannelBucket, string> = {
+    social: tx("settings.connectors.kindSocial", "Social network"),
+    chat: tx("settings.connectors.kindChat", "Chat channel"),
+    other: tx("settings.connectors.kindOther", "Channel"),
+  };
+  const setupBadges: Record<string, string[]> = {
+    oauth: ["OAuth"],
+    connect: [tx("settings.connectors.badgeQr", "QR code")],
+    credentials: [tx("settings.connectors.badgeToken", "Token")],
+  };
+  // Every channel as a card among the apps, for every tab: the list keeps the
+  // active tab and shows a channel that is also an app on that app's card.
+  const channelCards: ChannelCardEntry[] = statusChannels.map((feature) => {
+    const bucket = bucketOf(feature);
+    return {
+      name: feature.name,
+      label: channelDisplayName(feature),
+      kind: channelKinds[bucket],
+      bucket,
+      icon: CHANNEL_ICONS[feature.name],
+      connected: feature.ready,
+      badges: setupBadges[channelSetup(feature).mode ?? "credentials"] ?? [],
+      twin: CHANNEL_CONNECTOR_TWINS[feature.name],
+    };
+  });
   const [selectedChannelName, setSelectedChannelName] = useState<string | null>(null);
   const selectedChannel =
     selectedChannelName
@@ -8194,7 +8235,7 @@ function ToolsSettings({
     : (loading && !navinFeatures) || (mcpPresetsLoading && !mcpPresets);
   const hasMcp = showMcp && allPresets.length > 0;
   const hasChannels = channels.length > 0;
-  const empty = !catalogLoading && !hasMcp && !hasChannels;
+  const empty = !catalogLoading && !hasMcp && !hasChannels && !showChannels;
 
   useEffect(() => {
     if (selectedChannelName && !channels.some((feature) => feature.name === selectedChannelName)) {
@@ -8204,6 +8245,22 @@ function ToolsSettings({
 
   const openChannel = (name: string) => {
     setSelectedChannelName(name);
+  };
+  // The setup of a channel inside the dialog of the app card it shares.
+  const renderSharedChannel = (name: string) => {
+    const feature = channels.find((row) => row.name === name);
+    return feature ? (
+      <ChannelSetupPanel
+        token={token}
+        feature={feature}
+        actionKey={actionKey}
+        docsBaseUrl={docsBaseUrl}
+        showBrandLogos={showBrandLogos}
+        onAction={onAction}
+        onFeaturesUpdate={onFeaturesUpdate}
+        variant="embedded"
+      />
+    ) : null;
   };
 
   return (
@@ -8220,48 +8277,79 @@ function ToolsSettings({
             )}
           </p>
         )}
-        <div className="relative min-w-0">
-          <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <Input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder={
-              showChannels
-                ? tx("settings.tools.searchChannelsPlaceholder", "Search channels")
-                : tx("settings.tools.searchMcpPlaceholder", "Search MCP")
-            }
-            className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[14rem] flex-1">
+            <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder={
+                showChannels
+                  ? tx("settings.tools.searchChannelsAndApps", "Search channels and apps")
+                  : tx("settings.tools.searchMcpPlaceholder", "Search MCP")
+              }
+              className="h-11 rounded-2xl border-border/60 bg-card/90 ps-10 text-[13px] shadow-sm"
+            />
+          </div>
+          {/* On the search row: two toggles, a second click on the active one shows every status again. */}
+          {showChannels ? (
+            <div
+              role="group"
+              aria-label={tx("settings.connectors.statusFilter", "Status")}
+              className="inline-flex h-11 shrink-0 items-center rounded-2xl border border-border/60 bg-muted/50 p-1"
+              data-testid="channels-status"
+            >
+              {(
+                [
+                  ["connected", tx("settings.connectors.statusConnected", "Connected")],
+                  ["available", tx("settings.connectors.statusAvailable", "Not connected")],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={channelStatus === id}
+                  onClick={() => setChannelStatus(channelStatus === id ? "" : id)}
+                  data-testid={`channels-status-${id}`}
+                  className={cn(
+                    "h-full rounded-xl px-3.5 text-[13px] font-semibold transition-colors",
+                    channelStatus === id
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         {showChannels ? (
           <div
             role="tablist"
             aria-label={tx("settings.tools.channelFilters", "Channel filters")}
-            className="inline-flex flex-wrap rounded-2xl border border-border/60 bg-muted/50 p-1"
+            className="flex w-fit max-w-full flex-wrap rounded-2xl border border-border/60 bg-muted/50 p-1"
+            data-testid="channels-tabs"
           >
-            {(
-              [
-                ["all", tx("settings.tools.filterAll", "All"), channels.length],
-                ["social", tx("settings.tools.filterSocial", "Social networks"), socialChannels.length],
-                ["chat", tx("settings.tools.filterChat", "Chat"), chatChannels.length],
-                ["other", tx("settings.tools.filterOther", "Other"), otherChannels.length],
-              ] as const
-            ).map(([id, label, count]) => (
+            {CHANNEL_GROUPS.map((group) => (
               <button
-                key={id}
+                key={group.id}
                 type="button"
                 role="tab"
-                aria-selected={channelTab === id}
-                onClick={() => setChannelTab(id)}
+                aria-selected={channelTab === group.id}
+                onClick={() => setChannelTab(group.id)}
+                data-testid={`channels-tab-${group.id}`}
                 className={cn(
                   "rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition-colors",
-                  channelTab === id
+                  channelTab === group.id
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {label}
-                <span className="ms-1.5 text-[11px] font-medium text-muted-foreground">{count}</span>
+                {tx(`settings.tools.group.${group.id}`, group.label)}
+                <span className="ms-1.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                  {groupCount(group)}
+                </span>
               </button>
             ))}
           </div>
@@ -8301,14 +8389,7 @@ function ToolsSettings({
               : tx("settings.tools.empty", "No tools match this search.")}
           </div>
         ) : (
-          <div
-            className={cn(
-              "grid min-h-0 flex-1 gap-6 overflow-hidden",
-              selectedChannel
-                ? "grid-cols-[minmax(0,1fr)_minmax(300px,440px)]"
-                : "grid-cols-1",
-            )}
-          >
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-hidden">
             <div className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pe-1">
               {hasMcp ? (
                 <div className="space-y-4" data-testid="tools-mcp">
@@ -8436,112 +8517,61 @@ function ToolsSettings({
                   ) : null}
                 </div>
               ) : null}
-              {hasChannels ? (
-                <div data-testid="tools-channels" className="space-y-6">
-                  {visibleSocial.length ? (
-                    <div>
-                      {channelTab === "all" ? (
-                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
-                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                            {tx("settings.tools.socialChannelsTitle", "Social networks")}
-                          </h3>
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                            {visibleSocial.length}
-                          </span>
-                        </div>
-                      ) : null}
-                      {channelTab === "social" ? (
-                        <p className="mb-2.5 max-w-xl px-0.5 text-[12px] leading-5 text-muted-foreground">
-                          {tx(
-                            "settings.tools.socialChannelsHint",
-                            "Same accounts as Marketing. Connect, turn On, then agents can publish.",
-                          )}
-                        </p>
-                      ) : null}
-                      <div className="space-y-2">
-                        {visibleSocial.map((feature) => (
-                          <ChannelCatalogRow
-                            key={feature.name}
-                            feature={feature}
-                            selected={selectedChannel?.name === feature.name}
-                            showBrandLogos={showBrandLogos}
-                            onSelect={() => openChannel(feature.name)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {visibleChat.length ? (
-                    <div>
-                      {channelTab === "all" ? (
-                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
-                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                            {tx("settings.tools.chatChannelsTitle", "Chat")}
-                          </h3>
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                            {visibleChat.length}
-                          </span>
-                        </div>
-                      ) : null}
-                      <div className="space-y-2">
-                        {visibleChat.map((feature) => (
-                          <ChannelCatalogRow
-                            key={feature.name}
-                            feature={feature}
-                            selected={selectedChannel?.name === feature.name}
-                            showBrandLogos={showBrandLogos}
-                            onSelect={() => openChannel(feature.name)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {visibleOther.length ? (
-                    <div>
-                      {channelTab === "all" ? (
-                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
-                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                            {tx("settings.tools.otherChannelsTitle", "Other")}
-                          </h3>
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                            {visibleOther.length}
-                          </span>
-                        </div>
-                      ) : null}
-                      <div className="space-y-2">
-                        {visibleOther.map((feature) => (
-                          <ChannelCatalogRow
-                            key={feature.name}
-                            feature={feature}
-                            selected={selectedChannel?.name === feature.name}
-                            showBrandLogos={showBrandLogos}
-                            onSelect={() => openChannel(feature.name)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {!visibleSocial.length && !visibleChat.length && !visibleOther.length ? (
-                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                      {tx("settings.tools.emptyChannels", "No channels match this search.")}
-                    </div>
-                  ) : null}
+              {showChannels ? (
+                <div data-testid="tools-channels">
+                  <ConnectorsSettings
+                    token={token}
+                    query={query}
+                    categories={activeGroup.connectors}
+                    buckets={activeGroup.channels}
+                    status={channelStatus}
+                    channels={channelCards}
+                    onOpenChannel={openChannel}
+                    renderChannel={renderSharedChannel}
+                    onCounts={setConnectorCounts}
+                  />
+                </div>
+              ) : null}
+              {showChannels && connectorCounts && groupCount(activeGroup) === 0 ? (
+                <div className="px-3 py-10 text-center text-sm text-muted-foreground" data-testid="channels-empty">
+                  {channelStatus === "connected"
+                    ? tx("settings.tools.emptyConnected", "Nothing is connected in this tab yet.")
+                    : channelStatus === "available"
+                      ? tx("settings.tools.emptyAllConnected", "Everything in this tab is connected.")
+                      : tx("settings.tools.emptyChannels", "No channels match this search.")}
                 </div>
               ) : null}
             </div>
-            {selectedChannel ? (
-              <div className="min-h-0 overflow-y-auto overscroll-contain">
-                <ChannelSetupPanel
-                  token={token}
-                  feature={selectedChannel}
-                  actionKey={actionKey}
-                  docsBaseUrl={docsBaseUrl}
-                  showBrandLogos={showBrandLogos}
-                  onAction={onAction}
-                  onFeaturesUpdate={onFeaturesUpdate}
-                />
-              </div>
-            ) : null}
+            <Dialog
+              open={Boolean(selectedChannel)}
+              onOpenChange={(open) => {
+                if (!open) setSelectedChannelName(null);
+              }}
+            >
+              {selectedChannel ? (
+                <DialogContent
+                  showCloseButton={false}
+                  className="flex max-h-[88vh] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:rounded-2xl"
+                  data-testid="channel-detail"
+                >
+                  <DialogTitle className="sr-only">{channelDisplayName(selectedChannel)}</DialogTitle>
+                  <DialogDescription className="sr-only">
+                    {tx("settings.tools.channelConfigTitle", "Channel configuration")}
+                  </DialogDescription>
+                  <ChannelSetupPanel
+                    token={token}
+                    feature={selectedChannel}
+                    actionKey={actionKey}
+                    docsBaseUrl={docsBaseUrl}
+                    showBrandLogos={showBrandLogos}
+                    onAction={onAction}
+                    onFeaturesUpdate={onFeaturesUpdate}
+                    variant="dialog"
+                    onClose={() => setSelectedChannelName(null)}
+                  />
+                </DialogContent>
+              ) : null}
+            </Dialog>
           </div>
         )}
       </section>

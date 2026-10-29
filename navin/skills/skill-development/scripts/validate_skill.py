@@ -44,7 +44,7 @@ def lint(folder: Path) -> dict:
         body = text[match.end():]
         try:
             meta = (yaml.safe_load(match.group(1)) if yaml else {}) or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             critical.append(f"invalid YAML frontmatter: {exc}")
             meta = {}
         if not isinstance(meta, dict):

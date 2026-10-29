@@ -9,6 +9,30 @@ import "@/i18n";
 import type { InboundEvent } from "@/lib/types";
 
 const PASSWORD = "Pa55-word-Never-Shown";
+const API_KEY = "hunter-Key-Never-Shown-123";
+const HUNTER_DETAIL = {
+  service: "hunter",
+  name: "Hunter",
+  category: "prospecting",
+  auth: "apikey",
+  auth_types: ["api_key"],
+  homepage: "https://hunter.io",
+  description: "Find and verify professional email addresses.",
+  icon: "hunter.png",
+  actions: 9,
+  status: { connected: false },
+  methods: [
+    {
+      type: "api_key",
+      label: "API Key",
+      fields: [{ key: "apiKey", label: "API Key", inputType: "password", required: true, secret: true }],
+    },
+  ],
+  docs: "https://hunter.io/api-documentation/v2",
+  base_url: "https://api.hunter.io/v2",
+  actions_page: { service: "hunter", items: [], total: 0, page: 1, page_size: 10, pages: 1 },
+  vault: "encrypted-file",
+};
 
 const handlers = new Map<string, (ev: InboundEvent) => void>();
 const fakeClient = {
@@ -37,6 +61,7 @@ vi.mock("@/components/settings/GitConnectPanel", () => ({
 import { CredentialRequestCards } from "./CredentialRequestCard";
 
 const requests: { url: string; body: Record<string, unknown> }[] = [];
+let connectAttempts = 0;
 
 function decodeBody(headers: Record<string, string>): Record<string, unknown> {
   const chunks = Object.keys(headers)
@@ -55,6 +80,7 @@ function emit(ev: Record<string, unknown>) {
 
 beforeEach(() => {
   requests.length = 0;
+  connectAttempts = 0;
   handlers.clear();
   fakeClient.sendCredentialAnswer.mockClear();
   fakeClient.sendMessage.mockClear();
@@ -62,6 +88,18 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       requests.push({ url: String(url), body: decodeBody((init?.headers ?? {}) as Record<string, string>) });
+      if (String(url).includes("/api/connectors")) {
+        if (String(url).includes("action=connect") && ++connectAttempts === 1) {
+          return new Response("Hunter refused this credential (HTTP 401): No user found for the API key supplied.", {
+            status: 400,
+            headers: { "content-type": "text/plain" },
+          });
+        }
+        const payload = String(url).includes("action=connect")
+          ? { service: "hunter", name: "Hunter", status: { connected: true, account: "agent@example.com" } }
+          : HUNTER_DETAIL;
+        return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      }
       const names = ["password", "username"];
       return new Response(
         JSON.stringify({
@@ -148,5 +186,43 @@ describe("CredentialRequestCards", () => {
     expect(await screen.findByTestId("credential-request-card")).toBeTruthy();
     emit({ event: "turn_end", chat_id: "c1" });
     expect(screen.queryByTestId("credential-request-card")).toBeNull();
+  });
+
+  it("connector card checks an API key through the connectors API and sends only the account on the socket", async () => {
+    render(<CredentialRequestCards chatId="c1" />);
+    emit({
+      event: "credential_request",
+      chat_id: "c1",
+      request_id: "r5",
+      kind: "connector",
+      host: "hunter",
+      reason: "Find the emails of the new leads",
+    });
+    expect(await screen.findByText("Connect Hunter")).toBeTruthy();
+    expect(screen.getByText("App connection needed")).toBeTruthy();
+    expect(screen.getByText("Find the emails of the new leads")).toBeTruthy();
+    expect(requests.some((r) => r.url.includes("/api/connectors?action=detail&service=hunter"))).toBe(true);
+
+    fireEvent.click(screen.getByTestId("connector-connect"));
+    expect(await screen.findByText("API Key is required.")).toBeTruthy();
+    expect(requests.some((r) => r.url.includes("action=connect"))).toBe(false);
+
+    fireEvent.change(screen.getByTestId("connector-field-apiKey"), { target: { value: "wrong-key-000000" } });
+    fireEvent.click(screen.getByTestId("connector-connect"));
+    expect(await screen.findByText("That did not work.")).toBeTruthy();
+    expect(screen.getByText(/No user found for the API key supplied/)).toBeTruthy();
+    expect(fakeClient.sendCredentialAnswer).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByTestId("connector-field-apiKey"), { target: { value: API_KEY } });
+    fireEvent.click(screen.getByTestId("connector-connect"));
+    await waitFor(() => expect(fakeClient.sendCredentialAnswer).toHaveBeenCalledWith("r5", "connected", "agent@example.com"));
+    const connect = requests.filter((r) => r.url.includes("action=connect")).at(-1);
+    expect(connect?.body).toEqual({ service: "hunter", method: "api_key", values: { apiKey: API_KEY } });
+    expect(JSON.stringify(fakeClient.sendCredentialAnswer.mock.calls)).not.toContain(API_KEY);
+    expect(fakeClient.sendMessage).not.toHaveBeenCalled();
+
+    emit({ event: "credential_closed", chat_id: "c1", request_id: "r5", status: "connected", login: "agent@example.com" });
+    expect(await screen.findByText("Connected as agent@example.com")).toBeTruthy();
+    expect(document.body.innerHTML).not.toContain(API_KEY);
   });
 });

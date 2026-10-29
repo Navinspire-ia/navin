@@ -59,6 +59,7 @@ import {
   PanelRightOpen,
   PenLine,
   Plus,
+  Radio,
   RefreshCw,
   Save,
   ScanSearch,
@@ -5378,6 +5379,17 @@ export function DevWorkbench({
                   if (!browserSrc) void openBrowser(undefined);
                   else setMode("browser");
                 },
+              },
+              {
+                // Channels launcher, right under Browser: opens Settings >
+                // Channels (chat and social channels, app connectors), so it
+                // keeps the layout like Team.
+                key: "channels",
+                icon: <Radio className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.channelsTab", "Channels"),
+                active: false,
+                keepLayout: true,
+                go: () => openSettingsSection("channels"),
               },
               // Evolve lives under Other (overflowMenuItems): the rail keeps
               // the everyday modules only.

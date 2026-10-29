@@ -5,9 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Loader2,
   Plus,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -61,75 +61,6 @@ import type {
   NavinFeatureInfo,
   NavinFeaturesPayload,
 } from "@/lib/types";
-import { cn } from "@/lib/utils";
-
-export function ChannelCatalogRow({
-  feature,
-  selected,
-  showBrandLogos,
-  onSelect,
-}: {
-  feature: NavinFeatureInfo;
-  selected: boolean;
-  showBrandLogos: boolean;
-  onSelect: () => void;
-}) {
-  const { t } = useTranslation();
-  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-
-  return (
-    <div
-      className={cn(
-        "group flex w-full min-w-0 items-center gap-3 rounded-[14px] border px-3 py-3 transition-colors",
-        selected
-          ? "border-border/55 bg-muted/35"
-          : "border-transparent hover:border-border/45 hover:bg-muted/25",
-      )}
-    >
-      <button
-        type="button"
-        aria-label={t("settings.channels.selectChannel", {
-          name: channelDisplayName(feature),
-          defaultValue: "View {{name}} settings",
-        })}
-        aria-pressed={selected}
-        onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border/80"
-      >
-        <ChannelLogo feature={feature} showBrandLogos={showBrandLogos} />
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[14px] font-semibold leading-5 text-foreground">
-            {channelDisplayName(feature)}
-          </h3>
-          <p className="mt-0.5 truncate text-[12.5px] leading-5 text-muted-foreground">
-            {channelDescription(feature, t)}
-          </p>
-        </div>
-      </button>
-      <div className="flex shrink-0 items-center gap-3">
-        <button
-          type="button"
-          onClick={onSelect}
-          aria-label={t("settings.channels.openConfig", {
-            name: channelDisplayName(feature),
-            defaultValue: "Config {{name}}",
-          })}
-          className="rounded-lg border border-border/60 bg-background px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-foreground transition-colors hover:bg-muted"
-        >
-          {tx("settings.tools.config", "Config")}
-        </button>
-        <ChannelStatusBadge>{channelStatusLabel(feature, tx)}</ChannelStatusBadge>
-        <ChevronRight
-          className={cn(
-            "rtl:-scale-x-100 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-            selected && "translate-x-0.5 rtl:-translate-x-0.5 text-foreground",
-          )}
-          aria-hidden
-        />
-      </div>
-    </div>
-  );
-}
 
 export function ChannelSetupPanel({
   token,
@@ -139,6 +70,8 @@ export function ChannelSetupPanel({
   showBrandLogos,
   onAction,
   onFeaturesUpdate,
+  variant = "panel",
+  onClose,
 }: {
   token: string;
   feature: NavinFeatureInfo;
@@ -147,6 +80,13 @@ export function ChannelSetupPanel({
   showBrandLogos: boolean;
   onAction: (action: "enable" | "disable", name: string) => void;
   onFeaturesUpdate: (payload: NavinFeaturesPayload) => void;
+  /**
+   * panel: a bordered card. dialog: a fixed header over a scrolling body.
+   * embedded: the toggle and the setup only, inside the dialog of the app
+   * card the channel shares (that dialog shows the name and the logo).
+   */
+  variant?: "panel" | "dialog" | "embedded";
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -172,61 +112,112 @@ export function ChannelSetupPanel({
     defaultValue: "{{name}} tool",
   });
 
+  const installButton =
+    missingSupport && feature.install_supported ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={enableBusy}
+        onClick={() => onAction("enable", feature.name)}
+        className="mt-2 h-8 rounded-full px-3 text-[12px] font-semibold"
+      >
+        {enableBusy ? (
+          <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : (
+          <Plus className="me-1.5 h-3.5 w-3.5" aria-hidden />
+        )}
+        {installSupportLabel}
+      </Button>
+    ) : null;
+  const identity = (
+    <div className="flex min-w-0 items-start gap-3">
+      <ChannelLogo feature={feature} showBrandLogos={showBrandLogos} />
+      <div className="min-w-0 flex-1">
+        <h3 className="truncate text-[18px] font-semibold leading-6 text-foreground">
+          {channelDisplayName(feature)}
+        </h3>
+        <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+          {channelDescription(feature, t)}
+        </p>
+        {installButton}
+      </div>
+    </div>
+  );
+  const controls = (
+    <div className="flex shrink-0 items-center gap-2 pt-1">
+      <ChannelStatusBadge>{channelStatusLabel(feature, tx)}</ChannelStatusBadge>
+      {channelBusy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
+      ) : null}
+      <ToggleButton
+        checked={channelChecked}
+        disabled={channelToggleDisabled}
+        ariaLabel={toggleAriaLabel}
+        label={channelChecked ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+        onChange={(checked) => {
+          onAction(checked ? "enable" : "disable", feature.name);
+        }}
+      />
+      {onClose ? (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-9 w-9 shrink-0 rounded-full"
+          onClick={onClose}
+          aria-label={tx("settings.connectors.close", "Close")}
+          data-testid="channel-detail-close"
+        >
+          <X className="h-4 w-4" aria-hidden />
+        </Button>
+      ) : null}
+    </div>
+  );
+  const surface = (
+    <ChannelSetupSurface
+      token={token}
+      feature={feature}
+      setup={setup}
+      docsBaseUrl={docsBaseUrl}
+      onFeaturesUpdate={onFeaturesUpdate}
+    />
+  );
+
+  if (variant === "embedded") {
+    return (
+      <div data-testid={`channel-setup-${feature.name}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[12.5px] leading-5 text-muted-foreground">{channelDescription(feature, t)}</p>
+            {installButton}
+          </div>
+          {controls}
+        </div>
+        {surface}
+      </div>
+    );
+  }
+  if (variant === "dialog") {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" data-testid={`channel-setup-${feature.name}`}>
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/60 px-5 pb-4 pt-5">
+          {identity}
+          {controls}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5" data-testid="channel-detail-body">
+          {surface}
+        </div>
+      </div>
+    );
+  }
   return (
     <aside className="min-h-full rounded-[20px] border border-border/80 bg-background p-5 shadow-none">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <ChannelLogo feature={feature} showBrandLogos={showBrandLogos} />
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[18px] font-semibold leading-6 text-foreground">
-              {channelDisplayName(feature)}
-            </h3>
-            <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-              {channelDescription(feature, t)}
-            </p>
-            {missingSupport && feature.install_supported ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={enableBusy}
-                onClick={() => onAction("enable", feature.name)}
-                className="mt-2 h-8 rounded-full px-3 text-[12px] font-semibold"
-              >
-                {enableBusy ? (
-                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Plus className="me-1.5 h-3.5 w-3.5" aria-hidden />
-                )}
-                {installSupportLabel}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 pt-1">
-          <ChannelStatusBadge>{channelStatusLabel(feature, tx)}</ChannelStatusBadge>
-          {channelBusy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
-          ) : null}
-          <ToggleButton
-            checked={channelChecked}
-            disabled={channelToggleDisabled}
-            ariaLabel={toggleAriaLabel}
-            label={channelChecked ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
-            onChange={(checked) => {
-              onAction(checked ? "enable" : "disable", feature.name);
-            }}
-          />
-        </div>
+        {identity}
+        {controls}
       </div>
-
-        <ChannelSetupSurface
-          token={token}
-          feature={feature}
-          setup={setup}
-          docsBaseUrl={docsBaseUrl}
-          onFeaturesUpdate={onFeaturesUpdate}
-        />
+      {surface}
     </aside>
   );
 }
@@ -449,16 +440,7 @@ function ChannelSetupSurface({
         </div>
         <p className="mt-1 text-[12.5px] leading-5 text-muted-foreground">{requirements}</p>
 
-        <p className="mt-3 text-[12.5px] leading-5 text-muted-foreground">{summary}</p>
-        <ChannelValidationDetails validation={validation} />
-        <ChannelSetupLinks
-          feature={feature}
-          setup={setup}
-          docsBaseUrl={docsBaseUrl}
-          token={token}
-        />
-        <ChannelSetupActions feature={feature} setup={setup} onNotice={setNotice} />
-
+        {/* Sign in or enter the keys first; the guide and its links come after. */}
         {mode === "oauth" ? (
           <SocialOauthSetup
             token={token}
@@ -492,7 +474,7 @@ function ChannelSetupSurface({
                 if (!next) void cancelChannelLogin(token, feature.name);
               }}
             >
-              <DialogContent className="max-w-md">
+              <DialogContent className="max-h-[min(90dvh,44rem)] max-w-md overflow-y-auto overscroll-contain">
                 <DialogHeader>
                   <DialogTitle>{tx("settings.channels.whatsappQrTitle", "Link WhatsApp")}</DialogTitle>
                   <DialogDescription>
@@ -585,6 +567,18 @@ function ChannelSetupSurface({
             </div>
           </>
         ) : null}
+      </section>
+
+      <section className="border-t border-border/60 px-4 py-4" data-testid="channel-setup-help">
+        <p className="text-[12.5px] leading-5 text-muted-foreground">{summary}</p>
+        <ChannelValidationDetails validation={validation} />
+        <ChannelSetupLinks
+          feature={feature}
+          setup={setup}
+          docsBaseUrl={docsBaseUrl}
+          token={token}
+        />
+        <ChannelSetupActions feature={feature} setup={setup} onNotice={setNotice} />
       </section>
 
       {notice ? (

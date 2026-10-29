@@ -6,7 +6,7 @@ Tool signatures and options come with the function definitions. These notes cove
 
 - Use the narrowest structured tool for the job. When a tool you need is not in your list and `tool_search` is, load it with `tool_search query="select:<name>"` instead of working around it with `exec`; when neither is there, the tool is off for this turn.
 - When a tool fails, read the error and change the approach. A safety or permission refusal is an answer: do not route around it.
-- When a login or git auth is missing, call `request_credentials` once; never ask for passwords in chat.
+- When a login, git auth or an app connector is missing, call `request_credentials` once (kind=connector for an app); never ask for passwords or keys in chat.
 
 ## Product quality (web / CRM / dashboards)
 

@@ -66,14 +66,25 @@ def prepare_terminal_env() -> None:
 # does not come back through WSL, ssh or a slow first frame. Without it a
 # frame that rewrites the whole chat (every streamed line moves the view up)
 # is shown half old, half new: the same lines twice for a few milliseconds.
+#
+# ``WT_SESSION`` alone missed real sessions: a WSL shell opened from VS Code,
+# a nested process or an ssh hop keeps the Windows Terminal window but drops
+# the variable (``WSLENV`` still names it), and the DECRQM answer never comes
+# back, so the chat showed every moved line twice. Any WSL console, VS Code
+# and the terminals that name themselves in ``TERM_PROGRAM`` now count too.
 _SYNC_OUTPUT_MARKERS = (
     "WT_SESSION",  # Windows Terminal (also visible inside WSL)
+    "WSL_DISTRO_NAME",  # any WSL console: Windows Terminal or conhost
+    "WSL_INTEROP",
     "KITTY_WINDOW_ID",
     "ALACRITTY_WINDOW_ID",
     "WEZTERM_PANE",
     "ITERM_SESSION_ID",
     "GHOSTTY_RESOURCES_DIR",
+    "KONSOLE_VERSION",
+    "VTE_VERSION",  # GNOME Terminal and friends draw mode 2026 frames whole
 )
+_SYNC_OUTPUT_TERM_PROGRAMS = {"vscode", "wezterm", "iterm.app", "ghostty", "kitty", "alacritty", "rio"}
 SYNC_OUTPUT_ENV = "NAVIN_SYNC_OUTPUT"
 
 
@@ -93,7 +104,13 @@ def forces_synchronized_output(env: Mapping[str, str] | None = None) -> bool:
         return False
     if env.get("TMUX") or env.get("STY"):
         return False
-    return any(env.get(marker) for marker in _SYNC_OUTPUT_MARKERS)
+    if any(env.get(marker) for marker in _SYNC_OUTPUT_MARKERS):
+        return True
+    if env.get("TERM_PROGRAM", "").strip().lower() in _SYNC_OUTPUT_TERM_PROGRAMS:
+        return True
+    # WSLENV lists the Windows variables shared with this distro: the window
+    # is Windows Terminal even when WT_SESSION itself did not survive.
+    return "WT_SESSION" in env.get("WSLENV", "")
 
 
 # -- the terminal's tab or window title -------------------------------------

@@ -775,6 +775,7 @@
       }
     },
     "agiTab": "AGI",
+    "channelsTab": "Kanallar",
     "reverseTab": "Reverse",
     "reverseNew": "NEW",
     "reverseHint": "Reverse engineer an app: switches the chat to Reverse mode",
@@ -5037,6 +5038,8 @@
         "core": "Core",
         "custom": "Custom",
         "data": "Data",
+        "design": "Tasarım ve Görseller",
+        "development": "Geliştirme",
         "devops": "DevOps",
         "documents": "Documents",
         "intelligence": "Intelligence",
@@ -9054,6 +9057,8 @@
     },
     "composer": {
       "attachImage": "Attach files",
+      "connectors": "Bağlayıcı",
+      "connectorsHint": "Ajanın kullanabileceği uygulamaları bağla",
       "budgetFilterNote": "At {{percent}}% usage, Opus 5+, Fable 5+ and GPT 5.6 are paused. Other plan models stay available until renewal.",
       "clearModelSearch": "Clear search",
       "configureModel": "Configure model",

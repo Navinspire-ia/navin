@@ -3,10 +3,11 @@
 
 """Credential card for the terminal: masked fields, token or device code.
 
-The agent asked for a site login or a git account (request_credentials).
-This modal writes the values straight to the vault or to Settings > Git &
-GitHub and dismisses with a status only (``saved`` / ``connected`` /
-``declined`` plus a login name), which is all the agent ever receives.
+The agent asked for a site login, a git account or an app connector
+(request_credentials). This modal writes the values straight to the vault,
+to Settings > Git & GitHub or to the connector vault (after the app
+accepted them), and dismisses with a status only (``saved`` / ``connected``
+/ ``declined`` plus a login name), which is all the agent ever receives.
 """
 
 from __future__ import annotations
@@ -60,6 +61,34 @@ def poll_device_flow(flow_id: str) -> dict[str, Any]:
     return git_accounts.poll_device_flow(flow_id)
 
 
+def connect_connector(service: str, method: str, values: dict[str, str]) -> dict[str, Any]:
+    """Verify a connector key with the app and store it, like Settings does."""
+    from navin.connectors import manager
+    from navin.connectors.store import ConnectorStore
+
+    return manager.connect(ConnectorStore(), service, method, values)
+
+
+def start_connector_oauth(service: str) -> str:
+    """Authorization URL of a connector whose OAuth app is set up."""
+    from navin.connectors import oauth
+    from navin.connectors.store import ConnectorStore
+
+    return str(oauth.start(ConnectorStore(), service, {})["authorization_url"])
+
+
+def connector_status(service: str) -> tuple[bool, str]:
+    from navin.connectors.manager import is_connected
+
+    return is_connected(service)
+
+
+def open_browser(url: str) -> bool:
+    import webbrowser
+
+    return bool(webbrowser.open(url))
+
+
 class CredentialScreen(ModalScreen[dict[str, str]]):
     """Dismisses with ``{"status": saved|connected|declined, "login": ...}``."""
 
@@ -97,6 +126,12 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
         save_token: Callable[[str, str], None] = save_forge_token,
         device_start: Callable[[str], dict[str, Any]] = start_device_flow,
         device_poll: Callable[[str], dict[str, Any]] = poll_device_flow,
+        connector_form: dict[str, Any] | None = None,
+        connect: Callable[[str, str, dict[str, str]], dict[str, Any]] = connect_connector,
+        oauth_start: Callable[[str], str] = start_connector_oauth,
+        oauth_status: Callable[[str], tuple[bool, str]] = connector_status,
+        browser: Callable[[str], bool] = open_browser,
+        poll_interval: float = 2.0,
     ) -> None:
         super().__init__()
         self.kind = kind
@@ -108,9 +143,59 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
         self._device_start = device_start
         self._device_poll = device_poll
         self._device_run = 0
+        self._form = connector_form or {}
+        key_method = self._form.get("key_method") or {}
+        self._key_fields: list[dict[str, Any]] = list(key_method.get("fields") or [])
+        self._key_type = str(key_method.get("type") or "")
+        self._connect = connect
+        self._oauth_start = oauth_start
+        self._oauth_status = oauth_status
+        self._browser = browser
+        self._poll_interval = poll_interval
+
+    def _compose_connector(self) -> ComposeResult:
+        name = str(self._form.get("name") or self.host)
+        yield Static(f"Connect {escape(name)}", classes="picker-title", markup=True)
+        if self.reason:
+            yield Static(escape(self.reason), classes="cred-hint", markup=True)
+        yield Static(
+            f"Checked with {escape(name)}, then kept in the local vault. The agent never sees the value.",
+            classes="cred-hint",
+            markup=True,
+        )
+        for field in self._key_fields:
+            label = str(field.get("label") or field["key"]) + ("" if field.get("required") else " (optional)")
+            yield Static(escape(label), classes="field-label", markup=True)
+            yield Input(
+                password=bool(field.get("secret")),
+                placeholder=str(field.get("placeholder") or ""),
+                value="" if field.get("secret") else str(field.get("defaultValue") or ""),
+                id=f"conn-{field['key']}",
+                compact=True,
+            )
+        oauth = self._form.get("oauth") or {}
+        if oauth and not (oauth.get("configured") and not oauth.get("needs_fields")):
+            yield Static(
+                f"To sign in with OAuth, add the {escape(str(oauth.get('label') or name))} OAuth app in "
+                "Settings > Channels > Connectors (web or desktop).",
+                classes="cred-hint",
+                markup=True,
+            )
+        yield Static("", id="cred-device")
+        yield Static("", id="cred-error")
+        with Horizontal():
+            if self._key_fields:
+                yield Button("Connect", variant="primary", id="cred-save")
+            if oauth.get("configured") and not oauth.get("needs_fields"):
+                yield Button(f"Sign in with {name}", variant="primary" if not self._key_fields else "default",
+                             id="conn-oauth")
+            yield Button("Decline  esc", id="cred-decline")
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
+            if self.kind == "connector":
+                yield from self._compose_connector()
+                return
             if self.kind == "site_login":
                 yield Static(f"Sign in to {escape(self.host)}", classes="picker-title", markup=True)
             else:
@@ -148,6 +233,9 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
     @on(Button.Pressed, "#cred-save")
     async def _save(self) -> None:
         try:
+            if self.kind == "connector":
+                await self._save_connector()
+                return
             if self.kind == "site_login":
                 values = {name: self.query_one(f"#cred-{name}", Input).value for name in self.names}
                 required = [n for n in self.names if n != "totp"]
@@ -168,6 +256,64 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
             self.dismiss({"status": "connected", "login": ""})
         except Exception as exc:  # noqa: BLE001 - shown in the card, never the value
             self._error(str(getattr(exc, "message", None) or "Could not save. Try again."))
+
+    async def _save_connector(self) -> None:
+        if not self._key_fields:
+            self._error("This app signs in with OAuth: use the sign-in button.")
+            return
+        values = {field["key"]: self.query_one(f"#conn-{field['key']}", Input).value for field in self._key_fields}
+        missing = [str(field.get("label") or field["key"]) for field in self._key_fields
+                   if field.get("required") and not values[field["key"]].strip()]
+        if missing:
+            self._error("Fill " + ", ".join(missing) + ".")
+            return
+        self.query_one("#cred-device", Static).update("Checking with the app...")
+        try:
+            result = await asyncio.to_thread(self._connect, self.host, self._key_type, values)
+        finally:
+            self.query_one("#cred-device", Static).update("")
+        for field in self._key_fields:
+            if field.get("secret"):
+                self.query_one(f"#conn-{field['key']}", Input).value = ""
+        account = str(((result or {}).get("status") or {}).get("account") or "")
+        self.dismiss({"status": "connected", "login": account})
+
+    @on(Button.Pressed, "#conn-oauth")
+    def _oauth(self) -> None:
+        self._device_run += 1
+        self._run_oauth(self._device_run)
+
+    @work(exclusive=True, group="cred-device")
+    async def _run_oauth(self, run: int) -> None:
+        from navin.connectors.catalog import ConnectorError
+
+        status = self.query_one("#cred-device", Static)
+        try:
+            url = await asyncio.to_thread(self._oauth_start, self.host)
+        except (ConnectorError, OSError) as exc:
+            self._error(str(getattr(exc, "message", None) or "The sign-in could not start."))
+            return
+        opened = await asyncio.to_thread(self._browser, url)
+        status.update(
+            "Finish signing in in your browser. Waiting..."
+            if opened
+            else f"Open this address to sign in: {escape(url)}"
+        )
+        deadline = asyncio.get_running_loop().time() + 600
+        while run == self._device_run and self.is_attached and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(self._poll_interval)
+            try:
+                linked, account = await asyncio.to_thread(self._oauth_status, self.host)
+            except (ConnectorError, OSError) as exc:
+                # A locked vault does not end the sign-in: say so and keep waiting.
+                status.update(escape(str(getattr(exc, "message", None) or "Waiting for the connection...")))
+                continue
+            if linked:
+                self.dismiss({"status": "connected", "login": account})
+                return
+        if run == self._device_run and self.is_attached:
+            status.update("")
+            self._error("The sign-in did not finish in time. Try again.")
 
     @on(Button.Pressed, "#cred-device-start")
     def _device(self) -> None:
@@ -223,7 +369,17 @@ async def handle_credential_event(app: Any, event: Any) -> bool:
         request_id = event.request_id
         if request_id in open_screens:
             return True  # already open: shown again when its session is reopened
-        screen = CredentialScreen(event.kind, event.host, list(event.names), event.reason)
+        form: dict[str, Any] | None = None
+        if event.kind == "connector":
+            from navin.connectors.catalog import ConnectorError
+            from navin.connectors.manager import terminal_form
+
+            try:
+                form = await asyncio.to_thread(terminal_form, event.host)
+            except (ConnectorError, OSError):
+                # Unknown app or unreadable vault: the card still opens and offers Decline.
+                form = {"service": event.host, "name": event.host, "key_method": None, "oauth": None}
+        screen = CredentialScreen(event.kind, event.host, list(event.names), event.reason, connector_form=form)
         open_screens[request_id] = screen
 
         async def _answer(result: dict[str, str] | None) -> None:

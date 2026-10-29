@@ -95,7 +95,19 @@ def test_shipped_catalog_is_current_and_consistent():
         "feature-dev", "commit-commands", "code-review", "issue-triage", "plugin-dev",
         "pr-review-toolkit", "frontend-design", "hookify", "security-guidance",
         "ralph-loop", "agent-sdk-dev", "model-migration", "explanatory-output-style", "learning-output-style",
+        "document-skills", "example-skills",
     } <= set(plugins)
+    document_steps = {s["use"] for s in plugins["document-skills"]["steps"]}
+    assert {"skill:docx", "skill:xlsx", "skill:pptx", "skill:pdf"} <= document_steps
+    example_skills = {s["name"] for s in plugins["example-skills"]["skills"]}
+    assert {
+        "algorithmic-art", "brand-guidelines", "canvas-design", "theme-factory", "slack-gif-creator",
+        "doc-coauthoring", "internal-comms", "mcp-builder", "webapp-testing", "web-artifacts-builder",
+        "frontend-design", "skill-creator",
+    } <= example_skills
+    categories = {e["name"]: e["category"] for e in data["skills"]}
+    assert categories["docx"] == categories["pdf"] == "documents"
+    assert categories["canvas-design"] == categories["theme-factory"] == "design"
     assert [c["name"] for c in plugins["security-guidance"]["commands"]] == ["/security-review"]
     assert [c["name"] for c in plugins["hookify"]["commands"]] == [
         "/hookify", "/hookify-list", "/hookify-configure", "/hookify-help",

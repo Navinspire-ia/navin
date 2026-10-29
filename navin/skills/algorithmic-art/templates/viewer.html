@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<!--
+  Navin generative art viewer.
+
+  KEEP: the chrome (layout, colors, seed controls, action buttons, slider
+  generation). It reads the PARAMS object and builds the sidebar on its own.
+
+  REPLACE: the SKETCH block at the bottom. Paste the sketch written from
+  templates/generator_template.js there. It must define PARAMS, DEFAULTS,
+  setup(), draw(), regenerate(), setSeed(), resetParams() and exportPNG().
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navin - Generative Sketch</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <style>
+    :root {
+      --ink: #17171a;
+      --graphite: #121214;
+      --paper: #f4f3ee;
+      --cream: #faf9f6;
+      --lime: #c6e88a;
+      --teal: #0e7490;
+      --coral: #ff5f57;
+      --muted: rgba(244, 243, 238, 0.56);
+      --line: rgba(244, 243, 238, 0.12);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: Inter, "IBM Plex Sans", system-ui, sans-serif;
+      background: var(--ink);
+      color: var(--paper);
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 300px;
+      flex: 0 0 300px;
+      background: var(--graphite);
+      border-right: 1px solid var(--line);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      overflow-y: auto;
+    }
+    .brand {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      font-size: 15px;
+    }
+    .brand small {
+      display: block;
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--muted);
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+    .row { display: flex; gap: 8px; align-items: center; }
+    button {
+      font: inherit;
+      font-size: 13px;
+      color: var(--paper);
+      background: transparent;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    button:hover { border-color: var(--lime); }
+    button.primary {
+      background: var(--lime);
+      color: var(--ink);
+      border-color: var(--lime);
+      font-weight: 600;
+    }
+    button.primary:hover { background: #d4ef9f; }
+    input[type="number"] {
+      font: inherit;
+      font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+      font-size: 13px;
+      color: var(--paper);
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      width: 100%;
+    }
+    input[type="number"]:focus, input[type="range"]:focus { outline: 1px solid var(--lime); outline-offset: 2px; }
+    .param { margin-bottom: 14px; }
+    .param label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .param label span.value {
+      font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+      color: var(--paper);
+    }
+    input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 2px;
+      background: var(--line);
+      border-radius: 1px;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--lime);
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: none;
+      border-radius: 50%;
+      background: var(--lime);
+      cursor: pointer;
+    }
+    .actions { display: flex; flex-direction: column; gap: 8px; }
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+    }
+    #canvas-host canvas {
+      max-width: min(100%, calc(100vh - 64px));
+      max-height: calc(100vh - 64px);
+      width: auto !important;
+      height: auto !important;
+      display: block;
+      box-shadow: 0 0 0 1px var(--line);
+    }
+    .fallback {
+      max-width: 420px;
+      border: 1px solid var(--coral);
+      border-radius: 8px;
+      padding: 20px 24px;
+      color: var(--paper);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .fallback strong { color: var(--coral); }
+    .fallback code {
+      font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+      font-size: 12px;
+      color: var(--lime);
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">Navin<small id="sketch-title">Generative sketch</small></div>
+
+    <section>
+      <h2>Seed</h2>
+      <div class="row" style="margin-bottom: 8px;">
+        <input type="number" id="seed-input" min="1" step="1" aria-label="Seed">
+        <button id="seed-go" title="Jump to seed">Go</button>
+      </div>
+      <div class="row">
+        <button id="seed-prev" title="Previous seed">Prev</button>
+        <button id="seed-next" title="Next seed">Next</button>
+        <button id="seed-random" title="Random seed">Random</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Parameters</h2>
+      <div id="params"></div>
+    </section>
+
+    <section class="actions">
+      <h2>Actions</h2>
+      <button class="primary" id="btn-regenerate">Regenerate</button>
+      <button id="btn-reset">Reset parameters</button>
+      <button id="btn-png">Download PNG</button>
+      <button id="btn-svg">Download SVG</button>
+    </section>
+  </aside>
+
+  <main>
+    <div id="canvas-host"></div>
+    <div id="fallback" class="fallback hidden">
+      <strong>p5.js did not load.</strong><br>
+      This viewer fetches p5 from a single CDN. Check the network connection, or
+      save <code>p5.min.js</code> next to this file and change the script tag to
+      <code>src="p5.min.js"</code>.
+    </div>
+  </main>
+
+  <!-- CHROME: do not edit. Builds the controls from PARAMS. -->
+  <script>
+    (function () {
+      function $(id) { return document.getElementById(id); }
+
+      function formatValue(v, step) {
+        var decimals = 0;
+        var s = String(step);
+        if (s.indexOf('.') >= 0) decimals = s.split('.')[1].length;
+        if (s.indexOf('e-') >= 0) decimals = parseInt(s.split('e-')[1], 10);
+        return Number(v).toFixed(decimals);
+      }
+
+      function buildParams() {
+        var host = $('params');
+        host.innerHTML = '';
+        Object.keys(PARAMS).forEach(function (key) {
+          if (key === 'seed') return;
+          var spec = PARAMS[key];
+          var wrap = document.createElement('div');
+          wrap.className = 'param';
+          var label = document.createElement('label');
+          var name = document.createElement('span');
+          name.textContent = key;
+          var val = document.createElement('span');
+          val.className = 'value';
+          val.id = 'val-' + key;
+          val.textContent = formatValue(spec.value, spec.step);
+          label.appendChild(name);
+          label.appendChild(val);
+          var input = document.createElement('input');
+          input.type = 'range';
+          input.min = spec.min;
+          input.max = spec.max;
+          input.step = spec.step;
+          input.value = spec.value;
+          input.id = 'range-' + key;
+          input.addEventListener('input', function () {
+            PARAMS[key].value = Number(input.value);
+            $('val-' + key).textContent = formatValue(input.value, spec.step);
+            regenerate();
+          });
+          wrap.appendChild(label);
+          wrap.appendChild(input);
+          host.appendChild(wrap);
+        });
+      }
+
+      function syncSeed() {
+        $('seed-input').value = PARAMS.seed.value;
+      }
+
+      function applySeed(value) {
+        setSeed(value);
+        syncSeed();
+        regenerate();
+      }
+
+      function wire() {
+        $('seed-go').addEventListener('click', function () { applySeed(Number($('seed-input').value) || 1); });
+        $('seed-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') applySeed(Number(e.target.value) || 1); });
+        $('seed-prev').addEventListener('click', function () { applySeed(PARAMS.seed.value - 1); });
+        $('seed-next').addEventListener('click', function () { applySeed(PARAMS.seed.value + 1); });
+        $('seed-random').addEventListener('click', function () { applySeed(1 + Math.floor(Math.random() * (PARAMS.seed.max - 1))); });
+        $('btn-regenerate').addEventListener('click', function () { regenerate(); });
+        $('btn-reset').addEventListener('click', function () { resetParams(); buildParams(); syncSeed(); regenerate(); });
+        $('btn-png').addEventListener('click', function () { exportPNG(); });
+        $('btn-svg').addEventListener('click', function () {
+          if (typeof exportSVG === 'function') exportSVG();
+        });
+      }
+
+      window.addEventListener('DOMContentLoaded', function () {
+        if (typeof window.p5 === 'undefined' || typeof window.PARAMS === 'undefined') {
+          $('fallback').classList.remove('hidden');
+          return;
+        }
+        buildParams();
+        syncSeed();
+        wire();
+      });
+    })();
+  </script>
+
+  <!-- SKETCH: replace everything inside this script with the generated sketch. -->
+  <script>
+    const PARAMS = {
+      seed:       { value: 2024,   min: 1,      max: 99999, step: 1 },
+      count:      { value: 1800,   min: 100,    max: 6000,  step: 50 },
+      noiseScale: { value: 0.0025, min: 0.0005, max: 0.01,  step: 0.0005 },
+      stepLength: { value: 2.2,    min: 0.5,    max: 6,     step: 0.1 },
+      steps:      { value: 260,    min: 40,     max: 800,   step: 10 },
+      lineAlpha:  { value: 28,     min: 4,      max: 120,   step: 1 },
+      curl:       { value: 1.0,    min: 0,      max: 3,     step: 0.05 },
+    };
+    const DEFAULTS = JSON.parse(JSON.stringify(PARAMS));
+    const PALETTE = { ink: '#17171a', paper: '#f4f3ee', lime: '#c6e88a', teal: '#0e7490' };
+    const CANVAS_SIZE = 1200;
+    function P(name) { return PARAMS[name].value; }
+
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    let rng = mulberry32(P('seed'));
+    function rnd(min, max) { return min + (max - min) * rng(); }
+    function seedEverything(seed) { rng = mulberry32(seed); randomSeed(seed); noiseSeed(seed); }
+
+    let particles = [];
+    let svgPaths = [];
+
+    function setup() {
+      const canvas = createCanvas(CANVAS_SIZE, CANVAS_SIZE);
+      pixelDensity(1);
+      canvas.parent(document.getElementById('canvas-host'));
+      noLoop();
+      regenerate();
+    }
+
+    function regenerate() {
+      seedEverything(P('seed'));
+      particles = [];
+      svgPaths = [];
+      for (let i = 0; i < P('count'); i++) particles.push(new Particle());
+      redraw();
+    }
+
+    function draw() {
+      background(PALETTE.ink);
+      strokeWeight(1);
+      noFill();
+      for (const p of particles) p.trace();
+      noStroke();
+      fill(PALETTE.lime);
+      textFont('IBM Plex Mono, JetBrains Mono, monospace');
+      textSize(14);
+      textAlign(RIGHT, BOTTOM);
+      text('seed ' + P('seed'), width - 32, height - 28);
+    }
+
+    class Particle {
+      constructor() {
+        this.x = rnd(0, width);
+        this.y = rnd(0, height);
+        const roll = rng();
+        this.color = roll < 0.06 ? PALETTE.lime : roll < 0.14 ? PALETTE.teal : PALETTE.paper;
+      }
+      angleAt(x, y) {
+        const s = P('noiseScale');
+        const base = noise(x * s, y * s) * TWO_PI * 2;
+        const detail = noise(x * s * 4 + 100, y * s * 4 + 100) * PI * 0.5;
+        const curl = P('curl') * Math.atan2(y - height / 2, x - width / 2);
+        return base + detail + curl * 0.25;
+      }
+      trace() {
+        const c = color(this.color);
+        c.setAlpha(P('lineAlpha'));
+        stroke(c);
+        let x = this.x, y = this.y;
+        const pts = [[x, y]];
+        beginShape();
+        vertex(x, y);
+        for (let i = 0; i < P('steps'); i++) {
+          const a = this.angleAt(x, y);
+          x += Math.cos(a) * P('stepLength');
+          y += Math.sin(a) * P('stepLength');
+          if (x < 0 || y < 0 || x > width || y > height) break;
+          vertex(x, y);
+          pts.push([x, y]);
+        }
+        endShape();
+        svgPaths.push({ points: pts, color: this.color });
+      }
+    }
+
+    function exportPNG(name) { saveCanvas(name || ('sketch-seed' + P('seed')), 'png'); }
+
+    function exportSVG(name) {
+      const parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '">',
+        '<rect width="100%" height="100%" fill="' + PALETTE.ink + '"/>'];
+      const alpha = (P('lineAlpha') / 255).toFixed(3);
+      for (const path of svgPaths) {
+        if (path.points.length < 2) continue;
+        const d = path.points.map((pt, i) => (i === 0 ? 'M' : 'L') + pt[0].toFixed(1) + ' ' + pt[1].toFixed(1)).join(' ');
+        parts.push('<path d="' + d + '" fill="none" stroke="' + path.color + '" stroke-opacity="' + alpha + '" stroke-width="1"/>');
+      }
+      parts.push('</svg>');
+      const blob = new Blob([parts.join('\n')], { type: 'image/svg+xml' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = (name || ('sketch-seed' + P('seed'))) + '.svg';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function setSeed(value) {
+      PARAMS.seed.value = Math.max(PARAMS.seed.min, Math.min(PARAMS.seed.max, Math.floor(value)));
+    }
+    function resetParams() {
+      for (const key of Object.keys(DEFAULTS)) PARAMS[key].value = DEFAULTS[key].value;
+    }
+  </script>
+</body>
+</html>

@@ -67,19 +67,35 @@ _MAX_CONFIRMATION_WORDS = 8
 _MAX_QUESTION_CHARS = 400
 
 
+# How a green light is typed fast: "vasy", "vazi", "gooo", "okk", "ouiii".
+# "/forge vasy" missed the word list, the gate read a greeting and the agent
+# asked the user again what to do.
+_AFFIRMATIVE_SPELLING = re.compile(
+    r"go+|va[sz]+[iy]+|ok+|oki+|ou+i+|ye+s+|yu+p|da+c|alle+z+y?|let+s+go+|letsgo+",
+)
+
+
+def _is_affirmative_word(word: str) -> bool:
+    return word in _AFFIRMATIVE_WORDS or bool(_AFFIRMATIVE_SPELLING.fullmatch(word))
+
+
 def focus_is_affirmative(text: str) -> bool:
     """True when *text* is only a green light ("oui", "ok vas-y", "go ahead").
 
     Any substantive word (a noun, a file name, a new instruction) disqualifies
     it: that message stands on its own and the normal intent gate applies.
     """
+    from navin.utils.runtime import is_go_ahead
+
     words = _WORD_RE.findall((text or "").casefold())
     if not words or len(words) > _MAX_CONFIRMATION_WORDS:
         return False
-    if not any(word in _AFFIRMATIVE_WORDS for word in words):
+    if is_go_ahead(text):
+        return True
+    if not any(_is_affirmative_word(word) for word in words):
         return False
     return all(
-        word in _AFFIRMATIVE_WORDS or word in _CONFIRM_FILLER_WORDS
+        _is_affirmative_word(word) or word in _CONFIRM_FILLER_WORDS
         for word in words
     )
 
@@ -102,10 +118,24 @@ def last_assistant_question(messages: Iterable[Mapping[str, Any]] | None) -> str
             # Tool-call records carry no prose; keep walking back to the last
             # thing the user actually read.
             continue
-        if not ends_with_user_question(content):
+        if not ends_with_user_question(content) and not _offers_next_step(content):
             return ""
         return _question_line(content)
     return ""
+
+
+def _offers_next_step(content: str) -> bool:
+    """True when the answer ends on a step it waits to be told to start.
+
+    "La prochaine etape est le registre de scanners. Je la demarre des que tu
+    me dis go." has no question mark, yet a "go" right after it confirms that
+    step. Read as a bare greeting, the gate asked what to build and the agent
+    asked the user again.
+    """
+    from navin.utils.runtime import lists_remaining_work
+
+    paragraphs = [part for part in re.split(r"\n\s*\n", content.strip()) if part.strip()]
+    return bool(paragraphs) and lists_remaining_work(paragraphs[-1])
 
 
 def _question_line(content: str) -> str:

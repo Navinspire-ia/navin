@@ -1,0 +1,71 @@
+/* Navin design tokens. Light by default; add data-theme="dark" on <html> for dark. */
+:root {
+  /* Core palette */
+  --navin-ink: #17171a;
+  --navin-graphite: #121214;
+  --navin-paper: #f4f3ee;
+  --navin-cream: #faf9f6;
+  --navin-lime: #c6e88a;
+  --navin-teal: #0e7490;
+  --navin-sky: #0ea5e9;
+  --navin-leaf: #6fbf6a;
+  --navin-violet: #7c3aed;
+  --navin-coral: #ff5f57;
+  --navin-amber: #febc2e;
+
+  /* Derived greys */
+  --navin-muted-light: #5f5f63;
+  --navin-muted-dark: #9a9a96;
+  --navin-hairline-light: #d9d8d3;
+  --navin-hairline-dark: #2a2a2e;
+
+  /* Semantic, light mode */
+  --navin-bg: var(--navin-paper);
+  --navin-surface: var(--navin-cream);
+  --navin-fg: var(--navin-ink);
+  --navin-fg-muted: var(--navin-muted-light);
+  --navin-hairline: var(--navin-hairline-light);
+  --navin-accent: var(--navin-lime);
+  --navin-on-accent: var(--navin-ink);
+  --navin-link: var(--navin-teal);
+  --navin-success: var(--navin-leaf);
+  --navin-warning: var(--navin-amber);
+  --navin-error: var(--navin-coral);
+
+  /* Type */
+  --navin-font-sans: Inter, "IBM Plex Sans", system-ui, sans-serif;
+  --navin-font-mono: "IBM Plex Mono", "JetBrains Mono", monospace;
+  --navin-font-serif: Lora, "Crimson Pro", Georgia, serif;
+  --navin-size-display: 56px;
+  --navin-size-h1: 40px;
+  --navin-size-h2: 28px;
+  --navin-size-h3: 20px;
+  --navin-size-body: 16px;
+  --navin-size-small: 14px;
+  --navin-size-caption: 12px;
+  --navin-size-code: 13px;
+
+  /* Space and shape */
+  --navin-space-1: 4px;
+  --navin-space-2: 8px;
+  --navin-space-3: 12px;
+  --navin-space-4: 16px;
+  --navin-space-5: 24px;
+  --navin-space-6: 32px;
+  --navin-space-7: 48px;
+  --navin-space-8: 64px;
+  --navin-space-9: 96px;
+  --navin-radius-control: 6px;
+  --navin-radius-card: 8px;
+  --navin-radius-panel: 12px;
+  --navin-shadow: 0 1px 2px rgba(23, 23, 26, 0.08);
+}
+
+[data-theme="dark"] {
+  --navin-bg: var(--navin-ink);
+  --navin-surface: var(--navin-graphite);
+  --navin-fg: var(--navin-paper);
+  --navin-fg-muted: var(--navin-muted-dark);
+  --navin-hairline: var(--navin-hairline-dark);
+  --navin-link: var(--navin-sky);
+}

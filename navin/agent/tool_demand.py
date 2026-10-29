@@ -44,6 +44,7 @@ NOTEBOOK_TOOL = "notebook_edit"
 WRITE_STDIN_TOOL = "write_stdin"
 LIST_EXEC_SESSIONS_TOOL = "list_exec_sessions"
 MCP_MANAGE_TOOL = "mcp"
+CONNECTORS_TOOL = "connectors"
 
 #: Withheld until the turn, the repository or a live session asks for them.
 ON_DEMAND_TOOLS: frozenset[str] = frozenset(
@@ -152,6 +153,27 @@ _TOOL_NOUNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         MCP_MANAGE_TOOL,
         re.compile(r"\b(mcp|mcps|mcpservers|model context protocol)\b"),
+    ),
+    # Not withheld either: naming a connected-app brand loads the connectors
+    # schema at once. Words that are also common nouns or code terms
+    # (notion, zoom, excel, motion, readme, apollo) are left to the runtime
+    # context, which lists the apps that are actually connected.
+    (
+        CONNECTORS_TOOL,
+        re.compile(
+            r"\b("
+            r"connecteurs?|connectors?|"
+            r"slack|microsoft teams|discord|gmail|outlook|google meet|reunion zoom|zoom meetings?|"
+            r"google calendar|calendly|google tasks|google drive|google sheets|dropbox|onedrive|airtable|"
+            r"google forms|typeform|wordpress|salesforce|hubspot|zendesk|hunter io|apollo io|"
+            r"anymail ?finder|crunchbase|erpnext|sage hr|shopify|woocommerce|stripe|tiktok|youtube|"
+            r"twitter|google analytics|search console|google ads|ahrefs|mailchimp|brevo|mailgun|"
+            r"sendgrid|emaillistverify|tavily|serpapi|apify|google maps|yelp|iplocate|supabase|"
+            r"pinecone|mongodb atlas|databricks|cloudflare|vercel|laravel cloud|docker hub|circleci|"
+            r"ngrok|permit io|sentry|datadog|grafana|figma|canva|heygen|higgsfield|elevenlabs|"
+            r"deepgram|crypto apis"
+            r")\b"
+        ),
     ),
 )
 

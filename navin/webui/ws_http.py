@@ -696,6 +696,10 @@ class GatewayHTTPHandler:
         if got == "/api/marketing/oauth/callback":
             return await self._handle_marketing_oauth_callback(request)
 
+        # Connector OAuth return address: public, gated by the one-use state.
+        if got == "/api/connectors/oauth/callback":
+            return await self._handle_connectors_oauth_callback(request)
+
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
         if response is not None:
@@ -2913,6 +2917,52 @@ class GatewayHTTPHandler:
         except (ValueError, WebUIFilePreviewError):
             return _http_error(400, "invalid account payload")
 
+    async def _handle_connectors(self, request: WsRequest) -> Response:
+        """Settings > Channels > Connectors. Values go in; only statuses come back."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.connectors.catalog import ConnectorError
+        from navin.webui.connectors_api import handle_connectors_action
+
+        query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
+        action = (query.get("action") or "catalog").strip()
+        try:
+            try:
+                raw = file_body_from_headers(request.headers) or "{}"
+            except WebUIFilePreviewError as exc:
+                if exc.message != "missing file content":
+                    raise
+                raw = "{}"
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                return _http_error(400, "invalid connectors payload")
+            payload = await asyncio.to_thread(handle_connectors_action, action, query, body)
+            return _http_json_response(payload)
+        except ConnectorError as exc:
+            return _http_error(exc.status, exc.message)
+        except (ValueError, WebUIFilePreviewError):
+            return _http_error(400, "invalid connectors payload")
+        except Exception:
+            self._log.exception("connectors action failed action={}", action)
+            return _http_error(500, "connectors request failed")
+
+    async def _handle_connectors_oauth_callback(self, request: WsRequest) -> Response:
+        """The provider sends the browser back here with ``code`` and ``state``."""
+        from navin.webui.connectors_api import oauth_callback_page
+
+        query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
+        status, page = await asyncio.to_thread(oauth_callback_page, query)
+        return _http_response(
+            page.encode("utf-8"),
+            status=status,
+            content_type="text/html; charset=utf-8",
+            extra_headers=[
+                ("Cache-Control", "no-store"),
+                ("Referrer-Policy", "no-referrer"),
+                ("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"),
+            ],
+        )
+
     async def _handle_browser_credentials(self, request: WsRequest) -> Response:
         """Site logins for browser capture. Values go in; only names come back."""
         if not self.check_api_token(request):
@@ -4372,6 +4422,8 @@ class GatewayHTTPHandler:
     ) -> Response | None:
         if got == "/api/sessions":
             return await self._handle_sessions_list(request)
+        if got == "/api/connectors":
+            return await self._handle_connectors(request)
         if got == "/api/commands":
             return await self._handle_commands(request)
         if got == "/api/workspaces":
@@ -4510,6 +4562,8 @@ class GatewayHTTPHandler:
             return await self._handle_webui_security_scan(request)
         if got == "/api/webui/security-scan/report":
             return await self._handle_webui_security_report(request)
+        if got == "/api/webui/security-audit":
+            return await self._handle_webui_security_audit(request)
         if got == "/api/webui/plugins":
             return self._handle_webui_plugins(request)
         if got == "/api/webui/plugins/install":
@@ -5849,6 +5903,40 @@ class GatewayHTTPHandler:
         from navin.agent.tools.mcp import request_mcp_reload
 
         return lambda: request_mcp_reload(self.bus)
+
+    async def _handle_webui_security_audit(self, request: WsRequest) -> Response:
+        """Navin Security audit for the Code > Cyber panel: catalog, run, last audit, checklist, SARIF."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui.security_audit_api import (
+            SecurityAuditError,
+            security_audit_payload,
+            security_audit_sarif,
+        )
+
+        query = _parse_query(request.path)
+        action = (_query_first(query, "action") or "last").strip().lower()
+        params = {
+            key: _query_first(query, key) or ""
+            for key in ("path", "base_url", "scanners", "offline", "control", "checked", "note", "lang")
+        }
+        try:
+            # An audit walks the tree and may run scanners for minutes: off the loop.
+            if action == "sarif":
+                body, filename = await asyncio.to_thread(security_audit_sarif, params["path"])
+                return _http_response(
+                    body,
+                    content_type="application/sarif+json",
+                    extra_headers=[
+                        ("Content-Disposition", content_disposition_attachment(filename)),
+                        ("X-Content-Type-Options", "nosniff"),
+                        ("Cache-Control", "private, no-store"),
+                    ],
+                )
+            payload = await asyncio.to_thread(security_audit_payload, action, params)
+        except SecurityAuditError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
 
     async def _handle_webui_plugins_install(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):

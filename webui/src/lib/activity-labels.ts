@@ -76,6 +76,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   pr_comments: label("prComments", "Checked PR comments"),
   my: label("my", "Checked identity"),
   security_scan: label("securityScan", "Scanned security"),
+  security_audit: label("securityAudit", "Audited security"),
 };
 
 const TOOL_ACTION_LABELS: Record<string, Record<string, ActivityLabel>> = {

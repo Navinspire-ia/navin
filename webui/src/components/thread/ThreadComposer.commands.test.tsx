@@ -44,6 +44,24 @@ describe("configuration commands in the chat composer", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("opens the channels and app connectors from the Connector button without sending", () => {
+    const send = vi.fn();
+    render(<ThreadComposer onSend={send} sessionKey="websocket:demo" turnMode="agent" />);
+    const button = screen.getByRole("button", { name: "Connector" });
+    expect(button.getAttribute("title")).toBe("Connect apps the agent can use");
+    fireEvent.click(button);
+    expect(window.location.hash).toBe("#/settings?chat=websocket%3Ademo&section=channels");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("disables the Connector button with the composer", () => {
+    render(<ThreadComposer onSend={vi.fn()} disabled />);
+    const button = screen.getByRole("button", { name: "Connector" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(window.location.hash).toBe("#/code?chat=websocket%3Ademo");
+  });
+
   it("opens configuration while a turn is running and no model is configured", () => {
     const send = vi.fn();
     const stop = vi.fn();

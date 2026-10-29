@@ -61,6 +61,7 @@ import {
   Mic,
   Package,
   Paperclip,
+  Plug,
   RotateCw,
   Route,
   ScanSearch,
@@ -2481,6 +2482,22 @@ function ThreadComposerImpl({
         disabled={disabled}
         isHero
       />
+      {/* App connectors and channels (Settings > Channels), next to the document picker. */}
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        disabled={disabled}
+        title={t("thread.composer.connectorsHint", { defaultValue: "Connect apps the agent can use" })}
+        data-testid="composer-connectors"
+        onClick={() => {
+          window.location.hash = configurationHash("channels", sessionKey);
+        }}
+        className="h-7 shrink-0 gap-1 rounded-md border-transparent px-2 text-[12px] text-muted-foreground hover:bg-muted/65 hover:text-foreground"
+      >
+        <Plug className="h-3.5 w-3.5" aria-hidden />
+        <span>{t("thread.composer.connectors", { defaultValue: "Connector" })}</span>
+      </Button>
       {sessionAction}
     </>
   );

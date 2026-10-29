@@ -706,12 +706,55 @@ class BuildTurnFinishesTheWorkTest(unittest.TestCase):
             # The reminder was acted on (a command ran): a new reminder.
             _shell("2", "python scripts/gen_i18n.py"),
             LLMResponse(content=halfway, finish_reason="stop"),
-            # Nothing done since the last reminder: stuck, so the turn ends.
+            # Nothing done since the last reminder: one firmer push, then the
+            # turn ends (the fake keeps answering the same text).
             LLMResponse(content=halfway, finish_reason="stop"),
         ])
         self.assertEqual(self._continues(result.messages, REMAINING_WORK_CONTINUE_PROMPT), 2)
-        self.assertEqual(provider.calls, 5)
+        self.assertEqual(provider.calls, 6)
         self.assertEqual(result.final_content, halfway)
+
+    # The two sentences a /forge session ended on (2026-10-29) after a git
+    # status, a listing, the graph, the index, two reads and the board: the
+    # user saw neither the plan nor a line of code.
+    ANNOUNCED_FR = (
+        "Je démarre pour de vrai : cartographie de l'existant navin/security/, "
+        "plan au board, puis code dans ce tour."
+    )
+    ANNOUNCED_EN = (
+        "The board plan from the cut turn was never filed. I file it now and "
+        "build the first step (the socle) in this turn."
+    )
+
+    def test_reads_then_an_announcement_of_the_work_are_sent_back_into_it(self) -> None:
+        from navin.utils.runtime import NO_ACTION_CONTINUE_PROMPT
+
+        for announced in (self.ANNOUNCED_FR, self.ANNOUNCED_EN):
+            with self.subTest(text=announced):
+                result, provider = _run_build([
+                    _look("1", "read_file", "navin/security/model.py"),
+                    _look("2", "grep", "Finding"),
+                    LLMResponse(content=announced, finish_reason="stop"),
+                    _shell("3", "python scripts/scaffold_security.py"),
+                    LLMResponse(content="Socle ecrit et teste.", finish_reason="stop"),
+                ])
+                self.assertEqual(self._continues(result.messages, NO_ACTION_CONTINUE_PROMPT), 1)
+                self.assertIn("exec", result.tools_used)
+                self.assertEqual(result.final_content, "Socle ecrit et teste.")
+                self.assertEqual(provider.calls, 5)
+
+    def test_an_announcement_after_real_work_is_one_more_reminder(self) -> None:
+        from navin.utils.runtime import REMAINING_WORK_CONTINUE_PROMPT
+
+        result, provider = _run_build([
+            _shell("1", "python scripts/file_plan.py"),
+            LLMResponse(content="Plan au board. " + self.ANNOUNCED_EN, finish_reason="stop"),
+            _shell("2", "python scripts/scaffold_security.py"),
+            LLMResponse(content="Plan au board, socle ecrit et teste.", finish_reason="stop"),
+        ])
+        self.assertEqual(self._continues(result.messages, REMAINING_WORK_CONTINUE_PROMPT), 1)
+        self.assertEqual(result.final_content, "Plan au board, socle ecrit et teste.")
+        self.assertEqual(provider.calls, 4)
 
 
 class RemainingWorkMarkersTest(unittest.TestCase):
@@ -729,4 +772,42 @@ class RemainingWorkMarkersTest(unittest.TestCase):
                 self.assertTrue(lists_remaining_work(text))
         for text in ("Tout est fait, les tests passent.", "", None):
             with self.subTest(text=text):
+                self.assertFalse(lists_remaining_work(text))
+
+    def test_an_announcement_of_imminent_work_is_unfinished_work(self) -> None:
+        from navin.utils.runtime import announces_work, lists_remaining_work
+
+        for text in (
+            BuildTurnFinishesTheWorkTest.ANNOUNCED_FR,
+            BuildTurnFinishesTheWorkTest.ANNOUNCED_EN,
+            "Je vais maintenant creer les fichiers du module.",
+            "J'attaque le routeur de skills.",
+            "Let me start with the orchestrator.",
+            "I'll write the registry and its tests.",
+            "I'm now wiring the panel into the rail.",
+            "Now I create the scanner adapters.",
+            "Starting with the model.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(announces_work(text))
+                self.assertTrue(lists_remaining_work(text))
+        for text in (
+            # Done, in the past: not a promise.
+            "Tout a ete fait dans ce tour : plan, socle, tests verts.",
+            "Le serveur a commence a repondre, tout est en place.",
+            # A refusal, an offer left to the user, a question, a user-owned step.
+            "Je ne vais pas toucher au module billing sans relecture.",
+            "I will not change the public API.",
+            "Si tu veux, je lance le build complet ensuite.",
+            "If you want, I will add the PDF export too.",
+            "Shall I start with the mobile skill now?",
+            "Tu peux maintenant lancer npm run build de ton cote.",
+            "I'll push to Forgejo once you confirm.",
+            # The phrase quoted as a phrase.
+            'The reminder fires on "I file it now" sentences.',
+            "",
+            None,
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(announces_work(text))
                 self.assertFalse(lists_remaining_work(text))

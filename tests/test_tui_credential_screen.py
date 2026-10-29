@@ -9,7 +9,7 @@ import unittest
 from typing import Any
 
 from textual.app import App
-from textual.widgets import Input
+from textual.widgets import Button, Input, Static
 
 from navin.tui.credential_screen import CredentialScreen, handle_credential_event
 from navin.tui.runtime import UiCredentialClosed, UiCredentialRequested
@@ -109,6 +109,117 @@ class CredentialScreenTest(unittest.IsolatedAsyncioTestCase):
             await handle_credential_event(app, UiCredentialClosed("r1", "declined"))
             await pilot.pause()
         self.assertEqual(answers, [("r1", "declined")])
+
+    async def test_connector_card_opens_even_when_the_vault_is_unreadable(self) -> None:
+        from unittest.mock import patch
+
+        answers: list[tuple[str, str]] = []
+
+        class Runtime:
+            async def answer_credential(self, request_id: str, *, status: str, login: str = "") -> None:
+                answers.append((request_id, status))
+
+        class Host(App):
+            runtime = Runtime()
+
+        def unreadable(service: str) -> dict[str, Any]:
+            raise PermissionError("the connectors index is not readable")
+
+        app = Host()
+        with patch("navin.connectors.manager.terminal_form", unreadable):
+            async with app.run_test(size=(100, 40)) as pilot:
+                handled = await handle_credential_event(
+                    app, UiCredentialRequested("r2", "connector", "hubspot", [], "Sync the CRM")
+                )
+                self.assertTrue(handled)
+                await pilot.pause()
+                screen = app.screen
+                self.assertIsInstance(screen, CredentialScreen)
+                # No form to fill without the app's details: only Decline is offered.
+                self.assertEqual(len(screen.query("#cred-save")), 0)
+                self.assertEqual(len(screen.query("#conn-oauth")), 0)
+                await pilot.press("escape")
+                await pilot.pause()
+        self.assertEqual(answers, [("r2", "declined")])
+
+    async def test_connector_key_is_verified_and_only_the_account_comes_back(self) -> None:
+        calls: list[tuple[str, str, dict[str, str]]] = []
+        results: list[Any] = []
+        form = {
+            "service": "zendesk",
+            "name": "Zendesk",
+            "key_method": {"type": "api_key", "fields": [
+                {"key": "apiKey", "label": "API Token", "required": True, "secret": True},
+                {"key": "subdomain", "label": "Subdomain", "required": True, "secret": False},
+                {"key": "email", "label": "Email", "required": True, "secret": False},
+            ]},
+            "oauth": {"configured": False, "label": "Zendesk", "needs_fields": True},
+        }
+
+        def connect(service: str, method: str, values: dict[str, str]) -> dict[str, Any]:
+            calls.append((service, method, dict(values)))
+            return {"status": {"connected": True, "account": "Agent Smith"}}
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(
+                    CredentialScreen("connector", "zendesk", reason="Read the tickets", connector_form=form, connect=connect),
+                    results.append,
+                )
+
+        app = Host()
+        async with app.run_test(size=(100, 60)) as pilot:
+            screen = app.screen
+            self.assertTrue(screen.query_one("#conn-apiKey", Input).password)
+            self.assertFalse(screen.query_one("#conn-subdomain", Input).password)
+            self.assertEqual(len(screen.query("#conn-oauth")), 0)
+            screen.query_one("#cred-save", Button).press()
+            await pilot.pause()
+            self.assertEqual(calls, [])
+            self.assertIn("Fill API Token, Subdomain, Email", str(screen.query_one("#cred-error", Static).render()))
+            screen.query_one("#conn-apiKey", Input).value = "zd-secret-token"
+            screen.query_one("#conn-subdomain", Input).value = "acme"
+            screen.query_one("#conn-email", Input).value = "a@b.co"
+            screen.query_one("#cred-save", Button).press()
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if results:
+                    break
+        self.assertEqual(calls, [("zendesk", "api_key", {"apiKey": "zd-secret-token", "subdomain": "acme", "email": "a@b.co"})])
+        self.assertEqual(results, [{"status": "connected", "login": "Agent Smith"}])
+        self.assertNotIn("zd-secret-token", repr(results))
+
+    async def test_connector_oauth_opens_the_browser_and_waits_for_the_connection(self) -> None:
+        opened: list[str] = []
+        results: list[Any] = []
+        state = {"polls": 0}
+        form = {"service": "notion", "name": "Notion", "key_method": None,
+                "oauth": {"configured": True, "label": "Notion", "needs_fields": False}}
+
+        def status(service: str) -> tuple[bool, str]:
+            state["polls"] += 1
+            return (state["polls"] >= 2, "Workspace A")
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(
+                    CredentialScreen(
+                        "connector", "notion", connector_form=form,
+                        oauth_start=lambda service: "https://api.notion.com/v1/oauth/authorize?state=x",
+                        oauth_status=status, browser=lambda url: opened.append(url) or True, poll_interval=0.01,
+                    ),
+                    results.append,
+                )
+
+        app = Host()
+        async with app.run_test(size=(100, 40)) as pilot:
+            app.screen.query_one("#conn-oauth", Button).press()
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if results:
+                    break
+        self.assertEqual(opened, ["https://api.notion.com/v1/oauth/authorize?state=x"])
+        self.assertEqual(results, [{"status": "connected", "login": "Workspace A"}])
 
 
 if __name__ == "__main__":

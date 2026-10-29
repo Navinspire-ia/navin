@@ -565,68 +565,6 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(menu._searchable)
             app._fork_session.assert_awaited_once_with(path, "cli:1", "", app.runtime.agent_loop.sessions)
 
-    async def test_open_in_a_new_terminal_tab_starts_a_second_cli_on_that_chat(self):
-        from unittest.mock import patch
-
-        from navin.tui.projects import ProjectEntry, SessionEntry
-
-        app, _switched = await self._project_host()
-        app.cli_executable = Path("/opt/navin/navin-cli")
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.pause()
-            path = str(app.runtime.workspace)
-            panel = app._projects_panel()
-            self.assertIsNotNone(panel)
-            panel.set_data(
-                [ProjectEntry(path, "proj", "#61AFEF", [SessionEntry("cli:7", "Login fix", "2026-01-01")])],
-                path, app.runtime.session_key,
-            )
-            await pilot.pause()
-            app._flash = AsyncMock()
-            app._note = AsyncMock()
-            # the menu entry and the arrow on the row land in the same place
-            app.push_screen_wait = AsyncMock(return_value="terminal")
-            with patch("navin.tui.open_terminal.open_in_terminal_tab", return_value="tmux window") as opened:
-                await app._session_menu(path, "cli:7")
-            menu = app.push_screen_wait.await_args.args[0]
-            self.assertEqual([item.id for item in menu._items][:2], ["open", "terminal"])
-            cwd, command = opened.call_args.args
-            self.assertEqual(str(cwd), path)
-            self.assertEqual(command, ["/opt/navin/navin-cli", path, "--session", "cli:7"])
-            self.assertEqual(opened.call_args.kwargs["title"], "Login fix")
-            said = app._flash.await_args.args[0]
-            self.assertIn("Login fix", said)
-            self.assertIn("tmux window", said)
-            self.assertNotIn("open here too", said)  # another chat than the one on screen
-            # the chat on screen: a second CLI on it is allowed, with a word of care
-            with patch("navin.tui.open_terminal.open_in_terminal_tab", return_value="Windows Terminal tab"):
-                await app._open_in_terminal(path, app.runtime.session_key)
-            self.assertIn("open here too", app._flash.await_args.args[0])
-            app._note.assert_not_awaited()
-
-    async def test_without_a_terminal_to_drive_the_command_is_copied_instead(self):
-        from unittest.mock import patch
-
-        from navin.tui.open_terminal import NoTerminalError
-
-        app, _switched = await self._project_host()
-        async with app.run_test(size=(120, 36)) as pilot:
-            await pilot.pause()
-            path = str(app.runtime.workspace)
-            app._flash = AsyncMock()
-            app._note = AsyncMock()
-            copied: list[str] = []
-            app.copy_to_clipboard = lambda text, **kwargs: copied.append(text) or True
-            with patch("navin.tui.open_terminal.open_in_terminal_tab", side_effect=NoTerminalError("No terminal here opens a tab.")):
-                await app._open_in_terminal(path, "cli:1")
-            app._flash.assert_not_awaited()
-            note = app._note.await_args.args[0]
-            self.assertIn("No terminal here opens a tab", note)
-            self.assertIn("copied", note)
-            self.assertEqual(len(copied), 1)
-            self.assertIn("--session cli:1", copied[0])
-            self.assertIn(path, copied[0])
-
     async def test_fork_copies_the_chat_and_opens_the_copy(self):
         from navin.session.webui_turns import WEBUI_TITLE_METADATA_KEY
 

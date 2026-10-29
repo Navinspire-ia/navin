@@ -1,0 +1,17 @@
+{
+  "name": "document-skills",
+  "version": "1.0.0",
+  "description": "Office document suite: read, create, edit, validate and convert Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and PDF files, with tracked changes, comments, formula recalculation, slide thumbnails and PDF forms.",
+  "category": "documents",
+  "skills": ["docx", "xlsx", "pptx", "pdf", "docx-generator", "pptx-generator", "pdf-generator", "spreadsheet-analyst"],
+  "steps": [
+    {"step": "read, edit, comment or track changes in an existing Word file", "use": "skill:docx"},
+    {"step": "write a new Word report, letter or proposal from scratch", "use": "skill:docx-generator"},
+    {"step": "build or audit a workbook with formulas, recalculation and error scan", "use": "skill:xlsx"},
+    {"step": "analyse spreadsheet data with pandas", "use": "skill:spreadsheet-analyst"},
+    {"step": "inventory, edit, rebuild or thumbnail an existing deck", "use": "skill:pptx"},
+    {"step": "write a new presentation from a story and slide plan", "use": "skill:pptx-generator"},
+    {"step": "extract text or tables, fill forms, merge, split or render a PDF", "use": "skill:pdf"},
+    {"step": "produce a new PDF from HTML or ReportLab", "use": "skill:pdf-generator"}
+  ]
+}

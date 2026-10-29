@@ -13,10 +13,16 @@ same turn.
 
 from __future__ import annotations
 
+import asyncio
+import time
 import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+from navin.agent.loop import AgentLoop
 from navin.agent.runner import AgentRunner, AgentRunSpec
+from navin.agent.tools import exec_session
 from navin.agent.tools.base import Tool
 from navin.agent.tools.registry import ToolRegistry
 from navin.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
@@ -119,6 +125,65 @@ class DrainWaitFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(received)
         self.assertIn("limit", received[0])
         self.assertIn("wait", received[0])
+
+
+class OwedResultWaitTest(unittest.IsolatedAsyncioTestCase):
+    """The end-of-turn wait ends once no subagent result is owed any more.
+
+    It was one blind five-minute wait whenever a subagent task was still
+    alive, even when its result had already reached the model.
+    """
+
+    @staticmethod
+    def _loop(owed: list[int]) -> AgentLoop:
+        loop = AgentLoop.__new__(AgentLoop)
+        loop.subagents = SimpleNamespace(pending_result_count=lambda _key: owed[0])
+        return loop
+
+    async def test_nothing_owed_ends_the_wait_at_once(self) -> None:
+        started = time.monotonic()
+        got = await self._loop([0])._wait_for_owed_result("cli:one", asyncio.Queue(), poll=0.01)
+        self.assertIsNone(got)
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    async def test_a_result_in_flight_is_still_taken(self) -> None:
+        queue: asyncio.Queue = asyncio.Queue()
+        asyncio.get_running_loop().call_later(0.06, queue.put_nowait, "result")
+        got = await self._loop([0])._wait_for_owed_result("cli:one", queue, poll=0.05)
+        self.assertEqual(got, "result")
+
+    async def test_an_owed_result_keeps_the_wait_open_until_it_lands(self) -> None:
+        queue: asyncio.Queue = asyncio.Queue()
+        asyncio.get_running_loop().call_later(0.1, queue.put_nowait, "late result")
+        got = await self._loop([1])._wait_for_owed_result("cli:one", queue, poll=0.01)
+        self.assertEqual(got, "late result")
+
+    async def test_the_wait_keeps_its_ceiling(self) -> None:
+        got = await self._loop([1])._wait_for_owed_result(
+            "cli:one", asyncio.Queue(), timeout=0.05, poll=0.01,
+        )
+        self.assertIsNone(got)
+
+    def test_a_manager_without_the_owed_count_falls_back(self) -> None:
+        loop = AgentLoop.__new__(AgentLoop)
+        loop.subagents = SimpleNamespace(get_running_count_by_session=lambda _key: 2)
+        self.assertEqual(loop._owed_subagent_results("cli:one"), 2)
+
+
+class LiveBackgroundCommandTest(unittest.TestCase):
+    """Only this conversation's commands (or ones of no known owner) count."""
+
+    def _live(self, *owners: str | None) -> bool:
+        rows = [SimpleNamespace(owner_session_key=owner) for owner in owners]
+        manager = exec_session.DEFAULT_EXEC_SESSION_MANAGER
+        with patch.object(manager, "running_snapshot", return_value=rows):
+            return AgentLoop._live_background_commands("cli:one")
+
+    def test_owners(self) -> None:
+        self.assertFalse(self._live())
+        self.assertFalse(self._live("cli:other"))
+        self.assertTrue(self._live("cli:one"))
+        self.assertTrue(self._live(None))
 
 
 if __name__ == "__main__":

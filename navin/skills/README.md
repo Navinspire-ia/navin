@@ -229,8 +229,32 @@ same name and are included in the agent skills summary automatically.
 | `archify` | Default architecture / sequence / workflow diagrams (HTML + SVG) |
 | `template-manager` | Branded template library |
 | `document-templates` | Built-in visual themes + template adaptation |
+| `docx` | Existing Word files: read, replace, comments, tracked changes, validate, convert |
+| `xlsx` | Workbooks with real formulas: inspect, recalculate, error scan, Navin table style |
+| `pptx` | Existing decks: inventory, in-place edits, JSON rebuild, thumbnails |
+| `pdf` | PDF toolkit: text and tables, forms, merge/split/rotate, render, overlay |
+
+### Design & visuals
+| Skill | Description |
+|-------|-------------|
+| `brand-guidelines` | Navin brand: palette roles, type scale, logo rules, CSS/JSON tokens |
+| `algorithmic-art` | Generative art with p5.js (seeded generator + viewer) |
+| `canvas-design` | Posters, covers and canvases (Pillow / browser render, curated fonts) |
+| `theme-factory` | Ten ready-made themes with a generated showcase page |
+| `slack-gif-creator` | Slack-sized animated GIFs (composer, easing, validators) |
+| `frontend-design` | Distinctive visual direction inside the locked design system |
+
+### Builders
+| Skill | Description |
+|-------|-------------|
+| `mcp-builder` | Build, test and evaluate an MCP server, then wire it into Navin |
+| `webapp-testing` | Headless browser tests of a local web app, server lifecycle helper |
+| `web-artifacts-builder` | React + MUI artifact bundled into one HTML file |
+| `doc-coauthoring` | Three-stage document co-authoring (context, drafts, reader simulation) |
+| `internal-comms` | Status updates, newsletters, FAQ answers, incident notes |
 
 ## Attribution
 
 These skills are adapted from [OpenClaw](https://github.com/openclaw/openclaw)'s skill system
-where noted; Navin-specific skills follow the same SKILL.md conventions.
+where noted; Navin-specific skills follow the same SKILL.md conventions. The design, builder,
+writing and document skills (`docx`, `xlsx`, `pptx`, `pdf`) are original Navin implementations.

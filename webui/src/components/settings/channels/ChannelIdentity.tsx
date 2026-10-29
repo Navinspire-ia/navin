@@ -5,9 +5,11 @@ import { useMemo, type ReactNode } from "react";
 import type { useTranslation } from "react-i18next";
 
 import {
+  CHANNEL_ICONS,
   CHANNEL_PRESENTATION,
   type ChannelSetupPresentation,
 } from "@/components/settings/channels/catalog";
+import { ConnectorIcon } from "@/components/settings/connectors/ConnectorIcon";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { logoFallbackUrls } from "@/lib/provider-brand";
 import type { NavinFeatureInfo } from "@/lib/types";
@@ -38,6 +40,10 @@ export function ChannelLogo({
   const Icon = presentation?.icon;
   const logoUrls = useMemo(() => logoFallbackUrls(presentation?.logoUrl), [presentation?.logoUrl]);
   const { logoUrl, onLogoError, onLogoLoad } = useLogoFallback(logoUrls);
+
+  // The bundled logo, as on the cards: local, so no favicon is fetched.
+  const bundled = CHANNEL_ICONS[feature.name];
+  if (bundled) return <ConnectorIcon icon={bundled} name={channelDisplayName(feature)} />;
 
   if (showBrandLogos && logoUrl) {
     return (

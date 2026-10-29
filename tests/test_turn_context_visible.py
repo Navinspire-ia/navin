@@ -26,6 +26,15 @@ def test_small_talk_gets_no_skill_and_a_task_gets_its_skill() -> None:
     assert task is not None and task.content.startswith(f"{SKILL_SUGGESTION_HEADER} pdf-generator.")
 
 
+def test_accented_french_request_still_meets_the_skill_description() -> None:
+    """search_skills folds accents; the suggestion filter must fold them the
+    same way or every French request ("thème", "présentation") is dropped
+    after it ranked first."""
+    tool = SkillCatalogTool(workspace=Path.cwd())
+    picked = tool._suggest_for_request("Applique un thème de couleurs à cette présentation")
+    assert "theme-factory" in [row["name"] for row in picked], picked
+
+
 def test_the_turn_announces_its_context_once() -> None:
     sent: list[list[dict]] = []
 

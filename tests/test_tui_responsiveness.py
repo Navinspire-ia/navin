@@ -495,6 +495,39 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(app.transcript.styles.visibility), "visible")
             self.assertEqual([row.raw_text for row in app.query(UserMessage)], ["hello first"])
 
+    async def test_a_working_session_opens_at_its_latest_step(self):
+        # Its turn so far is replayed on open. Drawn event by event, the chat
+        # scrolled through the whole turn from its start; it must open on the
+        # step running now, the user scrolls up for the rest.
+        from navin.tui.runtime import UiToolEvent, UiTurnStarted
+
+        app = self.app
+        first = [{"role": "user", "content": "hello first", "metadata": {}, "tools": []}]
+        other = [{"role": "user", "content": "build it", "metadata": {}, "tools": []}]
+        app.runtime.history_snapshot = lambda: other if app.runtime.session_key == "cli:other" else first
+        repaints_held: list[bool] = []
+
+        async def release_held():
+            await app._on_runtime_event(UiTurnStarted("build it"))
+            for index in range(60):
+                repaints_held.append(app._batch_count > 0)
+                await app._on_runtime_event(UiToolEvent(f"c{index}", "exec", "start", {"command": f"step {index}"}))
+                await app._on_runtime_event(UiToolEvent(f"c{index}", "exec", "end", result="ok"))
+            return False
+
+        app.runtime.release_held = release_held
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app._render_history()
+            await pilot.pause()
+            await app._switch_session("cli:other")
+            for _ in range(3):
+                await pilot.pause()
+            transcript = app.transcript
+            self.assertTrue(repaints_held and all(repaints_held))
+            self.assertGreater(transcript.max_scroll_y, 0)
+            self.assertEqual(transcript.scroll_y, transcript.max_scroll_y)
+            self.assertEqual(app._batch_count, 0)
+
     async def test_switch_reveals_latest_rows_first_then_keeps_order(self):
         app = self.app
         heavy = []

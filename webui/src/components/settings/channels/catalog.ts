@@ -205,13 +205,106 @@ export const CHAT_CHANNEL_NAMES = [
   "mattermost",
 ] as const;
 
-export type ChannelFilterTab = "all" | "social" | "chat" | "other";
+export type ChannelFilterTab = "all" | "messaging" | "social" | "productivity" | "business" | "data";
 
-export function channelFilterTab(name: string): Exclude<ChannelFilterTab, "all"> {
+/** Where a chat channel sits among the tabs. */
+export type ChannelBucket = "social" | "chat" | "other";
+
+export interface ChannelGroup {
+  id: ChannelFilterTab;
+  label: string;
+  /** Chat channel buckets shown under this tab. */
+  channels: readonly ChannelBucket[];
+  /** App connector categories of this tab; undefined means every app. */
+  connectors?: readonly string[];
+}
+
+/** The six tabs of Settings > Channels: chat channels and app connectors share them. */
+export const CHANNEL_GROUPS: readonly ChannelGroup[] = [
+  { id: "all", label: "All", channels: ["social", "chat", "other"] },
+  { id: "messaging", label: "Messaging", channels: ["chat", "other"], connectors: ["communication", "video", "emailing", "voice"] },
+  { id: "social", label: "Social and marketing", channels: ["social"], connectors: ["social", "marketing", "cms", "design", "media"] },
+  { id: "productivity", label: "Productivity", channels: [], connectors: ["calendar", "documents", "forms"] },
+  { id: "business", label: "Sales and business", channels: [], connectors: ["crm", "prospecting", "erp", "hr", "ecommerce", "payments"] },
+  { id: "data", label: "Data and dev", channels: [], connectors: ["search", "geo", "data", "cloud", "security", "monitoring", "crypto"] },
+];
+
+export function channelFilterTab(name: string): ChannelBucket {
   if (isSocialChannel(name)) return "social";
   if ((CHAT_CHANNEL_NAMES as readonly string[]).includes(name)) return "chat";
   return "other";
 }
+
+/** Key of a channel bucket among the counts the card list reports. */
+export function channelCountKey(bucket: ChannelBucket): string {
+  return `channel:${bucket}`;
+}
+
+/**
+ * The number on a tab, from the counts the card list reports: apps per
+ * connector category and channels per bucket (channelCountKey), a channel that
+ * shares its card with an app counted once. Without counts (still loading, or
+ * the app catalog failed) the tab counts its channels alone.
+ */
+export function channelGroupCount(
+  group: ChannelGroup,
+  buckets: readonly ChannelBucket[],
+  counts: Readonly<Record<string, number>> | null,
+): number {
+  if (!counts) return buckets.filter((bucket) => group.channels.includes(bucket)).length;
+  const channels = group.channels.reduce((sum, bucket) => sum + (counts[channelCountKey(bucket)] ?? 0), 0);
+  const ids = group.connectors ?? Object.keys(counts).filter((key) => !key.startsWith("channel:"));
+  return channels + ids.reduce((sum, id) => sum + (counts[id] ?? 0), 0);
+}
+
+/**
+ * Chat channels that are also an app connector. Both share the connector's
+ * card (sign-in first), and its dialog carries the channel setup as well.
+ */
+export const CHANNEL_CONNECTOR_TWINS: Readonly<Record<string, string>> = {
+  slack: "slack",
+  discord: "discord",
+  msteams: "microsoft_teams",
+  tiktok: "tiktok_business",
+};
+
+/**
+ * The apps most people connect first. They lead the grid of their tab, the
+ * chat channels and social networks come next, then every other app in
+ * catalog order.
+ */
+export const FEATURED_CONNECTORS: readonly string[] = [
+  "gmail",
+  "slack",
+  "microsoft_teams",
+  "outlook",
+  "googlecalendar",
+  "googledrive",
+  "notion",
+  "hubspot",
+];
+
+/**
+ * Bundled logo of each channel (see ConnectorIcon), so the cards work offline.
+ * The files under channels/ come from Simple Icons (CC0-1.0), the envelope of
+ * email from the lucide mail glyph (ISC); the others reuse connector icons.
+ */
+export const CHANNEL_ICONS: Readonly<Record<string, string>> = {
+  discord: "discord.svg",
+  email: "channels/email.svg",
+  facebook: "channels/facebook.svg",
+  instagram: "channels/instagram.svg",
+  linkedin: "channels/linkedin.svg",
+  matrix: "channels/matrix.svg",
+  mattermost: "channels/mattermost.svg",
+  msteams: "microsoft_teams.svg",
+  reddit: "channels/reddit.svg",
+  signal: "channels/signal.svg",
+  slack: "slack.svg",
+  telegram: "channels/telegram.svg",
+  tiktok: "tiktok_business.svg",
+  whatsapp: "channels/whatsapp.svg",
+};
 
 export function placeholderSocialFeature(
   name: (typeof SOCIAL_CHANNEL_NAMES)[number],

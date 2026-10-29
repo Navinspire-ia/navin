@@ -33,13 +33,14 @@ from navin.agent.tools.context import current_request_context
 
 ANSWERING_CHANNELS: frozenset[str] = frozenset({"websocket"})
 DEFAULT_TIMEOUT_S = 600
-KINDS = ("site_login", "git_host")
+KINDS = ("site_login", "git_host", "connector")
 SITE_NAMES = ("username", "password", "totp")
 DEFAULT_SITE_NAMES = ("username", "password")
 REASON_MAX = 240
 LOGIN_MAX = 80
 SITES_POINTER = "Settings > Sites & logins"
 GIT_POINTER = "Settings > Git & GitHub"
+CONNECTORS_POINTER = "Settings > Channels > Connectors"
 _HOST_RE = re.compile(r"^[a-z0-9.-]{1,253}(:[0-9]{1,5})?$")
 _LOGIN_RE = re.compile(r"[^A-Za-z0-9._@-]")
 
@@ -89,7 +90,11 @@ class CredentialAnswer:
 
     def as_text(self) -> str:
         where = self.host or "the site"
-        pointer = SITES_POINTER if self.kind == "site_login" else GIT_POINTER
+        pointer = (
+            SITES_POINTER if self.kind == "site_login"
+            else CONNECTORS_POINTER if self.kind == "connector"
+            else GIT_POINTER
+        )
         prefix = "Already asked in this turn. " if self.repeated else ""
         if self.status == "saved":
             refs = ", ".join(self.refs)
@@ -99,6 +104,11 @@ class CredentialAnswer:
             )
         if self.status == "connected":
             who = f" as {self.login}" if self.login else ""
+            if self.kind == "connector":
+                return (
+                    f"{prefix}The user connected {where}{who}. Call connectors action=request "
+                    f"service={self.host} now; the credential stays in Navin."
+                )
             return f"{prefix}Connected {where}{who}. Retry the git or forge action now."
         if self.status == "declined":
             return (
@@ -171,11 +181,30 @@ def _git_host_status(host: str) -> tuple[bool, str]:
         return False, ""
 
 
+def _connector_status(service: str) -> tuple[bool, str]:
+    """``(connected and turned on, account name)`` for a connector id."""
+    from navin.connectors.catalog import ConnectorError
+    from navin.connectors.manager import is_connected
+
+    try:
+        return is_connected(service)
+    except (ConnectorError, OSError) as exc:
+        # A locked vault or an unreadable index reads as "not connected": the card stays open.
+        logger.warning(
+            "connector check for {} failed: {}", service, getattr(exc, "message", None) or type(exc).__name__
+        )
+        return False, ""
+
+
 def normalize_host(kind: str, value: str) -> str:
-    """A bare host (``host[:port]`` for sites), or ``""`` when it is not one."""
+    """A bare host (``host[:port]`` for sites), a connector id, or ``""``."""
     text = (value or "").strip()
     if not text:
         return ""
+    if kind == "connector":
+        from navin.connectors.catalog import resolve_service
+
+        return resolve_service(text)
     if kind == "site_login":
         try:
             from navin.browser_credentials import BrowserCredentialError, normalize_site
@@ -413,6 +442,12 @@ async def _verify(request: CredentialRequest, raw: dict[str, Any]) -> Credential
         if needed and all(ref in present for ref in needed):
             return CredentialAnswer("saved", request.kind, request.host, refs=tuple(present))
         return CredentialAnswer("not_saved", request.kind, request.host, refs=tuple(present))
+    if request.kind == "connector":
+        # _connector_status already turns a vault or index failure into "not connected".
+        linked, account = await asyncio.to_thread(_connector_status, request.host)
+        if not linked:
+            return CredentialAnswer("not_saved", request.kind, request.host)
+        return CredentialAnswer("connected", request.kind, request.host, login=account[:LOGIN_MAX])
     try:
         connected, login = await asyncio.to_thread(_git_host_status, request.host)
     except Exception:  # noqa: BLE001
@@ -506,6 +541,16 @@ async def ensure_git_credentials(host: str, reason: str) -> CredentialAnswer | N
         return None
     return await request_credentials(
         CredentialRequest("git_host", name, (), _clean_reason(reason), auto=True)
+    )
+
+
+async def ensure_connector(service: str, reason: str) -> CredentialAnswer | None:
+    """Open a connector's connection card from a tool. None when nobody can answer."""
+    name = normalize_host("connector", service)
+    if not name or not credentials_interactive() or already_asked("connector", name):
+        return None
+    return await request_credentials(
+        CredentialRequest("connector", name, (), _clean_reason(reason), auto=True)
     )
 
 

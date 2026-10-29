@@ -215,3 +215,7 @@ navin/share/guest/
 
 # Kubernetes secrets filled from deploy/k8s/secrets.example.yaml
 /deploy/k8s/secrets.yaml
+
+# OpenConnector source checkout read by scripts/connectors/generate_catalog.py:
+# a separate project under its own license, never committed nor published.
+/open-connector/

@@ -1,0 +1,61 @@
+{
+  "server": "notes_mcp",
+  "description": "Read-only questions over a fictional team notes workspace. Answers are stable because they refer to closed projects and past dates.",
+  "questions": [
+    {
+      "question": "Among the notes tagged for the mobile launch written before July 2025, which author wrote the most notes? Give the display name only.",
+      "answer": "Sofia Rinaldi",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "The retrospective of the project whose codename is a bird of prey lists one unresolved action item. What is the due date of that item, formatted YYYY-MM-DD?",
+      "answer": "2025-05-16",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "How many distinct folders contain at least one note that mentions the vendor contract renewal discussed in the second quarter of 2025? Answer with a number.",
+      "answer": "3",
+      "tools": ["notes_search", "notes_list_folders"]
+    },
+    {
+      "question": "Find the decision record that rejected the self-hosted search engine. Which alternative was chosen? Answer with the product name only.",
+      "answer": "Meilisearch",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "In the onboarding checklist last edited in 2025, what is the title of the step that comes right after setting up two-factor authentication?",
+      "answer": "Request repository access",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "Which note in the finance folder has the earliest creation date? Give its title exactly as stored.",
+      "answer": "FY2024 budget assumptions",
+      "tools": ["notes_list_folders", "notes_list"]
+    },
+    {
+      "question": "True or false: the incident review for the March 2025 preview outage names a configuration change as the cause. Answer True or False.",
+      "answer": "True",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "The weekly status notes of the platform squad in February 2025 mention one external dependency as blocked every week. What is the name of that dependency?",
+      "answer": "payments sandbox",
+      "tools": ["notes_search", "notes_get"]
+    },
+    {
+      "question": "How many notes carry both the tag for hiring and the tag for the Lyon office? Answer with a number.",
+      "answer": "4",
+      "tools": ["notes_search"]
+    },
+    {
+      "question": "Which tag is applied to the largest number of notes across the whole workspace? Give the tag name without the hash sign.",
+      "answer": "meeting",
+      "tools": ["notes_list_tags"]
+    },
+    {
+      "question": "The product brief for the marketplace beta lists a target number of invited customers. What is that number?",
+      "answer": "40",
+      "tools": ["notes_search", "notes_get"]
+    }
+  ]
+}

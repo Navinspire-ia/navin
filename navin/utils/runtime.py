@@ -279,6 +279,44 @@ NO_ACTION_CONTINUE_PROMPT = (
     "input or decision), answer that directly instead."
 )
 
+# The user's whole message was a go-ahead ("go", "vas-y", "continue") and the
+# turn answered with text only, often by asking again: "/forge go" got back
+# "On attaque le registre de scanners, ou tu as autre chose en tete ?".
+GO_AHEAD_CONTINUE_PROMPT = (
+    "The user's message was a go-ahead: they already said go. Do not ask again "
+    "whether to start, which step to take or if they have something else in mind. "
+    "Start now, in this turn, with the next step you proposed or the next open "
+    "step of the plan, then continue through the remaining steps and validate "
+    "them. Ask only for a real blocker: a missing input or a decision only the "
+    "user can take, in one line."
+)
+
+# A whole message that only says "go on": "go", "vas-y", "ok continue",
+# "oui lance", "go ahead". A leading slash command (/forge go) is the mode,
+# not the answer. Short on purpose: a sentence with a request is not one.
+_GO_AHEAD = re.compile(
+    r"^(?:/\S+\s+)?(?:(?:ok(?:ay)?|oui|yes|yep|ouais|d'?accord|parfait|super|top|bon|allez|alors)[\s,!.]*)*"
+    r"(?:go+|va[sz]*[- ]?[yi]+|allez[- ]?y|on y va|c'?est parti|continue[rsz]?|poursui[st]|encha[iî]ne"
+    r"|lance(?:[- ]le|[- ]la|[- ]toi)?|d[ée]marre|commence|fais[- ]le|fais[- ]la|fais[- ]les|fonce"
+    r"|go ahead|proceed|carry on|keep going|do it|start|next|suite|la suite|ok|oui|yes)"
+    r"(?:[\s,!.]+(?:go+|vas[- ]?y|continue|stp|svp|please|maintenant|now|direct|tout|jusqu'au bout|l[àa]))*[\s!.]*$",
+    re.IGNORECASE,
+)
+
+
+def is_go_ahead(text: str | None) -> bool:
+    """True when the user's whole message is a go-ahead with no new request."""
+    if not text:
+        return False
+    stripped = text.strip()
+    return len(stripped) <= 60 and bool(_GO_AHEAD.match(stripped))
+
+
+def build_go_ahead_continue_message() -> dict[str, str]:
+    """Push a turn that answered "go" with text only into the work."""
+    return {"role": "user", "content": GO_AHEAD_CONTINUE_PROMPT}
+
+
 # A build turn that did part of the work and ended on a list of what is left.
 REMAINING_WORK_CONTINUE_PROMPT = (
     "Your answer lists work of the accepted request that is still to do. Do not "
@@ -307,6 +345,11 @@ _REMAINING_WORK_MARKERS = re.compile(
     # Seen in real sessions ending mid-plan: "Pas commencé :", "Dis « continue »
     # et j'attaque D1", "je fais cette partie dans un tour dédié".
     r"|pas (?:encore )?commenc[ée]|not (?:yet )?started"
+    # Waiting for a go the user already gave by accepting the task: "Je la
+    # demarre des que tu me dis go", "Say go and I start", "on your go".
+    r"|d[èe]s que tu (?:me )?(?:dis|donnes|valides|confirmes)|quand tu (?:me )?(?:dis|donnes le)"
+    r"|(?:dis|donne)[- ]moi (?:le )?go\b|(?:say|give me(?: the)?) go\b|on your go\b"
+    r"|(?:once|when|as soon as) you (?:say|give|confirm)\b"
     r"|dis(?:-moi)? [«\"']?\s*continue|say [\"']?continue"
     r"|(?:dans|en) un tour d[ée]di[ée]|in a (?:separate|dedicated) turn"
     # A heading or label opening a line of the report: "**Non traité**",
@@ -341,11 +384,72 @@ _USER_OWNED = re.compile(
 )
 _SENTENCE_END = re.compile(r"(?<=[.!?\n])")
 
+# A final answer that announces the work instead of doing it: "I file it now
+# and build the first step (the socle) in this turn", "Je demarre pour de
+# vrai : plan au board, puis code dans ce tour". A /forge session ended on
+# exactly those two sentences after reads only: the user saw neither the plan
+# nor a line of code. First person, imminent action: the work is still to do.
+_ANNOUNCED_WORK_MARKERS = re.compile(
+    r"\bje (?:vais|commence|d[ée]marre|lance|attaque|m'attaque|encha[iî]ne|m'y mets"
+    r"|m'en occupe|m'occupe|passe (?:maintenant |tout de suite )?[àa])\b"
+    r"|\bj'(?:attaque|encha[iî]ne|y vais)\b|\bc'est parti\b|\bon y va\b|\ballons-y\b"
+    r"|\bI(?:'ll| will|'m going to| am going to)\b"
+    # "I file it now", "I start with the model first": a present-tense action
+    # verb and a word of imminence in the same sentence.
+    r"|\bI (?:now |first )?(?:file|start|begin|proceed|move on|kick off|get started"
+    r"|launch|create|write|implement|build|add|fix|wire|open|run|spawn|set up|scaffold)\b"
+    r"[^.!?\n]*\b(?:now|next|first|right away|immediately|(?:in|during) this turn)\b"
+    r"|\bI(?:'m| am) (?:now )?(?:filing|starting|writing|building|implementing|creating"
+    r"|fixing|adding|moving|proceeding|launching|kicking|wiring|scaffolding)\b"
+    r"|\blet me (?:now |first )?(?:start|begin|file|write|build|implement|create|fix|add"
+    r"|run|open|wire|proceed|kick|get|set|scaffold|do)\b"
+    r"|\blet's (?:start|begin|go|get started|proceed|build|do|kick)\b"
+    r"|\b(?:now|next|first),? (?:I|let me|let's)\b"
+    r"|(?m:^[\s*#>_-]*starting (?:now|with)\b)",
+    re.IGNORECASE,
+)
+
+# Announcements that promise nothing: a refusal, a step the user may ask for
+# later, a question. "Je ne vais pas toucher au billing", "Si tu veux, je
+# lance le build", "Shall I start now?" leave the next move to the user.
+_NOT_A_PROMISE = re.compile(
+    r"\bI (?:will|would) not\b|\bI won't\b|\bI(?:'m| am) not going to\b"
+    r"|\bje ne (?:vais|commence|d[ée]marre|lance|passe|m'attaque|m'occupe)\b|\bje n'(?:attaque|encha)"
+    r"|\bsi (?:tu|vous) (?:veux|voulez|souhaites?|souhaitez|pr[ée]f[èe]res?|pr[ée]f[ée]rez|me le)\b"
+    r"|\bsi (?:besoin|n[ée]cessaire|tu me le demandes|vous me le demandez)\b|\bau besoin\b"
+    r"|\bif you(?:'d)? (?:want|wish|prefer|like|ask)\b|\bif (?:needed|necessary|asked)\b"
+    r"|\bsur demande\b|\bon request\b|\bsay the word\b|\bdis(?:-moi)? (?:si|quand)\b"
+    r"|\btell me (?:if|when)\b",
+    re.IGNORECASE,
+)
+
+
+def announces_work(text: str | None) -> bool:
+    """True when a final answer announces an imminent action it did not take.
+
+    Only first-person, present or future announcements count ("I file it now",
+    "je vais creer les fichiers"), never a refusal, an offer conditioned on
+    the user, a question, or a step the user owns (deploy, commit, push).
+    """
+    if not text:
+        return False
+    for sentence in _SENTENCE_END.split(_QUOTED.sub(" ", text)):
+        if sentence.strip().endswith("?"):
+            continue
+        if not _ANNOUNCED_WORK_MARKERS.search(sentence):
+            continue
+        if _NOT_A_PROMISE.search(sentence) or _USER_OWNED.search(sentence):
+            continue
+        return True
+    return False
+
 
 def lists_remaining_work(text: str | None) -> bool:
     """True when a final answer hands back unfinished work of the request.
 
-    A sentence that leaves the step to the user (deploying, committing, a
+    Work handed back is either listed ("what remains", "next steps") or
+    announced and not done ("I file it now and build the first step"). A
+    sentence that leaves the step to the user (deploying, committing, a
     decision) is not unfinished work: the user said they would do it.
     """
     if not text:
@@ -355,7 +459,144 @@ def lists_remaining_work(text: str | None) -> bool:
     for sentence in _SENTENCE_END.split(_QUOTED.sub(" ", text)):
         if _REMAINING_WORK_MARKERS.search(sentence) and not _USER_OWNED.search(sentence):
             return True
+    return announces_work(text)
+
+
+_APOS = "['\u2019]"
+
+# A final answer saying that work this conversation started is still going or
+# reports later: "Le chantier des donnees (DLP, RAG, ...) tourne encore", "the
+# audit is still running, its results will arrive". Only consulted once
+# nothing runs in the background any more (AgentRunSpec.background_idle): the
+# sentence then describes a state that no longer exists.
+_BACKGROUND_CLAIM_MARKERS = re.compile(
+    r"\btourne(?:nt)? (?:encore|toujours)\b"
+    r"|\b(?:encore|toujours) en cours\b"
+    rf"|\ben cours d{_APOS}ex[ée]cution\b"
+    rf"|\b(?:tourne(?:nt)?|travaille(?:nt)?|continue(?:nt)?|s{_APOS}ex[ée]cute(?:nt)?|avance(?:nt)?)\b"
+    r"[^.!?\n]*\ben arri[èe]re-plan\b"
+    r"|\b(?:travaille(?:nt)?|bosse(?:nt)?) encore\b"
+    rf"|\ben attente (?:de |du |des |d{_APOS})(?:son |sa |ses |leur |leurs |la |le |les )?"
+    r"(?:r[ée]sultat|retour|rapport|fin)s?\b"
+    rf"|\bj{_APOS}attends (?:encore )?(?:le |la |les |son |sa |ses |leur |leurs )"
+    r"(?:r[ée]sultat|retour|rapport|fin)s?\b"
+    rf"|\b(?:d[èe]s|une fois) qu{_APOS}(?:il|elle|ils|elles) (?:aura|auront|sera|seront)\b"
+    r"|\b(?:arrivera|arriveront|tombera|tomberont)\b[^.!?\n]*\b(?:ensuite|plus tard|bient[ôo]t"
+    rf"|d{_APOS}eux-m[êe]mes|d{_APOS}elles-m[êe]mes|au fur et [àa] mesure|d[èe]s qu)"
+    r"|\bstill (?:running|in progress|working|going|underway|processing"
+    r"|being (?:built|processed|worked on|written))\b"
+    r"|\b(?:running|working|continu(?:es|ing))\b[^.!?\n]*\bin the background\b"
+    r"|\b(?:results?|reports?|findings|outputs?)\b[^.!?\n]*\b(?:will|'ll) (?:arrive|come in|follow|land)\b"
+    r"|\b(?:will|'ll) report back\b"
+    r"|\b(?:once|when|as soon as) (?:it|they|the (?:\w+ )?(?:subagents?|agents?|workers?|tasks?|jobs?"
+    r"|audits?|runs?)) (?:finish(?:es)?|completes?|(?:is|are) (?:done|finished)|reports? back)\b"
+    r"|\bwaiting (?:for|on) (?:the |its |their )?(?:\w+ )?(?:results?|reports?|subagents?|agents?|workers?)\b",
+    re.IGNORECASE,
+)
+# Just before the claim, a negation turns it around: "rien ne tourne encore",
+# "n'est plus en cours", "nothing is still running", "none ... still running".
+_CLAIM_NEGATED = re.compile(
+    rf"(?:\b(?:ne|rien|aucun|aucune|personne|nothing|none|no|not|never)\b|\bn{_APOS}|n't\b)",
+    re.IGNORECASE,
+)
+# Things that do run on their own and are not this conversation's work: a dev
+# server, a container, CI. "Le serveur tourne toujours sur le port 5180" is true.
+_EXTERNAL_RUNNING = re.compile(
+    r"\b(?:serveurs?|servers?|ports?|localhost|127\.0\.0\.1|https?://|preview|aper[çc]u"
+    r"|conteneurs?|containers?|docker|pipelines?|github actions|workflows?|d[ée]ploiements?"
+    r"|deploy(?:ment)?s?|clusters?|pods?|daemons?|services?|watchers?|cron|[ée]mulateurs?|emulators?)\b"
+    r"|(?-i:\bCI\b)",
+    re.IGNORECASE,
+)
+_CODE_FENCE = re.compile(r"```.*?(?:```|$)", re.DOTALL)
+
+
+def claims_background_work(text: str | None) -> bool:
+    """True when a final answer says work it started is still running or reports later.
+
+    Questions, negated statements ("nothing is still running"), quotes, code
+    and sentences about servers, containers or CI do not count.
+    """
+    if not text:
+        return False
+    plain = _QUOTED.sub(" ", _CODE_FENCE.sub(" ", text))
+    for sentence in _SENTENCE_END.split(plain):
+        if sentence.strip().endswith("?") or _EXTERNAL_RUNNING.search(sentence):
+            continue
+        for match in _BACKGROUND_CLAIM_MARKERS.finditer(sentence):
+            if not _CLAIM_NEGATED.search(sentence[max(0, match.start() - 24):match.start()]):
+                return True
     return False
+
+
+# Tools whose work goes on after their call returned.
+_BACKGROUND_TOOLS = frozenset({"spawn", "collab", "write_stdin"})
+
+
+def _call_arguments(call: dict[str, Any]) -> dict[str, Any]:
+    function = call.get("function")
+    raw = function.get("arguments") if isinstance(function, dict) else call.get("arguments")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def started_background_work(messages: list[dict[str, Any]]) -> bool:
+    """True when the current request ran subagents or background commands.
+
+    Read from the messages themselves (tool calls, delivered results), so the
+    check never waits on a disk record of past subagents. The scan starts at
+    the last message the user typed: a subagent of an older request says
+    nothing about a job the user asks about now.
+    """
+    rows = [message for message in messages if isinstance(message, dict)]
+    start = 0
+    for index in range(len(rows) - 1, -1, -1):
+        if _typed_by_user(rows[index]):
+            start = index
+            break
+    for message in rows[start:]:
+        if message.get("injected_event") in {"subagent_result", "exec_finished"}:
+            return True
+        if _is_subagent_result_text(message.get("content")):
+            return True
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            name = function.get("name") if isinstance(function, dict) else call.get("name")
+            if name in _BACKGROUND_TOOLS:
+                return True
+            if name == "exec":
+                args = _call_arguments(call)
+                if args.get("background") or args.get("yield_time_ms"):
+                    return True
+    return False
+
+
+def _is_subagent_result_text(content: Any) -> bool:
+    """A delivered subagent announcement (its text opens on the result header)."""
+    if isinstance(content, list):
+        content = next(
+            (block.get("text") for block in content
+             if isinstance(block, dict) and block.get("type") == "text"),
+            None,
+        )
+    return isinstance(content, str) and content.lstrip().startswith("[Subagent '")
+
+
+def _typed_by_user(message: dict[str, Any]) -> bool:
+    """A user row the user wrote: not a nudge, a hidden event or a result."""
+    if message.get("role") != "user" or message.get("injected_event"):
+        return False
+    if _is_subagent_result_text(message.get("content")):
+        return False
+    from navin.session.history_visibility import is_hidden_history_message
+
+    return not is_hidden_history_message(message)
 
 
 def is_harness_nudge(content: object) -> bool:
@@ -375,6 +616,7 @@ def is_harness_nudge(content: object) -> bool:
             NO_ACTION_CONTINUE_PROMPT,
             REMAINING_WORK_CONTINUE_PROMPT,
             SUSTAINED_GOAL_CONTINUE_PROMPT,
+            BACKGROUND_CLAIM_CONTINUE_PROMPT,
         )
     )
 
@@ -414,9 +656,45 @@ def build_no_action_continue_message() -> dict[str, str]:
     return {"role": "user", "content": NO_ACTION_CONTINUE_PROMPT}
 
 
-def build_remaining_work_continue_message() -> dict[str, str]:
-    """Push a build turn that stopped halfway into its remaining steps."""
-    return {"role": "user", "content": REMAINING_WORK_CONTINUE_PROMPT}
+# The reminder above was answered with text only: the same stop again.
+REMAINING_WORK_REPEAT_PROMPT = (
+    "You answered the reminder without doing anything: the work you name as "
+    "next is still not started. The user accepted the whole task, so their go "
+    "already covers it: do not ask for it. Make the first tool call of that "
+    "next step now. If it is truly blocked, name the blocker in one line "
+    "instead of promising to start later."
+)
+
+
+def build_remaining_work_continue_message(*, repeat: bool = False) -> dict[str, str]:
+    """Push a build turn that stopped halfway into its remaining steps.
+
+    ``repeat``: the previous reminder got text only; this one is firmer.
+    """
+    content = REMAINING_WORK_REPEAT_PROMPT if repeat else REMAINING_WORK_CONTINUE_PROMPT
+    return {"role": "user", "content": content}
+
+
+# The final answer says work of this conversation is still running, yet nothing
+# runs in the background any more: every subagent reported and no command
+# started here is live. "Le chantier des donnees (DLP, RAG, ...) tourne encore"
+# was written from a picture that was already out of date.
+BACKGROUND_CLAIM_CONTINUE_PROMPT = (
+    "Your answer says that work of this conversation is still running or that "
+    "results will come later, but nothing is running in the background any more: "
+    "every subagent has already reported (its result is in the conversation above) "
+    "and no background command started here is still live. Do not tell the user "
+    "that this work is still going or that it will report later. Use the results "
+    "you received: finish what the request still needs with them, then answer with "
+    "where things really stand. If a result you expected is not above, read it with "
+    "spawn action='results' instead of waiting for it. A sentence about an external "
+    "system (a server, a container, CI) can stay as it is."
+)
+
+
+def build_background_claim_continue_message() -> dict[str, str]:
+    """Correct a final answer that says finished background work is still running."""
+    return {"role": "user", "content": BACKGROUND_CLAIM_CONTINUE_PROMPT}
 
 
 def build_delivery_continue_message(custom: str | None = None) -> dict[str, str]:

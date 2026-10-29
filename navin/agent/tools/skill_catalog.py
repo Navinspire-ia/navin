@@ -14,16 +14,18 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from navin.agent.skills import skill_source_label
+from navin.agent.skills import _search_text, skill_source_label
 from navin.agent.tools.base import Tool
 
 SKILL_SUGGESTION_HEADER = "Skills that fit this request:"
+# Compared after accent folding, like the request words ("être" -> "etre").
 _SUGGEST_STOP_WORDS = frozenset({
     "with", "that", "this", "from", "your", "into", "about", "have", "make", "want",
     "need", "please", "then", "when", "what", "comme", "dans", "pour", "avec", "veux",
-    "faire", "change", "changer", "mettre", "plus", "tout", "tous", "sans", "être",
+    "faire", "change", "changer", "mettre", "plus", "tout", "tous", "sans", "etre",
     "salut", "merci", "bien", "file", "files", "code", "user", "using", "used",
     "the", "and", "for", "les", "des", "une", "est", "app", "new", "all", "son", "ses",
+    "cette", "dans", "puis", "mon",
 })
 
 
@@ -159,8 +161,11 @@ class SkillCatalogTool(Tool):
         graph = build_skills_graph(self._loader())
 
         def words_of(value: str, shortest: int = 4) -> set[str]:
+            # Accent-folded like SkillsLoader.search_skills, so a French
+            # request ("thème", "présentation") meets the skill text it
+            # already ranked against instead of being dropped here.
             return {
-                w for w in re.findall(rf"[^\W_]{{{shortest},}}", value.lower())
+                w for w in re.findall(rf"[^\W_]{{{shortest},}}", _search_text(value))
                 if w not in _SUGGEST_STOP_WORDS
             }
 

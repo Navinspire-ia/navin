@@ -153,6 +153,192 @@
       ]
     },
     {
+      "name": "document-skills",
+      "description": "Office document suite: read, create, edit, validate and convert Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and PDF files, with tracked changes, comments, formula recalculation, slide thumbnails and PDF forms.",
+      "version": "1.0.0",
+      "category": "documents",
+      "source": "builtin_plugins/document-skills",
+      "commands": [],
+      "agents": [],
+      "skills": [
+        {
+          "name": "docx",
+          "skill": "skills/docx/SKILL.md"
+        },
+        {
+          "name": "xlsx",
+          "skill": "skills/xlsx/SKILL.md"
+        },
+        {
+          "name": "pptx",
+          "skill": "skills/pptx/SKILL.md"
+        },
+        {
+          "name": "pdf",
+          "skill": "skills/pdf/SKILL.md"
+        },
+        {
+          "name": "docx-generator",
+          "skill": "skills/docx-generator/SKILL.md"
+        },
+        {
+          "name": "pptx-generator",
+          "skill": "skills/pptx-generator/SKILL.md"
+        },
+        {
+          "name": "pdf-generator",
+          "skill": "skills/pdf-generator/SKILL.md"
+        },
+        {
+          "name": "spreadsheet-analyst",
+          "skill": "skills/spreadsheet-analyst/SKILL.md"
+        }
+      ],
+      "steps": [
+        {
+          "step": "read, edit, comment or track changes in an existing Word file",
+          "use": "skill:docx"
+        },
+        {
+          "step": "write a new Word report, letter or proposal from scratch",
+          "use": "skill:docx-generator"
+        },
+        {
+          "step": "build or audit a workbook with formulas, recalculation and error scan",
+          "use": "skill:xlsx"
+        },
+        {
+          "step": "analyse spreadsheet data with pandas",
+          "use": "skill:spreadsheet-analyst"
+        },
+        {
+          "step": "inventory, edit, rebuild or thumbnail an existing deck",
+          "use": "skill:pptx"
+        },
+        {
+          "step": "write a new presentation from a story and slide plan",
+          "use": "skill:pptx-generator"
+        },
+        {
+          "step": "extract text or tables, fill forms, merge, split or render a PDF",
+          "use": "skill:pdf"
+        },
+        {
+          "step": "produce a new PDF from HTML or ReportLab",
+          "use": "skill:pdf-generator"
+        }
+      ]
+    },
+    {
+      "name": "example-skills",
+      "description": "Creative and builder pack: generative art, Navin brand guidelines, canvas and poster design, ready-made themes, Slack GIFs, document co-authoring, internal communications, MCP server building, web app testing, single-file web artifacts and skill creation with an evaluation loop.",
+      "version": "1.0.0",
+      "category": "design",
+      "source": "builtin_plugins/example-skills",
+      "commands": [],
+      "agents": [],
+      "skills": [
+        {
+          "name": "algorithmic-art",
+          "skill": "skills/algorithmic-art/SKILL.md"
+        },
+        {
+          "name": "brand-guidelines",
+          "skill": "skills/brand-guidelines/SKILL.md"
+        },
+        {
+          "name": "canvas-design",
+          "skill": "skills/canvas-design/SKILL.md"
+        },
+        {
+          "name": "theme-factory",
+          "skill": "skills/theme-factory/SKILL.md"
+        },
+        {
+          "name": "slack-gif-creator",
+          "skill": "skills/slack-gif-creator/SKILL.md"
+        },
+        {
+          "name": "doc-coauthoring",
+          "skill": "skills/doc-coauthoring/SKILL.md"
+        },
+        {
+          "name": "internal-comms",
+          "skill": "skills/internal-comms/SKILL.md"
+        },
+        {
+          "name": "mcp-builder",
+          "skill": "skills/mcp-builder/SKILL.md"
+        },
+        {
+          "name": "webapp-testing",
+          "skill": "skills/webapp-testing/SKILL.md"
+        },
+        {
+          "name": "web-artifacts-builder",
+          "skill": "skills/web-artifacts-builder/SKILL.md"
+        },
+        {
+          "name": "frontend-design",
+          "skill": "skills/frontend-design/SKILL.md"
+        },
+        {
+          "name": "skill-creator",
+          "skill": "skills/skill-creator/SKILL.md"
+        }
+      ],
+      "steps": [
+        {
+          "step": "create generative art with p5.js and a seeded generator",
+          "use": "skill:algorithmic-art"
+        },
+        {
+          "step": "apply the Navin brand (palette, type, logo rules) to any deliverable",
+          "use": "skill:brand-guidelines"
+        },
+        {
+          "step": "design a poster, cover or single-image canvas",
+          "use": "skill:canvas-design"
+        },
+        {
+          "step": "pick and apply a ready-made visual theme",
+          "use": "skill:theme-factory"
+        },
+        {
+          "step": "make an animated GIF for Slack",
+          "use": "skill:slack-gif-creator"
+        },
+        {
+          "step": "co-write a proposal, spec or decision document section by section",
+          "use": "skill:doc-coauthoring"
+        },
+        {
+          "step": "write a status update, newsletter, FAQ or incident note",
+          "use": "skill:internal-comms"
+        },
+        {
+          "step": "build and evaluate an MCP server",
+          "use": "skill:mcp-builder"
+        },
+        {
+          "step": "test a local web app in a headless browser",
+          "use": "skill:webapp-testing"
+        },
+        {
+          "step": "bundle a React + MUI artifact into one HTML file",
+          "use": "skill:web-artifacts-builder"
+        },
+        {
+          "step": "give an interface a distinctive visual direction",
+          "use": "skill:frontend-design"
+        },
+        {
+          "step": "create a skill and improve it with evaluations",
+          "use": "skill:skill-creator"
+        }
+      ]
+    },
+    {
       "name": "explanatory-output-style",
       "description": "The agent explains as it codes: short Insight blocks about implementation choices and codebase patterns, injected into the system prompt every turn.",
       "version": "1.0.0",
@@ -976,6 +1162,12 @@
       "category": "general"
     },
     {
+      "name": "algorithmic-art",
+      "description": "Generates original algorithmic art with p5.js - seeded randomness, flow fields, particle systems, noise and parametric variation - packaged as a self-contained interactive HTML viewer with seed navigation, sliders and PNG export. Use when the user asks to \"make generative art\", \"create a flow field\", \"build a particle system sketch\", \"write art with code\" or wants a seeded, reproducible p5.js piece. In French \"génère de l'art génératif\", \"crée un flow field avec p5.js\" or \"fais une oeuvre algorithmique reproductible\".",
+      "skill": "skills/algorithmic-art/SKILL.md",
+      "category": "design"
+    },
+    {
       "name": "api-engineer",
       "description": "Read OpenAPI specs, call APIs, validate responses, and draft connectors. Use for integration work, contract testing, and client generation.",
       "skill": "skills/api-engineer/SKILL.md",
@@ -1114,6 +1306,12 @@
       "category": "writing"
     },
     {
+      "name": "brand-guidelines",
+      "description": "Defines the Navin brand (ink-on-paper palette with one lime accent, Inter and IBM Plex typography, spacing scale, wordmark rules, tone of voice) and shows how to apply it in HTML/CSS, python-pptx, python-docx, reportlab and matplotlib. Use when the user asks to \"use the Navin colors\", \"make it on-brand\", \"apply our brand style\", \"style this deck like Navin\" or when any document, slide, chart or interface needs a consistent house look. In French \"applique la charte graphique Navin\", \"utilise les couleurs et la typographie Navin\" or \"mets ce document aux couleurs de la marque\".",
+      "skill": "skills/brand-guidelines/SKILL.md",
+      "category": "design"
+    },
+    {
       "name": "brand-voice-manager",
       "description": "Define, store, and enforce brand voice across all content - vocabulary, tone, do/don't lists per brand. Use to keep multi-brand output consistent.",
       "skill": "skills/brand-voice-manager/SKILL.md",
@@ -1142,6 +1340,12 @@
       "description": "Present standalone analytical results (audits, code review findings, benchmarks, metrics, token usage, PR/CI status, project boards, video QA, investigations, data-heavy comparisons) as a Navin canvas in the Artifact Canvas panel, built from typed JSON blocks with present_artifact type=canvas. Not for architecture diagrams (archify), specific deliverables, or short answers.",
       "skill": "skills/canvas/SKILL.md",
       "category": "documents"
+    },
+    {
+      "name": "canvas-design",
+      "description": "Designs posters, covers, title cards and single-page visual canvases as one PNG or PDF - a short visual philosophy first, then a composition rendered with HTML+CSS in the headless browser or with Pillow from a JSON spec, using open-licensed fonts and the Navin palette. Use when the user asks to \"design a poster\", \"make a cover\", \"create a title card\", \"produce a visual for this event\" or wants a design-forward static piece with minimal text. In French \"conçois une affiche\", \"crée une couverture\", \"fais un visuel pour cet événement\" or \"produis un poster en PNG\".",
+      "skill": "skills/canvas-design/SKILL.md",
+      "category": "design"
     },
     {
       "name": "career-advisor",
@@ -1402,6 +1606,12 @@
       "category": "trading"
     },
     {
+      "name": "doc-coauthoring",
+      "description": "Co-author structured documents (proposals, technical specs, decision docs, RFCs, briefs, PRDs) in three stages - a short context round, outline then section-by-section drafting reviewed block by block, and a reader simulation that lists gaps first. Use when the user asks to \"write a proposal\", \"draft a spec\", \"help me write a decision doc\" or \"co-write this brief\". In French \"coécris ce document avec moi\", \"rédige une spécification section par section\" or \"aide-moi à écrire cette proposition\".",
+      "skill": "skills/doc-coauthoring/SKILL.md",
+      "category": "writing"
+    },
+    {
       "name": "docker-operator",
       "description": "Build, run, inspect, and diagnose containers safely - Docker and Compose, Podman, containerd (nerdctl, crictl). Use when debugging images, ports, volumes, or container logs.",
       "skill": "skills/docker-operator/SKILL.md",
@@ -1411,6 +1621,12 @@
       "name": "document-templates",
       "description": "Visual theme catalog and template handling for generated documents (PPTX, DOCX, PDF, XLSX). Use whenever a document request names a theme, or provides a template file to adapt.",
       "skill": "skills/document-templates/SKILL.md",
+      "category": "documents"
+    },
+    {
+      "name": "docx",
+      "description": "Works on existing Word (.docx) files at the package level with python-docx and lxml. Dumps and replaces text while keeping run formatting, adds or lists comments, accepts, rejects or creates tracked changes, unpacks, repacks and validates the OOXML package, converts with headless LibreOffice. Use when the user asks to \"edit this Word file\", \"add comments to the docx\", \"accept all tracked changes\", \"replace the text in the contract\" or \"check why this docx is corrupted\". In French \"modifie ce fichier Word\", \"ajoute des commentaires dans ce document\", \"accepte les modifications suivies\" or \"remplace le texte du contrat\". New documents from scratch belong to docx-generator.",
+      "skill": "skills/docx/SKILL.md",
       "category": "documents"
     },
     {
@@ -1580,6 +1796,12 @@
       "category": "devops"
     },
     {
+      "name": "internal-comms",
+      "description": "Write internal communications that people actually read - weekly status updates, team newsletters, FAQ answers, leadership notes, project updates and incident communications - with an audience and tone matrix and fixed structure templates. Use when the user asks to \"write a status update\", \"draft the weekly newsletter\", \"write an incident update\" or \"send a note to leadership\". In French \"rédige une note interne\", \"écris le point hebdo de l'équipe\", \"annonce ce changement à l'équipe\" or \"prépare la communication d'incident\".",
+      "skill": "skills/internal-comms/SKILL.md",
+      "category": "writing"
+    },
+    {
       "name": "interview-coach",
       "description": "Prepare candidates for interviews - likely questions, STAR answers, mock sessions, and salary negotiation. Use before any interview round.",
       "skill": "skills/interview-coach/SKILL.md",
@@ -1698,6 +1920,12 @@
       "description": "Build positioning, ICP, offer, channel mix, and an execution plan. Use when marketing lacks direction or before investing in campaigns.",
       "skill": "skills/marketing-strategist/SKILL.md",
       "category": "marketing"
+    },
+    {
+      "name": "mcp-builder",
+      "description": "Build an MCP (Model Context Protocol) server end to end - scope the upstream API, choose Python FastMCP or the TypeScript SDK, design tools an LLM picks correctly (names, schemas, pagination, errors), implement, run over stdio or HTTP, test with a client, write an evaluation set, wire it into Navin. Use when the user asks to \"build an MCP server\", \"expose this API to the agent as tools\" or \"evaluate our MCP server\". In French \"construis un serveur MCP\", \"expose cette API à l'agent comme outils\" or \"évalue notre serveur MCP\".",
+      "skill": "skills/mcp-builder/SKILL.md",
+      "category": "development"
     },
     {
       "name": "mcp-integration",
@@ -1867,6 +2095,12 @@
       "category": "ads"
     },
     {
+      "name": "pdf",
+      "description": "Reads and manipulates PDF files with pdfplumber, pypdf, PyMuPDF and reportlab. Extracts text and tables per page, lists and fills AcroForm fields with optional flattening, overlays text at measured coordinates on non-fillable forms, merges, splits, rotates, extracts and renders pages to PNG, reads metadata. Use when the user asks to \"extract the text from this PDF\", \"fill this PDF form\", \"merge these PDFs\", \"split the PDF into chapters\", \"get the tables out of the report\" or \"rotate the scanned pages\". In French \"remplis ce formulaire PDF\", \"fusionne ces PDF\", \"extrais le texte et les tableaux de ce PDF\" or \"fais pivoter les pages scannées\". New PDFs rendered from HTML belong to pdf-generator.",
+      "skill": "skills/pdf/SKILL.md",
+      "category": "documents"
+    },
+    {
       "name": "pdf-generator",
       "description": "Generate PDF documents - reports, one-pagers, certificates, agreements, product sheets, quotes - from HTML laid out as A4 pages (Chromium) or from a finished DOCX/PPTX/XLSX (LibreOffice). Use when the deliverable must be a polished PDF.",
       "skill": "skills/pdf-generator/SKILL.md",
@@ -1925,6 +2159,12 @@
       "description": "Lay out, scaffold, package and install a Navin plugin (plugin.json manifest, skills/, agents/, commands/, hooks/hooks.json, mcp.json, ${NAVIN_PLUGIN_ROOT}). Use when the user asks to \"create a plugin\", \"scaffold a plugin\", \"package these skills as a plugin\", \"set up plugin.json\", \"how are plugins organized\", \"where does this component go\", \"install or share a plugin\", or needs the discovery rules for plugin components.",
       "skill": "skills/plugin-structure/SKILL.md",
       "category": "general"
+    },
+    {
+      "name": "pptx",
+      "description": "Works on PowerPoint decks that already exist or must follow a strict JSON plan. Inventories slides and shapes, replaces text in place while keeping formatting, deletes and reorders slides, rebuilds a deck from a JSON spec with the Navin theme (twelve slide types from title to closing, native tables and charts), renders a contact sheet of thumbnails, repacks and validates the package. Use when the user asks to \"update the numbers in this deck\", \"list the slides of the pptx\", \"rebuild the presentation from this outline\", \"show me thumbnails of the slides\" or \"fix this corrupted pptx\". In French \"remplace les textes de cette présentation\", \"liste les slides du pptx\", \"génère les vignettes des slides\" or \"répare ce PowerPoint corrompu\". Story and slide plan from a brief belong to presentation-designer and pptx-generator.",
+      "skill": "skills/pptx/SKILL.md",
+      "category": "documents"
     },
     {
       "name": "pptx-generator",
@@ -2089,9 +2329,129 @@
       "category": "security"
     },
     {
+      "name": "security-ai-agents",
+      "description": "Audit prompts, RAG, tools, MCP and exfiltration. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-ai-agents/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-api",
+      "description": "Test REST, GraphQL, WebSocket and webhooks. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-api/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-attack-chaining",
+      "description": "Chain several weaknesses into compromise scenarios. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-attack-chaining/SKILL.md",
+      "category": "security"
+    },
+    {
       "name": "security-auditor",
       "description": "Run a full application security audit - auth flows, input validation, secrets handling, injection surfaces, dependency risks, and hardening. Use for /fortify, pre-release security reviews, or \"is this safe?\" questions.",
       "skill": "skills/security-auditor/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-authentication",
+      "description": "Audit JWT, OAuth, OIDC, MFA and sessions. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-authentication/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-authorization",
+      "description": "Verify IDOR, BOLA, RBAC and ABAC. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-authorization/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-business-logic",
+      "description": "Identify business rule bypasses. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-business-logic/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-cloud",
+      "description": "Analyze AWS, Azure, GCP and IAM. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-cloud/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-compliance",
+      "description": "Check OWASP ASVS, CIS and NIST requirements. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-compliance/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-containers",
+      "description": "Audit Docker, Kubernetes and OpenShift. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-containers/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-cryptography",
+      "description": "Check TLS, encryption, signatures and keys. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-cryptography/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-desktop",
+      "description": "Audit Tauri, Rust, IPC and permissions. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-desktop/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-frontend",
+      "description": "Verify DOM, CSP, CORS and browser storage. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-frontend/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-injection",
+      "description": "Find SQLi, XSS, SSTI, XXE and command injections. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-injection/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-mobile",
+      "description": "Audit Android, iOS and Capacitor. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-mobile/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-multitenancy",
+      "description": "Verify tenant isolation, RLS, cache and storage. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-multitenancy/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-remediation",
+      "description": "Generate and validate fixes. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-remediation/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-sast-review",
+      "description": "Analyze code, input sources and dangerous operations. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-sast-review/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-secrets",
+      "description": "Identify exposed secrets and their propagation. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-secrets/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-supply-chain",
+      "description": "Audit dependencies, SBOM, artifacts and CI/CD. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-supply-chain/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "security-threat-modeling",
+      "description": "Identify sensitive assets, trust boundaries and attack scenarios. Loaded by the Navin Security router for the matching stack or findings; also usable on its own.",
+      "skill": "skills/security-threat-modeling/SKILL.md",
       "category": "security"
     },
     {
@@ -2132,7 +2492,7 @@
     },
     {
       "name": "skill-creator",
-      "description": "Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.",
+      "description": "Create or update AgentSkills with scripts, references and assets, then measure them with an evaluation loop (prompts with and without the skill, deterministic grading, benchmark, HTML report, description tuning). Use when the user asks to \"create a skill\", \"package this skill\", \"improve the skill description\" or \"evaluate whether the skill helps\". In French \"crée un skill\", \"améliore la description du skill\" or \"évalue si le skill aide vraiment\".",
       "skill": "skills/skill-creator/SKILL.md",
       "category": "general"
     },
@@ -2147,6 +2507,12 @@
       "description": "Audit a skill package before install or enable - permissions, network calls, credential access, obfuscation, and suspicious system commands. Use before trusting ClawHub or third-party SKILL.md files.",
       "skill": "skills/skill-vetter/SKILL.md",
       "category": "security"
+    },
+    {
+      "name": "slack-gif-creator",
+      "description": "Builds small looping animated GIFs for Slack (custom emoji at 128x128, message GIFs up to 2 MB) from code with Pillow, applying size budgets, palette reduction and easing so the result reads well at thumbnail size. Use when the user asks to \"make a Slack emoji GIF\", \"animate this text for Slack\", \"create a bouncing GIF\", \"make a spinner emoji\" or wants a reaction GIF that fits Slack's limits. In French \"crée un GIF animé pour Slack\", \"anime ce texte en emoji\" or \"fais un GIF qui rebondit\".",
+      "skill": "skills/slack-gif-creator/SKILL.md",
+      "category": "design"
     },
     {
       "name": "social-media-manager",
@@ -2279,6 +2645,12 @@
       "category": "devops"
     },
     {
+      "name": "theme-factory",
+      "description": "Applies one of ten ready-made color and type themes (Navin Studio as the default, plus Ink and Lime, Harbor, Terracotta, Moss, Slate, Aurora, Dune, Orchard, Midnight) to slides, documents, reports and HTML pages, or derives a new theme in the same format. Use when the user asks to \"pick a theme for this deck\", \"restyle the report\", \"show me the available themes\", \"make a custom color scheme\" or wants consistent styling across an artifact. In French \"applique un thème à ce document\", \"propose une palette de couleurs\", \"change le thème du deck\" or \"montre les thèmes disponibles\".",
+      "skill": "skills/theme-factory/SKILL.md",
+      "category": "design"
+    },
+    {
       "name": "threat-modeler",
       "description": "Map the attack surface and build a STRIDE threat model - trust boundaries, data flows, entry points, assets, and prioritized threats with mitigations. Use for /threatmap, architecture security reviews, or \"what could go wrong?\" planning.",
       "skill": "skills/threat-modeler/SKILL.md",
@@ -2355,16 +2727,34 @@
       }
     },
     {
+      "name": "web-artifacts-builder",
+      "description": "Builds multi-component web artifacts (React + TypeScript + Material UI + framer-motion, optional three.js) bundled into one self-contained HTML file shown beside the chat - scaffold, live preview, vite-plugin-singlefile bundle. Use when the user asks to \"build an interactive dashboard artifact\", \"make a React app I can open as one HTML file\", \"create a multi-screen prototype\" or \"turn this data into an interactive explorer\". In French \"crée une page web autonome en un seul fichier\", \"fais un tableau de bord interactif\" or \"construis un prototype React\".",
+      "skill": "skills/web-artifacts-builder/SKILL.md",
+      "category": "development"
+    },
+    {
       "name": "web-extractor",
       "description": "Turn websites into clean Markdown or structured JSON for RAG, migrations, or analysis. Use when the user needs scraped content, tables, or documentation corpora - not full browser testing.",
       "skill": "skills/web-extractor/SKILL.md",
       "category": "navigation"
     },
     {
+      "name": "webapp-testing",
+      "description": "Tests a local web application end to end - start the server under test, discover selectors in the rendered DOM, drive the pages with the built-in browser tool or Playwright scripts, capture console errors, failed requests and screenshots, then report findings. Use when the user asks to \"test this web app\", \"check the login flow works\", \"find JavaScript errors on the page\" or \"verify the frontend after my change\". In French \"teste mon application web\", \"lance le serveur de dev puis les tests\" or \"vérifie le parcours de connexion\".",
+      "skill": "skills/webapp-testing/SKILL.md",
+      "category": "development"
+    },
+    {
       "name": "website-monitor",
       "description": "Detect changes in price, content, tenders, or availability and alert only on meaningful deltas. Use with cron or .navin/HEARTBEAT.md for recurring checks.",
       "skill": "skills/website-monitor/SKILL.md",
       "category": "navigation"
+    },
+    {
+      "name": "xlsx",
+      "description": "Builds and audits Excel workbooks that carry real formulas. Inspects sheets, named ranges and error cells, recalculates with headless LibreOffice or runs a static formula audit, applies the Navin table style and the financial model color code, repacks and validates the package. Use when the user asks to \"check the formulas in this spreadsheet\", \"build a financial model\", \"find the formula errors\", \"recalculate the workbook\" or \"format this sheet as a clean table\". In French \"crée un fichier Excel avec des formules\", \"vérifie les formules de ce tableur\", \"recalcule le classeur\" or \"mets en forme ce tableau\". Data analysis with pandas belongs to spreadsheet-analyst.",
+      "skill": "skills/xlsx/SKILL.md",
+      "category": "documents"
     }
   ]
 }

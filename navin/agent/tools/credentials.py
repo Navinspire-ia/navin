@@ -44,7 +44,10 @@ class RequestCredentialsTool(Tool):
             "values are stored in the vault and you get refs like "
             "site:<host>/password to use with browser action=login. "
             "kind=git_host: connect a git forge account (GitHub sign-in or "
-            "token) so git push/pull/clone and forge work. You never see a "
+            "token) so git push/pull/clone and forge work. kind=connector: open "
+            "the connection form of an app (host = connector id such as slack, "
+            "hubspot or stripe, see the connectors tool) so the user signs in "
+            "with OAuth or pastes an API key; you get the connected status. You never see a "
             "value. Call it once per host with a clear one-line reason; never "
             "ask the user to paste a password or token in the chat."
         )
@@ -57,7 +60,7 @@ class RequestCredentialsTool(Tool):
                 "kind": {"type": "string", "enum": list(KINDS)},
                 "host": {
                     "type": "string",
-                    "description": "Site host or URL (site_login), or forge host such as github.com (git_host).",
+                    "description": "Site host or URL (site_login), forge host such as github.com (git_host), or connector id such as slack (connector).",
                 },
                 "names": {
                     "type": "array",
@@ -85,6 +88,10 @@ class RequestCredentialsTool(Tool):
             return ToolResult.error(f"Error: kind must be one of {', '.join(KINDS)}.")
         clean_host = normalize_host(kind, host)
         if not clean_host:
+            if kind == "connector":
+                return ToolResult.error(
+                    "Error: host must be a connector id such as slack or hubspot (connectors action=list)."
+                )
             return ToolResult.error("Error: host must be a host name or URL, e.g. app.example.com.")
         text = " ".join(str(reason or "").split())
         if not text:

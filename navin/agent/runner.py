@@ -79,9 +79,11 @@ from navin.utils.prompt_templates import render_template
 from navin.utils.runtime import (
     IGNORED_NUDGES_BEFORE_FINAL,
     NO_PROGRESS_STOP_FALLBACK,
+    build_background_claim_continue_message,
     build_budget_exhausted_finalization_message,
     build_delivery_continue_message,
     build_finalization_retry_message,
+    build_go_ahead_continue_message,
     build_goal_continue_message,
     build_ignored_nudge_reminder_message,
     build_ignored_nudges_finalization_message,
@@ -94,6 +96,7 @@ from navin.utils.runtime import (
     build_verify_before_done_message,
     build_verify_failed_message,
     build_wrap_up_message,
+    claims_background_work,
     is_blank_text,
     lists_remaining_work,
     record_identical_action,
@@ -896,6 +899,11 @@ class AgentRunSpec:
     # never the end of the turn.
     tool_timeout_s: float | None = None
     goal_active_predicate: Callable[[], bool] | None = None
+    # Main turns: True when this conversation started background work
+    # (subagents, background commands) and none of it is running any more.
+    # Receives the run's messages. A final answer saying such work is still
+    # going is then corrected once.
+    background_idle: Callable[[list[dict[str, Any]]], bool] | None = None
     # "Keep going" nudges injected for an active goal in this run. Capped: a
     # model that wants to stop (missing key, real blocker) was pushed back in.
     goal_continue_count: int = 0
@@ -916,6 +924,9 @@ class AgentRunSpec:
     # Separate asks listed in the request; the final answer is checked once
     # for the ones it never mentions.
     explicit_asks: tuple[str, ...] = ()
+    # The user's message was only a go-ahead ("go", "vas-y"): a reply with
+    # text only, asking again, is pushed once into the work.
+    go_ahead: bool = False
     # Blank final responses re-asked before giving up on the turn.
     max_empty_retries: int = _MAX_EMPTY_RETRIES
     # finish_reason=length continuations before the output is cut short.
@@ -1170,6 +1181,15 @@ class AgentRunner:
                     )
                     return
             yield iteration
+
+    @staticmethod
+    def _background_is_idle(spec: AgentRunSpec, messages: list[dict[str, Any]]) -> bool:
+        """Ask the turn whether its background work is all over; False if it cannot say."""
+        try:
+            return bool(spec.background_idle(messages))
+        except Exception:
+            logger.exception("background_idle check failed for {}", spec.session_key or "default")
+            return False
 
     def _build_goal_continue_message(self, spec: AgentRunSpec) -> dict[str, str]:
         custom = spec.goal_continue_message
@@ -1436,6 +1456,7 @@ class AgentRunner:
         # what remains.
         acted = False
         no_action_nudged = False
+        go_ahead_nudged = False
         remaining_work_nudges = 0
         # One "keep going" nudge per turn at most among wrap-up, delivery and
         # no-action: stacked, they once turned a finished answer into an
@@ -1447,6 +1468,9 @@ class AgentRunner:
         # command, a delegation), so a model that is stuck or waiting on the
         # user is not pushed in a loop.
         remaining_work_mark: tuple[int, int] | None = None
+        # The answer to a reminder was text only (the same "I start when you
+        # say go"): one firmer push, then the turn may end.
+        remaining_work_repeats = 0
         action_steps = 0
         # Open board steps of the conversation's plan: each reminder needs
         # progress since the previous one (an edit or a step that moved).
@@ -1454,6 +1478,10 @@ class AgentRunner:
         plan_mark: tuple[Any, ...] | None = None
         plan_repeats = 0
         coverage_nudged = False
+        # "X is still running" once nothing runs any more: corrected once, and
+        # the false answer is withdrawn from the screen.
+        background_claim_nudged = False
+        withdraw_answer = False
         # A screen written but imported by nothing passes every test and build,
         # so it is checked once at the final answer (git dates are wall clock).
         integration_nudged = False
@@ -2139,7 +2167,10 @@ class AgentRunner:
                 backend_only = await asyncio.to_thread(
                     frontend_gap, spec.workspace, sorted(validation.paths),
                 )
-            if build_turn and not acted and tools_used and not no_action_nudged and soft_nudges < 1 and (
+            if build_turn and spec.go_ahead and not acted and not go_ahead_nudged:
+                go_ahead_nudged = True
+                continue_prompt = build_go_ahead_continue_message()
+            elif build_turn and not acted and tools_used and not no_action_nudged and soft_nudges < 1 and (
                 spec.requires_tool_delivery or lists_remaining_work(clean)
             ):
                 no_action_nudged = True
@@ -2172,17 +2203,22 @@ class AgentRunner:
                 build_turn
                 and acted
                 and remaining_work_nudges < _MAX_REMAINING_WORK_NUDGES
-                and (validation.revision, action_steps) != remaining_work_mark
+                and (
+                    (validation.revision, action_steps) != remaining_work_mark
+                    or remaining_work_repeats < 1
+                )
                 and not validation.pending
                 and lists_remaining_work(clean)
             ):
+                repeat = (validation.revision, action_steps) == remaining_work_mark
+                remaining_work_repeats = remaining_work_repeats + 1 if repeat else 0
                 remaining_work_nudges += 1
                 remaining_work_mark = (validation.revision, action_steps)
                 logger.info(
                     "Build turn answer still lists work on turn {} (reminder {}); continuing for {}",
                     iteration, remaining_work_nudges, spec.session_key or "default",
                 )
-                continue_prompt = build_remaining_work_continue_message()
+                continue_prompt = build_remaining_work_continue_message(repeat=repeat)
             if (
                 continue_prompt is None
                 and build_turn
@@ -2273,6 +2309,27 @@ class AgentRunner:
                         **build_remaining_work_continue_message(),
                         "content": build_coverage_nudge(missing),
                     }
+            if (
+                continue_prompt is None
+                and not background_claim_nudged
+                and spec.background_idle is not None
+                and spec.user_hook_scope != "subagent"
+                and response.finish_reason != "error"
+                and assistant_message is not None
+                and claims_background_work(clean)
+                and self._background_is_idle(spec, messages)
+            ):
+                # Every subagent reported and no command started here is
+                # live, yet the answer says the work is still going: it was
+                # written from a picture that is out of date.
+                background_claim_nudged = True
+                withdraw_answer = True
+                logger.info(
+                    "Final answer says background work is still running, but none is, on turn {};"
+                    " correcting once for {}",
+                    iteration, spec.session_key or "default",
+                )
+                continue_prompt = build_background_claim_continue_message()
             if continue_prompt is not None:
                 logger.info(
                     "Build turn ended {} on turn {}; continuing once for {}",
@@ -2280,7 +2337,14 @@ class AgentRunner:
                     iteration, spec.session_key or "default",
                 )
                 if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=True)
+                    # A false "still running" is not left on screen above the
+                    # corrected answer (same withdrawal as a mid-stream retry).
+                    context.stream_discarded = withdraw_answer and context.streamed_content
+                    try:
+                        await hook.on_stream_end(context, resuming=True)
+                    finally:
+                        context.stream_discarded = False
+                withdraw_answer = False
                 messages.append(assistant_message)
                 messages.append(continue_prompt)
                 await hook.after_iteration(context)

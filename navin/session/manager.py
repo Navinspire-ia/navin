@@ -108,6 +108,19 @@ def _text_preview(content: Any) -> str:
     return text
 
 
+def _subagent_result_row(message: dict[str, Any]) -> bool:
+    """A subagent result persisted in the assistant shape (late delivery).
+
+    Results drained during a turn are already user rows; only this shape
+    needs a different role when the history is replayed to the model.
+    """
+    return (
+        message.get("role") == "assistant"
+        and message.get("injected_event") == "subagent_result"
+        and not message.get("tool_calls")
+    )
+
+
 def _message_preview_text(message: dict[str, Any]) -> str:
     """Session list preview text; subagent inject blobs are shortened for display."""
     message = public_history_message(message)
@@ -189,6 +202,7 @@ class Session:
         extend_to_user: bool = False,
         include_runtime_context: bool = True,
         with_media_refs: bool = False,
+        subagent_results_as_input: bool = False,
     ) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input.
 
@@ -198,6 +212,10 @@ class Session:
         ``with_media_refs`` keeps the persisted attachment paths of user turns
         under ``_meta["media"]`` so the agent loop can show a vision model the
         images again; providers strip ``_meta`` before the call.
+
+        ``subagent_results_as_input`` replays a subagent result stored in the
+        assistant shape (it landed after its turn) as a user turn: the model
+        reads it as input. Display callers keep the stored role.
         """
         unconsolidated = self.messages[self.last_consolidated:]
         max_messages = max_messages if max_messages > 0 else FILE_MAX_MESSAGES
@@ -224,6 +242,7 @@ class Session:
             sliced = sliced[start:]
 
         out: list[dict[str, Any]] = []
+        replayed_as_input: set[int] = set()
         for message in sliced:
             if message.get("_command"):
                 continue
@@ -284,6 +303,8 @@ class Session:
                 if refs:
                     entry["_meta"] = {"media": refs}
             out.append(entry)
+            if subagent_results_as_input and _subagent_result_row(message):
+                replayed_as_input.add(id(entry))
 
         if max_tokens > 0 and out:
             kept: list[dict[str, Any]] = []
@@ -316,6 +337,16 @@ class Session:
             if start:
                 kept = kept[start:]
             out = kept
+        # A subagent result that lands after its turn ended is stored as an
+        # assistant row (the chat shows it as a result card). Replayed as an
+        # assistant turn it merged with the previous answer and, at the end of
+        # the conversation, every provider dropped it (no assistant prefill):
+        # the model never saw the result and repeated its last answer. For the
+        # model it is input. Converted last, so the alignment above still
+        # starts the window on a request the user typed.
+        for entry in out:
+            if id(entry) in replayed_as_input:
+                entry["role"] = "user"
         return out
 
     def clear(self) -> None:

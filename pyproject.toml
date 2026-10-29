@@ -262,6 +262,13 @@ include = [
     "navin/skills/**/*.sh",
     "navin/skills/**/*.py",
     "navin/skills/**/*.csv",
+    # Skill assets: viewer/template HTML, JS generators, CSS tokens, notices,
+    # example XML/JSON specs (document, design and MCP builder skills).
+    "navin/skills/**/*.html",
+    "navin/skills/**/*.js",
+    "navin/skills/**/*.css",
+    "navin/skills/**/*.txt",
+    "navin/skills/**/*.xml",
     "navin/builtin_agents/*.md",
     "navin/builtin_commands/*.md",
     "navin/builtin_plugins/*/plugin.json",

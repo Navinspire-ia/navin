@@ -1148,7 +1148,7 @@ class RemainingWorkNudgeTest(unittest.TestCase):
             call("a2", "apply_patch", {"path": "b.py"}),
             call("t2", "exec", tests),
             LLMResponse(content="Task 2 done. Still to do: task 3.", finish_reason="stop"),
-            # No edit since the last push: stuck or waiting, so the turn ends.
+            # No edit since the last push: one firmer push, then the turn ends.
             LLMResponse(content="Task 3 is still to do.", finish_reason="stop"),
         ])
         tools = ToolRegistry()
@@ -1171,7 +1171,7 @@ class RemainingWorkNudgeTest(unittest.TestCase):
             m for m in result.messages if m.get("role") == "user" and push in str(m.get("content"))
         ]
         self.assertEqual(len(pushes), 2)
-        self.assertEqual(provider.calls, 7)
+        self.assertEqual(provider.calls, 8)
         self.assertEqual(result.final_content, "Task 3 is still to do.")
 
 
@@ -1387,3 +1387,262 @@ class AskCoverageNudgeTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoAheadIsNotAskedAgainTest(unittest.IsolatedAsyncioTestCase):
+    """"/forge go" answered "On attaque la suite, ou tu as autre chose en tete ?"."""
+
+    async def _run(self, responses: list[LLMResponse], *, go_ahead: bool) -> tuple[_FakeProvider, AgentRunResult]:
+        provider = _FakeProvider(responses)
+        tools = ToolRegistry()
+        tools.register(_ApplyPatchTool())
+        tools.register(_ExecTool())
+        tools.register(_ReadFileTool())
+        result = await AgentRunner().run(
+            AgentRunSpec(
+                initial_messages=[{"role": "user", "content": "go"}],
+                tools=tools,
+                runtime=_runtime(provider),
+                max_iterations=20,
+                max_tool_result_chars=2000,
+                hook=AgentHook(),
+                requires_verify_before_done=True,
+                go_ahead=go_ahead,
+            )
+        )
+        return provider, result
+
+    async def test_asking_again_after_go_is_sent_back_into_the_work(self) -> None:
+        from navin.utils.runtime import GO_AHEAD_CONTINUE_PROMPT
+
+        ask = LLMResponse(
+            content="On attaque le registre de scanners, ou tu as autre chose en tete ?",
+            finish_reason="stop",
+        )
+        provider, result = await self._run(
+            [ask, *_edit_then_exec_then_done("python -m pytest tests -q")], go_ahead=True,
+        )
+        nudges = [m for m in result.messages if m.get("content") == GO_AHEAD_CONTINUE_PROMPT]
+        self.assertEqual(len(nudges), 1)
+        self.assertEqual(provider.calls, 4)
+        self.assertEqual(result.final_content, "Done.")
+
+    async def test_the_go_ahead_reminder_is_sent_once(self) -> None:
+        ask = LLMResponse(content="Tu veux vraiment que je commence ?", finish_reason="stop")
+        provider, result = await self._run([ask, ask], go_ahead=True)
+        self.assertEqual(provider.calls, 2)
+
+    async def test_a_real_request_is_not_treated_as_a_go(self) -> None:
+        ask = LLMResponse(content="Quelle base de donnees veux-tu ?", finish_reason="stop")
+        provider, _ = await self._run([ask], go_ahead=False)
+        self.assertEqual(provider.calls, 1)
+
+
+class RemainingWorkRepeatTest(unittest.IsolatedAsyncioTestCase):
+    """An answer to the reminder that repeats "I start when you say go" gets one firmer push."""
+
+    async def test_text_only_answer_to_the_reminder_is_pushed_once_more(self) -> None:
+        from navin.utils.runtime import REMAINING_WORK_REPEAT_PROMPT
+
+        edit, run, _ = _edit_then_exec_then_done("python -m pytest tests -q")
+        wait = LLMResponse(
+            content="La prochaine étape est le registre de scanners. Je la démarre dès que tu me dis go.",
+            finish_reason="stop",
+        )
+        provider = _FakeProvider([edit, run, wait, wait, wait])
+        tools = ToolRegistry()
+        tools.register(_ApplyPatchTool())
+        tools.register(_ExecTool())
+        tools.register(_ReadFileTool())
+        result = await AgentRunner().run(
+            AgentRunSpec(
+                initial_messages=[{"role": "user", "content": "demarre les dev"}],
+                tools=tools,
+                runtime=_runtime(provider),
+                max_iterations=20,
+                max_tool_result_chars=2000,
+                hook=AgentHook(),
+                requires_verify_before_done=True,
+            )
+        )
+        firm = [m for m in result.messages if m.get("content") == REMAINING_WORK_REPEAT_PROMPT]
+        self.assertEqual(len(firm), 1)
+        # edit, test, stop, stop after the reminder, stop after the firm push: then it ends.
+        self.assertEqual(provider.calls, 5)
+
+
+class BackgroundClaimDetectionTest(unittest.TestCase):
+    """A final answer saying that finished background work still runs is recognised."""
+
+    def test_claims_are_recognised_and_other_sentences_are_not(self) -> None:
+        from navin.utils.runtime import claims_background_work
+
+        for text in (
+            # The report of 2026-10-29, written after the last subagent had finished.
+            "Le chantier des données (DLP, RAG, mémoire, multimodal, qualité, audit, risque, "
+            "incidents) tourne encore. L'intégration finale vient ensuite.",
+            "Les deux audits sont toujours en cours, je fais la synthèse dès qu\u2019ils auront terminé.",
+            "J'attends le retour du sous-agent sécurité.",
+            "Le plus gros chantier tourne encore.",
+            "The data audit is still running; I will integrate it next.",
+            "Their results will arrive on their own.",
+            "I'll report back when they finish.",
+            "Waiting for the audit results.",
+        ):
+            self.assertTrue(claims_background_work(text), text)
+        for text in (
+            # Things that do run on their own.
+            "Le serveur tourne toujours sur le port 5180.",
+            "La CI tourne encore sur GitHub.",
+            "Le conteneur docker tourne toujours.",
+            # Negations, questions, quotes, code, finished work.
+            "Rien ne tourne encore en arrière-plan.",
+            "Aucun sous-agent n'est encore en cours.",
+            "Nothing is still running.",
+            "Est-ce que le build tourne encore ?",
+            "Le mot « tourne encore » est détecté.",
+            "```\nstill running\n```\nDone.",
+            "Tout est terminé : 3 fichiers modifiés, tests verts.",
+            "",
+        ):
+            self.assertFalse(claims_background_work(text), text)
+
+    def test_background_work_is_read_from_the_current_request_only(self) -> None:
+        from navin.utils.runtime import REMAINING_WORK_CONTINUE_PROMPT, started_background_work
+
+        def call(name: str, arguments: str) -> dict[str, Any]:
+            return {"role": "assistant", "content": "", "tool_calls": [
+                {"id": name, "type": "function", "function": {"name": name, "arguments": arguments}},
+            ]}
+
+        ask = {"role": "user", "content": "audite les trois chantiers"}
+        spawn = call("spawn", '{"task": "audit"}')
+        result = {"role": "user", "content": "[Subagent 'audit' completed successfully]\n\nResult:\nok"}
+        self.assertTrue(started_background_work([ask, spawn]))
+        self.assertTrue(started_background_work([ask, {"role": "assistant", "content": "ok"}, result]))
+        # A reminder Navin wrote does not open a new request.
+        nudge = {"role": "user", "content": REMAINING_WORK_CONTINUE_PROMPT}
+        self.assertTrue(started_background_work([ask, spawn, nudge]))
+        # A subagent of an older request says nothing about the new one.
+        later = {"role": "user", "content": "renomme le bouton"}
+        self.assertFalse(started_background_work([ask, spawn, {"role": "assistant", "content": "ok"}, later]))
+        self.assertTrue(started_background_work([ask, call("exec", '{"command": "npm run build", "background": true}')]))
+        self.assertFalse(started_background_work([ask, call("exec", '{"command": "ls"}')]))
+
+    def test_the_correction_is_a_hidden_navin_prompt(self) -> None:
+        from navin.session.history_visibility import is_runtime_nudge_message
+        from navin.utils.runtime import BACKGROUND_CLAIM_CONTINUE_PROMPT, is_harness_nudge
+
+        self.assertTrue(is_harness_nudge(BACKGROUND_CLAIM_CONTINUE_PROMPT))
+        self.assertTrue(is_runtime_nudge_message(
+            {"role": "user", "content": BACKGROUND_CLAIM_CONTINUE_PROMPT + "\n\nReply in French."}
+        ))
+
+
+class _StreamingFakeProvider(_FakeProvider):
+    """Streams each answer as one delta, like a real streaming provider."""
+
+    async def chat_stream_with_retry(self, **kwargs: Any) -> LLMResponse:
+        response = await self.chat_with_retry(**kwargs)
+        if response.content and kwargs.get("on_content_delta") is not None:
+            await kwargs["on_content_delta"](response.content)
+        return response
+
+
+class _StreamEndRecorder(AgentHook):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ends: list[tuple[bool, bool]] = []
+
+    def wants_streaming(self) -> bool:
+        return True
+
+    async def on_stream_end(self, context: Any, *, resuming: bool) -> None:
+        self.ends.append((resuming, context.stream_discarded))
+
+
+class BackgroundClaimNudgeTest(unittest.IsolatedAsyncioTestCase):
+    """'X is still running' once nothing runs any more is corrected once."""
+
+    _CLAIM = "Le chantier des données tourne encore. L'intégration finale vient ensuite."
+    _DONE = "Les trois chantiers sont terminés et intégrés."
+
+    async def _run(
+        self,
+        finals: list[str],
+        *,
+        idle: bool | Exception = True,
+        scope: str = "main",
+        hook: AgentHook | None = None,
+        provider_cls: type[_FakeProvider] = _FakeProvider,
+    ) -> tuple[int, AgentRunResult, list[int]]:
+        provider = provider_cls([LLMResponse(content=text, finish_reason="stop") for text in finals])
+        checked: list[int] = []
+
+        def background_idle(messages: list[dict[str, Any]]) -> bool:
+            checked.append(len(messages))
+            if isinstance(idle, Exception):
+                raise idle
+            return idle
+
+        result = await AgentRunner().run(
+            AgentRunSpec(
+                initial_messages=[{"role": "user", "content": "audite les trois chantiers"}],
+                tools=ToolRegistry(),
+                runtime=_runtime(provider),
+                max_iterations=6,
+                max_tool_result_chars=2000,
+                hook=hook or AgentHook(),
+                user_hook_scope=scope,
+                background_idle=background_idle,
+            )
+        )
+        return provider.calls, result, checked
+
+    @staticmethod
+    def _nudges(result: AgentRunResult) -> list[dict[str, Any]]:
+        from navin.utils.runtime import BACKGROUND_CLAIM_CONTINUE_PROMPT
+
+        return [
+            m for m in result.messages
+            if m.get("role") == "user"
+            and str(m.get("content")).startswith(BACKGROUND_CLAIM_CONTINUE_PROMPT)
+        ]
+
+    async def test_a_stale_claim_is_corrected_once(self) -> None:
+        calls, result, _checked = await self._run([self._CLAIM, self._DONE])
+        self.assertEqual(len(self._nudges(result)), 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.final_content, self._DONE)
+
+    async def test_the_correction_is_sent_only_once(self) -> None:
+        calls, result, _checked = await self._run([self._CLAIM, self._CLAIM, "never"])
+        self.assertEqual(len(self._nudges(result)), 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.final_content, self._CLAIM)
+
+    async def test_work_that_really_runs_is_left_alone(self) -> None:
+        calls, result, checked = await self._run([self._CLAIM, "never"], idle=False)
+        self.assertEqual(self._nudges(result), [])
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(checked), 1)
+
+    async def test_a_subagent_or_a_broken_check_is_left_alone(self) -> None:
+        for kwargs in ({"scope": "subagent"}, {"idle": RuntimeError("manager gone")}):
+            calls, result, _checked = await self._run([self._CLAIM, "never"], **kwargs)
+            self.assertEqual(self._nudges(result), [], kwargs)
+            self.assertEqual(calls, 1, kwargs)
+
+    async def test_an_answer_without_the_claim_never_asks(self) -> None:
+        calls, result, checked = await self._run([self._DONE, "never"])
+        self.assertEqual(calls, 1)
+        self.assertEqual(checked, [])
+        self.assertEqual(result.final_content, self._DONE)
+
+    async def test_the_stale_answer_is_withdrawn_from_the_screen(self) -> None:
+        hook = _StreamEndRecorder()
+        _calls, result, _checked = await self._run(
+            [self._CLAIM, self._DONE], hook=hook, provider_cls=_StreamingFakeProvider,
+        )
+        self.assertEqual(result.final_content, self._DONE)
+        self.assertEqual(hook.ends, [(True, True), (False, False)])

@@ -352,17 +352,46 @@ def test_errored_request_is_not_replayed_after_restart(tmp_path):
 
 
 def test_crash_loop_replays_are_bounded_across_restarts(tmp_path):
-    from navin.session.turn_recovery import MAX_RECOVERY_ATTEMPTS
-
+    # A turn that takes the process down (a runaway command filled WSL's
+    # memory) must not do it again at every start: one replay, then the user.
     _, session, _ = setup_record(tmp_path)
-    for _ in range(MAX_RECOVERY_ATTEMPTS):
-        reborn = TurnRecovery(SessionManager(tmp_path))
-        assert reborn.discover(channel="websocket") == [session.key]
-        assert len(reborn.take_due(active_keys=set())) == 1
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == [session.key]
+    assert len(reborn.take_due(active_keys=set())) == 1
     reborn = TurnRecovery(SessionManager(tmp_path))
     assert reborn.discover(channel="websocket") == []
     assert reborn.abandoned == [session.key]
+    assert reborn.cut_twice == {session.key}
     assert RECOVERY_KEY not in SessionManager(tmp_path).get_or_create(session.key).metadata
+
+
+def test_restart_before_the_replay_ran_still_resumes(tmp_path):
+    # Closed again before the replay started: nothing was cut twice.
+    _, session, _ = setup_record(tmp_path)
+    assert TurnRecovery(SessionManager(tmp_path)).discover(channel="websocket") == [session.key]
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == [session.key]
+    assert reborn.cut_twice == set()
+
+
+def test_provider_retries_in_one_process_are_not_restarts(tmp_path):
+    _, session, recovery = setup_record(tmp_path)
+    recovery.schedule(session)
+    recovery.due[session.key] = 0.0
+    assert len(recovery.take_due(active_keys=set())) == 1
+    from navin.session.turn_recovery import REPLAYED_AFTER_RESTART
+
+    assert REPLAYED_AFTER_RESTART not in session.metadata[RECOVERY_KEY]
+
+
+def test_turn_cut_twice_tells_the_user_why_it_did_not_resume(tmp_path):
+    loop = make_loop(tmp_path, LocalProvider(), SessionManager(tmp_path))
+    session = loop.sessions.get_or_create("cli:cut-twice")
+    session.add_message("user", "fix the tests")
+    session.messages.append({"role": "tool", "tool_call_id": "t1", "name": "exec", "content": "Error: interrupted"})
+    loop._close_interrupted_turn(session, cut_twice=True)
+    assert session.messages[-1]["role"] == "assistant"
+    assert "not resumed automatically" in session.messages[-1]["content"]
 
 
 def test_request_idle_past_the_window_is_dropped_with_a_neutral_note(tmp_path):

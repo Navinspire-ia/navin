@@ -37,6 +37,19 @@ johnvansickle.com, www.osxexperts.net, evermeet.cx, github.com and www.gyan.dev.
 
 ## UI and assets
 
+### OpenConnector (connector catalog and logos)
+
+`navin/connectors/data/catalog.json` (apps, auth methods, OAuth endpoints and
+scopes, action names and parameters), the app logos in
+`webui/src/assets/connectors/` and the per-app request rules in
+`navin/connectors/providers.py` are derived from OpenConnector, Copyright 2026
+OOMOL, licensed under a modified Apache License 2.0. Navin re-implements the
+request rules in Python and never runs the OpenConnector service. Third-party
+brand names and logos remain the property of their owners. Details and the list
+of changes: `navin/connectors/NOTICE.md`.
+
+Upstream: https://github.com/oomol-lab/open-connector
+
 ### TalkingHead
 
 - Source: https://github.com/met4citizen/TalkingHead

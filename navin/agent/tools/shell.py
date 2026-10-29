@@ -67,6 +67,7 @@ from navin.config_base import Base
 from navin.security.workspace_access import current_scope_allows_loopback, current_tool_workspace
 from navin.security.workspace_policy import is_path_within, project_rooted_path
 from navin.utils import wsl
+from navin.utils.memory_guard import MemoryGuard
 from navin.utils.proc import (
     kill_posix_process_group,
     kill_windows_process_tree,
@@ -1663,6 +1664,11 @@ class ExecTool(Tool):
             # communicate(), but in containers the child-watcher sometimes
             # misses it, leaving a zombie.
             _reap_pid(process.pid)
+            guard = MemoryGuard.of(process)
+            if guard is not None and guard.reason:
+                if agent_stream is not None:
+                    agent_stream.feed(f"\n[stopped: {guard.reason}]\n")
+                return ToolResult.error(guard.message())
             await emit_tool_meta(percent=100, label="Command finished", indeterminate=False)
             await self._remember_duration(timing)
 
@@ -2535,7 +2541,7 @@ class ExecTool(Tool):
         # dev server or watcher the command backgrounded outlives the SIGKILL
         # that only reaches the shell, and keeps its port.
         session_kwargs: dict[str, Any] = {} if _IS_WINDOWS else {"start_new_session": True}
-        return await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             *args,
             stdin=stdin,
             stdout=asyncio.subprocess.PIPE,
@@ -2545,6 +2551,10 @@ class ExecTool(Tool):
             **no_window_kwargs(),
             **session_kwargs,
         )
+        # Low CPU priority, and a stop before a runaway fills the machine's
+        # memory: under WSL that takes down the VM and every terminal with it.
+        MemoryGuard.watch(process)
+        return process
 
     @staticmethod
     async def _spawn_in_wsl(

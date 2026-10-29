@@ -137,6 +137,19 @@ class ConfirmedWorkflowBriefTest(unittest.TestCase):
         )
         self.assertTrue(meta.get(REQUIRES_TOOL_DELIVERY_METADATA_KEY))
 
+    def test_fast_typed_go_aheads_open_the_mission(self) -> None:
+        # "/forge vasy" and "/forge go" after "Je la demarre des que tu me dis
+        # go" were read as greetings: the agent asked again what to do.
+        offer = "La prochaine étape est le registre de scanners. Je la démarre dès que tu me dis \"go\"."
+        for focus, last in (
+            ("vasy", PENDING_QUESTION), ("gooo", PENDING_QUESTION), ("ok vazi", PENDING_QUESTION),
+            ("go", offer), ("vasy", offer),
+        ):
+            with self.subTest(focus=focus, last=last[:20]):
+                content, _meta = self._brief("/forge", focus, [{"role": "assistant", "content": last}])
+                self.assertIn(_CONFIRMED_FOCUS_CLAUSE, content)
+                self.assertNotIn(_UNCLEAR_FOCUS_CLAUSE, content)
+
     def test_a_cold_greeting_still_hits_the_intent_gate(self) -> None:
         content, meta = self._brief("/forge", "oui", [])
         self.assertIn(_UNCLEAR_FOCUS_CLAUSE, content)
@@ -168,3 +181,26 @@ class ConfirmedWorkflowBriefTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_go_after_a_proposed_next_step_confirms_that_step() -> None:
+    # No question mark: "/forge go" was read as a greeting and the agent asked
+    # "on attaque la suite, ou tu as autre chose en tete ?".
+    from navin.command.confirmation import confirmed_pending_question
+
+    history = [
+        {"role": "user", "content": "/forge demarre les dev"},
+        {"role": "assistant", "content": (
+            "Le socle est verifie : 71 passes, 0 echec.\n\n"
+            "La prochaine étape est le registre de scanners. Je la démarre dès que tu me dis \"go\"."
+        )},
+    ]
+    assert confirmed_pending_question("go", history).startswith("La prochaine étape est le registre")
+    assert confirmed_pending_question("ok vas y", history)
+
+
+def test_go_after_a_finished_report_is_not_a_confirmation() -> None:
+    from navin.command.confirmation import confirmed_pending_question
+
+    history = [{"role": "assistant", "content": "Tout est fait et vérifié : 30 tests verts."}]
+    assert confirmed_pending_question("go", history) == ""

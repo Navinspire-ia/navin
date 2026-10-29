@@ -18,6 +18,11 @@ from navin.session.manager import Session, SessionManager
 RECOVERY_KEY = "turn_recovery"
 # Automatic replays of an interrupted turn (about 4 minutes of backoff in all).
 MAX_RECOVERY_ATTEMPTS = 6
+# Set on a record once a restart replayed it. A turn cut again after that is
+# not replayed by the next start: a turn that takes the process (or the whole
+# machine, a runaway command under WSL) down would otherwise do it at every
+# start. The user resumes it with a message.
+REPLAYED_AFTER_RESTART = "replayed_after_restart"
 RECOVERY_ID_META = "_turn_recovery_id"
 TRACKED_REQUEST_META = "_turn_recovery_request"
 _CHANNELS = frozenset({"websocket", "cli"})
@@ -71,6 +76,10 @@ class TurnRecovery:
         # Interrupted requests a restart gave up on (too old or replayed too
         # often); the runtime closes them with a short note.
         self.abandoned: list[str] = []
+        # Of those, the ones already replayed once after an earlier restart.
+        self.cut_twice: set[str] = set()
+        # Found by this start's discover(): their next replay is the restart one.
+        self._restarted: set[str] = set()
 
     def begin(self, session: Session, msg: InboundMessage, *, persisted: bool = True) -> None:
         if msg.channel not in _CHANNELS or msg.metadata.get("heartbeat"):
@@ -201,10 +210,10 @@ class TurnRecovery:
         """Read once at startup; only this runtime's interactive channel resumes.
 
         ``external`` also resumes requests from non-interactive channels (chat
-        apps), which only the gateway serves. Every restart counts as a replay
-        attempt, so a request that keeps crashing the process stops after
-        ``MAX_RECOVERY_ATTEMPTS``; one idle for over ``MAX_RECOVERY_AGE_S`` is
-        dropped. Both end up in ``abandoned``.
+        apps), which only the gateway serves. A request is replayed after one
+        restart only: cut again after that replay, it may be what brings the
+        process down, so it waits for the user (``cut_twice``). One idle for
+        over ``MAX_RECOVERY_AGE_S`` is dropped. Both end up in ``abandoned``.
         """
         keys = [session_key] if session_key else [row["key"] for row in self.sessions.list_sessions()]
         recovered = []
@@ -222,12 +231,16 @@ class TurnRecovery:
                 external and origin not in _CHANNELS and _replayable_channel(origin)
             ):
                 continue
-            if self._expired(session, record, now) or not self._count_restart(record):
+            cut_twice = bool(record.get(REPLAYED_AFTER_RESTART))
+            if cut_twice or self._expired(session, record, now) or not self._count_restart(record):
                 self.finish(session)
                 self.sessions.save(session, fsync=True)
                 self.abandoned.append(key)
+                if cut_twice:
+                    self.cut_twice.add(key)
                 continue
             self.sessions.save(session, fsync=True)
+            self._restarted.add(key)
             due = record.get("next_attempt_at")
             self.due[key] = float(due) if isinstance(due, int | float) and math.isfinite(due) else now
             recovered.append(key)
@@ -286,6 +299,12 @@ class TurnRecovery:
                     media=list(request.get("media") or []),
                 )
                 record["request_persisted"] = True
+                self.sessions.save(session, fsync=True)
+            if key in self._restarted:
+                # Durable before the replay runs: if it takes the process down,
+                # the next start sees it and does not replay it a second time.
+                self._restarted.discard(key)
+                record[REPLAYED_AFTER_RESTART] = True
                 self.sessions.save(session, fsync=True)
             metadata.update({
                 RECOVERY_ID_META: record["id"],

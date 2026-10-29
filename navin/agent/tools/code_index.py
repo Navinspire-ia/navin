@@ -257,6 +257,27 @@ def _render_rank(result: Any, notes: tuple[str, ...], history_commits: int) -> s
     return "\n".join(lines)
 
 
+def _similar_paths(path: str, entries: Any, limit: int = 3) -> list[str]:
+    """Indexed files whose name is closest to ``path``, same folder first."""
+    import difflib
+    import posixpath
+
+    try:
+        known = list(entries or ())
+    except TypeError:
+        return []
+    folder, name = posixpath.split(path.replace("\\", "/").strip("/"))
+    siblings = [rel for rel in known if posixpath.dirname(rel) == folder]
+    for pool in (siblings, known):
+        by_name: dict[str, list[str]] = {}
+        for rel in pool:
+            by_name.setdefault(posixpath.basename(rel), []).append(rel)
+        close = difflib.get_close_matches(name, list(by_name), n=limit, cutoff=0.6)
+        if close:
+            return [rel for match in close for rel in by_name[match]][:limit]
+    return []
+
+
 def _truncate(items: list[str], limit: int, label: str) -> list[str]:
     if len(items) <= limit:
         return items
@@ -1035,7 +1056,14 @@ class CodeIndexTool(_FsTool):
         if candidates:
             listing = "\n".join(f"  {c}" for c in candidates[:10])
             return f"Ambiguous path '{cleaned}' - candidates:\n{listing}"
+        root = getattr(index, "root", None)
+        if isinstance(root, Path) and not (root / cleaned).exists():
+            # A guessed path: say it does not exist and offer the nearest real
+            # files, rather than three causes of which only one applies.
+            similar = _similar_paths(cleaned, getattr(index, "entries", None))
+            hint = f" Closest files: {', '.join(similar)}." if similar else ""
+            return ToolResult.error(f"Error: '{cleaned}' does not exist in this project.{hint}")
         return ToolResult.error(
-            f"Error: '{cleaned}' is not in the index. It may be ignored by git, "
-            "an unsupported language, or the path may be wrong."
+            f"Error: '{cleaned}' is not in the index. It may be ignored by git "
+            "or in an unsupported language."
         )

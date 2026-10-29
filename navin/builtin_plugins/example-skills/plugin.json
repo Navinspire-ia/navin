@@ -1,0 +1,34 @@
+{
+  "name": "example-skills",
+  "version": "1.0.0",
+  "description": "Creative and builder pack: generative art, Navin brand guidelines, canvas and poster design, ready-made themes, Slack GIFs, document co-authoring, internal communications, MCP server building, web app testing, single-file web artifacts and skill creation with an evaluation loop.",
+  "category": "design",
+  "skills": [
+    "algorithmic-art",
+    "brand-guidelines",
+    "canvas-design",
+    "theme-factory",
+    "slack-gif-creator",
+    "doc-coauthoring",
+    "internal-comms",
+    "mcp-builder",
+    "webapp-testing",
+    "web-artifacts-builder",
+    "frontend-design",
+    "skill-creator"
+  ],
+  "steps": [
+    {"step": "create generative art with p5.js and a seeded generator", "use": "skill:algorithmic-art"},
+    {"step": "apply the Navin brand (palette, type, logo rules) to any deliverable", "use": "skill:brand-guidelines"},
+    {"step": "design a poster, cover or single-image canvas", "use": "skill:canvas-design"},
+    {"step": "pick and apply a ready-made visual theme", "use": "skill:theme-factory"},
+    {"step": "make an animated GIF for Slack", "use": "skill:slack-gif-creator"},
+    {"step": "co-write a proposal, spec or decision document section by section", "use": "skill:doc-coauthoring"},
+    {"step": "write a status update, newsletter, FAQ or incident note", "use": "skill:internal-comms"},
+    {"step": "build and evaluate an MCP server", "use": "skill:mcp-builder"},
+    {"step": "test a local web app in a headless browser", "use": "skill:webapp-testing"},
+    {"step": "bundle a React + MUI artifact into one HTML file", "use": "skill:web-artifacts-builder"},
+    {"step": "give an interface a distinctive visual direction", "use": "skill:frontend-design"},
+    {"step": "create a skill and improve it with evaluations", "use": "skill:skill-creator"}
+  ]
+}

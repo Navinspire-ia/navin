@@ -636,7 +636,7 @@ _ASK_PHRASES = re.compile(
 _FAILURE_REPORT = re.compile(
     r"\bcould(?:n['’]?t| not)\b|\bcan(?:['’]?t|not)\b|\bunable to\b|\bfailed\b"
     r"|\bfailing\b|\bstill fails?\b|\bn['’]ai pas pu\b|\bpas pu\b|\bpas r[ée]ussi\b"
-    r"|\b[ée]chec\b|\b[ée]chou\w*|\bimpossible\b",
+    r"|\b[ée]checs?\b|\b[ée]chou\w*|\bimpossible\b",
     re.IGNORECASE,
 )
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+•]|\d+[.)]|[a-zA-Z][.)])\s+")
@@ -664,8 +664,20 @@ def asks_user(final_content: str | None) -> bool:
     return bool(_ASK_PHRASES.search(text))
 
 
+# "71 passes, 0 echec", "aucun echec", "0 failed", "no failures": a green
+# report that names the failure count. Read as a failure, it kept the plan
+# from advancing after a fully passing run.
+_NO_FAILURE = re.compile(
+    r"\b(?:0|z[ée]ro|aucune?|sans|pas d'|no|zero)\s*(?:[ée]checs?|[ée]chou\w*|failed|failures?|failing)\b"
+    r"|\b(?:[ée]checs?|failed|failures?)\s*:\s*0\b",
+    re.IGNORECASE,
+)
+
+
 def reports_failure(final_content: str | None) -> bool:
-    return isinstance(final_content, str) and bool(_FAILURE_REPORT.search(final_content))
+    if not isinstance(final_content, str):
+        return False
+    return bool(_FAILURE_REPORT.search(_NO_FAILURE.sub(" ", final_content)))
 
 
 def _event_failed(event: Mapping[str, Any]) -> bool:

@@ -160,6 +160,14 @@ def test_synchronized_output_is_forced_on_terminals_that_draw_frames_whole():
     assert forces_synchronized_output({"WT_SESSION": "x", "WSL_DISTRO_NAME": "Ubuntu"})
     assert forces_synchronized_output({"KITTY_WINDOW_ID": "1"})
     assert not forces_synchronized_output({"TERM": "xterm-256color"})
+    # A WSL shell that lost WT_SESSION (VS Code terminal, nested process, ssh)
+    # still draws through Windows Terminal or conhost: whole frames there too,
+    # or the chat shows every moved line twice.
+    assert forces_synchronized_output({"TERM": "xterm-256color", "WSL_DISTRO_NAME": "Ubuntu"})
+    assert forces_synchronized_output({"TERM": "xterm-256color", "WSLENV": "WT_SESSION:WT_PROFILE_ID:"})
+    assert forces_synchronized_output({"TERM_PROGRAM": "vscode"})
+    assert not forces_synchronized_output({"TERM_PROGRAM": "Apple_Terminal"})
+    assert not forces_synchronized_output({"WSL_DISTRO_NAME": "Ubuntu", "TMUX": "/tmp/tmux"})
     # tmux and screen redraw on their own: Textual's detection decides there.
     assert not forces_synchronized_output({"WT_SESSION": "x", "TMUX": "/tmp/tmux"})
     assert forces_synchronized_output({"NAVIN_SYNC_OUTPUT": "1"})
@@ -196,6 +204,8 @@ def test_windows_terminal_gets_whole_frames_without_a_decrqm_answer(tmp_path, mo
             await pilot.pause()
             assert app._sync_available
         monkeypatch.delenv("WT_SESSION")
+        for marker in ("WSL_DISTRO_NAME", "WSL_INTEROP", "WSLENV", "TERM_PROGRAM", "VTE_VERSION", "KONSOLE_VERSION"):
+            monkeypatch.delenv(marker, raising=False)
         plain = make_app(tmp_path)
         async with plain.run_test(size=(80, 20)) as pilot:
             plain.screen.refresh()

@@ -192,6 +192,7 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "collab",
         "ask_user",
         "request_credentials",
+        "connectors",
         "set_composer_mode",
         "create_goal",
         "update_goal",
@@ -253,7 +254,7 @@ _MODE_DENIED: dict[str, frozenset[str]] = {
     # and are gated per call by approval, not hidden.
     "reverse": _HEAVY_MEDIA_TOOLS
     | frozenset({"montage", "scrape", "music_generation", "generate_music"}),
-    "montage": frozenset({"scrape", "mobile", "security_scan"}),
+    "montage": frozenset({"scrape", "mobile", "security_scan", "security_audit"}),
 }
 
 

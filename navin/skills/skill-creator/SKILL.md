@@ -1,6 +1,7 @@
 ---
 name: skill-creator
-description: Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.
+description: Create or update AgentSkills with scripts, references and assets, then measure them with an evaluation loop (prompts with and without the skill, deterministic grading, benchmark, HTML report, description tuning). Use when the user asks to "create a skill", "package this skill", "improve the skill description" or "evaluate whether the skill helps". In French "crée un skill", "améliore la description du skill" or "évalue si le skill aide vraiment".
+metadata: {"navin":{"emoji":"\ud83e\udde9","category":"general"}}
 ---
 
 # Skill Creator
@@ -74,7 +75,7 @@ Every SKILL.md consists of:
 Executable code (Python/Bash/etc.) for tasks that require deterministic reliability or are repeatedly rewritten.
 
 - **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
-- **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
+- **Example**: a `rotate_pdf.py` script under `scripts/` for PDF rotation tasks
 - **Benefits**: Token efficient, deterministic, may be executed without loading into context
 - **Note**: Scripts may still need to be read by the agent for patching or environment-specific adjustments
 
@@ -83,7 +84,7 @@ Executable code (Python/Bash/etc.) for tasks that require deterministic reliabil
 Documentation and reference material intended to be loaded as needed into context to inform the agent's process and thinking.
 
 - **When to include**: For documentation that the agent should reference while working
-- **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
+- **Examples**: a `finance.md` file for financial schemas, an `mnda.md` file for a company NDA template, a `policies.md` file for company policies, an `api_docs.md` file for API specifications, all under `references/`
 - **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
 - **Benefits**: Keeps SKILL.md lean, loaded only when the agent determines it's needed
 - **Best practice**: If files are large (>10k words), include grep patterns in SKILL.md so the agent can use built-in search tools efficiently; mention when the default `grep(output_mode="files_with_matches")`, `grep(output_mode="count")`, `grep(fixed_strings=true)`, or pagination via `head_limit` / `offset` is the right first step
@@ -94,7 +95,7 @@ Documentation and reference material intended to be loaded as needed into contex
 Files not intended to be loaded into context, but rather used within the output the agent produces.
 
 - **When to include**: When the skill needs files that will be used in the final output
-- **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
+- **Examples**: a `logo.png` for brand assets, a `slides.pptx` PowerPoint template, a `frontend-template/` folder for HTML/React boilerplate, a `font.ttf` for typography, all under `assets/`
 - **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
 - **Benefits**: Separates output resources from documentation, enables the agent to use files without loading them into context
 
@@ -246,7 +247,7 @@ To turn concrete examples into an effective skill, analyze each example by:
 Example: When building a `pdf-editor` skill to handle queries like "Help me rotate this PDF," the analysis shows:
 
 1. Rotating a PDF requires re-writing the same code each time
-2. A `scripts/rotate_pdf.py` script would be helpful to store in the skill
+2. A `rotate_pdf.py` script under `scripts/` would be helpful to store in the skill
 
 Example: When designing a `frontend-webapp-builder` skill for queries like "Build me a todo app" or "Build me a dashboard to track my steps," the analysis shows:
 
@@ -256,7 +257,7 @@ Example: When designing a `frontend-webapp-builder` skill for queries like "Buil
 Example: When building a `big-query` skill to handle queries like "How many users have logged in today?" the analysis shows:
 
 1. Querying BigQuery requires re-discovering the table schemas and relationships each time
-2. A `references/schema.md` file documenting the table schemas would be helpful to store in the skill
+2. A `schema.md` file under `references/` documenting the table schemas would be helpful to store in the skill
 
 To establish the skill's contents, analyze each concrete example to create a list of the reusable resources to include: scripts, references, and assets.
 
@@ -301,8 +302,9 @@ When editing the (newly-generated or existing) skill, remember that the skill is
 
 Consult these helpful guides based on your skill's needs:
 
-- **Multi-step processes**: See references/workflows.md for sequential workflows and conditional logic
-- **Specific output formats or quality standards**: See references/output-patterns.md for template and example patterns
+- **Multi-step processes**: See `references/workflows.md` for sequential, conditional, gate-and-loop and checklist patterns
+- **Specific output formats or quality standards**: See `references/output-patterns.md` for template, example-driven and schema patterns
+- **Evaluation files**: See `references/eval-schema.md` for `evals.json`, run folders, grading, benchmark and trigger sets
 
 These files contain established best practices for effective skill design.
 
@@ -372,3 +374,18 @@ After testing the skill, users may request improvements. Often this happens righ
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+### Step 7: Measure with an evaluation loop
+
+Opinions about a skill are cheap; measurements are not. Once a skill is used for real work, write an `evals.json` next to it and run the loop below. No language model is called by the scripts: Navin runs the prompts itself (with `spawn`, one subagent per case) and the scripts grade, aggregate and report.
+
+1. **Write the cases.** `evals.json` holds a list of cases: `id`, `prompt` (the realistic user request), `assertions` (deterministic checks: `contains`, `regex`, `file_exists`, `json_path`, each with optional `negate`), optional `files` to stage. Ten cases is a good start, covering the main trigger phrases and two near-misses that should not trigger the skill. The full schema is in `references/eval-schema.md`.
+2. **Lint first.** `python3 navin/skills/skill-creator/scripts/quick_validate.py <skill-folder>` checks the frontmatter and the folder layout in a second; fix what it reports before spending runs on evaluation.
+3. **Prepare the prompts.** `python3 navin/skills/skill-creator/scripts/run_eval.py --skill <skill-folder> --evals evals.json --run-dir runs/<date>` writes, per case, the prompt with the skill body (`with_skill`) and without it (`without_skill`).
+4. **Run them.** Start one subagent per prompt file with `spawn`, save each answer under `runs/<date>/results/<case-id>/<config>/transcript.md` (plus produced files under `outputs/`).
+5. **Grade.** `run_eval.py --skill ... --evals evals.json --run-dir runs/<date> --results runs/<date>/results` applies the assertions and writes `grading.json`.
+6. **Aggregate and compare.** `python3 navin/skills/skill-creator/scripts/aggregate_benchmark.py runs/<date>/grading.json --primary with_skill --baseline without_skill` produces `benchmark.json` and `benchmark.md` with pass rates per configuration; several runs can be aggregated to follow progress over time.
+7. **Report.** `python3 navin/skills/skill-creator/scripts/generate_report.py --run runs/<date> --baseline runs/<previous>` writes a self-contained HTML report (Navin palette) to show with `present_artifact`.
+8. **Tune the description.** `python3 navin/skills/skill-creator/scripts/improve_description.py --skill <skill-folder> --triggers triggers.json` scores the current description against a list of `{query, should_trigger}` pairs (length, third person, quoted trigger phrases, coverage of the queries) and `--apply "..." --write` installs a better candidate once its score is higher.
+
+A skill is considered helpful when `with_skill` beats `without_skill` on the benchmark; when it does not, shorten the body, move detail to `references/` and sharpen the triggers before iterating again.

@@ -870,6 +870,9 @@ class SubagentManager:
         self._agent_sessions: dict[str, str] = {}
         self._agent_mailboxes: dict[str, deque[dict[str, Any]]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        # Tasks whose result is already out while their run is still tidying
+        # up: no longer owed to anyone (see pending_result_count, _wave_note).
+        self._announced_results: set[str] = set()
         # Delegation tree: level of each agent and who spawned it (nested spawn).
         self._spawn_depths: dict[str, int] = {}
         self._spawn_parents: dict[str, str] = {}
@@ -959,9 +962,34 @@ class SubagentManager:
             if isinstance(table, dict):
                 table.pop(task_id, None)
         self.forget_client_spawn(task_id)
+        announced = getattr(self, "_announced_results", None)
+        if isinstance(announced, set):
+            announced.discard(task_id)
         mailboxes = getattr(self, "_agent_mailboxes", None)
         unread = mailboxes.pop(task_id, None) if isinstance(mailboxes, dict) else None
         return unread or deque()
+
+    def _mark_announced(self, task_id: str) -> None:
+        """Record that a running *task_id* handed its result over (parent or spawner).
+
+        A re-announcement made after the task was forgotten records nothing:
+        the entry would never be cleared again.
+        """
+        if task_id not in (getattr(self, "_running_tasks", None) or {}):
+            return
+        announced = getattr(self, "_announced_results", None)
+        if not isinstance(announced, set):
+            announced = self._announced_results = set()
+        announced.add(task_id)
+
+    def _owes_result(self, task_id: str) -> bool:
+        """Started, not finished, and its result not handed over yet."""
+        task = self._running_tasks.get(task_id)
+        return (
+            task is not None
+            and not task.done()
+            and task_id not in getattr(self, "_announced_results", ())
+        )
 
     def _keep_task(self, task: asyncio.Future[Any]) -> None:
         tasks = getattr(self, "_background_tasks", None)
@@ -3118,16 +3146,17 @@ class SubagentManager:
                 "label": label, "task": task, "result": result, "origin": dict(origin),
                 "status": status, "origin_message_id": origin_message_id,
             }
+            self._mark_announced(task_id)
             spawner_box.append(message)
             return
 
-        announce_content = render_template(
+        announce_body = render_template(
             "agent/subagent_announce.md",
             label=label,
             status_text=status_text,
             task=task,
             result=result,
-        ) + self._wave_note(task_id)
+        )
 
         # Inject as system message to trigger main agent.
         # Use session_key_override to align with the main agent's effective
@@ -3140,17 +3169,22 @@ class SubagentManager:
         }
         if origin_message_id:
             metadata["origin_message_id"] = origin_message_id
+        if record:
+            await self._save_outcome(task_id, label, task, result, status, override)
+        # The wave is read when the result goes out, with no await before the
+        # publish. Read before the outcome write, two subagents ending together
+        # each saw the other as still running (its result was in flight): both
+        # said "Still running", the closing note never came, and the parent told
+        # the user that finished work was still going.
         msg = InboundMessage(
             channel="system",
             sender_id="subagent",
             chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
+            content=announce_body + self._wave_note(task_id),
             session_key_override=override,
             metadata=metadata,
         )
-
-        if record:
-            await self._save_outcome(task_id, label, task, result, status, override)
+        self._mark_announced(task_id)
         await self._publish_inbound(msg)
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
 
@@ -3169,7 +3203,7 @@ class SubagentManager:
         others = [
             self._task_statuses[tid].label if tid in self._task_statuses else tid
             for tid in sorted(self._session_tasks.get(session_key, set()))
-            if tid != task_id and tid in self._running_tasks and not self._running_tasks[tid].done()
+            if tid != task_id and self._owes_result(tid)
         ]
         queued = len(self._queued.get(session_key, ()))
         if others or queued:
@@ -3703,6 +3737,19 @@ class SubagentManager:
         waiting would strand work that was accepted.
         """
         return self._started_count(session_key) + len(self._queued.get(session_key, ()))
+
+    def pending_result_count(self, session_key: str) -> int:
+        """Subagent results this conversation is still owed.
+
+        Started and not reported yet, or still queued. Unlike
+        :meth:`get_running_count_by_session`, a subagent whose result is
+        already out does not count while its run tidies up: waiting on it is
+        waiting for nothing, and calling it "still running" is false.
+        """
+        started = sum(
+            1 for tid in self._session_tasks.get(session_key, set()) if self._owes_result(tid)
+        )
+        return started + len(self._queued.get(session_key, ()))
 
     def running_snapshot(self, session_key: str) -> list[dict[str, Any]]:
         """What is still running for *session_key*, as progress payloads.

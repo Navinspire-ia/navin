@@ -949,6 +949,32 @@ class PathHelpTest(unittest.TestCase):
         self.assertIn("not in the index", out)
         self.assertNotIn("Did you mean", out)
 
+    def _missing(self, path: str, entries: list[str]) -> str:
+        index = mock.Mock()
+        index.candidates_for.return_value = []
+        index.root = Path(self._tmp.name)
+        index.entries = dict.fromkeys(entries)
+        return self.tool._path_help(index, path)
+
+    def test_a_guessed_path_is_said_missing_with_the_nearest_files(self) -> None:
+        out = self._missing(
+            "navin/agent/turn_continuation.py",
+            ["navin/agent/turn_hooks.py", "navin/agent/turn_timing.py", "navin/cli/app.py"],
+        )
+        self.assertIn("does not exist in this project", out)
+        self.assertIn("navin/agent/turn_", out)
+        self.assertNotIn("ignored by git", out)
+
+    def test_a_missing_path_with_nothing_close_has_no_hint(self) -> None:
+        out = self._missing("zzz/qqq.py", ["navin/agent/loop.py"])
+        self.assertIn("does not exist in this project", out)
+        self.assertNotIn("Closest files", out)
+
+    def test_an_existing_file_outside_the_index_keeps_the_index_reasons(self) -> None:
+        (Path(self._tmp.name) / "notes.bin").write_bytes(b"x")
+        out = self._missing("notes.bin", [])
+        self.assertIn("not in the index", out)
+
 
 class ImportResolutionScopeTest(unittest.TestCase):
     """Hoisting the top-level prefix set must not change what resolves."""

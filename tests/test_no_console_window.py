@@ -58,15 +58,6 @@ _EXEMPT: dict[str, str] = {
         "this whole module exists to prevent - is pre-empted by the single "
         "hidden console _ensure_hidden_console allocates before the first spawn"
     ),
-    "navin/tui/open_terminal.py::_run_client": (
-        "the terminal client (wt.exe, tmux, osascript) that opens the tab the "
-        "user asked for; Launch.hidden decides per candidate, and the Windows "
-        "candidate is the one built hidden"
-    ),
-    "navin/tui/open_terminal.py::_run_detached": (
-        "starts the terminal emulator window itself (kitty, wezterm, xterm): "
-        "the window is the point, and these candidates exist only on POSIX"
-    ),
 }
 
 

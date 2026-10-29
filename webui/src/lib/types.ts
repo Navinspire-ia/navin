@@ -3107,11 +3107,11 @@ export type InboundEvent =
       error?: string;
     }
   | {
-      /** A tool needs a login or a git account: show the secure credential card. */
+      /** A tool needs a login, a git account or an app connector: show the secure credential card. */
       event: "credential_request";
       chat_id: string;
       request_id: string;
-      kind: "site_login" | "git_host" | string;
+      kind: "site_login" | "git_host" | "connector" | string;
       host: string;
       names?: string[];
       reason?: string;

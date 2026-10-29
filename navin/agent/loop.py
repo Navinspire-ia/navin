@@ -167,7 +167,9 @@ from navin.utils.llm_runtime import LLMRuntime
 from navin.utils.media_templates import media_template_context_provider
 from navin.utils.media_urls import expand_media_urls
 from navin.utils.runtime import (
+    is_go_ahead,
     session_empty_final_response_message,
+    started_background_work,
 )
 from navin.utils.video_frames import expand_video_attachments, is_video_path
 
@@ -2418,19 +2420,15 @@ class AgentLoop:
                 items.append(await _to_user_message(queued))
 
             # Block if nothing drained but sub-agents spawned in this dispatch
-            # are still running.  Keeps the runner loop alive so subsequent
+            # are still alive.  Keeps the runner loop alive so subsequent
             # completions are injected in-order rather than dispatched separately.
+            # The wait itself ends as soon as no result is owed any more.
             if (wait
                     and not items
                     and session is not None
                     and self.subagents.get_running_count_by_session(session.key) > 0):
-                try:
-                    msg = await asyncio.wait_for(pending_queue.get(), timeout=300)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Timeout waiting for sub-agent completion in session {}",
-                        session.key,
-                    )
+                msg = await self._wait_for_owed_result(session.key, pending_queue)
+                if msg is None:
                     return items
                 items.append(await _to_user_message(msg))
                 while len(items) < limit:
@@ -2441,6 +2439,18 @@ class AgentLoop:
                     items.append(await _to_user_message(queued))
 
             return items
+
+        def _background_idle(run_messages: list[dict[str, Any]]) -> bool:
+            """Background work was started here and none of it runs any more."""
+            if session is None:
+                return False
+            if pending_queue is not None and not pending_queue.empty():
+                return False  # a result is waiting for the next drain
+            if self._owed_subagent_results(session.key) > 0:
+                return False
+            if self._live_background_commands(session.key):
+                return False
+            return started_background_work(run_messages)
 
         active_session_key = session.key if session else session_key
         effective_scope = self.workspace_scopes.for_turn(
@@ -2614,11 +2624,13 @@ class AgentLoop:
                     message_metadata=metadata,
                 ),
                 goal_active_predicate=lambda: sustained_goal_active(session.metadata) if session is not None else False,
+                background_idle=_background_idle,
                 goal_continue_message=_goal_continue,
                 requires_tool_delivery=self._requires_tool_delivery(None, metadata),
                 scope_targets=tuple(named_targets(original_user_text, effective_scope.project_path)),
                 ui_terms=ui_terms(original_user_text),
                 explicit_asks=explicit_asks(original_user_text),
+                go_ahead=is_go_ahead(original_user_text),
                 requires_verify_before_done=self._requires_verify_before_done(
                     None, metadata
                 ),
@@ -2830,10 +2842,11 @@ class AgentLoop:
                 channel=recovery_channel, session_key=recovery_session_key, external=external,
             )
             abandoned, self.turn_recovery.abandoned = self.turn_recovery.abandoned, []
+            cut_twice, self.turn_recovery.cut_twice = self.turn_recovery.cut_twice, set()
             for key in abandoned:
                 session = self.sessions.get_or_create(key)
                 self._restore_runtime_checkpoint(session)
-                self._close_interrupted_turn(session)
+                self._close_interrupted_turn(session, cut_twice=key in cut_twice)
                 await self.sessions.save_async(session)
             for key in recovered:
                 session = self.sessions.get_or_create(key)
@@ -3408,6 +3421,64 @@ class AgentLoop:
 
         self._idle_check_task = asyncio.create_task(_check())
 
+    # The end-of-turn wait for a subagent result: how long at most, and how
+    # often it checks that a result is still owed at all.
+    _OWED_RESULT_WAIT_S = 300.0
+    _OWED_RESULT_POLL_S = 0.5
+
+    def _owed_subagent_results(self, session_key: str) -> int:
+        """Subagent results this conversation still waits for, queued spawns included."""
+        counter = getattr(self.subagents, "pending_result_count", None)
+        if not callable(counter):
+            counter = self.subagents.get_running_count_by_session
+        return counter(session_key)
+
+    async def _wait_for_owed_result(
+        self,
+        session_key: str,
+        queue: asyncio.Queue,
+        *,
+        timeout: float | None = None,
+        poll: float | None = None,
+    ) -> InboundMessage | None:
+        """Next follow-up while a subagent result is still owed, or None.
+
+        Rechecked at every poll. One blind five-minute wait used to start
+        whenever a subagent task was still alive, even when its result had
+        already reached the model (an earlier drain took it): the turn then
+        sat for nothing. Once nothing is owed, one more poll is still given to
+        a result in flight from the bus to this queue, so none is missed.
+        """
+        deadline = time.monotonic() + (self._OWED_RESULT_WAIT_S if timeout is None else timeout)
+        step = self._OWED_RESULT_POLL_S if poll is None else poll
+        idle_polls = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "Timeout waiting for sub-agent completion in session {}", session_key,
+                )
+                return None
+            try:
+                return await asyncio.wait_for(queue.get(), timeout=min(step, remaining))
+            except asyncio.TimeoutError:
+                if queue.empty() and self._owed_subagent_results(session_key) <= 0:
+                    idle_polls += 1
+                    if idle_polls >= 2:
+                        return None
+                else:
+                    idle_polls = 0
+
+    @staticmethod
+    def _live_background_commands(session_key: str) -> bool:
+        """A background command of this conversation (or of no known one) still runs."""
+        from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
+
+        return any(
+            not row.owner_session_key or row.owner_session_key == session_key
+            for row in DEFAULT_EXEC_SESSION_MANAGER.running_snapshot()
+        )
+
     def _busy_session_keys(self) -> set[str]:
         """Sessions that are not idle: a turn, its lock or a subagent is live.
 
@@ -3479,12 +3550,25 @@ class AgentLoop:
         if is_subagent and self._persist_subagent_followup(session, msg):
             logger.debug("Subagent result persisted for session {}", key)
             await self.sessions.save_async(session)
-        current_role = "assistant" if is_subagent else "user"
+        elif is_subagent and self._subagent_result_already_answered(session, msg):
+            # A result the model already answered (a leftover re-published
+            # after its turn, a second announcement). A turn on nothing new
+            # made the model repeat its previous answer to the user.
+            logger.info(
+                "Subagent result {} already answered in session {}; no new turn",
+                (msg.metadata or {}).get("subagent_task_id") or "(no id)", key,
+            )
+            return None
+        # The result replays as the last user turn (Session.get_history): a
+        # trailing assistant turn is dropped by every provider, so the model
+        # would never have seen it.
+        current_role = "user"
         _hist_kwargs: dict[str, Any] = {
             "max_messages": replay_max_messages_for_context(runtime.context_window_tokens),
             "max_tokens": self._replay_token_budget(runtime),
             "extend_to_user": is_subagent,
             "with_media_refs": True,
+            "subagent_results_as_input": True,
         }
         history = replay_history_images(
             session.get_history(**_hist_kwargs), model=runtime.model
@@ -4001,6 +4085,7 @@ class AgentLoop:
             "max_tokens": self._replay_token_budget(ctx.runtime),
             "extend_to_user": False,
             "with_media_refs": True,
+            "subagent_results_as_input": True,
         }
         ctx.history = replay_history_images(
             ctx.session.get_history(**_hist_kwargs), model=ctx.runtime.model
@@ -4342,6 +4427,32 @@ class AgentLoop:
         )
         return True
 
+    @staticmethod
+    def _subagent_result_already_answered(session: Session, msg: InboundMessage) -> bool:
+        """True when a subagent result brings nothing new to the model.
+
+        Empty, or already in the history (in either persisted shape) with a
+        model answer after it. A stored result with no answer yet still gets
+        its turn: the model has not seen it.
+        """
+        if not msg.content:
+            return True
+        task_id = msg.metadata.get("subagent_task_id") if isinstance(msg.metadata, dict) else None
+        if not task_id:
+            return False
+        messages = session.messages
+        for index in range(len(messages) - 1, -1, -1):
+            row = messages[index]
+            if row.get("injected_event") != "subagent_result" or row.get("subagent_task_id") != task_id:
+                continue
+            return any(
+                later.get("role") == "assistant"
+                and later.get("injected_event") != "subagent_result"
+                and (later.get("content") or later.get("tool_calls"))
+                for later in messages[index + 1:]
+            )
+        return False
+
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata.
 
@@ -4430,14 +4541,32 @@ class AgentLoop:
 
     _INTERRUPTED_TURN_NOTE = "This request was interrupted by a restart before it finished."
     _STOPPED_TURN_NOTE = "Stopped before a reply was produced."
+    _CUT_TWICE_TURN_NOTE = (
+        "This task stopped twice in a row, so it was not resumed automatically. "
+        "Send a message to continue it."
+    )
 
-    def _close_interrupted_turn(self, session: Session) -> None:
-        """Answer a request that will not be resumed with a short neutral note."""
+    def _close_interrupted_turn(self, session: Session, *, cut_twice: bool = False) -> None:
+        """Answer a request that will not be resumed with a short neutral note.
+
+        ``cut_twice``: the turn was already resumed once after a restart and
+        cut again. The note is always written then, even after tool results,
+        so the user sees why the work did not pick up on its own.
+        """
         from datetime import datetime
 
         marker = session.metadata.get(self._PENDING_USER_TURN_KEY)
         stopped = isinstance(marker, dict) and bool(marker.get("stopped"))
-        if session.messages and session.messages[-1].get("role") == "user":
+        if cut_twice and session.messages and not stopped:
+            session.messages.append(
+                {
+                    "role": "assistant",
+                    "content": self._CUT_TWICE_TURN_NOTE,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            session.updated_at = datetime.now()
+        elif session.messages and session.messages[-1].get("role") == "user":
             session.messages.append(
                 {
                     "role": "assistant",

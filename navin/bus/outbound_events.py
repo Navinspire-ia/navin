@@ -403,10 +403,11 @@ class ChoiceClosedEvent(OutboundEvent):
 
 @dataclass(frozen=True)
 class CredentialRequestedEvent(OutboundEvent):
-    """A tool paused until the user saves a login or connects a git account.
+    """A tool paused until the user saves a login, connects a git account or an app.
 
-    Carries what is needed, never a value: ``kind`` (site_login | git_host),
-    the host, the secret names wanted (site_login) and the agent's reason.
+    Carries what is needed, never a value: ``kind`` (site_login | git_host |
+    connector), the host (a connector id such as ``slack`` for connector), the
+    secret names wanted (site_login) and the agent's reason.
     """
 
     request_id: str

@@ -138,11 +138,33 @@ describe("Collapsed rail launchers", () => {
     expect(otherItems).toContain('key: "evolve"');
   });
 
-  it("keeps the layout for Team, Cyber and Reverse: the action lives in the chat or Settings", () => {
-    for (const key of ['key: "team"', 'key: "cyber"', 'key: "reverse"']) {
+  it("keeps the layout for Team, Cyber, Reverse and Channels: the action lives in the chat or Settings", () => {
+    for (const key of ['key: "team"', 'key: "cyber"', 'key: "reverse"', 'key: "channels"']) {
+      expect(rail.indexOf(key), key).toBeGreaterThanOrEqual(0);
       const entry = rail.slice(rail.indexOf(key), rail.indexOf("go: () =>", rail.indexOf(key)));
       expect(entry, key).toContain("keepLayout: true");
     }
+  });
+
+  it("lists Channels right under Browser and opens Settings > Channels", () => {
+    const browser = rail.indexOf('key: "browser"');
+    const channels = rail.indexOf('key: "channels"');
+    const board = rail.indexOf('key: "board"');
+    expect(browser).toBeGreaterThan(0);
+    expect(channels).toBeGreaterThan(browser);
+    expect(board).toBeGreaterThan(channels);
+    // Nothing else sits between Browser and Channels.
+    expect(rail.slice(browser + 'key: "browser"'.length, channels)).not.toContain('key: "');
+    const entry = rail.slice(channels, board);
+    expect(entry).toContain('tx("dev.channelsTab", "Channels")');
+    // No NEW pill in front of an app button.
+    expect(entry).not.toContain("badge:");
+    expect(entry).toContain('go: () => openSettingsSection("channels")');
+    // App routes the event to that section; an unknown key would land on Overview.
+    const app = readFileSync(resolve(__dirname, "../../App.tsx"), "utf8");
+    const start = app.indexOf("const SETTINGS_SECTION_KEYS");
+    expect(start).toBeGreaterThan(0);
+    expect(app.slice(start, app.indexOf("];", start))).toContain('"channels"');
   });
 
   it("only restores the workbench for entries that render in it", () => {

@@ -217,32 +217,6 @@ class ProjectsPanelTests(unittest.IsolatedAsyncioTestCase):
 
         await self._run(body)
 
-    async def test_every_session_row_has_an_open_in_terminal_arrow_before_its_menu(self) -> None:
-        from navin.tui.projects_panel import TERMINAL_MARK, TERMINAL_TIP
-
-        async def body(app, pilot, panel) -> None:
-            panel.set_data(_projects(3), "/work/alpha", "cli:1")
-            await self._settle(pilot)
-            arrows = list(panel.query(".proj-terminal"))
-            self.assertEqual(len(arrows), 3)
-            for arrow in arrows:
-                self.assertEqual(arrow.kind, "terminal")
-                self.assertEqual(arrow.path, "/work/alpha")
-                self.assertIn(TERMINAL_MARK, _text(arrow))
-                self.assertEqual(arrow.tooltip, TERMINAL_TIP)
-                # the arrow sits right before the menu dots of the same row
-                row = list(arrow.parent.children)
-                self.assertEqual(row.index(arrow) + 1, len(row) - 1)
-                self.assertEqual(row[-1].kind, "menu")
-                self.assertEqual(row[-1].key, arrow.key)
-            self.assertEqual({a.key for a in arrows}, {"cli:0", "cli:1", "cli:2"})
-            # the click reaches the app with the session it belongs to
-            arrows[1].post_message(panel.Hit("terminal", arrows[1].path, arrows[1].key))
-            await self._settle(pilot)
-            self.assertIn(("terminal", "/work/alpha", arrows[1].key), app.hits)
-
-        await self._run(body)
-
     async def test_clicking_a_project_folds_and_unfolds_its_sessions(self) -> None:
         async def body(app, pilot, panel) -> None:
             panel.set_data(_projects(5), "/work/alpha", "cli:1")
