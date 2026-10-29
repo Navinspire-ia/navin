@@ -38,6 +38,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _SKILL_LIBRARIES = (
     "reportlab",
     "pdfplumber",
+    # PyMuPDF: the skills import pymupdf; fitz is its legacy name, still
+    # common in scripts the agent writes.
+    "pymupdf",
     "fitz",
     "yt_dlp",
     "playwright",

@@ -47,8 +47,8 @@ A field stores a value (`/V`) and, optionally, an appearance stream (`/AP`) that
 ## Flattening with PyMuPDF
 
 ```python
-import fitz
-doc = fitz.open("filled.pdf")
+import pymupdf
+doc = pymupdf.open("filled.pdf")
 for page in doc:
     for widget in page.widgets():
         widget.update()                 # rebuild the appearance from the value

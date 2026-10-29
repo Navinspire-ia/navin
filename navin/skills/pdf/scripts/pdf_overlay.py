@@ -69,15 +69,15 @@ def overlay(path: Path, items: list[dict], out: Path, font: str, size: float) ->
 
 
 def grid(path: Path, page_no: int, step: int, dpi: int, out_dir: Path) -> dict:
-    import fitz  # PyMuPDF
+    import pymupdf
     from PIL import Image, ImageDraw
 
-    doc = fitz.open(str(path))
+    doc = pymupdf.open(str(path))
     if not 1 <= page_no <= doc.page_count:
         raise ValueError(f"page {page_no} out of range (1..{doc.page_count})")
     page = doc[page_no - 1]
     zoom = dpi / 72
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     draw = ImageDraw.Draw(img)
     height_pt = page.rect.height

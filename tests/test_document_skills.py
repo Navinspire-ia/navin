@@ -382,9 +382,9 @@ def test_pdf_forms_fields_fill_flatten(sample_pdf: Path, tmp_path: Path):
     flat = tmp_path / "flat.pdf"
     report = _json_out(_run(_script("pdf", "pdf_forms.py"), "fill", str(sample_pdf), "--data", str(data), "--out", str(flat), "--flatten"))
     assert report["flattened"] is True
-    import fitz
+    import pymupdf
 
-    with fitz.open(flat) as doc:
+    with pymupdf.open(flat) as doc:
         assert "Jane Doe" in doc[0].get_text()
         assert list(doc[0].widgets()) == []
 
@@ -414,9 +414,9 @@ def test_pdf_overlay_text_and_grid(sample_pdf: Path, tmp_path: Path):
     out = tmp_path / "overlay.pdf"
     report = _json_out(_run(_script("pdf", "pdf_overlay.py"), str(sample_pdf), "--text", "Stamped by Navin", "--x", "100", "--y", "500", "--page", "2", "--out", str(out)))
     assert report["items_written"] == 1
-    import fitz
+    import pymupdf
 
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert "Stamped by Navin" in doc[1].get_text() and "Stamped by Navin" not in doc[0].get_text()
     grid_dir = tmp_path / "grid"
     report = _json_out(_run(_script("pdf", "pdf_overlay.py"), str(sample_pdf), "--grid", "--step", "100", "--dpi", "40", "--out-dir", str(grid_dir)))

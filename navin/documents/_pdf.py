@@ -96,17 +96,19 @@ def _render_with_pymupdf(
     pdf: Path, out_dir: Path, numbers: list[int], prefix: str, max_edge: int
 ) -> list[Path] | None:
     try:
-        import fitz  # type: ignore[import-not-found]
+        # The module name since PyMuPDF 1.24: "import fitz" prints a
+        # deprecation notice on stdout, which garbles a terminal UI.
+        import pymupdf
     except Exception:
         return None
     written: list[Path] = []
     try:
-        with fitz.open(str(pdf)) as document:
+        with pymupdf.open(str(pdf)) as document:
             for number in numbers:
                 page = document[number - 1]
                 longest = max(page.rect.width, page.rect.height) or 1
                 zoom = min(max_edge / longest, 4.0)
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
                 target = _target(out_dir, prefix, number)
                 pixmap.save(str(target))
                 written.append(target)
@@ -184,7 +186,7 @@ _RENDERERS = (_render_with_pymupdf, _render_with_pdfium, _render_with_pdftoppm)
 
 def renderer_available() -> bool:
     """Whether at least one of the three PDF rasterizers is installed."""
-    for module in ("fitz", "pypdfium2"):
+    for module in ("pymupdf", "pypdfium2"):
         try:
             __import__(module)
             return True

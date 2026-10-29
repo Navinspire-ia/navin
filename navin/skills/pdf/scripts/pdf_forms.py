@@ -121,9 +121,9 @@ def fill(path: Path, data: dict, out: Path, flatten: bool) -> dict:
 
 def _flatten(path: Path) -> None:
     """Bake widget appearances into the page content so nothing stays editable."""
-    import fitz  # PyMuPDF
+    import pymupdf
 
-    doc = fitz.open(str(path))
+    doc = pymupdf.open(str(path))
     for page in doc:
         for widget in page.widgets():
             widget.update()

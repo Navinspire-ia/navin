@@ -98,12 +98,14 @@ def _target(out_dir: Path, page_number: int) -> Path:
 
 def _render_with_pymupdf(pdf: Path, out_dir: Path, page_numbers: list[int]) -> list[Path] | None:
     try:
-        import fitz  # type: ignore[import-not-found]
+        # The module name since PyMuPDF 1.24: "import fitz" prints a
+        # deprecation notice on stdout, which garbles a terminal UI.
+        import pymupdf
     except Exception:
         return None
     written: list[Path] = []
     try:
-        with fitz.open(str(pdf)) as doc:
+        with pymupdf.open(str(pdf)) as doc:
             for number in page_numbers:
                 target = _target(out_dir, number)
                 if target.is_file() and target.stat().st_size > 0:
@@ -112,7 +114,7 @@ def _render_with_pymupdf(pdf: Path, out_dir: Path, page_numbers: list[int]) -> l
                 page = doc[number - 1]
                 longest = max(page.rect.width, page.rect.height) or 1
                 zoom = min(PAGE_MAX_EDGE / longest, 4.0)
-                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
                 pix.save(str(target))
                 written.append(target)
     except Exception as exc:

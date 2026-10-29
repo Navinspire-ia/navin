@@ -126,15 +126,15 @@ def rotate(path: Path, degrees: int, pages: str | None, out: Path) -> dict:
 
 
 def render(path: Path, pages: str | None, dpi: int, out_dir: Path) -> dict:
-    import fitz  # PyMuPDF
+    import pymupdf
 
-    doc = fitz.open(str(path))
+    doc = pymupdf.open(str(path))
     selected = parse_pages(pages, doc.page_count)
     out_dir.mkdir(parents=True, exist_ok=True)
     zoom = dpi / 72
     outputs = []
     for number in selected:
-        pix = doc[number - 1].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+        pix = doc[number - 1].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
         target = out_dir / f"{path.stem}-p{number:03d}.png"
         pix.save(str(target))
         outputs.append({"page": number, "file": str(target), "width": pix.width, "height": pix.height})

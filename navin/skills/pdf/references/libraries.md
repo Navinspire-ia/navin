@@ -4,10 +4,10 @@
 |---------|--------|---------|-----------|
 | pypdf | `from pypdf import PdfReader, PdfWriter` | Page-level operations (merge, split, rotate, crop), metadata, encryption, AcroForm fields, bookmarks | Text extraction with layout, rendering |
 | pdfplumber | `import pdfplumber` | Text with positions, tables, words and characters with coordinates, cropping regions | Writing PDFs, large files (slow on hundreds of pages) |
-| PyMuPDF | `import fitz` | Fast text, rendering pages to PNG, images, annotations, flattening forms, redaction, searching | Table detection quality lower than pdfplumber on messy layouts |
+| PyMuPDF | `import pymupdf` | Fast text, rendering pages to PNG, images, annotations, flattening forms, redaction, searching | Table detection quality lower than pdfplumber on messy layouts |
 | reportlab | `from reportlab.pdfgen import canvas` | Drawing new content: overlays, stamps, simple generated pages, AcroForm widgets | Reading anything |
 
-All four are bundled; do not install anything before trying.
+All four are bundled; do not install anything before trying. Import PyMuPDF as `pymupdf`: the old name `fitz` still works but prints a deprecation line on stdout, which breaks a script that answers in JSON.
 
 ## Text
 
@@ -21,8 +21,8 @@ with pdfplumber.open("file.pdf") as pdf:
 ```
 
 ```python
-import fitz
-doc = fitz.open("file.pdf")
+import pymupdf
+doc = pymupdf.open("file.pdf")
 text = doc[0].get_text("text")                    # fast plain text
 blocks = doc[0].get_text("dict")["blocks"]        # spans with font, size, bbox
 hits = doc[0].search_for("Total")                  # list of rectangles
@@ -44,11 +44,11 @@ Clean cells (`None` to "", strip whitespace, join wrapped lines) before loading 
 ## Images
 
 ```python
-doc = fitz.open("file.pdf")
+doc = pymupdf.open("file.pdf")
 for index, img in enumerate(doc[0].get_images(full=True)):
-    pix = fitz.Pixmap(doc, img[0])
+    pix = pymupdf.Pixmap(doc, img[0])
     if pix.n > 4:
-        pix = fitz.Pixmap(fitz.csRGB, pix)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
     pix.save(f"image-{index}.png")
 ```
 
@@ -115,7 +115,7 @@ Read an existing outline with `reader.outline` (nested lists of destinations).
 ## Redaction
 
 ```python
-doc = fitz.open("file.pdf")
+doc = pymupdf.open("file.pdf")
 for page in doc:
     for rect in page.search_for("123-45-6789"):
         page.add_redact_annot(rect, fill=(0.09, 0.09, 0.1))

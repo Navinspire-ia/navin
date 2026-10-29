@@ -94,14 +94,14 @@ def to_pdf(path: Path, work: Path, timeout: int) -> Path:
 
 
 def contact_sheet(pdf: Path, out: Path, cols: int, dpi: int, per_slide: bool) -> dict:
-    import fitz  # PyMuPDF
+    import pymupdf
     from PIL import Image, ImageDraw
 
-    doc = fitz.open(str(pdf))
+    doc = pymupdf.open(str(pdf))
     zoom = dpi / 72
     thumbs = []
     for page_index, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         if per_slide:
             img.save(out.parent / f"{out.stem}-{page_index:02d}.png")

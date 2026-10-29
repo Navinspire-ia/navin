@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from navin.agent.hook import AgentHook
 from navin.agent.loop import AgentLoop
 from navin.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -307,25 +308,11 @@ def test_the_journal_card_declined_lets_the_agent_go_on_without_the_app(
 # -- CLI widget -----------------------------------------------------------------------
 
 
-class NoopHook:
-    """Stand-in for the usage and cron hooks."""
-
-    accounts_for_usage = False
+class NoopHook(AgentHook):
+    """Stand-in for the usage and cron hooks: every lifecycle step does nothing."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    async def before_run(self, context: Any) -> None:
-        pass
-
-    async def after_run(self, context: Any) -> None:
-        pass
-
-    async def on_error(self, context: Any) -> None:
-        pass
-
-    async def on_finally(self, context: Any) -> None:
-        pass
+        super().__init__()
 
 
 def test_the_cli_widget_connects_the_app_the_agent_asked_for_then_it_is_called(
@@ -376,10 +363,14 @@ def test_the_cli_widget_connects_the_app_the_agent_asked_for_then_it_is_called(
                     await tui.submit_text("Cherche navin avec tavily")
 
                     def card_ready() -> bool:
-                        # The screen is pushed first and composed on the next frames.
-                        return isinstance(tui.screen, CredentialScreen) and len(tui.screen.query("#conn-apiKey")) > 0
+                        # The screen is pushed first; its fields and buttons mount on the next
+                        # frames, later on a slow runner.
+                        screen = tui.screen
+                        return isinstance(screen, CredentialScreen) and all(
+                            len(screen.query(selector)) > 0 for selector in ("#conn-apiKey", "#cred-save")
+                        )
 
-                    await _wait_for(card_ready, "the terminal card and its key field")
+                    await _wait_for(card_ready, "the terminal card, its key field and its Connect button")
                     screen = tui.screen
                     assert (screen.kind, screen.host, screen.reason) == ("connector", "tavily", "Chercher navin avec Tavily")
                     key = screen.query_one("#conn-apiKey", Input)

@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"📄","category":"documents"}}
 
 ## Overview
 
-This skill handles PDFs the user already has: contracts to read, forms to fill, reports to split, scans to rotate, pages to render for review. Four libraries ship with Navin and each has a job: pdfplumber for text and tables with positions, pypdf for page-level operations and form fields, PyMuPDF (`fitz`) for rendering, flattening and fast text, reportlab for drawing new content. `references/libraries.md` explains when to use which.
+This skill handles PDFs the user already has: contracts to read, forms to fill, reports to split, scans to rotate, pages to render for review. Four libraries ship with Navin and each has a job: pdfplumber for text and tables with positions, pypdf for page-level operations and form fields, PyMuPDF (`import pymupdf`) for rendering, flattening and fast text, reportlab for drawing new content. `references/libraries.md` explains when to use which.
 
 Pick the sibling skill when the job is different:
 
