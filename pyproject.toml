@@ -102,6 +102,9 @@ documents = [
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
+    # The pdf skill renders, overlays and flattens forms with PyMuPDF (the
+    # frozen builds bundle it too). 1.x keeps the legacy fitz API, see dev.
+    "pymupdf>=1.25.0,<2.0.0",
 ]
 dev-tools = [
     # Python quality tooling for the `lint`, `test_run` and `verify` tools, plus
