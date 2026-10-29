@@ -24,11 +24,55 @@ them, which depends on which side of the boundary it runs on;
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from navin.utils import wsl
+from navin.utils.proc import no_window_kwargs
+
+# macOS ships /usr/bin/git as a shim: without the Command Line Tools it opens
+# the "install the developer tools" dialog and exits 1 instead of answering,
+# on every single call. One `xcode-select -p` tells; a missing toolchain is
+# asked again only now and then (the user may install it mid-session).
+_CLT_RECHECK_S = 120.0
+_CLT_PROBE_TIMEOUT_S = 5.0
+_clt_lock = threading.Lock()
+_clt_state: tuple[float, bool] | None = None
+
+
+def _apple_shim(git: str) -> bool:
+    return git == "/usr/bin/git"
+
+
+def developer_tools_present(*, refresh: bool = False) -> bool:
+    """Whether ``xcode-select -p`` names a developer directory (macOS only)."""
+    global _clt_state
+    now = time.monotonic()
+    with _clt_lock:
+        state = _clt_state
+    if state is not None and not refresh and (state[1] or now - state[0] < _CLT_RECHECK_S):
+        return state[1]
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv
+            ["xcode-select", "-p"], capture_output=True, timeout=_CLT_PROBE_TIMEOUT_S, check=False,
+            **no_window_kwargs(),
+        )
+        present = completed.returncode == 0 and bool(completed.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        present = False
+    with _clt_lock:
+        _clt_state = (now, present)
+    return present
+
+
+def _usable_git(git: str | None, system: str) -> str | None:
+    if git is None or system != "darwin" or not _apple_shim(git):
+        return git
+    return git if developer_tools_present() else None
 
 
 @dataclass(frozen=True)
@@ -74,6 +118,7 @@ def git_route(root: Path | str, *, platform: str | None = None) -> GitRoute | No
 
         augment_path_for_user_tools()
         git = shutil.which("git")
+    git = _usable_git(git, system)
     if git is None:
         return None
     return GitRoute(argv=(git, "-C", root_str), root=root_str)

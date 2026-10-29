@@ -62,12 +62,14 @@ def _runtime_prompt_heads() -> tuple[str, ...]:
         heads.append("Exploration check:")
     try:
         from navin.session.turn_continuation import (
+            _NO_PROGRESS_RESUME_PROMPT,
             _board_continuation_prompt,
             _turn_budget_continuation_prompt,
         )
 
         heads.append(_board_continuation_prompt()[:60])
         heads.append(_turn_budget_continuation_prompt()[:60])
+        heads.append(_NO_PROGRESS_RESUME_PROMPT[:60])
     except Exception:  # noqa: BLE001
         pass
     heads.append("You were reminded ")

@@ -10,6 +10,7 @@ import {
   ActivityJournal,
   ActivityPhaseBar,
   JournalNowLine,
+  JournalRow,
 } from "@/components/thread/activity/ActivityJournal";
 import {
   buildJournalTimeline,
@@ -379,5 +380,85 @@ describe("activity journal V3 controls", () => {
     expect(html).toContain('data-testid="activity-verbosity"');
     expect(html).toMatch(/data-testid="activity-verbosity-standard"[^>]*aria-checked="true"|aria-checked="true"[^>]*data-testid="activity-verbosity-standard"/);
     expect(html).not.toContain('data-testid="activity-journal-virtual"');
+  });
+});
+
+describe("index and graph tools", () => {
+  const indexStep = (name: string, status: ActivityJournalStatus, output = ""): JournalStep => ({
+    kind: "tool", name, args: '{"action":"semantic","query":"loop stall"}', status, output,
+  });
+  const BUILDING =
+    "Semantic index is building in the background (4612 file(s) to embed). Meanwhile use action=search "
+    + "for symbol names or the grep tool for exact text, and retry action=semantic shortly.";
+
+  it("colour the row in the index tone and spin the orbit next to the verb while they run", () => {
+    const live = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([indexStep("code_index", "running")], { streaming: true }),
+        streaming: true,
+      }),
+    );
+    expect(live).toContain('data-tone="index"');
+    expect(live).toContain("text-[hsl(var(--tone-index))]");
+    expect(live).toContain('data-testid="activity-index-mark"');
+    expect(live).toContain('data-live="true"');
+    expect(live).toContain("animate-spin");
+
+    const done = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([indexStep("code_index", "done", "3 hits")], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    // The mark stays, in colour, once the step is done; only the spin stops.
+    expect(done).toContain('data-testid="activity-index-mark"');
+    expect(done).toContain("text-[hsl(var(--tone-index))]");
+    expect(done).not.toContain("animate-spin");
+    // Like Explored, an index row opens by itself: its query and answer are the point.
+    expect(done).toContain('aria-expanded="true"');
+    expect(done).toContain('data-testid="activity-journal-detail"');
+  });
+
+  it("the graph tool shares the tone with its own network mark", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([{ kind: "tool", name: "metagraph", args: '{"action":"impact"}', status: "done" }], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    expect(html).toContain('data-tone="index"');
+    expect(html).toContain('data-testid="activity-index-mark"');
+    expect(html).toContain("lucide-network");
+  });
+
+  it("highlights the 'index is building' notice instead of muting it as tool output", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([indexStep("code_index", "done", BUILDING)], { streaming: true }),
+        streaming: true,
+      }),
+    );
+    // The row is open (index rows open like Explored): the notice heads its details.
+    expect(html).toContain("Semantic index is building in the background (4612 file(s) to embed).");
+    expect(html).toContain("ring-[hsl(var(--tone-index))]/30");
+    expect(html).toContain('data-testid="activity-journal-detail"');
+    expect(html).not.toContain("text-foreground/50\">Semantic index");
+
+    // Folded (details closed), the notice is the row's preview line.
+    const [entry] = buildJournalTimeline([indexStep("code_index", "done", BUILDING)], { streaming: false });
+    const folded = renderToStaticMarkup(
+      createElement(JournalRow, { entry: { ...entry, output: BUILDING, detail: undefined }, streaming: false, plain: true }),
+    );
+    expect(folded).toContain('data-testid="activity-journal-row"');
+
+    // An ordinary result keeps the muted output.
+    const plain = renderToStaticMarkup(
+      createElement(ActivityJournal, {
+        entries: buildJournalTimeline([indexStep("code_index", "done", "3 hits in navin/agent/loop.py")], { streaming: false }),
+        streaming: false,
+      }),
+    );
+    expect(plain).not.toContain('data-testid="activity-index-notice"');
+    expect(plain).not.toContain("ring-[hsl(var(--tone-index))]/30");
   });
 });

@@ -26,6 +26,7 @@ import asyncio
 import os
 import re
 import shutil
+import subprocess
 from collections.abc import Sequence
 from contextvars import ContextVar
 from pathlib import Path
@@ -33,6 +34,7 @@ from typing import Any
 
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.filesystem import _FsTool
+from navin.quality import wsl_route
 from navin.utils import git_credentials, wsl
 from navin.utils.git_argv import git_route
 from navin.utils.git_state import RepoState, clear_cache, repo_state
@@ -200,13 +202,20 @@ async def _git(
     timeout: float = _TIMEOUT,
 ) -> tuple[int, str, str]:
     """Run one git command, never through a shell and never paging."""
-    route = git_route(cwd)
+    # Resolving the route walks PATH and, on Windows, may ask `wsl -l -q`
+    # (10 s when the service is cold): never inline on the shared loop.
+    route = await asyncio.to_thread(git_route, cwd)
     if route is None:
         from navin.utils.path_env import git_missing_hint
 
         hint = git_missing_hint()
         return 127, "", "git is not installed or not on PATH" + (f". {hint}" if hint else "")
     env = _git_env()
+    refused = wsl_route.refusal(route.argv)
+    if refused is not None:
+        # WSL confirmed down for this distribution: say so now rather than
+        # hang for the timeout like every other git call did before.
+        return 124, "", refused
     if git_credentials.is_network_command(args):
         env = await _network_env(cwd, args, env, wsl_route=bool(route.distro))
     if route.distro:
@@ -238,8 +247,13 @@ async def _git(
     except (TimeoutError, asyncio.TimeoutError):
         proc.kill()
         await proc.wait()
+        wsl_route.note_launch(route.argv, timed_out=True)
         head = args[0] if args else "command"
         return 124, "", f"git {head} timed out after {timeout:.0f}s"
+    wsl_route.note_launch(
+        route.argv, timed_out=False,
+        completed=subprocess.CompletedProcess(list(route.argv), proc.returncode or 0, out, err),
+    )
     return (
         proc.returncode or 0,
         out.decode("utf-8", errors="replace"),
@@ -279,17 +293,22 @@ async def _in_progress(root: Path) -> str | None:
         return None
     raw = _from_git_path(root, out.strip())
     git_dir = raw if raw.is_absolute() else root / raw
-    for marker, label in (
-        ("rebase-merge", "rebase"),
-        ("rebase-apply", "rebase"),
-        ("MERGE_HEAD", "merge"),
-        ("CHERRY_PICK_HEAD", "cherry-pick"),
-        ("REVERT_HEAD", "revert"),
-        ("BISECT_LOG", "bisect"),
-    ):
-        if (git_dir / marker).exists():
-            return label
-    return None
+
+    def find_marker() -> str | None:
+        # Six stats: each one a 9P round trip on a \\wsl.localhost repository.
+        for marker, label in (
+            ("rebase-merge", "rebase"),
+            ("rebase-apply", "rebase"),
+            ("MERGE_HEAD", "merge"),
+            ("CHERRY_PICK_HEAD", "cherry-pick"),
+            ("REVERT_HEAD", "revert"),
+            ("BISECT_LOG", "bisect"),
+        ):
+            if (git_dir / marker).exists():
+                return label
+        return None
+
+    return await asyncio.to_thread(find_marker)
 
 
 def _tracking_note(state: RepoState) -> str:
@@ -1239,8 +1258,8 @@ class GitTool(_FsTool):
         if not dest_name:
             dest_name = _clone_folder_name(url)
         dest = root if dest_name in {".", "./"} else (root / dest_name)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        route = git_route(root)
+        await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
+        route = await asyncio.to_thread(git_route, root)
         clone_dest = str(dest)
         if route and route.distro:
             location = wsl.parse_unc(clone_dest)

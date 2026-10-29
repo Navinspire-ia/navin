@@ -70,6 +70,29 @@ def answered(distro: str) -> None:
         logger.info("WSL {} starts new sessions again", cleared.distro)
 
 
+def refuse_reason(distro: str) -> str | None:
+    """Why a new ``wsl.exe`` launch into ``distro`` must not even start, else None.
+
+    Only once the liveness check has confirmed the distribution down, never on
+    a mere suspicion. Until this existed every git, lint, test or search routed
+    into a wedged distribution paid its own full timeout (20 s to 2 min each),
+    one after the other, while the status bar already knew. The caller fails at
+    once with this reason; asking also schedules the next recovery check, so
+    the refusal clears itself once WSL is restarted.
+    """
+    if not distro:
+        return None
+    with _lock:
+        down = _down.get(distro.lower())
+    if down is None:
+        return None
+    _schedule_check(down.distro)
+    return (
+        f"WSL {down.distro} does not start new sessions ({down.detail}); "
+        f"run `{RESTART_COMMAND}` on Windows, then retry"
+    )
+
+
 def status() -> dict[str, Any] | None:
     """The distribution that no longer starts sessions, for the status bar.
 

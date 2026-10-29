@@ -84,3 +84,30 @@ class ReclaimOrphanListenersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TaskkillBoundedTest(unittest.TestCase):
+    """Windows stop: taskkill runs with a timeout, hidden, and a hang is survived."""
+
+    def test_taskkill_has_timeout_and_no_window(self) -> None:
+        import subprocess
+
+        calls: list[dict] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(kwargs)
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+
+        root = Path(tempfile.mkdtemp())
+        paths = ProcessRuntimePaths(
+            run_dir=root, logs_dir=root, state_path=root / "s.json", log_path=root / "l.log"
+        )
+        runtime = ManagedProcessRuntime(
+            paths=paths, platform_name="Windows", subprocess_run=fake_run, sleep=lambda _s: None
+        )
+        runtime._is_pid_running = lambda pid: True  # type: ignore[method-assign]
+        self.assertFalse(runtime._terminate_windows(4242, timeout_s=0))
+        self.assertEqual(len(calls), 2)
+        for kwargs in calls:
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertIn("creationflags", kwargs)

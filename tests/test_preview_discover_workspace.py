@@ -105,3 +105,43 @@ def test_preview_tools_use_the_conversation_project_not_the_default_folder(monke
 
     asyncio.run(run())
     assert seen == [project, project, default]
+
+
+def test_preview_tools_keep_their_probes_off_the_event_loop(monkeypatch, tmp_path):
+    # who_listens shells out to ss / lsof / netstat and the manifest scan
+    # reads every candidate folder (9P on a WSL project): both ran inline in
+    # the coroutine and froze every other chat for the duration.
+    import asyncio
+    import threading
+
+    from navin.agent.tools import open_preview, start_app
+    from navin.agent.tools.context import RequestContext, request_context
+
+    loop_thread = threading.current_thread()
+    threads: dict[str, object] = {}
+
+    async def fake_ensure(*, workspace, **_):
+        return "http://127.0.0.1:3000", None
+
+    def reject(url):
+        threads["reject"] = threading.current_thread()
+        return None
+
+    def discover(workspace):
+        threads["discover"] = threading.current_thread()
+        return []
+
+    monkeypatch.setattr(open_preview, "ensure_project_preview_url", fake_ensure)
+    monkeypatch.setattr(start_app, "ensure_project_preview_url", fake_ensure)
+    monkeypatch.setattr(open_preview, "emit_preview_open_request", lambda **_: None)
+    monkeypatch.setattr(open_preview, "_reject_navin_editor_url", reject)
+    monkeypatch.setattr(start_app, "discover_project_dev_servers", discover)
+
+    async def run():
+        with request_context(RequestContext(channel="websocket", chat_id="c", workspace=tmp_path)):
+            await open_preview.OpenPreviewTool(bus=None, workspace=tmp_path).execute(kind="web")
+            return await start_app.StartAppTool(workspace=tmp_path).execute()
+
+    assert "App is running at http://127.0.0.1:3000" in asyncio.run(run())
+    assert threads["reject"] is not loop_thread
+    assert threads["discover"] is not loop_thread

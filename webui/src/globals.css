@@ -94,6 +94,10 @@
     --tone-shell: 20 88% 38%;
     --tone-skill: 263 68% 48%;
     --tone-error: 0 72% 42%;
+    /* The code index and the project graph: Navin reading the project through
+       its own intelligence. One vivid fuchsia, apart from the four families,
+       so those rows and the "index is building" notice stand out. */
+    --tone-index: 318 78% 40%;
     --tone-read: var(--tone-explore);
     --tone-browser: var(--tone-explore);
     --tone-git: var(--tone-edit);
@@ -159,6 +163,7 @@
     --tone-shell: 27 92% 62%;
     --tone-skill: 255 88% 76%;
     --tone-error: 0 88% 70%;
+    --tone-index: 318 92% 74%;
   }
 }
 

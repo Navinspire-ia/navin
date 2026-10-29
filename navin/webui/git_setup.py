@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from navin.quality import wsl_route
 from navin.utils import git_credentials, wsl
 from navin.utils.git_argv import git_route
 from navin.utils.proc import no_window_kwargs
@@ -160,9 +161,10 @@ def _run(
     input_text: str | None = None,
     timeout: float = _GIT_TIMEOUT_S,
 ) -> subprocess.CompletedProcess[str] | None:
+    argv_full = [*argv, *args]
     try:
-        return subprocess.run(  # argv list, never a shell string
-            [*argv, *args],
+        completed = subprocess.run(  # argv list, never a shell string
+            argv_full,
             input=input_text,
             capture_output=True,
             text=True,
@@ -173,8 +175,13 @@ def _run(
             env=git_credentials.apply_noninteractive(dict(os.environ)),
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv_full, timed_out=True)
+        return None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+    wsl_route.note_launch(argv_full, timed_out=False, completed=completed)
+    return completed
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:

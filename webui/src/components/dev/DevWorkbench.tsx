@@ -434,6 +434,8 @@ export function DevWorkbench({
   panelWidth = 620,
   projectsReady = true,
   onExplorerWidthChange,
+  workbenchFocus,
+  onToggleWorkbenchFocus,
 }: {
   sessionKey: string | null;
   projectPath: string | null;
@@ -519,6 +521,12 @@ export function DevWorkbench({
    * maximized chat exactly on the center area (explorer stays resizable).
    */
   onExplorerWidthChange?: (width: number) => void;
+  /**
+   * Task board full screen: chat hidden, workbench takes the center; the app
+   * sidebar stays. Toggled from the board header, reset when leaving the board.
+   */
+  workbenchFocus?: boolean;
+  onToggleWorkbenchFocus?: () => void;
 }) {
   const { token, client } = useClient();
   // Background loaders read the token at call time. The gateway rotates it
@@ -612,6 +620,20 @@ export function DevWorkbench({
     | "extensions"
     | "plan"
   >("code");
+  // Leaving the Task board while in full screen returns to the normal layout
+  // (chat visible again). The ref guards the toggle so it fires once per
+  // transition and never loops when the parent is slow to flip the flag.
+  const focusResetRef = useRef(false);
+  useEffect(() => {
+    if (workbenchFocus && mode !== "board") {
+      if (!focusResetRef.current) {
+        focusResetRef.current = true;
+        onToggleWorkbenchFocus?.();
+      }
+      return;
+    }
+    focusResetRef.current = false;
+  }, [workbenchFocus, mode, onToggleWorkbenchFocus]);
   const [panelTab, setPanelTab] = useState<"files" | "search" | "outline">(
     "files",
   );
@@ -5279,14 +5301,9 @@ export function DevWorkbench({
                 keepLayout: true,
                 go: () => requestReverseLaunch(),
               },
-              ...appFactoryMenuItems().map((item) => ({
-                key: item.key,
-                icon: item.icon,
-                label: item.label,
-                menu: item.children ?? [],
-                active: false,
-                go: () => {},
-              })),
+              // Mobile apps / Desktop apps (App Factory) live under Other: the
+              // rail keeps the everyday modules, and the agent itself offers the
+              // native build once the web project stands (appfactory_hint).
               reviewChanges.length > 0
                 ? {
                     key: "changes",
@@ -5362,13 +5379,8 @@ export function DevWorkbench({
                   else setMode("browser");
                 },
               },
-              {
-                key: "evolve",
-                icon: <FlaskConical className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.evolveTab", "Evolve"),
-                active: mode === "evolve",
-                go: () => showMode("evolve"),
-              },
+              // Evolve lives under Other (overflowMenuItems): the rail keeps
+              // the everyday modules only.
               {
                 key: "board",
                 icon: <ListTodo className="h-3.5 w-3.5 shrink-0" aria-hidden />,
@@ -5527,6 +5539,7 @@ export function DevWorkbench({
             triggerClassName={railItem(
               moreMenuActive ||
                 mode === "skills" ||
+                mode === "evolve" ||
                 mode === "rules" ||
                 mode === "guardrails" ||
                 mode === "graph" ||
@@ -5534,7 +5547,7 @@ export function DevWorkbench({
                 mode === "computer",
             )}
             showTriggerLabel={!railIconsOnly}
-            items={overflowMenuItems((action) => restoreAnd(action), ["evolve", "bench", "board"])}
+            items={overflowMenuItems((action) => restoreAnd(action), ["bench", "board"])}
           />
           {onToggleRailDensity ? (
             // Closes the list, a small gap under Other so it reads as a control
@@ -6540,6 +6553,8 @@ export function DevWorkbench({
               sessionKey={sessionKey}
               projectPath={projectPath ?? rootPath}
               onRunAction={onRunAction}
+              fullscreen={Boolean(workbenchFocus)}
+              onToggleFullscreen={onToggleWorkbenchFocus}
             />
           </Suspense>
           </PanelErrorBoundary>

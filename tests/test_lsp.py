@@ -374,6 +374,41 @@ class FakeServerClientTest(unittest.TestCase):
         with self.assertRaises(LspError):
             client.start()
 
+    def test_process_exit_kills_every_language_server(self):
+        """Servers are children with their own pipes: a gateway exiting without
+        this left pyright / tsserver running. kill_all is registered with atexit
+        and must end the process quickly, without the shutdown handshake."""
+        import atexit
+        import time
+
+        client = self._client()
+        process = client._process
+        manager = manager_mod.LspManager(self.root)
+        manager._clients["fake:x"] = client
+        with manager_mod.LspManager._instances_lock:
+            manager_mod.LspManager._instances["test-kill-all"] = manager
+        self.addCleanup(lambda: manager_mod.LspManager._instances.pop("test-kill-all", None))
+        started = time.monotonic()
+        manager_mod.LspManager.kill_all()
+        self.assertLess(time.monotonic() - started, 3.0)
+        self.assertIsNotNone(process.poll())
+        self.assertFalse(client.alive)
+        self.assertEqual(manager._clients, {})
+        # Registered for interpreter exit: load the module source once more
+        # under another name with atexit.register observed.
+        import importlib.util
+        from unittest import mock
+
+        spec = importlib.util.spec_from_file_location("navin_lsp_manager_copy", manager_mod.__file__)
+        copy = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = copy  # dataclasses resolve annotations through sys.modules
+        try:
+            with mock.patch.object(atexit, "register") as register:
+                spec.loader.exec_module(copy)
+        finally:
+            sys.modules.pop(spec.name, None)
+        self.assertEqual(register.call_args.args, (copy._kill_language_servers_at_exit,))
+
     def test_missing_binary_raises_lsp_error(self):
         client = LspClient(["/nonexistent/server"], self.root, name="ghost")
         with self.assertRaises(LspError) as caught:
@@ -548,3 +583,95 @@ class RealServerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WslRoutedServerTest(unittest.TestCase):
+    """A project under \\\\wsl.localhost gets its language server inside the distribution.
+
+    Started on the Windows side with a UNC cwd, pyright read every file of the
+    project through the 9P redirector (a stat per millisecond, the tree in
+    minutes) and used the Windows toolchain instead of the project's venv.
+    """
+
+    ROOT = r"\\wsl.localhost\Ubuntu\home\aymen\proj"
+
+    def test_paths_are_spoken_in_linux_on_the_way_out_and_unc_on_the_way_back(self) -> None:
+        mapping = client_mod.WslPathMapping("Ubuntu")
+        root = PureWindowsPath(self.ROOT)
+        self.assertEqual(mapping.to_server_path(root), "/home/aymen/proj")
+        self.assertEqual(mapping.to_server_uri(root), "file:///home/aymen/proj")
+        self.assertEqual(
+            mapping.to_server_uri(root / "src" / "a b.py"),
+            "file:///home/aymen/proj/src/a%20b.py",
+        )
+        # A Windows file (a report in %TEMP%) is reachable from the distribution too.
+        self.assertEqual(
+            mapping.to_server_uri(PureWindowsPath(r"C:\Users\me\x.py")),
+            "file:///mnt/c/Users/me/x.py",
+        )
+        self.assertEqual(
+            mapping.to_local_path("file:///home/aymen/proj/src/a%20b.py"),
+            r"\\wsl.localhost\Ubuntu\home\aymen\proj\src\a b.py",
+        )
+        self.assertEqual(mapping.to_local_path("file:///mnt/c/Users/me/x.py"), r"C:\Users\me\x.py")
+        # Non-file URIs (a server's web link) pass through untouched.
+        self.assertEqual(mapping.to_local_path("https://example.org/x"), "https://example.org/x")
+
+    def test_the_server_starts_inside_the_distribution_and_answers_in_project_paths(self) -> None:
+        import os
+        from pathlib import PurePosixPath
+        from unittest import mock
+
+        from navin.quality import wsl_route
+        from navin.utils import wsl as wsl_mod
+        from navin.utils.wsl import WslLocation
+
+        location = WslLocation(distro="Ubuntu", path=PurePosixPath("/home/aymen/proj"))
+        started: list[dict[str, object]] = []
+
+        class FakeClient:
+            def __init__(self, argv, root, *, name="lsp", initialization_options=None,
+                         mapping=None, launch_cwd=None):
+                started.append({"argv": argv, "mapping": mapping, "launch_cwd": launch_cwd})
+                self.name = name
+                self.alive = False
+                self.returncode = None
+
+            def start(self):
+                self.alive = True
+
+            def open_document(self, path, language_id, *, text=None):
+                return "file:///home/aymen/proj/src/a.py"
+
+            def request(self, method, params, **_kwargs):
+                return [{
+                    "uri": "file:///home/aymen/proj/src/b.py",
+                    "range": {"start": {"line": 2, "character": 4}, "end": {"line": 2, "character": 9}},
+                }]
+
+        names = [name for name, _spec in manager_mod.servers_for(".py")]
+        self.assertTrue(names, "the server table has no Python server")
+        with mock.patch.object(wsl_route, "wsl_root", return_value=location), \
+                mock.patch.object(wsl_route, "available", return_value=None), \
+                mock.patch.object(wsl_mod, "wsl_executable", return_value="wsl.exe"), \
+                mock.patch.object(wsl_mod, "resolve_distro", return_value="Ubuntu"), \
+                mock.patch.dict(os.environ, {"USERPROFILE": r"C:\Users\me"}), \
+                mock.patch.object(manager_mod, "LspClient", FakeClient):
+            manager = manager_mod.LspManager(Path(self.ROOT))
+            self.assertIsInstance(manager._mapping, client_mod.WslPathMapping)
+            locations = manager.definition("src/a.py", 3, 5)
+
+            # The probe said which tools the distribution has: only those are offered.
+            with mock.patch.object(wsl_route, "available", return_value={names[0]}):
+                self.assertEqual(manager.installed_servers_for("src/a.py"), [names[0]])
+
+        self.assertEqual(len(started), 1)
+        argv = started[0]["argv"]
+        self.assertEqual(argv[:6], ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/aymen/proj", "--exec"])
+        self.assertEqual(argv[6:8], ["bash", "-lc"])
+        self.assertIn("navin-tool", argv)
+        # wsl.exe cannot start in a UNC folder: it starts from the user's profile.
+        self.assertEqual(started[0]["launch_cwd"], r"C:\Users\me")
+        self.assertIs(started[0]["mapping"], manager._mapping)
+        # The answer comes back as a project-relative path, computed on the Linux side.
+        self.assertEqual([(loc.path, loc.line, loc.col) for loc in locations], [("src/b.py", 3, 5)])

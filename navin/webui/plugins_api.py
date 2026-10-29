@@ -37,13 +37,16 @@ def install_plugin(
     scope: str = "workspace",
     workspace_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Install a skill pack from git, a local path, npm, or an uploaded folder."""
+    """Install a plugin from git, a local path, npm, a marketplace, or an uploaded folder."""
+    from navin.plugins.marketplace import install_from_marketplace, parse_spec
     from navin.utils.host import normalize_host_path
     from navin.webui.skills_api import publish_plugin_skills, resolve_skill_apply_root
 
     manager = PluginManager()
     try:
-        if source == "git":
+        if source == "marketplace" or (source == "git" and parse_spec(location) is not None):
+            plugin = install_from_marketplace(location, manager=manager)
+        elif source == "git":
             plugin = manager.install_from_git(location, name=name or None)
         elif source == "path":
             try:
@@ -65,7 +68,7 @@ def install_plugin(
             else:
                 raise PluginsApiError("upload a folder or a .zip / .tgz archive")
         else:
-            raise PluginsApiError("source must be 'git', 'path', 'npx' or 'upload'")
+            raise PluginsApiError("source must be 'git', 'path', 'npx', 'marketplace' or 'upload'")
         changed = manager.sync_mcp_servers()
     except PluginError as exc:
         raise PluginsApiError(str(exc)) from exc

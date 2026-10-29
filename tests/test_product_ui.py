@@ -208,6 +208,32 @@ class ProductUiGateTests(unittest.TestCase):
             codes = {d.code for d in lint_product_ui(root, ["apps/web/package.json"]).diagnostics}
             self.assertEqual(codes & defaults, defaults)
 
+    def test_the_commit_check_uses_the_routed_git(self) -> None:
+        # A \\wsl.localhost package.json is asked inside the distribution, not
+        # with a bare Windows "git -C" that refuses the UNC path.
+        from unittest import mock
+
+        from navin.quality import product_ui
+
+        calls: list[list[str]] = []
+
+        def run(argv, **kwargs):
+            calls.append(list(argv))
+            self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
+            return subprocess.CompletedProcess(argv, 0, stdout="true\n", stderr="")
+
+        routed = ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/app", "--exec", "git"]
+        with mock.patch("navin.utils.git_argv.git_argv", return_value=routed) as route, \
+                mock.patch("subprocess.run", side_effect=run):
+            committed = product_ui.package_json_committed(Path("/home/me/app/package.json"))
+        self.assertTrue(committed)
+        self.assertEqual(route.call_args.args[0], Path("/home/me/app"))
+        self.assertEqual([c[:7] for c in calls], [routed, routed])
+        self.assertEqual(calls[0][7:], ["rev-parse", "--is-inside-work-tree"])
+        self.assertEqual(calls[1][7:], ["cat-file", "-e", "HEAD:./package.json"])
+        with mock.patch("navin.utils.git_argv.git_argv", return_value=None):
+            self.assertIsNone(product_ui.package_json_committed(Path("/tmp/x/package.json")))
+
     def test_outside_git_an_existing_ui_stack_counts_as_an_existing_app(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

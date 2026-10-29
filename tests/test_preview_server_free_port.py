@@ -117,6 +117,32 @@ class FreePortTest(unittest.TestCase):
         server = ps._package_server(root)
         self.assertEqual(server.cwd, root)
 
+    def test_the_port_question_is_answered_off_the_event_loop(self) -> None:
+        """The port probes shell out (ss / lsof / netstat) and GET the loopback:
+        they ran inline in the coroutine and stalled every chat for seconds."""
+        import threading
+
+        loop_thread = threading.current_thread()
+        seen: dict = {}
+
+        def probe(port):
+            seen["thread"] = threading.current_thread()
+            return "127.0.0.1" if port == 5173 else None
+
+        async def fake_start(**kwargs):
+            return "s1", SimpleNamespace(done=False, exit_code=None, output="")
+
+        manager = SimpleNamespace(start=fake_start)
+        with (
+            mock.patch.object(ps, "loopback_host", side_effect=probe),
+            mock.patch.object(ps, "_looks_like_navin_port", return_value=True),
+            mock.patch("navin.agent.tools.exec_session.DEFAULT_EXEC_SESSION_MANAGER", manager),
+        ):
+            _sid, error, moved = asyncio.run(ps.start_project_dev_server(ps._package_server(_vite_project())))
+        self.assertIsNone(error)
+        self.assertEqual(moved.port, 5177)
+        self.assertIsNot(seen["thread"], loop_thread)
+
 
 if __name__ == "__main__":
     unittest.main()

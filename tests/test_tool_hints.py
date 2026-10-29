@@ -130,6 +130,44 @@ class ExploreClusterTests(unittest.TestCase):
             "Index AgentLoop",
         )
 
+    def test_index_and_graph_rows_carry_their_own_colour_in_the_cli(self) -> None:
+        """Like the desktop: the index tools stand apart from plain reads and searches."""
+        from rich.console import Console
+
+        from navin.utils.tool_hints import activity_head_text, activity_palette
+
+        console = Console()
+        palette = activity_palette(True)
+        index_row = activity_head_text("├ ✓ Index AgentLoop")
+        graph_row = activity_head_text("└ ✓ Graph checkpoint")
+        read_row = activity_head_text("├ ✓ Read loop.py")
+        index_color = index_row.get_style_at_offset(console, 4).color.triplet.hex
+        self.assertEqual(index_color, palette["index"].lower())
+        self.assertEqual(graph_row.get_style_at_offset(console, 4).color.triplet.hex, palette["index"].lower())
+        self.assertNotEqual(read_row.get_style_at_offset(console, 4).color.triplet.hex, index_color)
+        # The query stays plain, as every target does.
+        self.assertIsNone(index_row.get_style_at_offset(console, index_row.plain.index("AgentLoop")).color)
+
+    def test_the_index_building_notice_is_the_row_outcome_for_the_user(self) -> None:
+        from navin.utils.tool_hints import index_notice_text, result_summary
+
+        building = (
+            "Semantic index is building in the background (4612 file(s) to embed). "
+            "Meanwhile use action=search for symbol names or the grep tool for exact text, "
+            "and retry action=semantic shortly."
+        )
+        notice = index_notice_text("code_index", building)
+        self.assertEqual(notice, "Semantic index is building in the background (4612 file(s) to embed).")
+        # The outcome under the row is that sentence, not a line count, and the
+        # agent-facing remainder is not shown.
+        self.assertEqual(result_summary("code_index", {"action": "semantic"}, building), notice)
+        self.assertNotIn("Meanwhile", notice)
+        # Ordinary results and other tools are untouched.
+        self.assertEqual(index_notice_text("code_index", "navin/agent/loop.py:120 class AgentLoop"), "")
+        self.assertEqual(index_notice_text("grep", building), "")
+        self.assertEqual(index_notice_text("metagraph", "Project map is being refreshed in the background (5712 files)."),
+                         "Project map is being refreshed in the background (5712 files).")
+
     def test_run_journal_hidden_except_git(self) -> None:
         # Non-git command runs show the head only, no output journal.
         rows = preview_rows(

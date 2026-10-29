@@ -33,6 +33,7 @@ export type ActivityJournalTone =
   | "task"
   | "git"
   | "browser"
+  | "index"
   | "error";
 
 /**
@@ -266,7 +267,37 @@ const TOOL_TONE_BY_LEAF: Record<string, ActivityJournalTone> = {
   open_file_preview: "read",
   open_preview: "read",
   open_in_editor: "read",
+  // The project's own intelligence: the code index (symbols, semantic search)
+  // and the dependency graph. Their own colour, so the user sees Navin reading
+  // the project through its index rather than file by file.
+  code_index: "index",
+  metagraph: "index",
 };
+
+/** The index and graph tools: the rows that carry the "index" tone and mark. */
+export const INDEX_TOOLS = new Set(["code_index", "metagraph"]);
+
+export function isIndexTool(tool: string | undefined): boolean {
+  return INDEX_TOOLS.has(toolLeaf(tool ?? ""));
+}
+
+const INDEX_BACKGROUND_RE = /\b(index(?:ing)?|embedding|graph|map)\b[^.\n]*\b(building|is being built|in the background|warming up|in progress|refreshing)\b/i;
+
+/**
+ * The sentence an index tool answers while its index is still being built
+ * ("Semantic index is building in the background (4612 file(s) to embed).").
+ * Shown highlighted instead of as muted output: it is the project's
+ * intelligence coming online, not a tool's noise. The agent-facing remainder
+ * ("Meanwhile use action=search ...") is dropped. Empty when the output is
+ * an ordinary result.
+ */
+export function indexBackgroundNotice(entry: Pick<ActivityJournalEntry, "kind" | "tool" | "output">): string {
+  if (entry.kind !== "tool" || !isIndexTool(entry.tool) || !entry.output) return "";
+  const first = entry.output.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (!INDEX_BACKGROUND_RE.test(first)) return "";
+  const sentence = first.match(/^.*?\)\.|^.*?[.!](?=\s|$)/)?.[0] ?? first;
+  return sentence.trim();
+}
 
 const JOURNAL_FACT_KEYS = [
   "action",
@@ -1065,7 +1096,7 @@ export type JournalPhaseKey = "explore" | "edit" | "agents" | "command" | "check
 export const JOURNAL_PHASE_ORDER: JournalPhaseKey[] = ["explore", "edit", "agents", "command", "check", "test", "attention"];
 
 /** Tools that only look around the project: they read as exploration, not commands. */
-const EXPLORE_TOOLS = new Set(["list_dir", "find_files", "glob", "code_index", "lsp", "tree"]);
+const EXPLORE_TOOLS = new Set(["list_dir", "find_files", "glob", "code_index", "metagraph", "lsp", "tree"]);
 
 const TEST_COMMAND_RE =
   /(^|[\s;&|(])(pytest|py\.test|vitest|jest|mocha|ava|unittest|phpunit|rspec|playwright\s+test|go\s+test|cargo\s+test|dotnet\s+test|(npm|pnpm|yarn|bun)(\s+run)?\s+test(:\S+)?)(?=$|[\s;&|)])/i;

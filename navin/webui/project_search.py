@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
-import time
+import threading
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
@@ -109,6 +109,12 @@ def _passes_globs(rel_posix: str, include: list[str], exclude: list[str]) -> boo
 
 def _wsl_rg_prefix(root: Path, *, platform: str | None = None) -> list[str] | None:
     """ripgrep inside the distribution for a ``\\\\wsl.localhost`` root seen from Windows."""
+    found = _wsl_rg_target(root, platform=platform)
+    return None if found is None else found[1]
+
+
+def _wsl_rg_target(root: Path, *, platform: str | None = None) -> tuple[str, list[str]] | None:
+    """``(distro, rg argv prefix)`` for a WSL root seen from Windows, else None."""
     if (platform or sys.platform) != "win32":
         return None
     from navin.utils import wsl
@@ -117,7 +123,7 @@ def _wsl_rg_prefix(root: Path, *, platform: str | None = None) -> list[str] | No
     if location is None or not wsl.wsl_executable():
         return None
     distro = wsl.resolve_distro(location.distro) or location.distro
-    return wsl.rg_prefix(distro, location.path)
+    return distro, wsl.rg_prefix(distro, location.path)
 
 
 def _rg_search(
@@ -134,7 +140,8 @@ def _rg_search(
     # the Windows ripgrep would read every file over the 9P bridge (the same
     # search took minutes there against 0.3 s inside). It runs from the
     # project root through --cd, so paths come back relative as below.
-    wsl_prefix = _wsl_rg_prefix(root, platform=platform)
+    wsl_target = _wsl_rg_target(root, platform=platform)
+    wsl_prefix = None if wsl_target is None else wsl_target[1]
     rg = shutil.which("rg")
     if wsl_prefix is None and rg is None:
         return None
@@ -160,8 +167,8 @@ def _rg_search(
     # relative to the project.
     flags.extend(["--", query, "."])
     out = None
-    if wsl_prefix is not None:
-        out = _run_rg([*wsl_prefix, *flags], cwd=None)
+    if wsl_prefix is not None and wsl_target is not None:
+        out = _run_rg([*wsl_prefix, *flags], cwd=None, distro=wsl_target[0])
         if out is not None and out.returncode == 127:
             out = None  # no ripgrep in the distribution: the Windows one, slower
     if out is None:
@@ -204,13 +211,21 @@ def _rg_search(
     return rows
 
 
-def _run_rg(cmd: list[str], *, cwd: str | None) -> subprocess.CompletedProcess[str] | None:
+def _run_rg(
+    cmd: list[str], *, cwd: str | None, distro: str | None = None,
+) -> subprocess.CompletedProcess[str] | None:
     """Run ripgrep and stop reading once ``_MAX_RESULTS`` matches came back.
 
     ``--max-count`` is per file, so a common word over a large tree printed
     gigabytes of JSON (2 GB, 7 s for "import" on navin's own repo) that were
     all read and then cut to 500 rows. The process is stopped as soon as the
     rows we keep are in.
+
+    The deadline is enforced by a timer, not only between lines: a ripgrep
+    (or ``wsl.exe``) that prints nothing would otherwise hold the reader, and
+    the search request with it, for as long as it lives. ``distro`` names the
+    distribution a ``wsl.exe`` launch targets, so a timed-out launch marks WSL
+    as suspect and an answer clears it (:mod:`navin.utils.wsl_health`).
     """
     try:
         process = subprocess.Popen(  # noqa: S603
@@ -222,7 +237,15 @@ def _run_rg(cmd: list[str], *, cwd: str | None) -> subprocess.CompletedProcess[s
     lines: list[str] = []
     matches = 0
     stopped = False
-    deadline = time.monotonic() + _RG_TIMEOUT_S
+    timed_out = threading.Event()
+
+    def expire() -> None:
+        timed_out.set()
+        process.kill()
+
+    watchdog = threading.Timer(_RG_TIMEOUT_S, expire)
+    watchdog.daemon = True
+    watchdog.start()
     assert process.stdout is not None
     try:
         for raw in process.stdout:
@@ -233,10 +256,8 @@ def _run_rg(cmd: list[str], *, cwd: str | None) -> subprocess.CompletedProcess[s
                 if matches >= _MAX_RESULTS:
                     stopped = True
                     break
-            if time.monotonic() > deadline:
-                stopped = True
-                break
     finally:
+        watchdog.cancel()
         if stopped:
             process.kill()
         try:
@@ -244,6 +265,17 @@ def _run_rg(cmd: list[str], *, cwd: str | None) -> subprocess.CompletedProcess[s
         except subprocess.SubprocessError:
             process.kill()
             err = b""
+    if timed_out.is_set():
+        # Same answer as the per-line deadline always gave: what came back
+        # before the clock ran out, as a complete (cut) result.
+        stopped = True
+    if distro:
+        from navin.utils import wsl_health
+
+        if timed_out.is_set():
+            wsl_health.suspect(distro)
+        else:
+            wsl_health.answered(distro)
     code = 0 if stopped else process.returncode
     return subprocess.CompletedProcess(
         cmd, code, stdout="".join(lines), stderr=(err or b"").decode("utf-8", errors="replace"),

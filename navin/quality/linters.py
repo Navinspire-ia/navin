@@ -650,6 +650,7 @@ def _finish_linter(
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv, timed_out=True)
         return LinterResult(
             linter=name,
             ran=False,
@@ -659,6 +660,7 @@ def _finish_linter(
     except (OSError, subprocess.SubprocessError) as exc:
         return LinterResult(linter=name, ran=False, skipped_reason=str(exc))
 
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     duration_ms = int((time.monotonic() - started) * 1000)
     ok_codes = {int(c) for c in spec.get("ok_exit_codes", [0])}
     # Tools like `php -l` print nothing useful on success; only parse failures.

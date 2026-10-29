@@ -1452,18 +1452,21 @@ class _BrowserSession:
             with suppress(Exception):
                 stop = getattr(self._bu_session, "stop", None) or getattr(self._bu_session, "close", None)
                 if stop is not None:
-                    await stop()
+                    await asyncio.wait_for(stop(), _CLOSE_TIMEOUT_S)
             self._bu_session = None
             self._bu_tools = None
+        # A Chromium that stopped answering (or a driver whose pipe is gone) must
+        # not hang the chat close, the live view "close" button or the gateway
+        # shutdown: each teardown step is bounded.
         for closer in (self._context, self._browser):
             try:
                 if closer is not None:
-                    await closer.close()
+                    await asyncio.wait_for(closer.close(), _CLOSE_TIMEOUT_S)
             except Exception:
                 pass
         try:
             if self._pw is not None:
-                await self._pw.stop()
+                await asyncio.wait_for(self._pw.stop(), _CLOSE_TIMEOUT_S)
         except Exception:
             pass
         self._pw = self._browser = self._context = self.page = None
@@ -1481,6 +1484,9 @@ class _BrowserSession:
         self.history.clear()
 
 
+_CLOSE_TIMEOUT_S = 15.0
+# Upper bound for the two actions Playwright leaves unbounded (evaluate, raw CDP).
+_EVALUATE_TIMEOUT_S = 60.0
 _SESSIONS: dict[str, _BrowserSession] = {}
 _SESSIONS_LOCK = asyncio.Lock()
 
@@ -2220,6 +2226,11 @@ class BrowserTool(Tool):
             return None
         return f"Error: navigation blocked ({error})"
 
+    @classmethod
+    async def _guard_navigation_url_async(cls, url: str) -> str | None:
+        """Same check off the event loop: the DNS lookup can take seconds."""
+        return await asyncio.to_thread(cls._guard_navigation_url, url)
+
     async def _dispatch(self, session: _BrowserSession, action: str, kwargs: dict[str, Any]) -> Any:
         session.record_history(action, kwargs)
         if action == "close":
@@ -2295,7 +2306,7 @@ class BrowserTool(Tool):
                 return ToolResult.error("Error: url is required for navigate")
             if not url.startswith(("http://", "https://")):
                 url = f"http://{url}"
-            refusal = self._guard_navigation_url(url)
+            refusal = await self._guard_navigation_url_async(url)
             if refusal is not None:
                 allowed = await self._ask_browser_lift(
                     action="Navigate the browser to an internal or private URL",
@@ -2328,7 +2339,7 @@ class BrowserTool(Tool):
             if url and not url.startswith(("http://", "https://")):
                 url = f"http://{url}"
             if url:
-                refusal = self._guard_navigation_url(url)
+                refusal = await self._guard_navigation_url_async(url)
                 if refusal is not None:
                     allowed = await self._ask_browser_lift(
                         action="Open a new tab on an internal or private URL",
@@ -2678,7 +2689,17 @@ class BrowserTool(Tool):
             script = kwargs.get("javascript")
             if not script:
                 return ToolResult.error("Error: javascript is required for evaluate")
-            return f"Result: {_truncate(_render_value(await page.evaluate(script)), 8_000)}"
+            # Playwright never times out evaluate: a script that loops (or a page
+            # whose main thread is stuck) would otherwise pin this turn forever.
+            try:
+                value = await asyncio.wait_for(page.evaluate(script), _EVALUATE_TIMEOUT_S)
+            except TimeoutError:
+                return ToolResult.error(
+                    f"Error: evaluate did not finish within {_EVALUATE_TIMEOUT_S:.0f} s "
+                    "(the script or the page main thread is stuck). Reload the page or "
+                    "run a shorter script."
+                )
+            return f"Result: {_truncate(_render_value(value), 8_000)}"
 
         if action == "content":
             selector = kwargs.get("selector")
@@ -2718,7 +2739,12 @@ class BrowserTool(Tool):
                 if not allowed:
                     return ToolResult.error(refusal)
             cdp = await session.cdp_session()
-            result = await cdp.send(method, params)
+            try:
+                result = await asyncio.wait_for(cdp.send(method, params), _EVALUATE_TIMEOUT_S)
+            except TimeoutError:
+                return ToolResult.error(
+                    f"Error: cdp {method} did not answer within {_EVALUATE_TIMEOUT_S:.0f} s."
+                )
             if not result:
                 return f"{method} acknowledged (empty result)."
             return f"{method} result:\n{_truncate(_render_value(result), 20_000)}"
@@ -2770,7 +2796,7 @@ class BrowserTool(Tool):
             url = (kwargs.get("url") or "").strip()
             if not url:
                 return ToolResult.error("Error: url is required for navigate")
-            refusal = self._guard_navigation_url(
+            refusal = await self._guard_navigation_url_async(
                 url if url.startswith(("http://", "https://")) else f"http://{url}"
             )
             if refusal is not None:
@@ -3006,7 +3032,7 @@ class BrowserTool(Tool):
             url = current
         if not url.startswith(("http://", "https://")):
             url = f"http://{url}"
-        refusal = self._guard_navigation_url(url)
+        refusal = await self._guard_navigation_url_async(url)
         if refusal is not None:
             allowed = await self._ask_browser_lift(
                 action="Log in on an internal or private URL",

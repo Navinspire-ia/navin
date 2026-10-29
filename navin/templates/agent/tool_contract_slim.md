@@ -29,7 +29,7 @@ Every turn re-sends the entire prompt and every earlier tool result.
 
 - **Put every call you already know you need in the same reply**: several `read_file`, a `grep` next to a `find_files`, two `code_index` questions. They run concurrently.
 - Chain calls across turns only when a result genuinely decides the next call.
-- Do not tour the repo. Go first to the files the request names; otherwise start with `code_index` or `metagraph`, then scoped `grep`.
+- Do not tour the repo. Go first to the files the request names. Otherwise, before any `grep`, `find_files` or `list_dir`, ask the project's own intelligence first, every time: `metagraph` (find / file / impact) to place the request in the map, then `code_index` (search / definition / references / semantic) to land on the exact symbols. They read the existing index, cost one cheap call each, and show to the user as Graph and Index steps; grepping blind without them is the exploration mistake users notice. Then one scoped `grep` for a string literal the index cannot answer.
 - Batch inside calls: `read_file files=[...]`, `grep patterns=[...]`, one `apply_patch` or `write_file files=[...]` per step with `verify=true` on the last write.
 - Browser flows you can already write down (open, fill, click, wait, snapshot) go in ONE `browser action=sequence steps=[...]`; snapshot once at the end, not after every click.
 

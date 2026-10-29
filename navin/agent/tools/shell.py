@@ -9,6 +9,7 @@ import asyncio
 import codecs
 import os
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -1582,6 +1583,11 @@ class ExecTool(Tool):
 
         if await asyncio.to_thread(cloud_target_active):
             return await run_cloud_command(command)
+        # Before the spawn: pytest stops at the first unknown path and runs
+        # nothing, so a guessed test file costs the whole run for a raw error.
+        missing = await asyncio.to_thread(_missing_pytest_paths, command, prepared.cwd)
+        if missing:
+            return ToolResult.error(_missing_pytest_message(missing))
         await self._announce_sandbox(prepared)
 
         waited = await self._wait_for_package_manager(command, prepared.cwd)
@@ -2571,18 +2577,27 @@ class ExecTool(Tool):
         if Path(program).name in {"bash", "zsh"} and _wants_pipefail(command):
             command = "set -o pipefail\n" + command
         argv = [*wsl.command_prefix(distro, location.path), program, "-lc" if login_shell else "-c", command]
-        return await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=stdin,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # wsl.exe is a Windows process and cannot itself start in a UNC
-            # path; where it starts does not matter, because --cd is what
-            # decides where the command lands.
-            cwd=os.environ.get("USERPROFILE") or os.environ.get("SYSTEMROOT") or None,
-            env=env,
-            **no_window_kwargs(),
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=stdin,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # wsl.exe is a Windows process and cannot itself start in a UNC
+                # path; where it starts does not matter, because --cd is what
+                # decides where the command lands.
+                cwd=os.environ.get("USERPROFILE") or os.environ.get("SYSTEMROOT") or None,
+                env=env,
+                **no_window_kwargs(),
+            )
+        except OSError:
+            # wsl.exe itself could not be started: WSL is the suspect, not the
+            # command. The health check tells the status bar if it is wedged.
+            from navin.utils import wsl_health
+
+            wsl_health.suspect(distro)
+            raise
+        return process
 
     @staticmethod
     def _normalize_powershell_command(command: str) -> str:
@@ -2671,8 +2686,10 @@ class ExecTool(Tool):
         if not self._shell_allowed(shell):
             return self._refuse_shell(shell)
         if _IS_WINDOWS and shell.lower() in ("cmd", "cmd.exe"):
-            return os.environ.get("COMSPEC") or shutil.which("cmd") or "cmd", None
-        resolved = shutil.which(shell)
+            return os.environ.get("COMSPEC") or _which_cached("cmd") or "cmd", None
+        # Cached: shutil.which walks PATH (every /mnt/c entry in a WSL guest,
+        # network shares on Windows) and this runs on the event loop.
+        resolved = _which_cached(shell)
         if not resolved:
             return None, ToolResult.error(f"Error: shell not found: {shell}")
         return resolved, None
@@ -2697,7 +2714,9 @@ class ExecTool(Tool):
             # run fails to bind against a process nothing shows. taskkill /T
             # walks the tree on Windows; killpg covers the process group the
             # shell leads on POSIX (spawned with start_new_session=True).
-            kill_windows_process_tree(process.pid)
+            # taskkill is a process spawn with a 10 s timeout: off the loop.
+            if _IS_WINDOWS:
+                await asyncio.to_thread(kill_windows_process_tree, process.pid)
             kill_posix_process_group(process.pid)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), timeout=5.0)
@@ -3325,4 +3344,114 @@ def _shell_search_hint(command: str) -> str:
         "\n[navin] Recursive code search through the shell: use the grep tool for "
         "the next one (declarations ranked first, generated trees skipped, results "
         "paged instead of cut by head; several patterns in one call)."
+    )
+
+
+# pytest options whose value is the next token, so that value is not a path.
+_PYTEST_VALUE_OPTIONS = frozenset({
+    "-k", "-m", "-p", "-o", "-W", "-c", "-r", "-n", "--maxfail", "--tb", "--rootdir",
+    "--confcutdir", "--basetemp", "--junitxml", "--junit-xml", "--durations",
+    "--durations-min", "--timeout", "--log-level", "--log-cli-level", "--log-file",
+    "--deselect", "--ignore", "--ignore-glob", "--import-mode", "--override-ini", "--color",
+    "--capture", "--cov", "--cov-report", "--cov-config", "--dist", "--numprocesses",
+    "--html", "--result-log", "--pythonwarnings", "--assert", "--doctest-glob",
+})
+# Launchers that run the program named after them: ``uv run pytest``,
+# ``timeout 600 python -m pytest``.
+_PYTEST_LAUNCHERS = frozenset({"uv", "poetry", "pipenv", "pdm", "hatch", "env", "nohup", "time", "timeout", "nice"})
+_PYTHON_PROGRAM_RE = re.compile(r"python[0-9.]*|pypy[0-9.]*|py|navin-python")
+_PYTHON_FLAGS = frozenset({"-B", "-u", "-E", "-s", "-S", "-I", "-O", "-OO", "-q", "-b", "-d", "-P"})
+# ``> out.log``, ``2>&1``, ``>>log``: the operator, with or without its target.
+_REDIRECT_RE = re.compile(r"^\d*(?:>>?|<<?<?|&>>?|>\|)(?:&\d+)?(.*)$")
+_PYTEST_BARE_FOLDERS = frozenset({"tests", "test"})
+
+
+def _pytest_arguments(tokens: list[str]) -> list[str] | None:
+    """The arguments of the pytest invocation in ``tokens``, or None when it is not one."""
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+        tokens = tokens[1:]  # FOO=bar prefixes
+    while tokens and os.path.basename(tokens[0]) in _PYTEST_LAUNCHERS:
+        tokens = tokens[1:]
+        while tokens and (tokens[0].startswith("-") or re.fullmatch(r"\d+[smhd]?", tokens[0])):
+            tokens = tokens[1:]
+        if tokens and tokens[0] in {"run", "exec"}:
+            tokens = tokens[1:]
+    if not tokens:
+        return None
+    program = os.path.basename(tokens[0]).lower().removesuffix(".exe")
+    args = tokens[1:]
+    if program in {"pytest", "py.test"}:
+        return args
+    if _PYTHON_PROGRAM_RE.fullmatch(program):
+        while args and args[0] in _PYTHON_FLAGS:
+            args = args[1:]
+        if len(args) >= 2 and args[0] == "-m" and args[1] == "pytest":
+            return args[2:]
+    return None
+
+
+def _missing_pytest_paths(command: str, cwd: str) -> list[tuple[str, Path]]:
+    """pytest file or folder arguments of ``command`` that do not exist, with the
+    directory each was resolved from.
+
+    Seen in a session: 21 test files in one run, one of them a guessed name;
+    pytest printed "file or directory not found" and ran none of the other 20.
+    """
+    missing: list[tuple[str, Path]] = []
+    current = Path(cwd or ".")
+    for segment in shell_segments(command):
+        try:
+            tokens = shlex.split(segment.replace("\\", "/"))
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+        if tokens[0] == "cd":
+            if len(tokens) > 1 and not tokens[1].startswith("-"):
+                step = Path(os.path.expanduser(tokens[1]))
+                current = step if step.is_absolute() else current / step
+            continue
+        args = _pytest_arguments(tokens)
+        if args is None:
+            continue
+        skip_value = False
+        for token in args:
+            if skip_value:
+                skip_value = False
+                continue
+            redirect = _REDIRECT_RE.match(token)
+            if redirect:
+                skip_value = not redirect.group(1)
+                continue
+            if token.startswith("-"):
+                skip_value = token in _PYTEST_VALUE_OPTIONS
+                continue
+            head = token.split("::", 1)[0]
+            if not head or "=" in head or any(ch in head for ch in "*?[$`"):
+                continue
+            if "/" not in head and not head.endswith(".py") and head not in _PYTEST_BARE_FOLDERS:
+                continue
+            path = Path(os.path.expanduser(head))
+            if not path.is_absolute():
+                path = current / path
+            try:
+                exists = path.exists()
+            except OSError:
+                continue  # unreadable, not absent: pytest reports it with the real error
+            if not exists:
+                missing.append((head, current))
+    return missing
+
+
+def _missing_pytest_message(missing: list[tuple[str, Path]]) -> str:
+    """The refusal for a pytest command naming files that do not exist."""
+    from navin.quality.testing import missing_target_error
+
+    notes = []
+    for head, base in missing:
+        note = missing_target_error(base, head)
+        notes.append(note or f"{head} does not exist (resolved from {base}).")
+    return (
+        "Error: pytest would stop before running a single test, because the "
+        "command names a path that does not exist. " + " ".join(notes)
     )

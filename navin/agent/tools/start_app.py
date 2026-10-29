@@ -9,6 +9,7 @@ and reporting the URL/port. The agent runs apps - never the user.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -91,7 +92,7 @@ class StartAppTool(Tool):
             start_if_needed=True,
         )
         if not url:
-            servers = discover_project_dev_servers(workspace)
+            servers = await asyncio.to_thread(discover_project_dev_servers, workspace)
             hints = []
             for server in servers[:5]:
                 hints.append(f"- {server.label}: `{server.command}` in {server.cwd}")
@@ -108,7 +109,10 @@ class StartAppTool(Tool):
         except Exception:
             port = None
 
-        picked = pick_server_for_url(discover_project_dev_servers(workspace), url)
+        # Manifest scan: off the loop, like the start itself.
+        picked = pick_server_for_url(
+            await asyncio.to_thread(discover_project_dev_servers, workspace), url
+        )
         detail = ""
         if picked:
             detail = f" command=`{picked.command}` cwd={picked.cwd}"

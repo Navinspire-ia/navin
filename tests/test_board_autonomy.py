@@ -680,6 +680,112 @@ class TestWebApi(unittest.TestCase):
             self.assertIn("autonomy", payload)
             self.assertFalse(payload["autonomy"]["enabled"])
 
+    def test_board_payload_scaffolds_a_project_once_per_process(self):
+        """The panel polls /board every 15 s; the scaffold walk cost 12-27 s per poll
+        over a WSL share (gateway.log). It runs on first sight of a project only."""
+        from navin.webui import board_api
+        from navin.webui.board_api import board_payload
+
+        class _Scope:
+            def __init__(self, path: str) -> None:
+                self.project_path = path
+
+        calls: list[str] = []
+
+        def _scaffold(project, silent=False):
+            calls.append(str(project))
+            # The real scaffold creates the pack; the stand-in does the same so
+            # the second poll sees .navin on disk, like production.
+            (Path(project) / ".navin").mkdir(exist_ok=True)
+            return [".navin/board/tasks.json"]
+
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as other:
+            board_api._SCAFFOLDED.clear()
+            with patch("navin.utils.helpers.ensure_project_scaffold", side_effect=_scaffold):
+                board_payload(_Scope(tmp))
+                board_payload(_Scope(tmp))
+                board_payload(_Scope(tmp))
+                board_payload(_Scope(other))
+            self.assertEqual(calls, [str(Path(tmp)), str(Path(other))])
+            # A scaffold that could not be written (ensure_project_scaffold logs
+            # and answers [] without a pack on disk) is retried next time, never
+            # cached as done.
+            board_api._SCAFFOLDED.clear()
+            with TemporaryDirectory() as bare:
+                with patch("navin.utils.helpers.ensure_project_scaffold", return_value=[]):
+                    board_payload(_Scope(bare))
+                self.assertNotIn(str(Path(bare)), board_api._SCAFFOLDED)
+            # Once the pack exists, an idempotent re-check ([] with .navin present) counts.
+            with patch("navin.utils.helpers.ensure_project_scaffold", return_value=[]):
+                board_payload(_Scope(tmp))
+            self.assertIn(str(Path(tmp)), board_api._SCAFFOLDED)
+
+    def test_board_payload_imports_issues_by_itself_when_consented(self):
+        """Autonomy + "GitHub issues sync" on: the panel's own poll brings new issues in,
+        at most once per interval, and says so; without the consent the forge is never
+        called and a manual Sync GitHub resets the clock."""
+        from navin.webui import board_api
+        from navin.webui.board_api import board_payload, board_update_payload
+
+        class _Scope:
+            def __init__(self, path: str) -> None:
+                self.project_path = path
+
+        calls: list[str] = []
+
+        def _import(project, store, *, actor, repo=None):
+            calls.append(actor)
+            return {"ok": True, "imported": 2, "repo": "acme/widgets", "detail": "2 issue(s) imported from acme/widgets"}
+
+        with TemporaryDirectory() as tmp:
+            board_api._AUTO_SYNC_STATE.clear()
+            with patch.object(github_mod, "import_issues_to_board", side_effect=_import):
+                # No consent: nothing fetched, nothing reported.
+                payload = board_payload(_Scope(tmp))
+                self.assertNotIn("issues_sync", payload)
+                self.assertEqual(calls, [])
+                write_autonomy(tmp, {"enabled": True, "sync_github_issues": True}, actor="aymen")
+                payload = board_payload(_Scope(tmp))
+                sync = payload["issues_sync"]
+                self.assertEqual(calls, ["navin"])
+                self.assertTrue(sync["ok"])
+                self.assertEqual(sync["imported"], 2)
+                self.assertEqual(sync["repo"], "acme/widgets")
+                self.assertTrue(sync["last_sync"])
+                # The next polls inside the interval reuse the state without a fetch.
+                board_payload(_Scope(tmp))
+                board_payload(_Scope(tmp))
+                self.assertEqual(calls, ["navin"])
+                # The import is visible in the timeline as the agent's doing.
+                entries = ProjectBoardStore(tmp).read_activity()
+                auto = [e for e in entries if e["kind"] == "github_sync"]
+                self.assertTrue(auto and auto[-1]["detail"].startswith("automatic:"))
+                # A manual sync resets the clock: the following poll fetches again.
+                board_update_payload(_Scope(tmp), {"action": "sync_github"})
+                board_payload(_Scope(tmp))
+                self.assertEqual(calls, ["navin", "user", "navin"])
+
+    def test_automatic_issue_import_reports_a_forge_failure_without_breaking_the_board(self):
+        from navin.webui import board_api
+        from navin.webui.board_api import board_payload
+
+        class _Scope:
+            def __init__(self, path: str) -> None:
+                self.project_path = path
+
+        with TemporaryDirectory() as tmp:
+            board_api._AUTO_SYNC_STATE.clear()
+            write_autonomy(tmp, {"enabled": True, "sync_github_issues": True}, actor="aymen")
+            with patch.object(
+                github_mod,
+                "import_issues_to_board",
+                return_value={"ok": False, "imported": 0, "repo": "acme/widgets", "detail": "acme/widgets not found on github.com (404)"},
+            ):
+                payload = board_payload(_Scope(tmp))
+            self.assertEqual(payload["tasks"], [])
+            self.assertFalse(payload["issues_sync"]["ok"])
+            self.assertIn("404", payload["issues_sync"]["detail"])
+
     def test_issues_repo_endpoint_round_trip(self):
         from navin.webui.board_api import github_issues_payload, github_issues_repo_payload
 

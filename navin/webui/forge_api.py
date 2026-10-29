@@ -2078,7 +2078,60 @@ def list_issues(
     state: str = "open",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Issues of ``remote``, newest first, pull requests excluded."""
+    """Issues of ``remote``, newest first, pull requests excluded.
+
+    A 404 is retried once with the repository's canonical casing: GitHub
+    resolves ``navinspire-ai/navin`` and ``Navinspire-ia/navin`` to the same
+    repository on the web, but its REST API is exact about the path, so a
+    tracker typed from memory answered "not found" while the repository was
+    right there. The canonical slug comes from the repository lookup, which
+    GitHub serves case-insensitively.
+    """
+    try:
+        return _list_issues_once(remote, token, state=state, limit=limit)
+    except ForgeError as exc:
+        if exc.code != "forge_repo_not_found" or remote.kind != GITHUB:
+            raise
+        canonical = canonical_repository_slug(remote, token)
+        if not canonical or canonical == remote.slug:
+            raise
+        owner, _, repo = canonical.partition("/")
+        fixed = ForgeRemote(
+            kind=remote.kind,
+            host=remote.host,
+            owner=owner,
+            repo=repo,
+            scheme=remote.scheme,
+            port=remote.port,
+        )
+        return _list_issues_once(fixed, token, state=state, limit=limit)
+
+
+def canonical_repository_slug(remote: ForgeRemote, token: str) -> str | None:
+    """``owner/name`` as the forge spells it, or None when the lookup fails.
+
+    GitHub serves ``GET /repos/{owner}/{repo}`` case-insensitively and answers
+    with ``full_name`` in the canonical casing; a renamed or transferred
+    repository answers with its new name too.
+    """
+    if remote.kind != GITHUB:
+        return None
+    status, payload, _text = _request(
+        "GET", f"{remote.api_base}/repos/{remote.slug}", kind=remote.kind, token=token
+    )
+    if not (200 <= status < 300) or not isinstance(payload, dict):
+        return None
+    full_name = str(payload.get("full_name") or "").strip()
+    return full_name if full_name.count("/") == 1 else None
+
+
+def _list_issues_once(
+    remote: ForgeRemote,
+    token: str,
+    *,
+    state: str = "open",
+    limit: int = 50,
+) -> list[dict[str, Any]]:
     wanted = _clean_state(state)
     count = max(1, min(int(limit), _MAX_ISSUES))
     if remote.kind == GITLAB:

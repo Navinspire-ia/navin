@@ -777,7 +777,7 @@ class ReadFileTool(_FsTool):
             raw = await asyncio.to_thread(fp.read_bytes)
             if not raw:
                 self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
-                return f"(Empty file: {path})" + scoped_project_instructions(self._display_workspace(), fp)
+                return f"(Empty file: {path})" + await self._scoped_instructions(fp)
 
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
@@ -798,7 +798,7 @@ class ReadFileTool(_FsTool):
                 and read_mtime == entry.mtime
                 and _hash_content(raw) == entry.content_hash
             ):
-                return f"[File unchanged since last read: {path}]" + scoped_project_instructions(self._display_workspace(), fp)
+                return f"[File unchanged since last read: {path}]" + await self._scoped_instructions(fp)
 
             # Decoding also strips any BOM and normalizes CRLF -> LF before
             # line-splitting. CRLF is primarily a Windows concern (git checkouts
@@ -897,11 +897,20 @@ class ReadFileTool(_FsTool):
             await asyncio.to_thread(
                 self._file_states.record_read, fp, offset=offset, limit=limit, content=raw, mtime=read_mtime,
             )
-            return result + scoped_project_instructions(self._display_workspace(), fp)
+            return result + await self._scoped_instructions(fp)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error reading file: {e}")
+
+    async def _scoped_instructions(self, fp: Path) -> str:
+        """Nested AGENTS.md text for ``fp``, read off the loop.
+
+        One resolve, stat and possibly a read per ancestor: milliseconds on
+        a local disk, tens to hundreds through the 9P bridge of a WSL project
+        opened from Windows.
+        """
+        return await asyncio.to_thread(scoped_project_instructions, self._display_workspace(), fp)
 
     def _closest_readable_match(self, fp: Path) -> Path | None:
         """Unambiguous stand-in for a missing read path, or None.
@@ -1137,7 +1146,8 @@ class WriteFileTool(_FsTool):
             if content is None:
                 raise ValueError("Unknown content")
             fp = await self._bound_path(path, write=True)
-            refused = self._stale_overwrite_refusal(fp)
+            # Compares a hash of the file on disk: a whole read, in a worker.
+            refused = await asyncio.to_thread(self._stale_overwrite_refusal, fp)
             if refused:
                 return ToolResult.error(refused)
             # Replacing a whole file is the only edit with no anchor text to
@@ -1183,7 +1193,7 @@ class WriteFileTool(_FsTool):
                 continue
             try:
                 fp = await self._bound_path(str(item["path"]), write=True)
-                refused = self._stale_overwrite_refusal(fp)
+                refused = await asyncio.to_thread(self._stale_overwrite_refusal, fp)
                 if refused:
                     errors.append(refused)
                     continue

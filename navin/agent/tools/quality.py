@@ -19,6 +19,7 @@ from typing import Any
 from navin.agent.tool_output import emit_tool_meta, emit_tool_output
 from navin.agent.tools.base import Tool, ToolResult
 from navin.agent.tools.filesystem import _FsTool
+from navin.quality import wsl_route
 from navin.utils.path import normalize_relative_path
 from navin.utils.proc import no_window_kwargs
 
@@ -100,8 +101,12 @@ def _tracked_modifications(root: Path, paths: list[str] | None) -> list[str]:
             timeout=_GIT_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv, timed_out=True)
+        return []
     except (OSError, subprocess.SubprocessError):
         return []
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     if completed.returncode != 0:
         # Includes a repository with no commit yet: HEAD does not resolve, and
         # git itself will refuse the restore with its own explanation.
@@ -445,7 +450,7 @@ class TestRunTool(_QualityTool):
         if root is None:
             return error
 
-        from navin.quality.testing import detect_suites, run_tests
+        from navin.quality.testing import detect_suites, missing_target_error, run_tests
 
         if action == "run" and targets:
             if target:
@@ -454,7 +459,14 @@ class TestRunTool(_QualityTool):
                 return ToolResult.error(f"Error: at most {self._MAX_TARGETS} targets per call.")
             if not all(isinstance(item, str) and item.strip() for item in targets):
                 return ToolResult.error("Error: every entry of targets must be a non-empty string.")
-            return await self._run_many(root, [item.strip() for item in targets], runner)
+            wanted = [item.strip() for item in targets]
+            # Off the loop: each check is a stat, seconds each on a WSL share.
+            problems = await asyncio.to_thread(
+                lambda: [note for item in wanted if (note := missing_target_error(root, item))]
+            )
+            if problems:
+                return ToolResult.error("Error: " + "\n".join(problems))
+            return await self._run_many(root, wanted, runner)
 
         if action == "detect":
             await emit_tool_output("Detecting test suites…")
@@ -470,6 +482,10 @@ class TestRunTool(_QualityTool):
             return "\n".join(lines)
 
         if action == "run":
+            if target:
+                problem = await asyncio.to_thread(missing_target_error, root, target)
+                if problem:
+                    return ToolResult.error("Error: " + problem)
             scope = target or runner or "the project suite"
             await emit_tool_output(f"Running tests on {scope}…")
             # A full suite legitimately takes minutes; run it off the event
@@ -698,6 +714,12 @@ class VerifyTool(_QualityTool):
             return "\n".join(lines)
 
         if action in {"check", "fix"}:
+            if test_target:
+                from navin.quality.testing import missing_target_error
+
+                problem = await asyncio.to_thread(missing_target_error, root, test_target)
+                if problem:
+                    return ToolResult.error("Error: " + problem)
             # Lints plus a test run: the slowest thing a tool can do here, so
             # it must not hold the event loop while it does it.
             report = await asyncio.to_thread(

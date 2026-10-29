@@ -121,6 +121,8 @@ class EventLoopStaysResponsiveTest(unittest.TestCase):
     def test_missing_test_action_runs_the_requested_target(self) -> None:
         from navin.agent.tools.registry import ToolRegistry
 
+        (self.root / "tests").mkdir(exist_ok=True)
+        (self.root / "tests" / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
         tool = quality_tools.TestRunTool(workspace=str(self.root))
         registry = ToolRegistry()
         registry.register(tool)

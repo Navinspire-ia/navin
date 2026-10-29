@@ -121,3 +121,26 @@ def test_the_answer_is_kept_until_the_config_file_changes(config, monkeypatch):
     save_config(cfg)
     assert cloud_target_active() is True
     assert len(loads) == 2
+
+
+def test_sandbox_call_loads_the_config_off_the_event_loop(monkeypatch):
+    import threading
+
+    seen: dict[str, str] = {}
+
+    def fake_config():
+        seen["config"] = threading.current_thread().name
+        return object()
+
+    def fake_post(config, path, payload, *, timeout_s):
+        seen["post"] = threading.current_thread().name
+        return 200, {"ok": True, "path": path}
+
+    monkeypatch.setattr(cloud_sandbox, "_full_config", fake_config)
+    import navin.license_client as license_client
+
+    monkeypatch.setattr(license_client, "team_post", fake_post)
+    body = asyncio.run(cloud_sandbox.sandbox_call("browser_start", timeout_s=5))
+    assert body["path"] == "/api/sandbox/browser_start"
+    assert seen["config"] != "MainThread"
+    assert seen["post"] != "MainThread"

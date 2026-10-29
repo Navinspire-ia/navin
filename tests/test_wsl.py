@@ -532,6 +532,44 @@ class WslHealthTest(unittest.TestCase):
         wsl_health.answered("ubuntu")
         self.assertIsNone(wsl_health.status())
 
+    def test_a_confirmed_down_distribution_refuses_new_launches_at_once(self) -> None:
+        """Every routed git/lint/test paid its full timeout, one after the other, while
+        the status bar already knew WSL was down. A confirmed verdict now fails fast;
+        a mere suspicion (verdict pending) and a recovered WSL refuse nothing."""
+        from navin.quality import wsl_route
+
+        argv = ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/proj", "--exec", "git", "status"]
+        self.assertIsNone(wsl_health.refuse_reason("Ubuntu"))
+        self.assertIsNone(wsl_route.refusal(argv))
+        with patch.object(wsl_health.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 20)) as run:
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+            reason = wsl_route.refusal(argv)
+            assert reason is not None
+            self.assertIn("Ubuntu", reason)
+            self.assertIn(wsl_health.RESTART_COMMAND, reason)
+            # Case-insensitive like the rest of the module; non-wsl argv never refused.
+            self.assertIsNotNone(wsl_health.refuse_reason("ubuntu"))
+            self.assertIsNone(wsl_route.refusal(["git", "status"]))
+            # Asking did not start a second check inside the recheck interval.
+            self._settle()
+            self.assertEqual(run.call_count, 1)
+        wsl_health.answered("Ubuntu")
+        self.assertIsNone(wsl_route.refusal(argv))
+
+    def test_a_down_distribution_skips_the_tool_probe_instead_of_hanging(self) -> None:
+        from pathlib import PurePosixPath
+
+        from navin.quality import wsl_route
+
+        location = wsl.WslLocation(distro="Ubuntu", path=PurePosixPath("/home/me/proj"))
+        with patch.object(wsl_health.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 20)):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        with patch.object(wsl, "resolve_distro", return_value="Ubuntu"), \
+                patch("subprocess.run", side_effect=AssertionError("probe launched wsl.exe")):
+            self.assertIsNone(wsl_route._run_probe({"ruff": {"binary": {"name": "ruff"}}}, location, 5.0))
+
 
 class GeneratedScriptsRunForRealTest(unittest.TestCase):
     """The shell scripts sent to wsl.exe, run here with wsl.exe left out."""

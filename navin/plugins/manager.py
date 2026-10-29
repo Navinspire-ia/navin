@@ -26,7 +26,14 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _NPX_SPEC_RE = re.compile(
     r"^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+(@[A-Za-z0-9._-]+)?$"
 )
+# ``owner/repo`` (GitHub shorthand, as Claude Code plugin marketplaces write it).
+_GITHUB_SHORTHAND_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _STATE_FILE = "state.json"
+# Where a manifest may live. Navin's own layout first, then the Claude Code
+# plugin layout, so a plugin written for Claude installs unchanged.
+_MANIFEST_PATHS = ("plugin.json", ".navin-plugin/plugin.json", ".claude-plugin/plugin.json")
+# Same for the MCP servers file: ``mcp.json`` (Navin) or ``.mcp.json`` (Claude).
+_MCP_PATHS = ("mcp.json", ".mcp.json")
 _GIT_CLONE_TIMEOUT_S = 120
 _NPX_PACK_TIMEOUT_S = 180
 _MAX_SKILLS_PER_PLUGIN = 200
@@ -162,6 +169,42 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def manifest_path(plugin_dir: Path) -> Path | None:
+    """The manifest file of a plugin folder, whichever layout it uses."""
+    for rel in _MANIFEST_PATHS:
+        candidate = plugin_dir / rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def mcp_path(plugin_dir: Path) -> Path | None:
+    """The MCP servers file of a plugin folder (``mcp.json`` or ``.mcp.json``)."""
+    for rel in _MCP_PATHS:
+        candidate = plugin_dir / rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def git_url_for(source: str) -> str | None:
+    """A clonable URL for ``source``, or None when it is not a git source.
+
+    Accepts full URLs (https://, git@, ssh://) and the ``owner/repo`` GitHub
+    shorthand used by plugin marketplaces. A local path is never a git source.
+    """
+    text = source.strip()
+    if re.match(r"^(https://|git@|ssh://)", text):
+        return text
+    if (
+        _GITHUB_SHORTHAND_RE.match(text)
+        and not text.startswith((".", "/", "~"))
+        and not Path(text).expanduser().exists()
+    ):
+        return f"https://github.com/{text}.git"
+    return None
+
+
 def enabled_plugin_skill_dirs() -> list[tuple[str, Path]]:
     """Return ``(plugin_name, skills_dir)`` for every enabled plugin.
 
@@ -235,12 +278,14 @@ _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def expand_plugin_vars(value: Any, plugin_dir: Path) -> Any:
     """Replace ``${NAVIN_PLUGIN_ROOT}`` and ``${VAR}`` (environment) in strings.
 
-    Unknown variables are left as written so a missing export stays visible.
+    ``${CLAUDE_PLUGIN_ROOT}`` is the same folder: plugins written for Claude
+    Code reference their own files with it. Unknown variables are left as
+    written so a missing export stays visible.
     """
     if isinstance(value, str):
         def sub(match: re.Match[str]) -> str:
             name = match.group(1)
-            if name == "NAVIN_PLUGIN_ROOT":
+            if name in ("NAVIN_PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT"):
                 return str(plugin_dir)
             return os.environ.get(name, match.group(0))
 
@@ -307,11 +352,11 @@ class PluginManager:
 
     @staticmethod
     def _manifest(plugin_dir: Path) -> dict[str, Any]:
-        manifest_path = plugin_dir / "plugin.json"
-        if not manifest_path.is_file():
+        path = manifest_path(plugin_dir)
+        if path is None:
             return {}
         try:
-            return _read_json(manifest_path)
+            return _read_json(path)
         except PluginError:
             return {}
 
@@ -329,13 +374,23 @@ class PluginManager:
 
     @staticmethod
     def _mcp_servers(plugin_dir: Path) -> dict[str, Any]:
-        mcp_path = plugin_dir / "mcp.json"
-        if not mcp_path.is_file():
-            return {}
-        data = _read_json(mcp_path)
-        servers = data.get("mcpServers", data)
-        if not isinstance(servers, dict):
-            raise PluginError("mcp.json must contain an 'mcpServers' object")
+        """MCP servers declared by ``mcp.json`` / ``.mcp.json`` or the manifest.
+
+        A Claude Code manifest may carry its servers inline under
+        ``mcpServers``; the file wins when both exist, the manifest fills in
+        the servers the file does not name.
+        """
+        servers: dict[str, Any] = {}
+        inline = PluginManager._manifest(plugin_dir).get("mcpServers")
+        if isinstance(inline, dict):
+            servers.update(inline)
+        path = mcp_path(plugin_dir)
+        if path is not None:
+            data = _read_json(path)
+            declared = data.get("mcpServers", data)
+            if not isinstance(declared, dict):
+                raise PluginError(f"{path.name} must contain an 'mcpServers' object")
+            servers.update(declared)
         return servers
 
     @staticmethod
@@ -433,11 +488,22 @@ class PluginManager:
         return self.get(plugin_name)
 
     def install_from_git(self, url: str, *, name: str | None = None) -> dict[str, Any]:
-        """Install a plugin by shallow-cloning a git repository."""
+        """Install a plugin by shallow-cloning a git repository.
+
+        ``url`` is a full URL or the ``owner/repo`` GitHub shorthand; a
+        ``#sub/folder`` suffix installs that folder of the repository (a
+        monorepo of plugins).
+        """
         url = url.strip()
-        if not re.match(r"^(https://|git@|ssh://)", url):
-            raise PluginError("git url must start with https://, git@ or ssh://")
-        plugin_name = _normalize_name(name or url.rstrip("/").rsplit("/", 1)[-1])
+        url, _, subdir = url.partition("#")
+        clone_url = git_url_for(url)
+        if clone_url is None:
+            raise PluginError("git url must start with https://, git@ or ssh://, or be owner/repo")
+        sub = _safe_relpath(subdir) if subdir else None
+        if subdir and sub is None:
+            raise PluginError(f"invalid folder in git source: {subdir!r}")
+        default_name = (sub or clone_url).rstrip("/").rsplit("/", 1)[-1]
+        plugin_name = _normalize_name(name or default_name)
         reused = self._reuse_if_installed(plugin_name)
         if reused is not None:
             return reused
@@ -445,32 +511,41 @@ class PluginManager:
         self.root.mkdir(parents=True, exist_ok=True)
         tmp = self.root / f".clone-{plugin_name}"
         if tmp.exists():
-            shutil.rmtree(tmp)
+            _rmtree_force(tmp)
         try:
             proc = subprocess.run(  # noqa: S603
-                ["git", "clone", "--depth", "1", url, str(tmp)],
+                ["git", "clone", "--depth", "1", clone_url, str(tmp)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=_GIT_CLONE_TIMEOUT_S,
                 check=False,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
                 **no_window_kwargs(),
             )
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()[-400:]
                 raise PluginError(f"git clone failed: {detail}")
-            self._coerce_skill_bundle(tmp)
-            self._validate_bundle(tmp)
             _rmtree_force(tmp / ".git")
-            tmp.rename(target)
+            bundle = tmp
+            if sub:
+                bundle = tmp / sub
+                if not bundle.is_dir():
+                    raise PluginError(f"folder {sub!r} not found in {clone_url}")
+            self._coerce_skill_bundle(bundle)
+            self._validate_bundle(bundle)
+            if bundle is tmp:
+                tmp.rename(target)
+            else:
+                shutil.copytree(bundle, target)
         except (OSError, subprocess.SubprocessError) as exc:
             raise PluginError(f"install failed: {exc}") from exc
         finally:
             if tmp.exists():
                 _rmtree_force(tmp)
-        self._set_state(plugin_name, enabled=True, source=url)
-        logger.info("Plugin installed: {} (from {})", plugin_name, url)
+        self._set_state(plugin_name, enabled=True, source=url + (f"#{sub}" if sub else ""))
+        logger.info("Plugin installed: {} (from {})", plugin_name, clone_url)
         return self.get(plugin_name)
 
     def install_from_npx(self, spec: str, *, name: str | None = None) -> dict[str, Any]:
@@ -576,9 +651,14 @@ class PluginManager:
         """A plugin must ship at least one component and parse cleanly."""
         skills = self._skill_names(plugin_dir)
         mcp = self._mcp_servers(plugin_dir)  # raises on malformed mcp.json
-        if not skills and not mcp:
+        manifest = self._manifest(plugin_dir)
+        agents = _md_names([plugin_dir / "agents", *(plugin_dir / p for p in _manifest_paths(manifest, "agents"))])
+        commands = _md_names([plugin_dir / "commands", *(plugin_dir / p for p in _manifest_paths(manifest, "commands"))])
+        hooks = self._hook_events(plugin_dir, manifest)
+        if not (skills or mcp or agents or commands or hooks):
             raise PluginError(
-                "plugin has no components: expected skills/<name>/SKILL.md or mcp.json"
+                "plugin has no components: expected skills/<name>/SKILL.md, agents/*.md, "
+                "commands/*.md, hooks/hooks.json or mcp.json"
             )
 
     def uninstall(self, name: str) -> None:

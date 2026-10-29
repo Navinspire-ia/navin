@@ -103,7 +103,8 @@ async def sandbox_call(action: str, payload: dict[str, Any] | None = None, *, ti
     """POST /api/sandbox/<action> on the Navin site with this device's license."""
     from navin.license_client import team_post
 
-    config = _full_config()
+    # load_config parses and decrypts the file: keep that off the loop too.
+    config = await asyncio.to_thread(_full_config)
     status, body = await asyncio.to_thread(
         team_post, config, f"/api/sandbox/{action}", dict(payload or {}), timeout_s=timeout_s
     )

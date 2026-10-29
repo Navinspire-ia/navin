@@ -251,6 +251,24 @@ class ComputerToolTest(unittest.IsolatedAsyncioTestCase):
         with request_context(_ctx()):
             return await self.tool.execute(**kwargs)
 
+    async def test_backend_is_built_in_a_worker_thread_not_on_the_loop(self) -> None:
+        # Creating a backend loads native libraries and probes PATH; the first
+        # call of a chat must not do that on the shared gateway loop.
+        import threading
+
+        threads: list[str] = []
+
+        def factory() -> FakeBackend:
+            threads.append(threading.current_thread().name)
+            return self.backend
+
+        self.tool = ComputerTool(config=self.config, backend_factory=factory)
+        result = await self._run(action="screenshot")
+        images, _text = _image_blocks(result)
+        self.assertEqual(len(images), 1)
+        self.assertEqual(len(threads), 1)
+        self.assertNotEqual(threads[0], "MainThread")
+
     async def test_screenshot_is_scaled_and_returned_as_image(self) -> None:
         result = await self._run(action="screenshot")
         images, text = _image_blocks(result)

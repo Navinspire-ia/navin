@@ -1735,6 +1735,9 @@ function Shell({
   // Focus mode: the workbench takes the whole shell and the chat column steps
   // aside. It stays mounted so the session keeps streaming underneath.
   const [workbenchFocus, setWorkbenchFocus] = useState(false);
+  // Task board "Full screen" button: chat hidden, workbench takes the center,
+  // the app sidebar stays (it is governed by toggleSidebar).
+  const onToggleWorkbenchFocus = useCallback(() => setWorkbenchFocus((v) => !v), []);
   // Tenders / Career / Trading / Leads / Marketing / Scraping: chat column
   // hidden until the header Chat button. Independent of workbenchFocus.
   const [deskChatOpen, setDeskChatOpen] = useState(false);
@@ -4827,6 +4830,10 @@ function Shell({
                     }
                     onRevealWorkbench={
                       !isNarrowWorkbench ? onRevealDevWorkbench : undefined
+                    }
+                    workbenchFocus={workbenchFocus}
+                    onToggleWorkbenchFocus={
+                      !isNarrowWorkbench ? onToggleWorkbenchFocus : undefined
                     }
                     collapsed={devChatMaximized}
                     railDensity={railDensity}

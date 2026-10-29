@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from navin.quality import wsl_route
 from navin.quality.linters import (
     Diagnostic,
     LinterResult,
@@ -247,9 +248,10 @@ def changed_files(root: Path) -> list[str]:
     git = git_argv(root)
     if git is None:
         return []
+    argv = [*git, "status", "--porcelain=v1", "-z", "--untracked-files=all"]
     try:
         completed = subprocess.run(  # noqa: S603
-            [*git, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -257,8 +259,12 @@ def changed_files(root: Path) -> list[str]:
             timeout=_GIT_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv, timed_out=True)
+        return []
     except (OSError, subprocess.SubprocessError):
         return []
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     if completed.returncode != 0:
         return []
     out: list[str] = []
@@ -407,8 +413,12 @@ def restore_from_git(root: Path, paths: list[str] | None = None) -> dict[str, An
             timeout=_GIT_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired as exc:
+        wsl_route.note_launch(git, timed_out=True)
+        return {"restored": 0, "error": str(exc)}
     except (OSError, subprocess.SubprocessError) as exc:
         return {"restored": 0, "error": str(exc)}
+    wsl_route.note_launch(git, timed_out=False, completed=completed)
     if completed.returncode != 0:
         return {
             "restored": 0,

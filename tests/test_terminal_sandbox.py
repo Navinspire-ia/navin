@@ -87,7 +87,7 @@ class IsolatedTerminalLiveTest(unittest.IsolatedAsyncioTestCase):
             "available_shells",
             return_value=[{"name": "bash", "path": bash, "args": ["-c", command], "default": True}],
         ):
-            session = manager.open(
+            session = await manager.open_async(
                 "conn",
                 terminal_id="iso",
                 shell="bash",

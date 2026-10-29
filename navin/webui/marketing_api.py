@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -133,19 +135,29 @@ def marketing_qa_readiness(workspace_root: str | Path | None) -> dict[str, Any]:
     }
 
 
+def _image_files(root: Path) -> Iterator[Path]:
+    """Image files under ``root``, never descending into the heavy folders.
+
+    ``rglob`` walked node_modules, .git and .venv in full and dropped their
+    entries afterwards: 31 s on a project with dependencies installed. Pruning
+    the walk is what makes the skip list worth having.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(name for name in dirnames if name not in _SKIP_PARTS)
+        for name in filenames:
+            if Path(name).suffix.lower() in _IMAGE_EXTENSIONS:
+                yield Path(dirpath) / name
+
+
 def list_marketing_qa_assets(
     workspace_root: str | Path | None, *, limit: int = 500
 ) -> dict[str, Any]:
     root = _require_workspace(workspace_root)
     safe_limit = max(1, min(limit, 1000))
     assets: list[dict[str, Any]] = []
-    for path in root.rglob("*"):
+    for path in _image_files(root):
         relative = path.relative_to(root)
-        if any(part in _SKIP_PARTS for part in relative.parts):
-            continue
         if "marketing/qa" in relative.as_posix() or not path.is_file():
-            continue
-        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
             continue
         stat = path.stat()
         assets.append(

@@ -472,13 +472,19 @@ describe("AGI panel layout", () => {
     readFileSync(resolve(__dirname, "../../i18n/locales/fr/common.json"), "utf8"),
   ) as { dev: Record<string, unknown> };
 
-  it("sits first in the rail after the project folder picker", () => {
-    const folder = workbench.indexOf("<DevProjectSelector");
-    const agi = workbench.indexOf('key: "agi"', folder);
-    const guardrails = workbench.indexOf('key: "guardrails"', agi);
-    expect(folder).toBeGreaterThan(0);
-    expect(agi).toBeGreaterThan(folder);
-    expect(guardrails).toBeGreaterThan(agi);
+  it("lives in the Other menu next to Guardrails, no standalone rail entry", () => {
+    // AGI, Guardrails, Rules, Evolve and Install skill share the single Other
+    // menu (overflowMenuItems); the rail itself carries no AGI tab.
+    const otherItems = workbench.slice(
+      workbench.indexOf("const overflowMenuItems"),
+      workbench.indexOf("const restoreAnd"),
+    );
+    const guardrails = otherItems.indexOf('key: "guardrails"');
+    const agi = otherItems.indexOf('key: "agi"', guardrails);
+    expect(guardrails).toBeGreaterThan(0);
+    expect(agi).toBeGreaterThan(guardrails);
+    expect(workbench.split('key: "agi"').length - 1).toBe(1);
+    expect(workbench).not.toContain("dev-rail-agi");
     expect(workbench).toContain('tx("dev.agiTab", "AGI")');
     expect(workbench).toContain(') : mode === "agi" ? (');
     expect(workbench).toContain("<DevAgiPanel");

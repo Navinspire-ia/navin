@@ -23,6 +23,7 @@ from loguru import logger
 
 from navin.agent import context as agent_context
 from navin.agent import model_presets as preset_helpers
+from navin.agent.appfactory_hint import appfactory_hint_context_provider
 from navin.agent.approval import (
     ApprovalBroker,
     ApprovalDecision,
@@ -1046,6 +1047,8 @@ class AgentLoop:
             board_context_provider,
             continuity_context_provider,
             project_runbook_context_provider,
+            # One nudge toward native apps, once the web project stands.
+            appfactory_hint_context_provider,
             voice_mode_context_provider,
             # The chat's language lives in its session: a restart keeps it.
             reply_language_provider(lambda: self.sessions),

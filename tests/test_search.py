@@ -834,3 +834,33 @@ def test_broad_pattern_gets_a_narrowing_note_but_exact_and_count_do_not(tmp_path
     assert "target.py" in exact and "broad pattern" not in exact
     # count is the scoping step itself: it reports totals, not a warning.
     assert "broad pattern" not in count and "total matches" in count
+
+
+def test_wsl_rg_timeout_marks_the_distribution_suspect_and_an_answer_clears_it() -> None:
+    """A wsl.exe launch that times out is a WSL health hint, not a silent None."""
+    import subprocess as sp
+    from unittest import mock
+
+    from navin.agent.tools import search as search_mod
+    from navin.utils import wsl_health
+
+    with (
+        mock.patch.object(search_mod.subprocess, "run", side_effect=sp.TimeoutExpired("rg", 1)),
+        mock.patch.object(wsl_health, "suspect") as suspect,
+        mock.patch.object(wsl_health, "answered") as answered,
+    ):
+        assert search_mod._run_rg(["wsl.exe", "rg"], distro="Ubuntu") is None
+    suspect.assert_called_once_with("Ubuntu")
+    answered.assert_not_called()
+
+    done = sp.CompletedProcess([], 1, stdout="", stderr="")
+    with (
+        mock.patch.object(search_mod.subprocess, "run", return_value=done),
+        mock.patch.object(wsl_health, "suspect") as suspect,
+        mock.patch.object(wsl_health, "answered") as answered,
+    ):
+        assert search_mod._run_rg(["wsl.exe", "rg"], distro="Ubuntu") is done
+        # A plain ripgrep (no distro) never touches the WSL health state.
+        assert search_mod._run_rg(["rg"]) is done
+    answered.assert_called_once_with("Ubuntu")
+    suspect.assert_not_called()

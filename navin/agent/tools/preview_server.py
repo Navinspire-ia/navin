@@ -792,6 +792,42 @@ def _moved_to_free_port(server: ProjectDevServer) -> ProjectDevServer | None:
     return replace(server, port=port, command=_command_on_port(server, port))
 
 
+def _port_decision(server: ProjectDevServer) -> tuple[ProjectDevServer | None, str | None, bool]:
+    """``(server to start, error, already_up)`` once the port question is settled.
+
+    Sockets, ``ss``/``lsof``/``netstat`` and a loopback GET: all blocking, so
+    this runs in a worker thread, never on the shared event loop.
+    """
+    taken = bool(server.port) and bool(loopback_host(server.port))
+    # A reserved port moves the project even while it is free: the app would
+    # otherwise sit where Navin's editor opens. Without a port flag the command
+    # cannot be moved, so it keeps its own port.
+    reserved = bool(server.port and server.port_flag) and server.port in _navin_ports()
+    if not (taken or reserved):
+        return server, None, False
+    navin_port = reserved or _looks_like_navin_port(server.port)
+    if taken and not navin_port and http_reachable(loopback_url(server.port)):
+        # "Already up" is only true when the listener is actually this
+        # project (same cwd). A foreign app on the same port must not
+        # be adopted: start on the next free port instead.
+        if _listener_belongs_to_workspace(server.port, server.cwd):
+            return server, None, True
+    moved = _moved_to_free_port(server)
+    if moved is None:
+        return None, (
+            f"port {server.port} is "
+            + ("taken" if taken else "reserved")
+            + (" by Navin's editor" if navin_port else " by another app")
+            + " and no free port was found near it."
+        ), False
+    logger.info(
+        "Port {} is {}{}; starting {} on {}",
+        server.port, "taken" if taken else "reserved",
+        " by Navin" if navin_port else "", server.label, moved.port,
+    )
+    return moved, None, False
+
+
 async def start_project_dev_server(
     server: ProjectDevServer,
     *,
@@ -805,33 +841,12 @@ async def start_project_dev_server(
     """
     from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
 
-    taken = bool(server.port) and bool(loopback_host(server.port))
-    # A reserved port moves the project even while it is free: the app would
-    # otherwise sit where Navin's editor opens. Without a port flag the command
-    # cannot be moved, so it keeps its own port.
-    reserved = bool(server.port and server.port_flag) and server.port in _navin_ports()
-    if taken or reserved:
-        navin_port = reserved or _looks_like_navin_port(server.port)
-        if taken and not navin_port and http_reachable(loopback_url(server.port)):
-            # "Already up" is only true when the listener is actually this
-            # project (same cwd). A foreign app on the same port must not
-            # be adopted: start on the next free port instead.
-            if _listener_belongs_to_workspace(server.port, server.cwd):
-                return None, None, server  # already up
-        moved = _moved_to_free_port(server)
-        if moved is None:
-            return None, (
-                f"port {server.port} is "
-                + ("taken" if taken else "reserved")
-                + (" by Navin's editor" if navin_port else " by another app")
-                + " and no free port was found near it."
-            ), server
-        logger.info(
-            "Port {} is {}{}; starting {} on {}",
-            server.port, "taken" if taken else "reserved",
-            " by Navin" if navin_port else "", server.label, moved.port,
-        )
-        server = moved
+    decided, error, already_up = await asyncio.to_thread(_port_decision, server)
+    if error or decided is None:
+        return None, error, server
+    server = decided
+    if already_up:
+        return None, None, server
 
     env = os.environ.copy()
     if server.port:
@@ -932,7 +947,9 @@ async def ensure_project_preview_url(
             "(open_preview will launch npm/vite/etc. for you)."
         )
 
-    servers = discover_project_dev_servers(workspace)
+    # The shallow scan stats and reads manifests in every candidate folder:
+    # seconds through the 9P bridge on a \\wsl.localhost project.
+    servers = await asyncio.to_thread(discover_project_dev_servers, workspace)
     server = pick_server_for_url(servers, preferred_url)
     if server is None:
         return None, (

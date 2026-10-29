@@ -131,7 +131,7 @@ const SAME_IN_EVERY_LANGUAGE = new Set([
   "Application", "Branches", "Bonus +{{amount}}", "Code", "Commits", "CRM", "Documents",
   "Flash", "Leads", "Loop", "Marketing", "Mcp", "Montage", "Notes", "Ops", "Plus", "Pro",
   "Prompts", "RiskLens", "Scraping", "SEO", "Site", "Skills & Loop", "Source", "Stack",
-  "Studio", "Team", "Terminal", "Trading", "Ultra", "agent", "sessions",
+  "Studio", "Team", "Terminal", "Total", "Trading", "Ultra", "agent", "sessions",
 ]);
 
 function untranslatedLeaves(locale: Tree, prefixes: readonly string[]): string[] {
@@ -158,6 +158,23 @@ describe("french sidebar and chat list are translated", () => {
     expect(untranslatedLeaves(ar, ["sidebar", "chat"])).toEqual([]);
   });
 
+  // Settings > Account shipped in English on a French desktop ("Sign in with
+  // navin.live", "Manage plan", the token table): the whole page, including
+  // its nav entry and the per-model usage table, must read in fr and ar.
+  const ACCOUNT_PAGE = ["settings/account", "settings/usage/models"];
+
+  it("settings > account reads in french", () => {
+    expect(untranslatedLeaves(fr, ACCOUNT_PAGE)).toEqual([]);
+    expect(leaves(fr).get("settings/nav/account")).not.toBe(enLeaves.get("settings/nav/account"));
+  });
+
+  it("settings > account reads in arabic", () => {
+    expect(untranslatedLeaves(ar, ACCOUNT_PAGE)).toEqual([]);
+    expect(leaves(ar).get("settings/nav/account")).not.toBe(enLeaves.get("settings/nav/account"));
+    // No English word left inside an Arabic sentence either.
+    expect(leaves(ar).get("settings/account/useOwnKeys")).not.toMatch(/[a-zA-Z]{3,}/);
+  });
+
   // The rest of the French file is translated in batches: this ratchet only
   // forbids new English strings from landing while that work is under way.
   // Lower the ceiling as batches land; never raise it.
@@ -168,6 +185,6 @@ describe("french sidebar and chat list are translated", () => {
       if (got.get(path) !== enValue) continue;
       if (/[a-zA-Z]{3,}/.test(enValue.replace(/\{\{[^{}]+\}\}/g, ""))) identical += 1;
     }
-    expect(identical).toBeLessThanOrEqual(2640);
+    expect(identical).toBeLessThanOrEqual(2590);
   });
 });

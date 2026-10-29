@@ -31,6 +31,47 @@ def test_wsl_git_runs_without_windows_git_and_uses_linux_working_directory(monke
     assert "GIT_TERMINAL_PROMPT" in spawn.call_args.kwargs["env"]["WSLENV"]
 
 
+def test_a_wsl_git_that_hangs_flags_wsl_health_and_an_answer_clears_it(monkeypatch):
+    # The git tool is one of the first things to notice a wedged WSL: the
+    # status bar must learn about it from here, like from lint and test_run.
+    import threading
+
+    from navin.utils import wsl_health
+
+    root = Path(r"\\wsl.localhost\Ubuntu\home\aymen\proj")
+    monkeypatch.setattr(wsl, "wsl_executable", lambda: "wsl.exe")
+    monkeypatch.setattr(wsl, "resolve_distro", lambda name: name)
+    loop_thread = threading.current_thread()
+    routed_on: list = []
+
+    def route(path):
+        routed_on.append(threading.current_thread())
+        return git_route(path, platform="win32")
+
+    monkeypatch.setattr(git, "git_route", route)
+
+    async def never(*_a, **_k):
+        await asyncio.sleep(60)
+
+    hung = SimpleNamespace(returncode=None, communicate=never, kill=lambda: None, wait=AsyncMock())
+    monkeypatch.setattr(git.asyncio, "create_subprocess_exec", AsyncMock(return_value=hung))
+    suspected: list[str] = []
+    monkeypatch.setattr(wsl_health, "suspect", suspected.append)
+    code, _out, err = asyncio.run(git._git(root, ["status"], timeout=0.05))
+    assert code == 124 and "timed out" in err
+    assert suspected == ["Ubuntu"]
+    # Route resolution (PATH walk, `wsl -l -q` when cold) left the loop thread.
+    assert routed_on and routed_on[0] is not loop_thread
+
+    answered: list[str] = []
+    monkeypatch.setattr(wsl_health, "answered", answered.append)
+    fine = SimpleNamespace(returncode=128, communicate=AsyncMock(return_value=(b"", b"fatal: not a git repository")))
+    monkeypatch.setattr(git.asyncio, "create_subprocess_exec", AsyncMock(return_value=fine))
+    code, _out, _err = asyncio.run(git._git(root, ["status"]))
+    assert code == 128
+    assert answered == ["Ubuntu"]  # git's own error still means WSL answered
+
+
 def test_repository_root_is_translated_back_for_windows_file_access(monkeypatch):
     root = Path(r"\\wsl.localhost\Ubuntu\home\aymen\project\subdir")
     monkeypatch.setattr(git, "_git", AsyncMock(return_value=(0, "/home/aymen/project\n", "")))

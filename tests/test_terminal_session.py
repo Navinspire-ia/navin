@@ -386,6 +386,39 @@ class ConPtySessionTest(unittest.IsolatedAsyncioTestCase):
         # close() marks the session ended; on_exit is only for a shell that
         # dies on its own, so the reader must not hang after terminate().
 
+    async def test_close_does_not_block_the_loop_on_a_slow_tree_kill(self) -> None:
+        """taskkill (10 s timeout) used to run on the loop from close()."""
+        from navin.webui import terminal_ws
+
+        async def on_output(_tid: str, _data: bytes) -> None:
+            pass
+
+        async def on_exit(_tid: str, _code: int | None) -> None:
+            pass
+
+        killed = __import__("threading").Event()
+
+        def slow_kill(_pid: int) -> None:
+            time.sleep(0.5)
+            killed.set()
+
+        session = WindowsTerminalSession(
+            terminal_id="t2",
+            shell_name="powershell",
+            shell_path="powershell.exe",
+            shell_args=[],
+            cwd="C:/tmp",
+            cols=80,
+            rows=24,
+            on_output=on_output,
+            on_exit=on_exit,
+        )
+        with mock.patch.object(terminal_ws, "kill_windows_process_tree", slow_kill):
+            started = time.monotonic()
+            session.close()
+            self.assertLess(time.monotonic() - started, 0.2)
+            self.assertTrue(await asyncio.to_thread(killed.wait, 3))
+
 
 @unittest.skipUnless(sys.platform == "win32", "ConPTY requires Windows")
 class ConPtyLiveTest(unittest.IsolatedAsyncioTestCase):
@@ -607,6 +640,41 @@ class OpenDoesNotStallTheLoopTest(unittest.IsolatedAsyncioTestCase):
                     on_output=ignore, on_exit=ignore,
                 )
         manager.cleanup_connection("conn")
+
+    async def test_the_synchronous_open_refuses_to_resolve_the_shell_on_the_loop(self) -> None:
+        """available_shells walked PATH for 11 s on the loop (gateway.log, 18 stalls).
+
+        The blocking entry point is for threads and scripts; from a coroutine
+        it fails fast instead of freezing every chat, and never gets as far as
+        probing the host.
+        """
+        async def ignore(*_args: object) -> None:
+            return
+
+        manager = TerminalManager()
+        probed = mock.Mock(side_effect=AssertionError("shell probing ran on the loop"))
+        with mock.patch.object(terminal_ws, "prepare_launch", probed):
+            with self.assertRaisesRegex(RuntimeError, "open_async"):
+                manager.open(
+                    "conn", terminal_id="sync", shell=None, cwd="/tmp", cols=80, rows=24,
+                    on_output=ignore, on_exit=ignore,
+                )
+        probed.assert_not_called()
+        self.assertIsNone(manager.get("conn", "sync"))
+
+    def test_the_loop_check_answers_false_off_the_loop_and_hides_nothing_else(self) -> None:
+        """Off the loop (a thread, a script) the sync entry point stays open."""
+        self.assertFalse(terminal_ws._on_event_loop_thread())
+
+        async def on_loop() -> bool:
+            return terminal_ws._on_event_loop_thread()
+
+        self.assertTrue(asyncio.run(on_loop()))
+        # Only the documented "no running loop" RuntimeError is turned into
+        # False; any other failure of the probe surfaces.
+        with mock.patch.object(terminal_ws.asyncio, "get_running_loop", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                terminal_ws._on_event_loop_thread()
 
 
 if __name__ == "__main__":

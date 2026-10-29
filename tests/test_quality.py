@@ -1030,6 +1030,75 @@ class WslRoutedToolsTest(unittest.TestCase):
         report = next(arg for arg in argv if arg.startswith("--junit-xml="))
         self.assertNotIn("\\", report)
 
+    def test_every_wsl_launch_reports_to_wsl_health(self):
+        # A wedged WSL shows up first in whatever ran: git, a linter, a test
+        # runner. Each outcome reaches the status bar through one helper.
+        from navin.utils import wsl_health
+
+        wsl_argv = ["C:\\Windows\\System32\\wsl.exe", "-d", "Ubuntu", "--exec", "git", "status"]
+        with patch.object(wsl_health, "suspect") as suspect, patch.object(wsl_health, "answered") as answered:
+            self.wsl_route.note_launch(["git", "-C", "C:\\proj", "status"], timed_out=True)
+            suspect.assert_not_called()  # not a wsl.exe launch: nothing to say
+            self.wsl_route.note_launch(wsl_argv, timed_out=True)
+            suspect.assert_called_once_with("Ubuntu")
+            answered.assert_not_called()
+        with patch.object(wsl_health, "suspect") as suspect, patch.object(wsl_health, "answered") as answered:
+            # git's own failure (not a repository) is a WSL that works.
+            done = subprocess.CompletedProcess(wsl_argv, 128, stdout="", stderr="fatal: not a git repository")
+            self.wsl_route.note_launch(wsl_argv, timed_out=False, completed=done)
+            answered.assert_called_once_with("Ubuntu")
+            suspect.assert_not_called()
+        with patch.object(wsl_health, "suspect") as suspect, patch.object(wsl_health, "answered") as answered:
+            # wsl.exe refusing at once writes its own UTF-16 error code.
+            refused = subprocess.CompletedProcess(
+                wsl_argv, 4294967295, stdout=b"", stderr="Error code: Wsl/Service/E_UNEXPECTED".encode("utf-16-le"),
+            )
+            self.wsl_route.note_launch(wsl_argv, timed_out=False, completed=refused)
+            suspect.assert_called_once_with("Ubuntu")
+            answered.assert_not_called()
+
+    def test_a_linter_and_a_runner_timing_out_in_wsl_flag_wsl_health(self):
+        from navin.utils import wsl_health
+
+        spec = {"binary": {"name": "ruff"}, "args": ["{file}"]}
+        hung = subprocess.TimeoutExpired(["wsl.exe"], 30)
+        with patch.object(linters_mod.subprocess, "run", side_effect=hung), \
+                patch.object(wsl_health, "suspect") as suspect:
+            result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
+        self.assertFalse(result.ran)
+        suspect.assert_called_once_with("Ubuntu")
+        with patch.object(testing_mod.subprocess, "run", side_effect=hung), \
+                patch.object(testing_mod, "_detected", return_value=True), \
+                patch.object(wsl_health, "suspect") as suspect:
+            outcome = testing_mod._run_one("pytest", dict(_runner("pytest")), self.unc, None)
+        self.assertIn("timed out", outcome.skipped_reason)
+        suspect.assert_called_once_with("Ubuntu")
+
+    def test_the_test_explorer_collects_inside_the_distribution(self):
+        # Collection used to run navin's own Windows pytest over the 9P bridge
+        # (and could not start node_modules/.bin shims at all).
+        from navin.quality import test_explorer
+
+        done = subprocess.CompletedProcess([], 0, stdout="tests/test_a.py::test_x\n", stderr="")
+        rows = [{
+            "runner": "pytest", "language": "python", "available": True, "fallback_only": False,
+            "workdir": ".", "reason": "",
+        }]
+        location = self.wsl_route.wsl_root(self.unc)
+        # Path.resolve() of a UNC spelling is only meaningful on Windows.
+        with patch.object(test_explorer, "detect_suites", return_value=rows), \
+                patch.object(test_explorer, "_detected", return_value=True), \
+                patch.object(test_explorer, "_workdir_for", return_value=self.unc), \
+                patch.object(test_explorer.Path, "resolve", lambda self_, **_kw: self_), \
+                patch.object(self.wsl_route, "wsl_root", return_value=location), \
+                patch.object(test_explorer.subprocess, "run", return_value=done) as run:
+            payload = test_explorer.collect_tests(self.unc)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:3], ["wsl.exe", "-d", "Ubuntu"])
+        self.assertIn("--collect-only", argv)
+        self.assertNotEqual(run.call_args.kwargs["cwd"], str(self.unc))
+        self.assertEqual(payload["suites"][0]["tests"][0]["id"], "tests/test_a.py::test_x")
+
 
 class ProjectHasTestsAnswerTests(unittest.TestCase):
     """"Does this project have tests" is answered once, and off the loop."""

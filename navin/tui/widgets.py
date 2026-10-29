@@ -85,6 +85,7 @@ from navin.utils.tool_hints import (
     format_turn_summary,
     highlight_output_statuses,
     humanize_agent_error,
+    index_notice_text,
     is_validation_pending,
     preview_rows,
     redact_command,
@@ -1120,7 +1121,12 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             if key != self._painted_head:
                 head = activity_head_text(key[0], dark=key[1])
                 if inline and summary:
-                    head.append(f"  {summary}", style=activity_palette(key[1])["muted"])
+                    palette = activity_palette(key[1])
+                    # "Semantic index is building in the background ..." is the
+                    # project's intelligence coming online: in the index colour,
+                    # not greyed out like a line count.
+                    notice = summary == index_notice_text(self.tool_name, self.result, self.output_lines)
+                    head.append(f"  {summary}", style=f"bold {palette['index']}" if notice else palette["muted"])
                 head_widget = self.query_one(".tool-head", Static)
                 old = str(head_widget.content)
                 # A finished step swaps its spinner for a check: same row.

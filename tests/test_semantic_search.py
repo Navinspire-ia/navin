@@ -731,5 +731,29 @@ class DegradationTest(_Project):
         self.assertIn("nope", out)
 
 
+class OffLoopTest(_Project):
+    def test_sync_reads_sources_and_the_cache_in_worker_threads(self) -> None:
+        """A WSL project read from Windows costs 5 to 50 ms per file: never on the loop."""
+        import threading
+
+        self.write("a.py", "def alpha():\n    return 1\n")
+        self.write("notes.md", "# Notes\n\n" + "word " * 40 + "\n")
+        threads: set[str] = set()
+        real_read_text = Path.read_text
+
+        def spy(self, *args, **kwargs):
+            threads.add(threading.current_thread().name)
+            return real_read_text(self, *args, **kwargs)
+
+        sem = self.semantic(HashEmbedder())
+        index = self.index()
+        with patch.object(Path, "read_text", spy):
+            stats = _run(sem.sync(index))
+            _run(sem.search("alpha", 1))
+        self.assertGreater(stats["embedded"], 0)
+        self.assertTrue(threads)
+        self.assertNotIn("MainThread", threads)
+
+
 if __name__ == "__main__":
     unittest.main()

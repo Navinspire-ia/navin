@@ -97,6 +97,44 @@ class TestGitArgv:
         assert argv is not None
         assert argv[1] == "-C"
 
+    def test_macos_git_shim_without_developer_tools_is_not_git(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # /usr/bin/git without the Command Line Tools opens the "install the
+        # developer tools" dialog and exits 1 on every call: that is "no git",
+        # not a repository problem, and it is asked once, not per call.
+        import subprocess
+
+        from navin.utils import git_argv as module
+
+        monkeypatch.setattr(module, "_clt_state", None)
+        monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/git")
+        calls: list[list[str]] = []
+
+        def no_clt(argv, **_kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"xcode-select: error")
+
+        monkeypatch.setattr(module.subprocess, "run", no_clt)
+        assert git_argv("/Users/me/proj", platform="darwin") is None
+        assert git_argv("/Users/me/proj", platform="darwin") is None
+        assert calls == [["xcode-select", "-p"]]
+        # Homebrew's git is a real binary: never probed, never refused.
+        monkeypatch.setattr(module.shutil, "which", lambda _name: "/opt/homebrew/bin/git")
+        assert git_argv("/Users/me/proj", platform="darwin") == ["/opt/homebrew/bin/git", "-C", "/Users/me/proj"]
+        # The same shim with the tools installed is plain git.
+        monkeypatch.setattr(module, "_clt_state", None)
+        monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/git")
+        monkeypatch.setattr(
+            module.subprocess, "run",
+            lambda argv, **_kw: subprocess.CompletedProcess(argv, 0, stdout=b"/Library/Developer/CommandLineTools\n", stderr=b""),
+        )
+        assert git_argv("/Users/me/proj", platform="darwin") == ["/usr/bin/git", "-C", "/Users/me/proj"]
+        # Linux never asks xcode-select anything.
+        monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: pytest.fail("probed on linux"))
+        monkeypatch.setattr(module, "_clt_state", None)
+        assert git_argv("/home/me/proj", platform="linux") == ["/usr/bin/git", "-C", "/home/me/proj"]
+
 
 class TestCallersShareTheHelper:
     def test_project_search_delegates(self, tmp_path: Path) -> None:

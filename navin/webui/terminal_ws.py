@@ -592,8 +592,21 @@ class WindowsTerminalSession:
         kill_windows_process_tree(pid)
 
     def close(self) -> None:
+        """End the session; the tree kill runs off the loop.
+
+        ``kill_windows_process_tree`` falls back to ``taskkill /T /F`` (a
+        process spawn with a 10 s timeout) when the native extension is
+        missing. close() is called from the websocket handler and from
+        ``cleanup_connection`` on the engine loop, so that spawn froze every
+        chat for the duration; a disconnect with eight tabs open froze it eight
+        times in a row. The kill still happens, just on a worker thread.
+        """
         self._closed = True
-        self._kill_tree()
+        threading.Thread(
+            target=self._kill_tree,
+            name=f"navin-terminal-kill-{self.terminal_id}",
+            daemon=True,
+        ).start()
 
 
 TerminalSession = UnixTerminalSession | WindowsTerminalSession
@@ -602,6 +615,20 @@ TerminalSession = UnixTerminalSession | WindowsTerminalSession
 def _create_session(**kwargs: Any) -> TerminalSession:
     cls = WindowsTerminalSession if _IS_WINDOWS else UnixTerminalSession
     return cls(**kwargs)
+
+
+def _on_event_loop_thread() -> bool:
+    """True when called from a thread that is running an asyncio loop.
+
+    ``asyncio.get_running_loop`` has no non-raising form: its RuntimeError is
+    the documented "no loop here" answer, not a failure, so it is turned into
+    False and nothing else is caught.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def sandboxed_launch(
@@ -654,6 +681,19 @@ class TerminalManager:
         sandbox: bool = False,
         workspace: str | None = None,
     ) -> TerminalSession:
+        """Open a terminal synchronously: for callers that are NOT on the loop.
+
+        ``prepare_launch`` walks PATH, probes WSL distributions and reads the
+        project folder (11 s on a cold Windows host in the gateway log). The
+        WebSocket handler uses ``open_async`` so that work runs in a thread;
+        this entry point refuses to do it on a running loop rather than
+        freezing every chat of the Desktop while one tab opens.
+        """
+        if _on_event_loop_thread():
+            raise RuntimeError(
+                "TerminalManager.open() resolves the shell on the event loop; "
+                "use `await open_async(...)` from a coroutine"
+            )
         sessions = self._by_connection.setdefault(connection, {})
         if terminal_id in sessions:
             raise TerminalError("terminal already open")

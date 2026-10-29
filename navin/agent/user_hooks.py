@@ -231,7 +231,7 @@ def _read_json(path: Path) -> Any:
 
 def _plugin_sources() -> list[tuple[Any, str, str]]:
     try:
-        from navin.plugins.manager import PluginManager, plugins_root
+        from navin.plugins.manager import PluginManager, manifest_path, plugins_root
 
         root = plugins_root()
         if not root.is_dir():
@@ -247,10 +247,11 @@ def _plugin_sources() -> list[tuple[Any, str, str]]:
         default = plugin_dir / "hooks" / "hooks.json"
         if default.is_file():
             sources.append((_read_json(default), str(plugin_dir), str(default)))
-        manifest = _read_json(plugin_dir / "plugin.json") if (plugin_dir / "plugin.json").is_file() else None
+        manifest = PluginManager._manifest(plugin_dir)
         custom = manifest.get("hooks") if isinstance(manifest, dict) else None
+        manifest_file = manifest_path(plugin_dir)
         if isinstance(custom, dict):
-            sources.append((custom, str(plugin_dir), f"{plugin_dir}/plugin.json"))
+            sources.append((custom, str(plugin_dir), str(manifest_file or plugin_dir / "plugin.json")))
         elif isinstance(custom, str) and ".." not in Path(custom).parts and not custom.startswith("/"):
             path = plugin_dir / custom
             if path.is_file() and path.resolve() != default.resolve():

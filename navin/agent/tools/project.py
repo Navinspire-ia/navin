@@ -511,7 +511,7 @@ class ProjectTool(Tool):
                 notes.append(self._report("install", install_unit.path, install, install.command, ok, output))
                 if not ok:
                     return ToolResult.error("\n".join(notes))
-                runtime.remember(root, install_unit.path, "install", install.command)
+                await _to_thread(runtime.remember, root, install_unit.path, "install", install.command)
 
         if action == "start" and candidate is not None and "needs a build first" in candidate.note:
             build = unit.best("build") if unit else None
@@ -547,10 +547,10 @@ class ProjectTool(Tool):
                 else:
                     _GREEN_RUNS.pop(reuse_key, None)
             if ok:
-                runtime.remember(root, unit_path, action, command)
+                await _to_thread(runtime.remember, root, unit_path, action, command)
             else:
                 if candidate is not None and candidate.source == "validated":
-                    runtime.forget(root, unit_path, action)
+                    await _to_thread(runtime.forget, root, unit_path, action)
                 return ToolResult.error("\n".join([*notes, result]))
         return "\n".join([*notes, str(result)])
 
@@ -569,21 +569,22 @@ class ProjectTool(Tool):
         if command.startswith(("docker compose up", "docker-compose up")):
             ok, output = await self._run_once(root, unit_path, command, "start")
             if ok:
-                runtime.remember(root, unit_path, "start", command)
+                await _to_thread(runtime.remember, root, unit_path, "start", command)
                 _TRACKED[key] = Tracked(unit_path, command, None, None, time.time())
                 return self._report("start", unit_path, candidate, command, ok, output)
             return ToolResult.error(self._report("start", unit_path, candidate, command, ok, output))
 
         port = unit.dev_port if unit else None
         if port:
-            detected = ps._detect_server(folder)
+            # Reads package.json / vite config: 9P round trips on a WSL project.
+            detected = await _to_thread(ps._detect_server, folder)
             same = detected is not None and detected.command == command and detected.cwd == folder
             flag = detected.port_flag if same else None
             server = ps.ProjectDevServer(cwd=folder, command=command, port=port, label=unit_path, port_flag=flag)
             session_id, error, server = await ps.start_project_dev_server(server, owner_session_key=self._owner())
             if error:
                 if candidate is not None and candidate.source == "validated":
-                    runtime.forget(root, unit_path, "start")
+                    await _to_thread(runtime.forget, root, unit_path, "start")
                 return ToolResult.error(self._report("start", unit_path, candidate, server.command, False, error))
             url = server.url
             up = await ps.wait_for_url(url, timeout_s=75.0) if url else False
@@ -605,7 +606,7 @@ class ProjectTool(Tool):
                 ))
             _TRACKED[key] = Tracked(unit_path, server.command, session_id, url, time.time(),
                                     watcher=self._watch(session_id, unit_path, server.command))
-            runtime.remember(root, unit_path, "start", command)
+            await _to_thread(runtime.remember, root, unit_path, "start", command)
             return (
                 f"project start [{unit_path}] OK: running at {url} (`{server.command}`). "
                 "Call open_preview with this URL for the user to see it."
@@ -620,7 +621,7 @@ class ProjectTool(Tool):
         if match:
             _TRACKED[key] = Tracked(unit_path, command, match.group(1), None, time.time(),
                                     watcher=self._watch(match.group(1), unit_path, command))
-            runtime.remember(root, unit_path, "start", command)
+            await _to_thread(runtime.remember, root, unit_path, "start", command)
             return self._report("start", unit_path, candidate, command, True, output) + "\nRunning in the background; stop it with project action=stop."
         ok = code == 0
         report = self._report("start", unit_path, candidate, command, ok, output)

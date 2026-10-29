@@ -466,12 +466,91 @@ class TestPluginComponents:
         from types import SimpleNamespace
 
         from navin.bus.events import InboundMessage
-        from navin.command.builtin import cmd_pack
+        from navin.command.builtin import cmd_pack, cmd_plugin
 
         msg = InboundMessage(channel="cli", sender_id="u", chat_id="c", content="/pack")
-        out = asyncio.run(cmd_pack(SimpleNamespace(msg=msg, args="list")))
+        out = asyncio.run(cmd_pack(SimpleNamespace(msg=msg, args="list", loop=None)))
         assert "`kit` (enabled)" in out.content
         assert "1 agent(s), 2 command(s), hooks: PreToolUse, Stop" in out.content
+        # /plugin is the real name; /pack stays an alias of it.
+        same = asyncio.run(cmd_plugin(SimpleNamespace(msg=msg, args="list", loop=None)))
+        assert same.content == out.content
+
+    def test_plugin_install_reports_every_component_and_reloads_mcp_live(self, env, monkeypatch):
+        """`/plugin install` answers like Claude's: what the plugin brings, and the MCP
+        servers it declares are connected in the running loop, not on the next start."""
+        from types import SimpleNamespace
+
+        from navin.bus.events import InboundMessage
+        from navin.command import builtin
+
+        src = env["home"] / "src-kit"
+        _write(src / ".claude-plugin" / "plugin.json", json.dumps({"name": "srckit", "version": "1.0.0", "description": "Kit"}))
+        _write(src / "commands" / "ship.md", "Ship.\n")
+        _write(src / "agents" / "rev.md", "---\nname: rev\ndescription: d\n---\nBody.\n")
+        _write(src / ".mcp.json", json.dumps({"mcpServers": {"srv": {"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/s.js"]}}}))
+
+        synced: list[bool] = []
+        monkeypatch.setattr(PluginManager, "sync_mcp_servers", lambda self: synced.append(True) or True)
+        reloads: list[tuple] = []
+
+        async def fake_reload(state, registry):
+            reloads.append((state, registry))
+            return {"ok": True, "connected": ["srckit-srv"], "failed": []}
+
+        monkeypatch.setattr("navin.agent.tools.mcp.reload_servers", fake_reload)
+        loop = SimpleNamespace(tools=object(), _mcp_servers={}, _mcp_stacks={})
+        msg = InboundMessage(channel="cli", sender_id="u", chat_id="c", content="/plugin")
+        out = asyncio.run(builtin.cmd_plugin(SimpleNamespace(msg=msg, args=f"install {src}", loop=loop)))
+        assert "Plugin installed: `srckit` v1.0.0" in out.content
+        assert "- Commands: `/srckit:ship`" in out.content
+        assert "- Agents: rev" in out.content
+        assert "- MCP servers: `srckit-srv`" in out.content
+        assert "MCP servers: connected: srckit-srv." in out.content
+        assert synced == [True]
+        assert reloads and reloads[0][0] is loop
+        # The command is callable right away under its plugin-qualified name.
+        assert cc.find_custom_command(env["ws"], "/srckit:ship") is not None
+
+        # Without a live loop (a script), the reply says the servers connect on the next start.
+        out = asyncio.run(builtin.cmd_plugin(SimpleNamespace(msg=msg, args="disable srckit", loop=None)))
+        assert "Plugin `srckit` disabled." in out.content
+        assert "connect on the next start" in out.content
+
+        # A reload that could not read the config is reported as such, not hidden.
+        async def unreadable(state, registry):
+            return {"ok": False, "requires_restart": True, "message": "Could not reload MCP config."}
+
+        monkeypatch.setattr("navin.agent.tools.mcp.reload_servers", unreadable)
+        out = asyncio.run(builtin.cmd_plugin(SimpleNamespace(msg=msg, args="enable srckit", loop=loop)))
+        assert "Plugin `srckit` enabled." in out.content
+        assert "live reload did not run (Could not reload MCP config.)" in out.content
+
+    def test_plugin_marketplace_round_trip_in_chat(self, env):
+        from types import SimpleNamespace
+
+        from navin.bus.events import InboundMessage
+        from navin.command import builtin
+
+        market = env["home"] / "market"
+        _write(market / ".claude-plugin" / "marketplace.json", json.dumps({
+            "name": "acme", "plugins": [{"name": "deploy", "source": "./plugins/deploy", "description": "Deploys"}],
+        }))
+        _write(market / "plugins" / "deploy" / "skills" / "deploy" / "SKILL.md", "---\nname: deploy\n---\nD.\n")
+        msg = InboundMessage(channel="cli", sender_id="u", chat_id="c", content="/plugin")
+
+        def run(args: str) -> str:
+            return asyncio.run(builtin.cmd_plugin(SimpleNamespace(msg=msg, args=args, loop=None))).content
+
+        assert "Marketplace added: `acme` (1 plugin(s))" in run(f"marketplace add {market}")
+        assert "`deploy@acme` - Deploys" in run("marketplace list")
+        installed = run("install deploy@acme")
+        assert "Plugin installed: `deploy`" in installed and "- Skills: deploy" in installed
+        listing = run("list")
+        assert "`deploy` (enabled)" in listing and "[deploy@acme]" in listing and "Marketplaces (1)" in listing
+        assert "Plugin error: plugin nope not in marketplace acme" in run("install nope@acme")
+        assert "Marketplace removed: `acme`" in run("marketplace remove acme")
+        assert "Plugin removed: `deploy`" in run("uninstall deploy")
 
     def test_expand_plugin_vars(self, env, monkeypatch):
         monkeypatch.setenv("KIT_TOKEN", "t0k")

@@ -10,8 +10,13 @@ the Evolutions view.
 
 from __future__ import annotations
 
+import threading
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from navin.board import session_focus
 from navin.board.ledger import MissionLedgerStore
@@ -21,17 +26,38 @@ from navin.security.workspace_access import WorkspaceScope
 
 _DEFAULT_HUMAN_ACTOR = "user"
 
+# Projects whose scaffold (.navin pack, templates, metadata) was checked in this
+# process. The board is polled every 15 s by every open Code panel, and the
+# scaffold walk costs dozens of stats and a few writes: 12 to 27 s over the 9P
+# redirector of a WSL project (gateway.log), every poll. Once per project per
+# process is what the check is for; a new folder (a new project opened) still
+# gets it on first sight, and a mutation never waits on it.
+_SCAFFOLDED: set[str] = set()
+_SCAFFOLD_LOCK = threading.Lock()
+
+
+def _ensure_scaffold_once(project: Path) -> None:
+    key = str(project)
+    with _SCAFFOLD_LOCK:
+        if key in _SCAFFOLDED:
+            return
+    from navin.utils.helpers import ensure_project_scaffold
+
+    # ensure_project_scaffold logs and returns [] when the pack cannot be
+    # written (read-only share, vanished folder); it does not raise. A system
+    # folder that must not carry a pack also returns []: both leave the key
+    # out so the next poll tries again, which costs one stat when .navin exists.
+    created = ensure_project_scaffold(project, silent=True)
+    if created or (project / ".navin").is_dir():
+        with _SCAFFOLD_LOCK:
+            _SCAFFOLDED.add(key)
+
 
 def _store_for_scope(scope: WorkspaceScope) -> ProjectBoardStore:
     project = Path(scope.project_path).expanduser()
     if not project.is_dir():
         raise BoardError(f"project not found: {project}", status=404)
-    try:
-        from navin.utils.helpers import ensure_project_scaffold
-
-        ensure_project_scaffold(project, silent=True)
-    except Exception:
-        pass
+    _ensure_scaffold_once(project)
     return ProjectBoardStore(project)
 
 
@@ -74,6 +100,7 @@ def board_payload(
     session_key: str | None = None,
 ) -> dict[str, Any]:
     store = _store_for_scope(scope)
+    issues_sync = _auto_import_issues(store)
     payload = _with_session_plan(store.payload(), session_key, store=store)
     try:
         from navin.board.autonomy import autonomy_state
@@ -81,7 +108,74 @@ def board_payload(
         payload["autonomy"] = autonomy_state(store.project_path)
     except Exception:
         payload["autonomy"] = None
+    if issues_sync is not None:
+        payload["issues_sync"] = issues_sync
     return payload
+
+
+# Automatic issue intake. With autonomy on and "GitHub issues sync" consented,
+# the open issues of the tracker land on the board by themselves: the panel
+# polls /board every 15 s, so the import piggybacks on that read, at most once
+# per interval per project, and reports what it did in the payload. Without
+# the consent nothing is fetched (the user's forge is never called behind
+# their back); the Sync GitHub button stays the manual path.
+_AUTO_SYNC_INTERVAL_S = 600.0
+_AUTO_SYNC_STATE: dict[str, dict[str, Any]] = {}
+_AUTO_SYNC_LOCK = threading.Lock()
+
+
+def _auto_import_issues(store: ProjectBoardStore, *, now: float | None = None) -> dict[str, Any] | None:
+    """Import open issues when consented and due; return the sync state for the panel.
+
+    None when the project did not consent (nothing to show). Otherwise a dict
+    with ``enabled``, ``last_sync`` (ISO), ``imported`` (last run), ``repo``,
+    ``ok`` and ``detail`` so the board can say what happened without a click.
+    """
+    from navin.board.autonomy import autonomy_state
+
+    # autonomy_state reads settings.json with its own defaults for a missing or
+    # unreadable file; it does not raise for a project folder that exists.
+    state = autonomy_state(store.project_path)
+    if not state.get("effective", {}).get("sync_github_issues"):
+        return None
+    key = str(store.project_path)
+    clock = time.monotonic() if now is None else now
+    with _AUTO_SYNC_LOCK:
+        cached = _AUTO_SYNC_STATE.get(key)
+        if cached is not None and clock - cached["at"] < _AUTO_SYNC_INTERVAL_S:
+            return cached["state"]
+        # Claim the slot before the network call so concurrent polls do not
+        # all import at once; the result replaces this placeholder.
+        placeholder = cached["state"] if cached else {"enabled": True, "last_sync": None, "imported": 0, "ok": True, "detail": "", "repo": state.get("issues_repo")}
+        _AUTO_SYNC_STATE[key] = {"at": clock, "state": placeholder}
+    from navin.board.github_sync import import_issues_to_board
+
+    # import_issues_to_board answers {"ok": False, "detail": ...} for every
+    # forge-side failure (404, bad token, gh missing, network): nothing to
+    # catch here, the state below carries it to the panel.
+    result = import_issues_to_board(store.project_path, store, actor="navin")
+    if not result.get("ok"):
+        logger.warning(
+            "board: automatic issue import failed for {}: {}", store.project_path, result.get("detail")
+        )
+    sync_state = {
+        "enabled": True,
+        "last_sync": datetime.now(UTC).isoformat(timespec="seconds"),
+        "imported": int(result.get("imported") or 0),
+        "ok": bool(result.get("ok")),
+        "detail": str(result.get("detail") or ""),
+        "repo": result.get("repo") or state.get("issues_repo"),
+    }
+    if result.get("ok") and result.get("imported"):
+        store.log_activity(
+            kind="github_sync",
+            actor="navin",
+            actor_type="agent",
+            detail=f"automatic: {sync_state['detail']}",
+        )
+    with _AUTO_SYNC_LOCK:
+        _AUTO_SYNC_STATE[key] = {"at": clock, "state": sync_state}
+    return sync_state
 
 
 def _project_for_issues(
@@ -355,6 +449,9 @@ def board_update_payload(
             actor_type="human",
             detail=str(result.get("detail") or ""),
         )
+        # A manual sync resets the automatic clock and its reported state.
+        with _AUTO_SYNC_LOCK:
+            _AUTO_SYNC_STATE.pop(str(store.project_path), None)
     else:
         raise BoardError(f"unknown board action: {action}")
 

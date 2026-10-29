@@ -24,6 +24,7 @@ in the project tree, and are re-embedded per changed file using the same
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import tempfile
@@ -316,9 +317,12 @@ class SemanticIndex:
         """Bring the vectors in line with the code index.
 
         Only files whose fingerprint moved are re-embedded, which is what keeps
-        this affordable on a repo that is being actively edited.
+        this affordable on a repo that is being actively edited. Disk work
+        (the cache load, every source read, the final write) runs in worker
+        threads: this coroutine lives on the gateway's shared loop, and a WSL
+        project read from Windows costs 5 to 50 ms per file.
         """
-        self._load()
+        await asyncio.to_thread(self._load)
         known: dict[str, str] = dict(self._meta.get("files") or {})
         current = self._current_fingerprints(index)
 
@@ -355,7 +359,7 @@ class SemanticIndex:
                         self.max_chunks,
                     )
                     break
-                pending.extend(self._chunks_for_file(index, rel))
+                pending.extend(await asyncio.to_thread(self._chunks_for_file, index, rel))
                 pending_files.append(rel)
                 if len(pending) >= _FLUSH_AT:
                     await self._flush(state, pending, pending_files, current)
@@ -366,11 +370,11 @@ class SemanticIndex:
             # the difference between a network blip costing one batch and costing
             # the whole spend, since the next call resumes from the fingerprints
             # already recorded.
-            self._commit(state)
+            await asyncio.to_thread(self._commit, state)
             raise
 
         embedded = len(state.chunks) - len(keep)
-        self._commit(state)
+        await asyncio.to_thread(self._commit, state)
         return {
             "embedded": embedded,
             "removed": len(removed),
@@ -433,7 +437,7 @@ class SemanticIndex:
 
     async def search(self, query: str, limit: int) -> list[SemanticHit]:
         """Nearest chunks to ``query`` by cosine similarity."""
-        self._load()
+        await asyncio.to_thread(self._load)
         if not self._chunks:
             return []
         vector = _normalize((await self.client.embed([query]))[0])

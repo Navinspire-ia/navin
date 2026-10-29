@@ -131,3 +131,41 @@ def test_write_and_edit_do_disk_io_off_the_event_loop(tmp_path):
     asyncio.run(scenario())
     assert (tmp_path / "a.txt").read_text() == "bye\n"
     assert threads and "MainThread" not in threads
+
+
+def test_stale_overwrite_check_and_instructions_run_off_the_event_loop(tmp_path):
+    """The overwrite guard hashes the file on disk and read_file looks up nested AGENTS.md."""
+    import asyncio
+    import threading
+    from unittest.mock import patch
+
+    from navin.agent.tools import filesystem
+    from navin.agent.tools.filesystem import ReadFileTool, WriteFileTool
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.txt").write_text("hello\n")
+    threads: list[str] = []
+
+    def spy_refusal(self, fp):
+        threads.append(threading.current_thread().name)
+        return None
+
+    def spy_instructions(workspace, target, **kwargs):
+        threads.append(threading.current_thread().name)
+        return ""
+
+    async def scenario():
+        with (
+            patch.object(WriteFileTool, "_stale_overwrite_refusal", spy_refusal),
+            patch.object(filesystem, "scoped_project_instructions", spy_instructions),
+        ):
+            await ReadFileTool(workspace=tmp_path, allowed_dir=tmp_path).execute(path="pkg/a.txt")
+            await WriteFileTool(workspace=tmp_path, allowed_dir=tmp_path).execute(path="pkg/a.txt", content="bye\n")
+            await WriteFileTool(workspace=tmp_path, allowed_dir=tmp_path).execute(
+                files=[{"path": "pkg/b.txt", "content": "x\n"}]
+            )
+
+    asyncio.run(scenario())
+    assert (tmp_path / "pkg" / "a.txt").read_text() == "bye\n"
+    assert len(threads) >= 3
+    assert "MainThread" not in threads

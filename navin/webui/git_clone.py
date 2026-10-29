@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from navin.config.paths import is_navin_internal_path
+from navin.quality import wsl_route
 from navin.utils import wsl
 from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
@@ -358,6 +359,8 @@ def clone_git_project(
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
+        if via_wsl:
+            wsl_route.note_launch(clone_argv, timed_out=True)
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
         raise GitCloneError("git clone timed out", status=504) from exc
@@ -372,6 +375,8 @@ def clone_git_project(
             shutil.rmtree(target, ignore_errors=True)
         raise GitCloneError(f"git clone failed: {exc}", status=500) from exc
 
+    if via_wsl:
+        wsl_route.note_launch(clone_argv, timed_out=False, completed=proc)
     if proc.returncode != 0:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)

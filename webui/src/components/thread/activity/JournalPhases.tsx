@@ -414,7 +414,7 @@ const EXPLORE_GROUPS: Array<{ key: string; match: (entry: ActivityJournalEntry) 
   { key: "read", match: (entry) => entry.kind === "read", label: ["message.journalExploreReads", "Reads"] },
   { key: "search", match: (entry) => entry.kind === "search", label: ["message.journalExploreSearches", "Searches"] },
   { key: "list", match: (entry) => entry.kind === "tool" && ["list_dir", "find_files", "glob", "tree"].includes(entry.tool ?? ""), label: ["message.journalExploreListings", "Folder listings"] },
-  { key: "index", match: (entry) => entry.kind === "tool" && ["code_index", "lsp"].includes(entry.tool ?? ""), label: ["message.journalExploreIndex", "Code index"] },
+  { key: "index", match: (entry) => entry.kind === "tool" && ["code_index", "metagraph", "lsp"].includes(entry.tool ?? ""), label: ["message.journalExploreIndex", "Code index"] },
 ];
 
 /** Exploration by kind of action (reads, searches, listings, index), each group with its count; nothing left out. */

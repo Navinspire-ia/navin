@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from navin.agent.tools.scrape import (
     ScrapeTool,
@@ -158,6 +160,34 @@ class ScrapeToolExportTest(unittest.TestCase):
 
 
 class ScrapeToolExecuteTest(unittest.TestCase):
+    def test_url_validation_and_sitemap_fetch_run_off_the_event_loop(self) -> None:
+        # validate_url_target resolves DNS and the sitemap fetch is sync httpx
+        # with retry back-off: both used to run directly on the gateway loop.
+        from navin.agent.tools import scrape as scrape_mod
+
+        threads: dict[str, str] = {}
+
+        def fake_validate(url, *, enforce_ssrf=True):
+            threads["validate"] = threading.current_thread().name
+            return True, ""
+
+        def fake_sitemap(self, safe, opts, limit, enforce_ssrf, proxy):
+            threads["sitemap"] = threading.current_thread().name
+            return ["https://example.com/a"], []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = ScrapeTool(workspace=tmp, config=ScrapeToolConfig())
+            with (
+                mock.patch.object(scrape_mod, "_validate_url_safe", fake_validate),
+                mock.patch.object(ScrapeTool, "_sitemap_sync", fake_sitemap),
+            ):
+                raw = asyncio.run(tool.execute(action="sitemap", url="https://example.com/sitemap.xml"))
+        payload = json.loads(raw)
+        self.assertEqual(payload["urls"], ["https://example.com/a"])
+        self.assertEqual(payload["count"], 1)
+        self.assertNotEqual(threads["validate"], "MainThread")
+        self.assertNotEqual(threads["sitemap"], "MainThread")
+
     def test_extract_and_clean_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tool = ScrapeTool(workspace=tmp, config=ScrapeToolConfig())

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from navin.quality import wsl_route
 from navin.runtime_context import RuntimeContextBlock, wrap_runtime_context_lines
 from navin.utils import wsl
 from navin.utils.git_argv import git_route
@@ -217,6 +218,11 @@ def _read(root: Path) -> RepoState:
     argv = _status_argv(root)
     if argv is None:
         return RepoState(unavailable="git is not installed")
+    refused = wsl_route.refusal(argv)
+    if refused is not None:
+        # The status bar polls this: with WSL down it would cost a full timeout
+        # per poll and keep the UI thread pool busy for nothing.
+        return RepoState(unavailable=refused)
     try:
         completed = subprocess.run(
             argv,
@@ -224,8 +230,12 @@ def _read(root: Path) -> RepoState:
             timeout=_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired as exc:
+        wsl_route.note_launch(argv, timed_out=True)
+        return RepoState(unavailable=f"git status failed: {exc}")
     except (OSError, subprocess.SubprocessError) as exc:
         return RepoState(unavailable=f"git status failed: {exc}")
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     if completed.returncode != 0:
         # The common case by far is "not a repository", which is not an error
         # worth reporting to the model.

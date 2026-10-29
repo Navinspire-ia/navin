@@ -654,9 +654,17 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         accepts_args=True,
     ),
     BuiltinCommandSpec(
+        "/plugin",
+        "Plugins",
+        "Install, list, enable/disable or remove plugins (skills, agents, commands, hooks, MCP servers) and their marketplaces.",
+        "package",
+        "[list|install <name@marketplace|owner/repo|git-url|path|@scope/pkg>|uninstall <name>|enable <name>|disable <name>|marketplace add|list|remove|update]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
         "/pack",
         "Plugin packs",
-        "Install, list, enable/disable or remove plugin packs (skills + MCP servers).",
+        "Alias of /plugin: install, list, enable/disable or remove plugin packs.",
         "package",
         "[list|install <git-url|path>|enable <name>|disable <name>|remove <name>]",
         accepts_args=True,
@@ -4252,9 +4260,81 @@ async def cmd_pilot(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-async def cmd_pack(ctx: CommandContext) -> OutboundMessage:
-    """Manage plugin packs: bundles of skills + MCP servers."""
+_PLUGIN_USAGE = (
+    "Usage: `/plugin [list|install <source>|uninstall <name>|enable <name>|disable <name>|"
+    "marketplace add <owner/repo|url|path>|marketplace list|marketplace remove <name>|"
+    "marketplace update [name]]`\n\n"
+    "`<source>` is `name@marketplace`, `owner/repo` (GitHub), a git url (`#folder` picks a folder "
+    "of a monorepo), a local folder or an npm package (`@scope/pkg`). A plugin bundles skills "
+    "(`skills/<name>/SKILL.md`), agents (`agents/*.md`), slash commands (`commands/*.md`, run as "
+    "`/<plugin>:<command>`), hooks (`hooks/hooks.json`) and MCP servers (`mcp.json` or `.mcp.json`). "
+    "Plugins written for Claude Code (`.claude-plugin/plugin.json`) install unchanged. Everything is "
+    "live at once: skills, agents and commands on the next message, MCP servers connected now."
+)
+
+
+async def _plugin_mcp_reload(ctx: CommandContext, changed: bool) -> str:
+    """Connect the MCP servers a plugin mutation added or dropped, in this running loop.
+
+    Returns the one line to append to the reply. Not a live agent loop (a
+    script, a test): the config is saved and the servers connect on the next
+    start, said plainly.
+    """
+    if not changed:
+        return ""
+    loop = ctx.loop
+    registry = getattr(loop, "tools", None)
+    if loop is None or registry is None or not hasattr(loop, "_mcp_servers"):
+        return "MCP servers: saved; they connect on the next start of navin."
+    from navin.agent.tools.mcp import reload_servers
+
+    # reload_servers never raises for a server that will not connect: those
+    # come back in result["failed"], a config it cannot read in result["error"].
+    # The one thing to bound here is the time: the first npx/uvx run downloads
+    # the package, so give it two minutes, then let the connection finish in
+    # the background instead of holding the chat.
+    task = asyncio.ensure_future(reload_servers(loop, registry))
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=120.0)
+    except asyncio.TimeoutError:
+        return "MCP servers: still connecting in the background (first run downloads the package); their tools appear once connected."
+    if not result.get("ok") and result.get("requires_restart"):
+        return f"MCP servers: saved, but the live reload did not run ({result.get('message')}). Restart navin to connect them."
+    connected = result.get("connected") or []
+    failed = result.get("failed") or []
+    parts = []
+    if connected:
+        parts.append(f"connected: {', '.join(connected)}")
+    if failed:
+        parts.append(f"not connected: {', '.join(failed)} (see the gateway log; `/plugin list` shows the state)")
+    return "MCP servers: " + ("; ".join(parts) if parts else str(result.get("message") or "up to date")) + "."
+
+
+def _plugin_report(plugin: dict[str, Any], *, verb: str) -> str:
+    """What the plugin brings, component by component, as the chat reply."""
+    name = plugin["name"]
+    lines = [f"Plugin {verb}: `{name}`" + (f" v{plugin['version']}" if plugin.get("version") else "")]
+    if plugin.get("description"):
+        lines.append(plugin["description"])
+    lines.append(f"- Skills: {', '.join(plugin['skills']) or 'none'}")
+    lines.append(f"- Agents: {', '.join(plugin.get('agents') or []) or 'none'}")
+    commands = plugin.get("commands") or []
+    lines.append(
+        "- Commands: " + (", ".join(f"`/{name}:{cmd}`" for cmd in commands) if commands else "none")
+    )
+    lines.append(f"- Hooks: {', '.join(plugin.get('hooks') or []) or 'none'}")
+    servers = plugin.get("mcp_servers") or []
+    lines.append(
+        "- MCP servers: " + (", ".join(f"`{name}-{server}`" for server in servers) if servers else "none")
+    )
+    return "\n".join(lines)
+
+
+async def cmd_plugin(ctx: CommandContext) -> OutboundMessage:
+    """Manage plugins and their marketplaces; everything is live without a restart."""
+    from navin.agent.skills import clear_skills_index_cache
     from navin.plugins import PluginError, PluginManager
+    from navin.plugins.marketplace import MarketplaceRegistry, install_from_marketplace, parse_spec
 
     metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
 
@@ -4270,70 +4350,147 @@ async def cmd_pack(ctx: CommandContext) -> OutboundMessage:
     action = action.lower()
     rest = rest.strip()
 
+    def refresh() -> None:
+        # Skills, agents and commands are rescanned on the next message once
+        # the caches are dropped; the plugin manager already forgets the agents.
+        clear_skills_index_cache()
+
     try:
-        if action in ("", "list"):
-            rows = manager.list()
-            if not rows:
-                return reply(
-                    "No plugin packs installed.\n"
-                    "Install one with `/pack install <git-url|/local/path>`. "
-                    "A pack bundles skills (`skills/<name>/SKILL.md`), agents (`agents/*.md`), "
-                    "slash commands (`commands/*.md`), hooks (`hooks/hooks.json`) and MCP servers "
-                    "(`mcp.json`, commands may use npx/uvx/docker)."
-                )
-            lines = [f"Plugin packs ({len(rows)}):", ""]
+        if action in ("", "list", "ls"):
+            rows = await asyncio.to_thread(manager.list)
+            markets = await asyncio.to_thread(MarketplaceRegistry(manager.root).list)
+            if not rows and not markets:
+                return reply("No plugins installed.\n\n" + _PLUGIN_USAGE)
+            live = set(getattr(ctx.loop, "_mcp_stacks", {}) or {})
+            lines = [f"Plugins ({len(rows)}):", ""] if rows else ["No plugins installed.", ""]
             for row in rows:
-                state = "enabled" if row["enabled"] else "disabled"
+                state = "enabled" if row["enabled"] else ("blocked by policy" if row.get("blocked_by_policy") else "disabled")
                 parts = []
                 if row["skills"]:
                     parts.append(f"{len(row['skills'])} skill(s)")
-                if row["mcp_servers"]:
-                    parts.append(f"{len(row['mcp_servers'])} MCP server(s)")
                 if row.get("agents"):
                     parts.append(f"{len(row['agents'])} agent(s)")
                 if row.get("commands"):
                     parts.append(f"{len(row['commands'])} command(s)")
                 if row.get("hooks"):
                     parts.append(f"hooks: {', '.join(row['hooks'])}")
+                if row["mcp_servers"]:
+                    states = []
+                    for server in row["mcp_servers"]:
+                        key = f"{row['name']}-{server}"
+                        states.append(f"{server} ({'connected' if key in live else 'not connected'})")
+                    parts.append("MCP: " + ", ".join(states))
                 desc = f" - {row['description']}" if row["description"] else ""
-                lines.append(
-                    f"- `{row['name']}` ({state}) · {', '.join(parts) or 'empty'}{desc}"
-                )
+                source = f" [{row['source']}]" if row.get("source") else ""
+                lines.append(f"- `{row['name']}` ({state}) · {', '.join(parts) or 'empty'}{desc}{source}")
+            if markets:
+                lines += ["", f"Marketplaces ({len(markets)}):"]
+                for market in markets:
+                    names = ", ".join(p.name for p in market.plugins) or "no plugins"
+                    lines.append(f"- `{market.name}` ({market.source}) · {names}")
+                lines.append("Install one with `/plugin install <name>@<marketplace>`.")
             return reply("\n".join(lines))
-        if action == "install":
+
+        if action in ("install", "add"):
             if not rest:
-                return reply("Usage: `/pack install <git-url|/local/path>`")
-            if rest.startswith(("https://", "git@", "ssh://")):
-                plugin = manager.install_from_git(rest)
+                return reply("Usage: `/plugin install <name@marketplace|owner/repo|git-url|path|@scope/pkg>`")
+            spec, _, forced_name = rest.partition(" --name ")
+            spec = spec.strip()
+            forced = forced_name.strip() or None
+            if parse_spec(spec) is not None:
+                plugin = await asyncio.to_thread(install_from_marketplace, spec, manager=manager)
+            elif spec.startswith(("https://", "git@", "ssh://")):
+                plugin = await asyncio.to_thread(manager.install_from_git, spec, name=forced)
+            elif spec.startswith("@") or (
+                "/" not in spec and "\\" not in spec and not Path(spec).expanduser().exists()
+                and spec.replace("-", "").replace("_", "").replace(".", "").isalnum()
+            ):
+                # `@scope/pkg` is npm; a bare word is first a marketplace plugin, then npm.
+                if not spec.startswith("@"):
+                    try:
+                        plugin = await asyncio.to_thread(install_from_marketplace, spec, manager=manager)
+                    except PluginError as market_exc:
+                        if "no marketplace offers" not in str(market_exc):
+                            raise
+                        plugin = await asyncio.to_thread(manager.install_from_npx, spec, name=forced)
+                else:
+                    plugin = await asyncio.to_thread(manager.install_from_npx, spec, name=forced)
+            elif Path(spec).expanduser().exists():
+                plugin = await asyncio.to_thread(manager.install_from_path, spec, name=forced)
             else:
-                plugin = manager.install_from_path(rest)
-            manager.sync_mcp_servers()
-            return reply(
-                f"Pack installed: `{plugin['name']}`\n"
-                f"- Skills: {', '.join(plugin['skills']) or 'none'}\n"
-                f"- MCP servers: {', '.join(plugin['mcp_servers']) or 'none'}\n\n"
-                "Skills are available immediately; MCP servers connect on the next turn."
-            )
+                # `owner/repo` or `owner/repo#folder`: GitHub shorthand.
+                plugin = await asyncio.to_thread(manager.install_from_git, spec, name=forced)
+            changed = await asyncio.to_thread(manager.sync_mcp_servers)
+            refresh()
+            text = _plugin_report(plugin, verb="installed")
+            note = await _plugin_mcp_reload(ctx, changed)
+            return reply(text + ("\n\n" + note if note else ""))
+
         if action in ("enable", "disable"):
             if not rest:
-                return reply(f"Usage: `/pack {action} <name>`")
-            plugin = manager.set_enabled(rest, action == "enable")
-            manager.sync_mcp_servers()
-            return reply(f"Pack `{plugin['name']}` {action}d.")
-        if action in ("remove", "uninstall"):
+                return reply(f"Usage: `/plugin {action} <name>`")
+            plugin = await asyncio.to_thread(manager.set_enabled, rest, action == "enable")
+            changed = await asyncio.to_thread(manager.sync_mcp_servers)
+            refresh()
+            note = await _plugin_mcp_reload(ctx, changed)
+            return reply(f"Plugin `{plugin['name']}` {action}d." + ("\n" + note if note else ""))
+
+        if action in ("uninstall", "remove", "rm"):
             if not rest:
-                return reply("Usage: `/pack remove <name>`")
-            manager.uninstall(rest)
-            manager.sync_mcp_servers()
-            return reply(f"Pack removed: `{rest}`.")
+                return reply("Usage: `/plugin uninstall <name>`")
+            await asyncio.to_thread(manager.uninstall, rest)
+            changed = await asyncio.to_thread(manager.sync_mcp_servers)
+            refresh()
+            note = await _plugin_mcp_reload(ctx, changed)
+            return reply(f"Plugin removed: `{rest}`." + ("\n" + note if note else ""))
+
+        if action in ("marketplace", "market", "marketplaces"):
+            registry = MarketplaceRegistry(manager.root)
+            sub, _, value = rest.partition(" ")
+            sub = sub.lower()
+            value = value.strip()
+            if sub in ("", "list", "ls"):
+                markets = await asyncio.to_thread(registry.list)
+                if not markets:
+                    return reply(
+                        "No marketplace registered. Add one with "
+                        "`/plugin marketplace add <owner/repo|git-url|path>`."
+                    )
+                lines = [f"Marketplaces ({len(markets)}):"]
+                for market in markets:
+                    lines.append(f"- `{market.name}` ({market.source})" + (f" - {market.description}" if market.description else ""))
+                    for plugin_entry in market.plugins:
+                        version = f" v{plugin_entry.version}" if plugin_entry.version else ""
+                        desc = f" - {plugin_entry.description}" if plugin_entry.description else ""
+                        lines.append(f"    - `{plugin_entry.name}@{market.name}`{version}{desc}")
+                return reply("\n".join(lines))
+            if sub == "add":
+                if not value:
+                    return reply("Usage: `/plugin marketplace add <owner/repo|git-url|path>`")
+                market = await asyncio.to_thread(registry.add, value)
+                names = ", ".join(f"`{p.name}@{market.name}`" for p in market.plugins) or "none"
+                return reply(
+                    f"Marketplace added: `{market.name}` ({len(market.plugins)} plugin(s)).\n"
+                    f"Plugins: {names}\n"
+                    f"Install one with `/plugin install <name>@{market.name}`."
+                )
+            if sub in ("remove", "rm"):
+                if not value:
+                    return reply("Usage: `/plugin marketplace remove <name>`")
+                await asyncio.to_thread(registry.remove, value)
+                return reply(f"Marketplace removed: `{value}`. Installed plugins stay installed.")
+            if sub == "update":
+                refreshed = await asyncio.to_thread(registry.update, value or None)
+                return reply("Marketplaces updated: " + (", ".join(f"`{n}`" for n in refreshed) or "none") + ".")
+            return reply("Usage: `/plugin marketplace [list|add <source>|remove <name>|update [name]]`")
     except PluginError as exc:
-        return reply(f"Pack error: {exc}")
-    return reply(
-        "Usage: `/pack [list|install <git-url|path>|enable <name>|disable <name>|remove <name>]`\n\n"
-        "A pack is a directory bundling skills and MCP servers, installed under "
-        "`~/.navin/plugins/`. Skills hot-reload instantly; MCP servers are merged "
-        "into the tools config with a `<pack>-` prefix."
-    )
+        return reply(f"Plugin error: {exc}")
+    return reply(_PLUGIN_USAGE)
+
+
+async def cmd_pack(ctx: CommandContext) -> OutboundMessage:
+    """``/pack``: the former name of ``/plugin``, kept as an alias."""
+    return await cmd_plugin(ctx)
 
 
 def register_builtin_commands(router: CommandRouter) -> None:
@@ -4400,6 +4557,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/checkpoint ", cmd_checkpoint)
     router.exact("/pilot", cmd_pilot)
     router.prefix("/pilot ", cmd_pilot)
+    router.exact("/plugin", cmd_plugin)
+    router.prefix("/plugin ", cmd_plugin)
     router.exact("/pack", cmd_pack)
     router.prefix("/pack ", cmd_pack)
     from navin.github.triage_command import cmd_triage

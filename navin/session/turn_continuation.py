@@ -50,6 +50,23 @@ _EMPTY_FINAL_CONTINUATION_PROMPT = (
     "mention the empty reply or this note to the user."
 )
 _CONTINUABLE_STOPS = frozenset({"max_iterations", "empty_final_response"})
+# A turn that stopped for want of progress (reminders to act ignored, only
+# blocked or unchanged calls) is resumed as well, but only while the work the
+# user accepted is still open: a board step this chat claimed, or an active
+# sustained goal. Seen live: the agent was reading the files a board step
+# needed, the exploration reminders counted that as looking around, the turn
+# was forced to answer, and the user had to type "continue" with steps still
+# open. The stall accounting below still ends a run that keeps changing
+# nothing; a plain chat turn with no plan simply answers.
+_PLAN_CONTINUABLE_STOPS = frozenset({"no_progress"})
+_NO_PROGRESS_RESUME_PROMPT = (
+    "The previous slice stopped because it kept looking around without acting "
+    "and the reminders went unanswered, while steps of the accepted plan are "
+    "still open. Nothing is lost. Decide from what you already read: make the "
+    "edit, run the check, or close the step with its evidence. If something "
+    "genuinely blocks a step, say exactly what and move it to blocked instead "
+    "of reading more."
+)
 # Slices in a row that changed nothing, and whether the "stuck" report slice
 # was already sent. Work that moves (an edit, a command that succeeds, a board
 # step that changes) resets the count: real progress is never cut short.
@@ -199,7 +216,7 @@ async def maybe_continue_turn(ctx: Any) -> bool:
         session_key=ctx.session_key,
     )
     if not kind:
-        if ctx.stop_reason in _CONTINUABLE_STOPS:
+        if ctx.stop_reason in _CONTINUABLE_STOPS or ctx.stop_reason in _PLAN_CONTINUABLE_STOPS:
             _park_board_after_hard_stop(ctx)
         return False
     if ctx.stop_reason == "empty_final_response":
@@ -266,6 +283,9 @@ async def maybe_continue_turn(ctx: Any) -> bool:
         and not stalled
     ):
         content = f"{_EMPTY_FINAL_CONTINUATION_PROMPT}\n\n{content}"
+    if ctx.stop_reason in _PLAN_CONTINUABLE_STOPS and not stalled:
+        # Not a budget boundary: say what happened, then hand over the plan.
+        content = f"{_NO_PROGRESS_RESUME_PROMPT}\n\n{content}"
     if not stalled:
         content += _failures_note(report.failures)
 
@@ -310,7 +330,8 @@ def _continuation_kind(
     message_metadata: Mapping[str, Any] | None = None,
     session_key: str | None = None,
 ) -> str | None:
-    if stop_reason not in _CONTINUABLE_STOPS or not pending_queue_available:
+    plan_only = stop_reason in _PLAN_CONTINUABLE_STOPS
+    if not pending_queue_available or (stop_reason not in _CONTINUABLE_STOPS and not plan_only):
         return None
     if stop_reason == "empty_final_response" and int(
         (session_metadata or {}).get(_EMPTY_FINAL_ROUNDS_KEY) or 0
@@ -327,6 +348,9 @@ def _continuation_kind(
         return _GOAL_CONTINUATION_KIND
     if _board_continuation_available(session_key=session_key, message_metadata=message_metadata):
         return _BOARD_CONTINUATION_KIND
+    if plan_only:
+        # No accepted plan behind this turn: the forced answer stands.
+        return None
     return _TURN_CONTINUATION_KIND
 
 
@@ -484,7 +508,9 @@ def slice_report(
         text = _tool_result_text(message)
         head = text.lstrip()[:400]
         # The exit code sits at the END of a long build log: take the last one.
-        codes = _EXIT_CODE.findall(text)
+        # File contents and search hits are not command output: a test file
+        # that quotes "Exit code: 1" must not turn a read into a failure.
+        codes = [] if name in _READ_TOOLS else _EXIT_CODE.findall(text)
         failed = (
             message.get("_tool_status") == "error"
             or head.startswith("Error")

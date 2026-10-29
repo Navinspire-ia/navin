@@ -567,6 +567,10 @@ class CronService:
             ]
         }
 
+        # Synchronous on purpose: _load_store re-reads the disk on every call
+        # (other instances merge their actions through the file), so a deferred
+        # write would let a reload resurrect the previous snapshot. The one hot
+        # caller on the loop, the timer tick, already saves from a thread.
         self._atomic_write(self.store_path, json.dumps(data, indent=2, ensure_ascii=False))
 
     @staticmethod

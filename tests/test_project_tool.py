@@ -132,10 +132,14 @@ def test_stop_only_touches_what_navin_started(monkeypatch) -> None:
 
 
 def test_web_app_starts_on_the_dev_server_path(monkeypatch) -> None:
+    import threading
+
     from navin.agent.tools import preview_server as ps
 
     root = _project({**_node_app(), "node_modules/.keep": ""})
     seen = {}
+    loop_thread = threading.current_thread()
+    off_loop: dict[str, object] = {}
 
     async def fake_start(server, owner_session_key=None):
         seen["command"] = server.command
@@ -146,11 +150,27 @@ def test_web_app_starts_on_the_dev_server_path(monkeypatch) -> None:
     async def fake_wait(url, timeout_s=60.0):
         return url == "http://127.0.0.1:5174"
 
+    real_detect, real_remember = ps._detect_server, runtime.remember
+
+    def detect(folder):
+        off_loop["detect"] = threading.current_thread()
+        return real_detect(folder)
+
+    def remember(*args):
+        off_loop["remember"] = threading.current_thread()
+        return real_remember(*args)
+
     monkeypatch.setattr(ps, "start_project_dev_server", fake_start)
     monkeypatch.setattr(ps, "wait_for_url", fake_wait)
+    monkeypatch.setattr(ps, "_detect_server", detect)
+    monkeypatch.setattr(runtime, "remember", remember)
     result = _run(ProjectTool(workspace=root, exec_tool=FakeExec()), action="start")
     assert "running at http://127.0.0.1:5174" in result
     assert seen["command"] == "npm run dev"
+    # Manifest reads and the commands.json write are 9P round trips on a WSL
+    # project: both leave the event loop thread.
+    assert off_loop["detect"] is not loop_thread
+    assert off_loop["remember"] is not loop_thread
     assert "already running" in _run(ProjectTool(workspace=root, exec_tool=FakeExec()), action="start") or True
 
 

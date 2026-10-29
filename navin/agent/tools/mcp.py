@@ -182,6 +182,11 @@ def _sanitize_mcp_tool_name(name: str) -> str:
 _MAX_FAILURE_CHARS = 600
 
 
+def _is_http_405(detail: str) -> bool:
+    """True when a described failure is an HTTP 405 from the MCP endpoint."""
+    return "405" in detail and "Method Not Allowed" in detail
+
+
 def _describe_failure(exc: BaseException) -> str:
     """Render an MCP failure so the agent can act on it.
 
@@ -1129,6 +1134,11 @@ def _server_stderr(name: str) -> Iterator[TextIO]:
         reader.join(timeout=5)
 
 
+async def _exit_in_thread(cm: Any) -> None:
+    """Leave a synchronous context manager without blocking the event loop."""
+    await asyncio.to_thread(cm.__exit__, None, None, None)
+
+
 def _load_mcp_sdk() -> None:
     """Import the MCP SDK (the imports below are then instant on the loop)."""
     import mcp  # noqa: F401
@@ -1185,8 +1195,10 @@ async def connect_mcp_servers(
         ) from exc
 
     async def open_single_server(
-        name: str, cfg, server_stack: AsyncExitStack
+        name: str, cfg, server_stack: AsyncExitStack, *, probe: bool = True
     ) -> tuple[str, AsyncExitStack | None]:
+        # probe=False: the port is already known reachable (SSE fallback after a
+        # streamable HTTP 405), so the retry fits in the caller's connect timeout.
         try:
             transport_type = cfg.type
             if not transport_type:
@@ -1201,7 +1213,9 @@ async def connect_mcp_servers(
                     return name, None
 
             if transport_type in {"sse", "streamableHttp"}:
-                ok, error = validate_url_target(cfg.url)
+                # DNS resolution for the SSRF check runs in a worker: a slow
+                # resolver would otherwise stall the loop for every server.
+                ok, error = await asyncio.to_thread(validate_url_target, cfg.url)
                 if not ok:
                     logger.warning(
                         "MCP server '{}': blocked unsafe URL {} ({})",
@@ -1212,7 +1226,9 @@ async def connect_mcp_servers(
                     return name, None
 
             if transport_type == "stdio":
-                command, args, env = _normalize_windows_stdio_command(
+                # shutil.which walks PATH (network shares included on Windows).
+                command, args, env = await asyncio.to_thread(
+                    _normalize_windows_stdio_command,
                     cfg.command,
                     cfg.args,
                     _stdio_server_env(cfg.env),
@@ -1226,7 +1242,11 @@ async def connect_mcp_servers(
                 # Entered first on purpose: the stack unwinds LIFO, so the child
                 # dies before the pipe closes and the reader gets its EOF. Swap
                 # these two and every shutdown waits out the reader's timeout.
-                errlog = server_stack.enter_context(_server_stderr(name))
+                # The exit joins the reader thread (up to 5 s when a grandchild
+                # still holds the pipe), so it runs in a worker, not on the loop.
+                stderr_cm = _server_stderr(name)
+                errlog = stderr_cm.__enter__()
+                server_stack.push_async_callback(_exit_in_thread, stderr_cm)
                 # Tagged: at quit the CLI signals these children at once instead
                 # of waiting for each to notice its closed stdin.
                 with tagged(f"mcp:{name}"):
@@ -1234,7 +1254,7 @@ async def connect_mcp_servers(
                         stdio_client(params, errlog=errlog)
                     )
             elif transport_type == "sse":
-                if not await _probe_http_url(cfg.url):
+                if probe and not await _probe_http_url(cfg.url):
                     _log_unreachable(name, cfg.url)
                     return name, None
 
@@ -1261,7 +1281,7 @@ async def connect_mcp_servers(
                     sse_client(cfg.url, httpx_client_factory=httpx_client_factory)
                 )
             elif transport_type == "streamableHttp":
-                if not await _probe_http_url(cfg.url):
+                if probe and not await _probe_http_url(cfg.url):
                     _log_unreachable(name, cfg.url)
                     return name, None
 
@@ -1381,6 +1401,10 @@ async def connect_mcp_servers(
             return name, server_stack
 
         except Exception as e:
+            if _is_http_405(_describe_failure(e)):
+                # Wrong transport or not an MCP endpoint: let the owner log one
+                # line (and try the SSE fallback) instead of a traceback here.
+                raise
             hint = ""
             text = str(e).lower()
             if any(
@@ -1405,28 +1429,85 @@ async def connect_mcp_servers(
         ready: asyncio.Future[bool] = loop.create_future()
         close_requested = asyncio.Event()
 
+        # Transport inferred from the URL (no explicit type, not a /sse URL):
+        # a 405 on the streamable HTTP POST means the server only speaks the
+        # older SSE transport, and the MCP backwards-compatibility guidance is
+        # to retry over SSE. A pinned type is never second-guessed.
+        url = getattr(cfg, "url", "") or ""
+        inferred_streamable = (
+            not getattr(cfg, "type", None)
+            and not getattr(cfg, "command", "")
+            and bool(url)
+            and not url.rstrip("/").endswith("/sse")
+        )
+
+        def _is_405(detail: str) -> bool:
+            return _is_http_405(detail)
+
+        async def attempt(attempt_cfg, *, probe: bool, fallback: bool = False) -> None:
+            # Own the stack before the handshake: SDK task-group failures
+            # cancel initialize(), so cleanup must also cover BaseException.
+            # Let __aexit__ unwind in this task and recover the HTTP error
+            # before reporting a failed connection to the caller.
+            async with AsyncExitStack() as stack:
+                _, connected_stack = await open_single_server(name, attempt_cfg, stack, probe=probe)
+                if connected_stack is None:
+                    return
+                if fallback:
+                    logger.info(
+                        "MCP server '{}': streamable HTTP answered 405, connected over SSE instead "
+                        "(set \"type\": \"sse\" in the config to skip this probe)",
+                        name,
+                    )
+                if not ready.done():
+                    ready.set_result(True)
+                await close_requested.wait()
+
         async def own_connection() -> None:
             try:
-                # Own the stack before the handshake: SDK task-group failures
-                # cancel initialize(), so cleanup must also cover BaseException.
-                # Let __aexit__ unwind in this task and recover the HTTP error
-                # before reporting a failed connection to the caller.
-                async with AsyncExitStack() as stack:
-                    _, connected_stack = await open_single_server(name, cfg, stack)
-                    if connected_stack is None:
+                fall_back = False
+                try:
+                    await attempt(cfg, probe=True)
+                except Exception as exc:
+                    if not inferred_streamable or not _is_405(_describe_failure(exc)):
+                        raise
+                    fall_back = True
+                if fall_back:
+                    # Streamable HTTP refused: same URL, same headers, over SSE.
+                    # Outside the except block so a failed retry is not chained
+                    # to the first 405.
+                    logger.info(
+                        "MCP server '{}': streamable HTTP answered 405, retrying {} over SSE",
+                        name, _redact_url(url),
+                    )
+                    try:
+                        await attempt(
+                            cfg.model_copy(update={"type": "sse"}), probe=False, fallback=True
+                        )
+                    except Exception as sse_exc:
+                        logger.warning(
+                            "MCP server '{}': {} answered 405 to streamable HTTP and the SSE fallback "
+                            "failed too ({}) - it is not an MCP endpoint on either transport. "
+                            "Fix the url or set \"type\": \"sse\" explicitly; skipping this server.",
+                            name, _redact_url(url), type(sse_exc).__name__,
+                        )
                         return
-                    if not ready.done():
-                        ready.set_result(True)
-                    await close_requested.wait()
             except Exception as exc:
                 detail = _describe_failure(exc)
-                if "405" in detail and "Method Not Allowed" in detail:
+                if _is_405(detail):
                     # Not an MCP endpoint (or the wrong transport): one clear line, no traceback spam.
-                    logger.warning(
-                        "MCP server '{}': {} answered 405 - it is not an MCP streamable HTTP endpoint. "
-                        "Set \"type\": \"sse\" or fix the url; skipping this server.",
-                        name, _redact_url(getattr(cfg, "url", "") or ""),
-                    )
+                    if getattr(cfg, "type", None) == "sse" or url.rstrip("/").endswith("/sse"):
+                        logger.warning(
+                            "MCP server '{}': {} answered 405 - it is not an MCP SSE endpoint. "
+                            "Set \"type\": \"streamableHttp\" or fix the url; skipping this server.",
+                            name, _redact_url(url),
+                        )
+                    else:
+                        logger.warning(
+                            "MCP server '{}': {} answered 405 - it is not an MCP streamable HTTP endpoint. "
+                            "Set \"type\": \"sse\" or fix the url; skipping this server.",
+                            name, _redact_url(url),
+                        )
                 else:
                     logger.warning("MCP server '{}': connection closed: {}", name, detail)
             except BaseException as exc:

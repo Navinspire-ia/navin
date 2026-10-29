@@ -33,7 +33,7 @@ Every turn re-sends the entire prompt and every earlier tool result, so both the
 
 - **Put every call you already know you need in the same reply.** Several `read_file`, a `grep` alongside a `find_files`, two `code_index` questions, a `git action=status` next to a `read_file`: they run concurrently and come back together.
 - Chain calls across turns only when a result genuinely decides the next call.
-- Do not list or read the whole repo, `.navin` or `node_modules` to get oriented. Start with `code_index action=overview` or `metagraph`, then scoped `find_files` / `grep`.
+- Do not list or read the whole repo, `.navin` or `node_modules` to get oriented. Before any `grep`, `find_files` or `list_dir`, ask the project's own intelligence first, every time: `metagraph` (find / file / impact) places the request in the map, `code_index` (overview, search, definition, references, semantic) lands on the exact symbols. They read the existing index and show to the user as Graph and Index steps; grepping blind without them is the exploration mistake users notice. Then scoped `find_files` / `grep`.
 - When the request names files, paths, branches or services, go there first.
 - Locate before reading; for a large file prefer `code_index action=outline` and read the range you need.
 - Batch inside a call too: `read_file files=[...]`, `grep patterns=[...]`, `test_run targets=[...]`, `write_file files=[...]`, several edits in one `apply_patch` or `edit_file edits=[...]`.

@@ -261,6 +261,28 @@ class WslSearchPanelTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0)
         self.assertEqual(out.stdout.count("\n"), project_search._MAX_RESULTS)
 
+    def test_a_silent_process_is_stopped_at_the_deadline(self):
+        # A hung ripgrep (or wsl.exe) that prints nothing used to hold the
+        # reader, and the search request with it, for as long as it lived.
+        import sys
+        import time
+        from unittest import mock
+
+        from navin.utils import wsl_health
+        from navin.webui import project_search
+
+        script = "import time\ntime.sleep(30)"
+        started = time.monotonic()
+        with (
+            mock.patch.object(project_search, "_RG_TIMEOUT_S", 0.5),
+            mock.patch.object(wsl_health, "suspect") as suspect,
+        ):
+            out = project_search._run_rg([sys.executable, "-c", script], cwd=None, distro="Ubuntu")
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, "")
+        suspect.assert_called_once_with("Ubuntu")
+
 
 if __name__ == "__main__":
     unittest.main()

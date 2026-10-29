@@ -315,6 +315,57 @@ class MaybeContinueTurnTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_a_no_progress_stop_resumes_while_the_plan_is_open(self) -> None:
+        """Reminders ignored mid-plan end the slice, never the plan.
+
+        Seen live: the agent was reading the files a board step needed, the
+        exploration reminders counted that as looking around, the turn was
+        forced to answer without tools, and the user had to type "continue"
+        with steps still open on the board.
+        """
+        session_focus.remember("websocket:chat-1", ["task-1"])
+        ctx = self._ctx()
+        ctx.stop_reason = "no_progress"
+        ctx.final_content = "I read the files; the remaining steps are still to do."
+        ctx.all_messages.append({"role": "assistant", "content": ctx.final_content})
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
+        self.assertTrue(ctx.suppress_response)
+        self.assertEqual(ctx.final_content, "")
+        queued = ctx.pending_queue.get_nowait()
+        self.assertEqual(queued.metadata[tc.INTERNAL_CONTINUATION_KIND_META], "session_board")
+        # The resume says what happened (no action), not "tool budget".
+        self.assertIn("without acting", queued.content)
+        self.assertIn("board checklist", queued.content)
+        # The forced answer is dropped: the next slice continues the work.
+        self.assertEqual(ctx.all_messages[-1]["role"], "user")
+
+    async def test_a_no_progress_stop_with_a_goal_resumes_the_goal(self) -> None:
+        """An active sustained goal is accepted work too: it resumes, as a goal slice."""
+        ctx = self._ctx(session_metadata={GOAL_STATE_KEY: {"status": "active", "objective": "ship it"}})
+        ctx.stop_reason = "no_progress"
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
+        self.assertTrue(ctx.suppress_response)
+        queued = ctx.pending_queue.get_nowait()
+        self.assertEqual(queued.metadata[tc.INTERNAL_CONTINUATION_KIND_META], "sustained_goal")
+        self.assertIn("without acting", queued.content)
+        self.assertIn("sustained goal", queued.content)
+
+    async def test_a_no_progress_stop_without_a_plan_answers(self) -> None:
+        """No board step, no goal: the forced answer is the end of the turn."""
+        ctx = self._ctx()
+        ctx.stop_reason = "no_progress"
+        self.assertFalse(await tc.maybe_continue_turn(ctx))
+        self.assertFalse(ctx.suppress_response)
+        self.assertTrue(ctx.pending_queue.empty())
+        self.assertIsNone(
+            tc._continuation_kind(
+                stop_reason="no_progress",
+                pending_queue_available=True,
+                session_metadata={},
+                session_key="websocket:chat-1",
+            )
+        )
+
 
 class EndsWithUserQuestionTest(unittest.TestCase):
     def test_detects_a_trailing_question(self) -> None:

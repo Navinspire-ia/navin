@@ -586,14 +586,31 @@ def _rg_scan_flags(
     return flags
 
 
-def _run_rg(cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
+def _run_rg(cmd: list[str], *, distro: str | None = None) -> subprocess.CompletedProcess[str] | None:
+    """Run ripgrep (or ``wsl.exe ... rg``) with a bounded timeout, or None.
+
+    ``distro`` names the distribution a ``wsl.exe`` launch targets: a timeout
+    then marks WSL as suspect (every new session may hang, see
+    :mod:`navin.utils.wsl_health`) and an answer clears that mark.
+    """
     try:
-        return subprocess.run(  # noqa: S603
+        out = subprocess.run(  # noqa: S603
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_RG_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        if distro:
+            from navin.utils import wsl_health
+
+            wsl_health.suspect(distro)
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
+    if distro:
+        from navin.utils import wsl_health
+
+        wsl_health.answered(distro)
+    return out
 
 
 def _git_grep_available() -> bool:
@@ -736,7 +753,7 @@ def _wsl_rg_scan(
     out = _run_rg([
         *wsl.command_prefix(distro), "sh", "-c", _WSL_RG_SCRIPT, "sh",
         *flags, "--", pattern, str(linux_path),
-    ])
+    ], distro=distro)
     if out is None or out.returncode not in (0, 1):
         return None
 
@@ -792,6 +809,11 @@ def _wsl_mtimes(
             [*wsl.command_prefix(distro), "xargs", "-0", "-r", "stat", "--printf=%Y %n\\0", "--"],
             input=payload, capture_output=True, timeout=_RG_TIMEOUT_S, **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired:
+        from navin.utils import wsl_health
+
+        wsl_health.suspect(distro)
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     mtimes: dict[str, float] = {}
@@ -915,7 +937,7 @@ def _wsl_rg_files(
     out = _run_rg([
         *wsl.command_prefix(distro), "sh", "-c", _WSL_RG_SCRIPT, "sh",
         *flags, "--", str(linux_path),
-    ])
+    ], distro=distro)
     if out is None or out.returncode not in (0, 1):
         return None
     rows: list[str] = []

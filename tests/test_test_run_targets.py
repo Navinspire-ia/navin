@@ -33,6 +33,10 @@ class RunManyTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve()
+        # A target must exist before it is handed to a runner.
+        (self.root / "tests").mkdir()
+        for name in ["a.py", "b.py", *(f"t{n}.py" for n in range(7))]:
+            (self.root / "tests" / name).write_text("def test_ok():\n    assert True\n", encoding="utf-8")
         self.tool = quality_tools.TestRunTool(workspace=str(self.root))
 
     def _run(self, **arguments):
@@ -85,6 +89,69 @@ class RunManyTest(unittest.TestCase):
         self.assertEqual(params["targets"], ["tests/a.py", "tests/b.py"])
         _, _, error = registry.prepare_call("test_run", {"targets": []})
         self.assertTrue(error.is_error)
+
+
+class MissingTargetTest(unittest.TestCase):
+    """A guessed test path is refused before the runner starts.
+
+    Seen in a session: ``tests/test_metagraph_tool.py`` next to 20 real files;
+    pytest answered "file or directory not found" and ran none of them.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        (self.root / "tests").mkdir()
+        for name in ("test_metagraph_graph.py", "test_metagraph_debounce.py", "test_board.py"):
+            (self.root / "tests" / name).write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+        self.tool = quality_tools.TestRunTool(workspace=str(self.root))
+
+    def _run(self, **arguments):
+        return asyncio.run(self.tool.execute(**arguments))
+
+    def test_a_missing_target_is_refused_with_the_closest_real_files(self) -> None:
+        with mock.patch.object(testing_mod, "run_tests") as run:
+            result = self._run(target="tests/test_metagraph_tool.py")
+        run.assert_not_called()
+        self.assertTrue(result.is_error)
+        text = str(result)
+        self.assertIn("tests/test_metagraph_tool.py does not exist", text)
+        self.assertIn("tests/test_metagraph_graph.py", text)
+        self.assertIn("tests/test_metagraph_debounce.py", text)
+        self.assertNotIn("test_board.py", text)
+        self.assertIn('find_files glob="tests/test_metagraph*"', text)
+
+    def test_one_missing_target_among_several_stops_the_whole_call(self) -> None:
+        with mock.patch.object(testing_mod, "run_tests") as run:
+            result = self._run(targets=["tests/test_board.py", "tests/test_metagraph_tool.py"])
+        run.assert_not_called()
+        self.assertTrue(result.is_error)
+        self.assertIn("tests/test_metagraph_tool.py does not exist", str(result))
+
+    def test_a_node_id_or_filter_without_a_path_is_left_to_the_runner(self) -> None:
+        outcome = testing_mod.TestOutcome(runner="pytest", ran=True, passed=1, exit_code=0)
+        with mock.patch.object(testing_mod, "run_tests", return_value=[outcome]) as run:
+            self.assertFalse(self._run(target="tests/test_board.py::test_ok").is_error)
+            self.assertFalse(self._run(target="TestBoard.test_ok").is_error)
+            self.assertFalse(self._run(target="tests").is_error)
+        self.assertEqual(run.call_count, 3)
+
+    def test_a_missing_folder_names_the_real_test_folders(self) -> None:
+        with mock.patch.object(testing_mod, "run_tests") as run:
+            result = self._run(target="test/test_board.py")
+        run.assert_not_called()
+        self.assertIn("Its folder test/ does not exist either; test folders here: tests.", str(result))
+
+    def test_verify_refuses_a_missing_test_target_before_linting(self) -> None:
+        from navin.quality import verify as verify_mod
+
+        tool = quality_tools.VerifyTool(workspace=str(self.root))
+        with mock.patch.object(verify_mod, "verify_changes") as verify:
+            result = asyncio.run(tool.execute(action="check", test_target="tests/test_metagraph_tool.py"))
+        verify.assert_not_called()
+        self.assertTrue(result.is_error)
+        self.assertIn("tests/test_metagraph_graph.py", str(result))
 
 
 if __name__ == "__main__":

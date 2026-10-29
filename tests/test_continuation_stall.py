@@ -251,3 +251,24 @@ def test_seen_reads_trim_keeps_the_newest_entries() -> None:
     kept = state[tc._SEEN_READS_KEY]
     assert len(kept) == tc._SEEN_READS_MAX
     assert kept[0] == f"{1:012x}"  # oldest dropped, newest read kept
+
+
+def test_file_contents_quoting_an_exit_code_are_not_a_failed_read() -> None:
+    """A test file that contains the text "Exit code: 1" is content, not a command result.
+
+    Seen live: reading tests that assert on exit codes was counted as a
+    repeated failure, so an investigation slice looked stalled.
+    """
+    quoted = _slice(
+        (_call("1", "read_file", path="tests/test_build.py"), 'assert out == "Exit code: 1\\nvite: not found"'),
+        (_call("2", "grep", pattern="Exit code"), "tests/test_build.py:50: Exit code: 1"),
+    )
+    report = tc.slice_report(quoted, 1, set())
+    assert report.progressed
+    assert report.failures == []
+    # A command that really exited non-zero is still a failure.
+    failed = tc.slice_report(_slice((_call("3", "exec", command="npm test"), "Exit code: 1")), 1, set())
+    assert failed.failures == ["exec(npm test): Exit code: 1"]
+    # And a read that really failed (missing file) still counts as one.
+    missing = tc.slice_report(_slice((_call("4", "read_file", path="nope.py"), "Error: file not found")), 1, set())
+    assert missing.failures == ["read_file(nope.py): Error: file not found"]

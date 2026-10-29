@@ -15,7 +15,9 @@ import {
   Github,
   Loader2,
   Lock,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Plus,
   RefreshCw,
   Repeat,
@@ -148,10 +150,16 @@ export function DevBoardPanel({
   sessionKey,
   projectPath,
   onRunAction,
+  fullscreen,
+  onToggleFullscreen,
 }: {
   sessionKey: string | null;
   projectPath?: string | null;
   onRunAction?: (text: string) => void;
+  /** Task board full screen: chat hidden, board takes the center; the app sidebar stays. */
+  fullscreen?: boolean;
+  /** Rendered as a header toggle only when provided (wide layouts). */
+  onToggleFullscreen?: () => void;
 }) {
   const { client, token } = useClient();
   // Background reads take the token at call time, so a rotation does not reload.
@@ -452,6 +460,34 @@ export function DevBoardPanel({
     return map;
   }, [payload]);
 
+  // Open tasks that came from forge issues: what "Fix issues" hands the agent.
+  const openIssueTasks = useMemo(
+    () =>
+      (payload?.tasks ?? []).filter(
+        (task) => Boolean(task.issue_url) && task.status !== "done" && task.status !== "cancelled",
+      ),
+    [payload],
+  );
+
+  const fixIssues = useCallback(() => {
+    if (!onRunAction || openIssueTasks.length === 0) return;
+    const listed = openIssueTasks
+      .slice(0, 12)
+      .map((task) => `- ${task.id}: ${task.title} (${task.issue_url})`)
+      .join("\n");
+    const more = openIssueTasks.length > 12 ? `\n- ... and ${openIssueTasks.length - 12} more on the board` : "";
+    onRunAction(
+      t("dev.board.fixIssuesPrompt", {
+        count: openIssueTasks.length,
+        list: listed + more,
+        defaultValue:
+          "Fix the {{count}} open board task(s) that come from forge issues, one at a time, starting with the highest priority:\n{{list}}\n\nFor each one: claim the task on the board, reproduce the problem, implement a clean fix, run the relevant tests until they are fully green, commit, then let the board close the issue with a comment referencing the fix (board action=sync_github) and move the task to done with evidence. Never close an issue whose fix is not tested and committed; move a task to blocked with the reason instead.",
+      }),
+    );
+  }, [onRunAction, openIssueTasks, t]);
+
+  const issuesSync = payload?.issues_sync ?? null;
+
   const milestoneById = useMemo(
     () => new Map((payload?.milestones ?? []).map((m) => [m.id, m])),
     [payload],
@@ -640,6 +676,21 @@ export function DevBoardPanel({
             </span>
           ) : null}
         </button>
+        {onRunAction && openIssueTasks.length > 0 ? (
+          <button
+            type="button"
+            onClick={fixIssues}
+            data-testid="board-fix-issues"
+            title={tx(
+              "dev.board.fixIssuesHint",
+              "Send the open issue tasks to the agent: fix, tests green, commit, close the issue, re-sync the board.",
+            )}
+            className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11.5px] font-medium text-amber-700 transition-colors hover:bg-amber-500 hover:text-background dark:text-amber-300"
+          >
+            <Wrench className="h-3.5 w-3.5" aria-hidden />
+            {t("dev.board.fixIssues", { count: openIssueTasks.length, defaultValue: "Fix {{count}} issues" })}
+          </button>
+        ) : null}
         {onRunAction ? (
           <button
             type="button"
@@ -658,7 +709,72 @@ export function DevBoardPanel({
         >
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} aria-hidden />
         </button>
+        {onToggleFullscreen ? (
+          <button
+            type="button"
+            data-testid="board-fullscreen"
+            onClick={onToggleFullscreen}
+            aria-pressed={Boolean(fullscreen)}
+            aria-label={
+              fullscreen
+                ? tx("dev.board.exitFullscreen", "Exit full screen")
+                : tx("dev.board.fullscreen", "Full screen (hide the chat)")
+            }
+            title={
+              fullscreen
+                ? tx("dev.board.exitFullscreen", "Exit full screen")
+                : tx("dev.board.fullscreen", "Full screen (hide the chat)")
+            }
+            className={cn(
+              "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+              fullscreen && "bg-muted/60 text-foreground",
+            )}
+          >
+            <motion.span
+              key={fullscreen ? "min" : "max"}
+              initial={{ scale: 0.6, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.15 }}
+              className="flex"
+            >
+              {fullscreen ? (
+                <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </motion.span>
+          </button>
+        ) : null}
       </div>
+
+      {issuesSync ? (
+        <div
+          data-testid="board-issues-sync"
+          className={cn(
+            "flex items-center gap-2 border-b border-border/60 px-3 py-1 text-[11.5px]",
+            issuesSync.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300",
+          )}
+        >
+          {issuesSync.ok ? (
+            <Repeat className="h-3 w-3 shrink-0" aria-hidden />
+          ) : (
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+          )}
+          <span className="min-w-0 truncate">
+            {issuesSync.ok
+              ? t("dev.board.issuesSyncOk", {
+                  repo: issuesSync.repo || tx("dev.board.issuesSyncOwnRepo", "the project's repository"),
+                  imported: issuesSync.imported,
+                  time: issuesSync.last_sync ? new Date(issuesSync.last_sync).toLocaleTimeString() : "",
+                  defaultValue: "Issues synced automatically from {{repo}} at {{time}}: {{imported}} new task(s).",
+                })
+              : t("dev.board.issuesSyncFailed", {
+                  detail: issuesSync.detail,
+                  defaultValue: "Automatic issue sync failed: {{detail}}",
+                })}
+          </span>
+        </div>
+      ) : null}
 
       <AlertDialog open={consentOpen} onOpenChange={setConsentOpen}>
         <AlertDialogContent className="max-w-md">

@@ -23,15 +23,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
+from navin.utils import wsl
 from navin.utils.proc import no_window_kwargs
 
 _DEFAULT_TIMEOUT_S = 20.0
@@ -76,6 +79,70 @@ def diagnostics_key(uri: str) -> str:
     return os.path.normcase(uri_to_path(uri))
 
 
+class PathMapping:
+    """How the server spells the files it is given.
+
+    The default is the identity: the server runs on this machine and reads the
+    same paths navin does. :class:`WslPathMapping` changes the spelling when
+    the server lives inside a WSL distribution.
+    """
+
+    def to_server_path(self, path: PurePath | str) -> str:
+        return str(Path(path).resolve(strict=False))
+
+    def to_server_uri(self, path: PurePath | str) -> str:
+        return path_to_uri(Path(path))
+
+    def to_local_path(self, uri: str) -> str:
+        return uri_to_path(uri)
+
+
+class WslPathMapping(PathMapping):
+    """Paths for a language server running inside a WSL distribution.
+
+    A project under ``\\\\wsl.localhost\\<distro>`` reaches Navin through the 9P
+    redirector, where a stat costs a millisecond and a tree walk minutes; a
+    server started on the Windows side paid that on every file it indexed. The
+    server is started inside the distribution instead (see
+    :mod:`navin.quality.wsl_route`), so it is spoken to in Linux paths: the
+    project's UNC paths become ``/home/...`` on the way out, Windows drive paths
+    become ``/mnt/<drive>/...``, and what comes back is turned into the path
+    Navin can open.
+    """
+
+    _MOUNT = re.compile(r"^/mnt/([a-zA-Z])(/.*)?$")
+
+    def __init__(self, distro: str) -> None:
+        self.distro = distro
+
+    def to_server_path(self, path: PurePath | str) -> str:
+        text = str(path)
+        inside = wsl.parse_unc(text)
+        if inside is not None:
+            return inside.posix
+        mounted = wsl.drive_to_mount(text)
+        if mounted is not None:
+            return mounted
+        return text.replace("\\", "/")
+
+    def to_server_uri(self, path: PurePath | str) -> str:
+        server = self.to_server_path(path)
+        if not server.startswith("/"):
+            server = "/" + server
+        return PurePosixPath(server).as_uri()
+
+    def to_local_path(self, uri: str) -> str:
+        parsed = urlparse(uri)
+        if parsed.scheme and parsed.scheme != "file":
+            return uri
+        posix = unquote(parsed.path or uri)
+        mounted = self._MOUNT.match(posix)
+        if mounted:
+            tail = (mounted.group(2) or "/").replace("/", "\\")
+            return f"{mounted.group(1).upper()}:{tail}"
+        return wsl.to_unc(self.distro, posix)
+
+
 @dataclass(slots=True)
 class _Pending:
     event: threading.Event = field(default_factory=threading.Event)
@@ -93,11 +160,18 @@ class LspClient:
         *,
         name: str = "lsp",
         initialization_options: dict[str, Any] | None = None,
+        mapping: PathMapping | None = None,
+        launch_cwd: str | None = None,
     ) -> None:
         self.name = name
         self.root = root.resolve(strict=False)
         self._argv = argv
         self._init_options = initialization_options or {}
+        # ``mapping`` spells paths the way the server sees them; ``launch_cwd``
+        # is where the process itself starts when the root is not a folder a
+        # process can start in (a UNC path for wsl.exe).
+        self._mapping = mapping or PathMapping()
+        self._launch_cwd = launch_cwd
         self._process: subprocess.Popen[bytes] | None = None
         self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -115,6 +189,19 @@ class LspClient:
     def alive(self) -> bool:
         return self._alive and self._process is not None and self._process.poll() is None
 
+    @property
+    def returncode(self) -> int | None:
+        """The server's exit code once it has ended, else None."""
+        process = self._process
+        return process.poll() if process is not None else None
+
+    def local_path(self, uri: str) -> str:
+        """The path Navin can open for a URI the server sent."""
+        return self._mapping.to_local_path(uri)
+
+    def _key(self, uri: str) -> str:
+        return os.path.normcase(self._mapping.to_local_path(uri))
+
     def start(self) -> None:
         if self.alive:
             return
@@ -122,7 +209,7 @@ class LspClient:
         try:
             self._process = subprocess.Popen(  # noqa: S603
                 self._argv,
-                cwd=str(self.root),
+                cwd=self._launch_cwd or str(self.root),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -144,13 +231,12 @@ class LspClient:
         self._initialize()
 
     def _initialize(self) -> None:
+        root_uri = self._mapping.to_server_uri(self.root)
         params: dict[str, Any] = {
             "processId": os.getpid(),
-            "rootUri": path_to_uri(self.root),
-            "rootPath": str(self.root),
-            "workspaceFolders": [
-                {"uri": path_to_uri(self.root), "name": self.root.name}
-            ],
+            "rootUri": root_uri,
+            "rootPath": self._mapping.to_server_path(self.root),
+            "workspaceFolders": [{"uri": root_uri, "name": self.root.name}],
             "initializationOptions": self._init_options,
             "capabilities": {
                 "textDocument": {
@@ -224,6 +310,25 @@ class LspClient:
             with_suppress_kill(self._process)
         self._process = None
         self._open_docs.clear()
+
+    def kill(self) -> None:
+        """End the server process now, without the protocol handshake.
+
+        For process exit: a graceful ``stop`` waits up to twice the shutdown
+        timeout per server, and a server that no longer reads its stdin would
+        hold the gateway's exit for that long.
+        """
+        process = self._process
+        self._process = None
+        self._alive = False
+        if process is None or process.poll() is not None:
+            return
+        with suppress(OSError, subprocess.SubprocessError):
+            process.terminate()
+        try:
+            process.wait(timeout=1.0)
+        except (OSError, subprocess.SubprocessError):
+            with_suppress_kill(process)
 
     # -- transport ---------------------------------------------------------
 
@@ -304,7 +409,7 @@ class LspClient:
             params = message.get("params") or {}
             uri = str(params.get("uri", ""))
             rows = params.get("diagnostics")
-            self._diagnostics[diagnostics_key(uri)] = rows if isinstance(rows, list) else []
+            self._diagnostics[self._key(uri)] = rows if isinstance(rows, list) else []
             return
         if message_id is not None:
             # Server-to-client request: answer minimally so it does not stall.
@@ -315,7 +420,7 @@ class LspClient:
             elif method in {"client/registerCapability", "client/unregisterCapability"}:
                 reply = None
             elif method == "workspace/workspaceFolders":
-                reply = [{"uri": path_to_uri(self.root), "name": self.root.name}]
+                reply = [{"uri": self._mapping.to_server_uri(self.root), "name": self.root.name}]
             try:
                 self._write({"jsonrpc": "2.0", "id": message_id, "result": reply})
             except LspError:
@@ -394,7 +499,7 @@ class LspClient:
         navigation truthful before Ctrl+S instead of silently replacing the
         buffer with the older file on disk.
         """
-        uri = path_to_uri(path)
+        uri = self._mapping.to_server_uri(path)
         if text is None:
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
@@ -402,7 +507,7 @@ class LspClient:
                 raise LspError(f"cannot read {path}: {exc}") from exc
         # Drop the previous batch so a later read waits for diagnostics that
         # describe this content, not the version we just replaced.
-        self._diagnostics.pop(diagnostics_key(uri), None)
+        self._diagnostics.pop(self._key(uri), None)
         version = self._open_docs.get(uri)
         if version is None:
             self._open_docs[uri] = 1
@@ -430,7 +535,7 @@ class LspClient:
 
     def diagnostics_for(self, uri: str, *, wait_s: float = 3.0) -> list[dict[str, Any]]:
         """Diagnostics published for ``uri``, waiting briefly for the first batch."""
-        key = diagnostics_key(uri)
+        key = self._key(uri)
         deadline = time.monotonic() + wait_s
         while time.monotonic() < deadline:
             if key in self._diagnostics:

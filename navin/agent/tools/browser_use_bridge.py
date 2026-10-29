@@ -9,7 +9,14 @@ install hint and Playwright remains the default engine.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+# Upper bound on one browser-use registry action and on the session start.
+# browser-use has internal waits of its own, but a page that never settles (or
+# a Chromium that never answers) must not pin the agent turn forever.
+ACTION_TIMEOUT_S = 120.0
+START_TIMEOUT_S = 180.0
 
 _INSTALL_HINT = (
     "Error: browser-use is not installed. Install it with: "
@@ -67,7 +74,12 @@ async def create_browser_use_session(
     profile_kwargs["executable_path"] = executable_path
     profile = BrowserProfile(**profile_kwargs)
     session = BrowserSession(browser_profile=profile)
-    await session.start()
+    try:
+        await asyncio.wait_for(session.start(), START_TIMEOUT_S)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Error: browser-use session did not start within {START_TIMEOUT_S:.0f} s."
+        ) from exc
     return session
 
 
@@ -111,9 +123,18 @@ async def run_browser_use_action(
     if name not in tools.registry.registry.actions:
         available = ", ".join(sorted(tools.registry.registry.actions)[:50])
         raise ValueError(f"Unknown browser-use action {name!r}. Available (sample): {available}")
-    result = await tools.registry.execute_action(
-        action_name=name,
-        params=params,
-        browser_session=session,
-    )
+    try:
+        result = await asyncio.wait_for(
+            tools.registry.execute_action(
+                action_name=name,
+                params=params,
+                browser_session=session,
+            ),
+            ACTION_TIMEOUT_S,
+        )
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Error: browser-use action {name!r} did not finish within "
+            f"{ACTION_TIMEOUT_S:.0f} s."
+        ) from exc
     return format_action_result(result)

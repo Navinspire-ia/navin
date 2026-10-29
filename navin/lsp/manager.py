@@ -10,18 +10,20 @@ shapes the rest of navin uses - so callers never handle raw protocol dicts.
 
 from __future__ import annotations
 
+import atexit
 import os
 import threading
 import time
 from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
-from navin.lsp.client import LspClient, LspError, uri_to_path
+from navin.lsp.client import LspClient, LspError, PathMapping, WslPathMapping
 
 _WORKSPACE_SEED_EXTENSIONS = {
     ".py",
@@ -182,6 +184,17 @@ class LspManager:
         self.root = root.resolve(strict=False)
         self._clients: dict[str, LspClient] = {}
         self._lock = threading.Lock()
+        # A project inside a WSL distribution gets its servers started in that
+        # distribution and addressed in Linux paths: on the Windows side every
+        # read crossed the 9P redirector (a stat per millisecond, a tree walk in
+        # minutes), and the project's toolchain (its venv, node_modules) lives
+        # on the Linux side anyway. None everywhere else: identity mapping.
+        from navin.quality import wsl_route
+
+        self._location = wsl_route.wsl_root(self.root)
+        self._mapping: PathMapping = (
+            WslPathMapping(self._location.distro) if self._location is not None else PathMapping()
+        )
 
     @classmethod
     def for_root(cls, root: Path | str) -> LspManager:
@@ -201,6 +214,24 @@ class LspManager:
         for client in clients:
             with suppress(Exception):
                 client.stop()
+
+    @classmethod
+    def kill_all(cls) -> None:
+        """End every language server this process started.
+
+        Registered for interpreter exit: servers are children with their own
+        pipes, and a gateway that stops without this leaves pyright or tsserver
+        running until they notice the closed stdin, which some never do.
+        """
+        with cls._instances_lock:
+            managers = list(cls._instances.values())
+        for manager in managers:
+            with manager._lock:
+                clients = list(manager._clients.values())
+                manager._clients.clear()
+            for client in clients:
+                with suppress(Exception):
+                    client.kill()
 
     @classmethod
     def drop_server(cls, name: str) -> None:
@@ -234,20 +265,53 @@ class LspManager:
 
     def installed_servers_for(self, rel_path: str) -> list[str]:
         """Names of installed servers that can handle this file, best first."""
-        from navin.quality.linters import tool_argv
-
         suffix = (self.root / rel_path).suffix.lower()
+        candidates = servers_for(suffix)
+        # None (the distribution has not answered the probe yet) counts as
+        # present, like the linters do: the real start tells.
         return [
             name
-            for name, spec in servers_for(suffix)
-            if tool_argv(spec, self.root) is not None
+            for name, spec in candidates
+            if self._server_available(name, spec, candidates) is not False
         ]
+
+    def _server_available(
+        self, name: str, spec: dict[str, Any], candidates: list[tuple[str, dict[str, Any]]]
+    ) -> bool | None:
+        """Whether this server's tool exists where it will run; None when unknown."""
+        if self._location is None:
+            from navin.quality.linters import tool_argv
+
+            return tool_argv(spec, self.root) is not None
+        from navin.quality import wsl_route
+
+        known = wsl_route.available(dict(candidates), self.root, self._location)
+        return None if known is None else name in known
+
+    def _launch_for(self, spec: dict[str, Any], server_root: Path) -> tuple[list[str], str | None] | None:
+        """The argv starting this server and the folder to start it from.
+
+        None when the tool is not installed where the server runs. Inside a
+        distribution the argv goes through wsl.exe (which cannot start in a
+        UNC folder, hence the explicit launch folder) and exits
+        ``wsl_route.MISSING_EXIT`` when the tool is missing there.
+        """
+        args = [str(a) for a in spec.get("args", [])]
+        if self._location is not None:
+            from navin.quality import wsl_route
+
+            argv = wsl_route.tool_argv(spec, self.root, server_root, args, location=self._location)
+            return (argv, wsl_route.launch_cwd()) if argv else None
+        from navin.quality.linters import tool_argv
+
+        launch = tool_argv(spec, self.root)
+        return ([*launch, *args], None) if launch is not None else None
 
     def _client_for(
         self, rel_path: str, *, exclude: Iterable[str] = ()
     ) -> tuple[LspClient, str]:
         """Return a started client plus the LSP languageId for this file."""
-        from navin.quality.linters import tool_argv
+        from navin.quality import wsl_route
 
         target = (self.root / rel_path).resolve(strict=False)
         suffix = target.suffix.lower()
@@ -260,15 +324,22 @@ class LspManager:
         for name, spec in candidates:
             if name in skip:
                 continue
-            launch = tool_argv(spec, self.root)
+            wanted = (spec.get("binary") or {}).get("name", name)
+            if (
+                self._location is not None
+                and self._server_available(name, spec, candidates) is False
+            ):
+                problems.append(f"{name} ({wanted} not installed in {self._location.distro})")
+                continue
+            server_root = self._server_root(spec, target)
+            launch = self._launch_for(spec, server_root)
             if launch is None:
-                wanted = (spec.get("binary") or {}).get("name", name)
                 problems.append(f"{name} ({wanted} not installed)")
                 continue
+            argv, launch_cwd = launch
             language_id = str(
                 (spec.get("language_ids") or {}).get(suffix, "plaintext")
             )
-            server_root = self._server_root(spec, target)
             key = f"{name}:{server_root}"
             with self._lock:
                 client = self._clients.get(key)
@@ -276,18 +347,22 @@ class LspManager:
                     self._clients.pop(key, None)
                     client = None
                 if client is None:
-                    argv = [*launch, *(str(a) for a in spec.get("args", []))]
                     client = LspClient(
                         argv,
                         server_root,
                         name=name,
                         initialization_options=spec.get("settings") or {},
+                        mapping=self._mapping,
+                        launch_cwd=launch_cwd,
                     )
             if not client.alive:
                 try:
                     client.start()
                 except LspError as exc:
-                    problems.append(f"{name} ({exc})")
+                    detail = str(exc)
+                    if self._location is not None and client.returncode == wsl_route.MISSING_EXIT:
+                        detail = f"{wanted} not installed in {self._location.distro}"
+                    problems.append(f"{name} ({detail})")
                     continue
                 with self._lock:
                     self._clients[key] = client
@@ -307,16 +382,33 @@ class LspManager:
             "no usable language server for this file - tried: " + ", ".join(problems)
         )
 
+    def _rel_path_for(self, uri: str) -> str:
+        """A URI the server sent, as a project-relative POSIX path.
+
+        Absolute (in Navin's spelling) when the file is outside the project.
+        For a server inside a distribution the relation is computed on the
+        Linux side, where both the project and the file are plain paths.
+        """
+        if self._location is not None:
+            parsed = urlparse(uri)
+            if not parsed.scheme or parsed.scheme == "file":
+                posix = PurePosixPath(unquote(parsed.path or uri))
+                try:
+                    return posix.relative_to(self._location.path).as_posix()
+                except ValueError:
+                    return self._mapping.to_local_path(uri)
+        absolute = Path(self._mapping.to_local_path(uri))
+        try:
+            return absolute.relative_to(self.root).as_posix()
+        except ValueError:
+            return absolute.as_posix()
+
     def _to_location(self, raw: dict[str, Any], *, name: str = "", kind: str = "") -> LspLocation:
         uri = str(raw.get("uri") or raw.get("targetUri") or "")
         rng = raw.get("range") or raw.get("targetSelectionRange") or raw.get("targetRange") or {}
         start = rng.get("start") or {}
         end = rng.get("end") or start
-        absolute = Path(uri_to_path(uri))
-        try:
-            path = absolute.relative_to(self.root).as_posix()
-        except ValueError:
-            path = absolute.as_posix()
+        path = self._rel_path_for(uri)
         return LspLocation(
             path=path,
             # LSP positions are zero-based; navin reports one-based everywhere.
@@ -584,11 +676,7 @@ class LspManager:
         def add(target_uri: str, rows: list[Any]) -> None:
             if not target_uri:
                 return
-            absolute = Path(uri_to_path(target_uri))
-            try:
-                key = absolute.relative_to(self.root).as_posix()
-            except ValueError:
-                key = absolute.as_posix()
+            key = self._rel_path_for(target_uri)
             bucket = edits.setdefault(key, [])
             for row in rows:
                 if not isinstance(row, dict):
@@ -814,3 +902,10 @@ def _flatten_hover(contents: Any) -> str:
         parts = [_flatten_hover(item) for item in contents]
         return "\n\n".join(part for part in parts if part)
     return ""
+
+
+def _kill_language_servers_at_exit() -> None:
+    LspManager.kill_all()
+
+
+atexit.register(_kill_language_servers_at_exit)

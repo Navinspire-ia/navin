@@ -109,6 +109,9 @@ def activity_palette(dark: bool = True) -> dict[str, str]:
         "coral": "#E39B91" if dark else "#914747",
         "lavender": "#C6AFE3" if dark else "#705393",
         "explore": "#5EA8FF" if dark else "#286AC4",
+        # The code index and the project graph: the project's own intelligence
+        # at work, apart from the exploration blue so the eye finds it.
+        "index": "#E58BE0" if dark else "#9F2A8F",
         "tool": "#C3BDA3" if dark else "#6C6042",
         "muted": "#A3A3A3" if dark else "#626262",
     }
@@ -952,8 +955,40 @@ def result_summary(
         return _plural(len(rows), noun)
     if verb == "fetch":
         return _plural(len([line for line in text.splitlines() if line.strip()]), "line")
+    if verb in {"index", "graph"}:
+        notice = index_notice_text(name, result, output_lines)
+        if notice:
+            return notice
     first = _first_line(text, 80)
     return first if len(text.splitlines()) == 1 else ""
+
+
+# "Semantic index is building in the background (4612 file(s) to embed).", "Project
+# map is being refreshed ...": the project's intelligence coming online.
+_INDEX_NOTICE_RE = re.compile(
+    r"\b(?:index(?:ing)?|embeddings?|graph|map)\b[^.\n]*"
+    r"\b(?:building|is being built|in the background|warming up|in progress|refreshing)\b",
+    re.I,
+)
+_INDEX_NOTICE_SENTENCE_RE = re.compile(r"^(.*?\)\.|.*?[.!](?=\s|$))")
+
+
+def index_notice_text(name: str, result: Any = None, output_lines: list[str] | None = None) -> str:
+    """The user-facing sentence of an index or graph tool whose index is still being built.
+
+    Empty for any other tool or any ordinary result. The agent-facing remainder
+    ("Meanwhile use action=search ...") is dropped: it is not for the user.
+    """
+    if tool_verb(name) not in {"index", "graph"}:
+        return ""
+    text = _human_result(result) if result is not None else ""
+    if not text.strip() and output_lines:
+        text = "\n".join(output_lines)
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if not first or not _INDEX_NOTICE_RE.search(first):
+        return ""
+    match = _INDEX_NOTICE_SENTENCE_RE.match(first)
+    return (match[1] if match else first).strip()
 
 
 def activity_head_text(text: str, *, dark: bool = True) -> Text:
@@ -972,6 +1007,8 @@ def activity_head_text(text: str, *, dark: bool = True) -> Text:
             family = "muted"
         elif action in {"explored", "exploring"}:
             family = "explore"
+        elif action in {"index", "indexed", "indexing", "graph", "graphed", "graphing"}:
+            family = "index"
         elif action in {"edit", "edited", "editing", "edits", "add", "added", "create", "created", "creating", "delete", "deleted", "deleting", "move", "moved", "moving", "copy", "copied", "copying"}:
             family = "lavender"
         elif action in {"run", "ran", "running", "testing", "tests", "completed", "checking", "checked", "validation"}:

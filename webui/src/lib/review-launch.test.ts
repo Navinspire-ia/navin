@@ -7,15 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import ar from "@/i18n/locales/ar/common.json";
 import en from "@/i18n/locales/en/common.json";
 import fr from "@/i18n/locales/fr/common.json";
-import type { UIMessage } from "@/lib/types";
-import {
-  REVIEW_INTRO_FALLBACK,
-  REVIEW_INTRO_KEY,
-  appendReviewIntro,
-  buildReviewIntroMessage,
-  onReviewLaunch,
-  requestReviewLaunch,
-} from "./review-launch";
+import { onReviewLaunch, requestReviewLaunch } from "./review-launch";
 
 function lookup(bundle: unknown, key: string): unknown {
   return key.split(".").reduce<unknown>(
@@ -25,6 +17,15 @@ function lookup(bundle: unknown, key: string): unknown {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/** The body of the effect that reacts to the rail click, up to the dependency list. */
+function listenerBody(shell: string, hook: string): string {
+  const start = shell.indexOf(`${hook}(`);
+  expect(start).toBeGreaterThan(0);
+  const end = shell.indexOf("}, [", start);
+  expect(end).toBeGreaterThan(start);
+  return shell.slice(start, end);
+}
 
 describe("review launch", () => {
   it("delivers a rail click to the thread listener and stops after unsubscribe", () => {
@@ -38,24 +39,7 @@ describe("review launch", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("builds the journal question from the Navin language", () => {
-    const t = vi.fn((key: string, options: { defaultValue: string }) =>
-      String(lookup(fr, key) ?? options.defaultValue),
-    );
-    const message = buildReviewIntroMessage(t, 42);
-    expect(t).toHaveBeenCalledWith(REVIEW_INTRO_KEY, { defaultValue: REVIEW_INTRO_FALLBACK });
-    expect(message).toMatchObject({ id: "review-intro-42", role: "assistant", createdAt: 42 });
-    expect(message.content).toBe(lookup(fr, REVIEW_INTRO_KEY));
-  });
-
-  it("ships a real fr, en and ar question with the rail labels", () => {
-    const intros = [fr, en, ar].map((bundle) => lookup(bundle, REVIEW_INTRO_KEY));
-    for (const intro of intros) {
-      expect(typeof intro).toBe("string");
-      expect(intro as string).not.toMatch(/[\u2013\u2014]/);
-    }
-    expect(new Set(intros).size).toBe(3);
-    expect(lookup(en, REVIEW_INTRO_KEY)).toBe(REVIEW_INTRO_FALLBACK);
+  it("ships the rail labels in fr, en and ar", () => {
     for (const bundle of [fr, en, ar]) {
       expect(typeof lookup(bundle, "dev.reviewTab")).toBe("string");
       expect(typeof lookup(bundle, "dev.reviewHint")).toBe("string");
@@ -75,9 +59,18 @@ describe("review launch", () => {
     expect(rail.slice(review, reverse)).toContain("keepLayout: true");
 
     const shell = readFileSync(join(here, "../components/thread/ThreadShell.tsx"), "utf8");
-    const listener = shell.indexOf("onReviewLaunch(");
-    expect(listener).toBeGreaterThan(0);
-    expect(shell.slice(listener, listener + 400)).toContain('handleComposerTurnModeChange("review")');
+    expect(listenerBody(shell, "onReviewLaunch")).toContain('handleComposerTurnModeChange("review")');
+  });
+
+  it("switches silently: no 'Review mode is on' line is written in the journal", () => {
+    const shell = readFileSync(join(here, "../components/thread/ThreadShell.tsx"), "utf8");
+    const body = listenerBody(shell, "onReviewLaunch");
+    expect(body).not.toContain("setMessages");
+    expect(body).not.toMatch(/Intro/);
+    expect(shell).not.toContain("review-intro");
+    for (const bundle of [fr, en, ar]) {
+      expect(lookup(bundle, "thread.composer.mode.reviewIntro")).toBeUndefined();
+    }
   });
 
   it("folds AGI, Guardrails, Graph, Rules and Install skill into the rail's single Other menu", () => {
@@ -90,13 +83,5 @@ describe("review launch", () => {
     for (const key of ["skills", "rules", "agi", "guardrails", "graph"]) {
       expect(block).toContain(`key: "${key}"`);
     }
-  });
-
-  it("does not stack the question on repeated clicks", () => {
-    const user: UIMessage = { id: "u1", role: "user", content: "hi", createdAt: 1 };
-    const intro = buildReviewIntroMessage((_key, options) => options.defaultValue, 2);
-    const once = appendReviewIntro([user], intro);
-    expect(once).toEqual([user, intro]);
-    expect(appendReviewIntro(once, buildReviewIntroMessage((_k, o) => o.defaultValue, 3))).toBe(once);
   });
 });

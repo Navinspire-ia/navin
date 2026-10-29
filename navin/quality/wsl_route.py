@@ -227,6 +227,10 @@ def _run_probe(
 
     distro = wsl.resolve_distro(location.distro) or location.distro
     argv = [*wsl.command_prefix(distro, location.path), "bash", "-lc", probe_script(specs, location.posix)]
+    if refusal(argv) is not None:
+        # WSL is confirmed down: the probe would hang for its whole timeout and
+        # answer nothing new. Unknown (None) keeps the callers' optimistic path.
+        return None
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv, no shell on the Windows side
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -245,6 +249,56 @@ def _run_probe(
         return None
     wsl_health.answered(distro)
     return {line.strip() for line in out.stdout.splitlines() if line.strip() in specs}
+
+
+def distro_of(argv: list[str] | tuple[str, ...]) -> str | None:
+    """The distribution a ``wsl.exe -d <distro> ...`` argv targets, else None."""
+    if len(argv) < 3:
+        return None
+    head = str(argv[0]).replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if head not in ("wsl", "wsl.exe") or str(argv[1]) != "-d":
+        return None
+    return str(argv[2]) or None
+
+
+def note_launch(
+    argv: list[str] | tuple[str, ...], *, timed_out: bool, completed: Any = None,
+) -> None:
+    """Tell :mod:`wsl_health` how a ``wsl.exe`` launch ended.
+
+    Every git, linter or test runner routed into a distribution is one more
+    place where a wedged WSL shows up first. A launch that timed out, or that
+    wsl.exe itself refused (``Wsl/Service/...`` on stderr), marks the
+    distribution as suspect so the status bar checks it and says so; a launch
+    that came back at all, whatever the command's own exit code, clears a
+    previous verdict. ``completed`` is the finished process (anything with a
+    ``returncode`` and a ``stderr``). Not a wsl.exe argv: nothing happens.
+    """
+    distro = distro_of(argv)
+    if not distro:
+        return
+    if timed_out:
+        wsl_health.suspect(distro)
+        return
+    returncode = getattr(completed, "returncode", None)
+    stderr = getattr(completed, "stderr", None)
+    if returncode not in (None, 0) and stderr:
+        raw = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
+        if "wsl/" in raw.replace("\x00", "").lower():
+            wsl_health.suspect(distro)
+            return
+    wsl_health.answered(distro)
+
+
+def refusal(argv: list[str] | tuple[str, ...]) -> str | None:
+    """Why this ``wsl.exe`` argv must not be launched right now, else None.
+
+    The fast-fail side of :func:`note_launch`: once :mod:`wsl_health` has
+    confirmed the distribution down, a launch site returns this reason at once
+    instead of paying its timeout. Not a wsl.exe argv: None.
+    """
+    distro = distro_of(argv)
+    return wsl_health.refuse_reason(distro) if distro else None
 
 
 def tool_argv(

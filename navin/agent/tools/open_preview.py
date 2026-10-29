@@ -13,6 +13,7 @@ discovers the real port, and opens Preview. NEVER use Navin's editor ports
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -215,7 +216,8 @@ class OpenPreviewTool(Tool):
             raw_url = str(kwargs.get("url") or "").strip()
             preferred = _normalize_web_url(raw_url) if raw_url else None
             if preferred:
-                blocked = _reject_navin_editor_url(preferred)
+                # who_listens shells out to ss / lsof / netstat: off the loop.
+                blocked = await asyncio.to_thread(_reject_navin_editor_url, preferred)
                 if blocked:
                     # Still try to start the real project instead of hard-failing
                     # when the model passed Navin's port by mistake.
@@ -240,7 +242,7 @@ class OpenPreviewTool(Tool):
                     )
                 )
 
-            blocked = _reject_navin_editor_url(url)
+            blocked = await asyncio.to_thread(_reject_navin_editor_url, url)
             if blocked:
                 return ToolResult.error(f"Error: {blocked}")
 

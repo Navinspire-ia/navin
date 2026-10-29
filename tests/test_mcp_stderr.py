@@ -18,7 +18,7 @@ import unittest
 
 from loguru import logger
 
-from navin.agent.tools.mcp import _STDERR_LINE_LIMIT, _server_stderr
+from navin.agent.tools.mcp import _STDERR_LINE_LIMIT, _exit_in_thread, _server_stderr
 
 
 class Captured:
@@ -102,6 +102,25 @@ class TeardownTest(unittest.TestCase):
         # write end, so this would hang if the context manager forgot to close.
         with _server_stderr("short-lived") as errlog:
             subprocess.run([sys.executable, "-c", "pass"], stderr=errlog, check=False)
+
+    def test_the_exit_runs_in_a_worker_so_the_reader_join_never_blocks_the_loop(self) -> None:
+        import asyncio
+        import threading
+
+        seen: list[str] = []
+
+        class Recording:
+            def __exit__(self, *exc) -> None:
+                seen.append(threading.current_thread().name)
+
+        asyncio.run(_exit_in_thread(Recording()))
+        self.assertEqual(len(seen), 1)
+        self.assertNotEqual(seen[0], "MainThread")
+        # And the real context manager closes cleanly through it.
+        cm = _server_stderr("threaded")
+        errlog = cm.__enter__()
+        asyncio.run(_exit_in_thread(cm))
+        self.assertTrue(errlog.closed)
 
     def test_the_sink_survives_a_server_that_writes_nothing(self) -> None:
         with _server_stderr("silent") as errlog:

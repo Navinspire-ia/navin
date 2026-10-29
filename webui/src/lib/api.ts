@@ -4390,6 +4390,16 @@ export type BoardAutonomy = {
   };
 };
 
+export type BoardIssuesSync = {
+  /** Autonomy + issues sync consented: the board imports open issues by itself. */
+  enabled: boolean;
+  last_sync: string | null;
+  imported: number;
+  ok: boolean;
+  detail: string;
+  repo?: string | null;
+};
+
 export type BoardPayload = {
   schema_version: number;
   project_path: string;
@@ -4403,6 +4413,8 @@ export type BoardPayload = {
   session_plan?: SessionPlan | null;
   mission?: BoardMission | null;
   autonomy?: BoardAutonomy | null;
+  /** Present only when the project consented to automatic issue intake. */
+  issues_sync?: BoardIssuesSync | null;
 };
 
 export type BoardUpdateOp =

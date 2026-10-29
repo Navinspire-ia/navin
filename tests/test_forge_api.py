@@ -1248,6 +1248,54 @@ class IssueListTest(unittest.TestCase):
         self.assertEqual(call["headers"]["Authorization"], "Bearer tok")
         self.assertEqual(call["headers"]["X-GitHub-Api-Version"], "2022-11-28")
 
+    def test_github_404_retries_with_the_canonical_repository_casing(self) -> None:
+        """The web resolves navinspire-ai/navin and Navinspire-ia/navin alike; the REST
+        API does not. Seen live: the Issues panel answered 404 for a tracker typed
+        from memory while the repository existed under its canonical casing."""
+        recorder = RequestRecorder(
+            [
+                FakeResponse(404, {"message": "Not Found"}),
+                FakeResponse(200, {"full_name": "Navinspire-ia/navin", "private": False}),
+                FakeResponse(
+                    200,
+                    [{"number": 1, "title": "Real", "html_url": "https://github.com/Navinspire-ia/navin/issues/1", "state": "open"}],
+                ),
+            ]
+        )
+        with patch.object(forge_api.httpx, "request", recorder):
+            issues = forge_api.list_issues(
+                ForgeRemote(GITHUB, "github.com", "navinspire-ai", "navin"), "tok"
+            )
+        self.assertEqual([issue["number"] for issue in issues], [1])
+        urls = [call["url"] for call in recorder.calls]
+        self.assertEqual(
+            urls,
+            [
+                "https://api.github.com/repos/navinspire-ai/navin/issues",
+                "https://api.github.com/repos/navinspire-ai/navin",
+                "https://api.github.com/repos/Navinspire-ia/navin/issues",
+            ],
+        )
+
+    def test_github_404_stays_a_404_when_the_repository_really_is_missing(self) -> None:
+        recorder = RequestRecorder(
+            [FakeResponse(404, {"message": "Not Found"}), FakeResponse(404, {"message": "Not Found"})]
+        )
+        with patch.object(forge_api.httpx, "request", recorder):
+            with self.assertRaises(ForgeError) as ctx:
+                forge_api.list_issues(ForgeRemote(GITHUB, "github.com", "nobody", "nothing"), "tok")
+        self.assertEqual(ctx.exception.code, "forge_repo_not_found")
+        self.assertIn("nobody/nothing not found on github.com (404)", ctx.exception.message)
+        # Exactly one lookup, no third request.
+        self.assertEqual(len(recorder.calls), 2)
+
+    def test_non_github_404_is_not_retried(self) -> None:
+        recorder = RequestRecorder([FakeResponse(404, {"message": "Not Found"})])
+        with patch.object(forge_api.httpx, "request", recorder):
+            with self.assertRaises(ForgeError):
+                forge_api.list_issues(_remote(), "tok")
+        self.assertEqual(len(recorder.calls), 1)
+
     def test_gitlab_uses_opened_iid_and_description(self) -> None:
         recorder = RequestRecorder(
             [

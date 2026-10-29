@@ -1388,7 +1388,9 @@ class ScrapeTool(Tool):
                 seed_list = _parse_url_list(urls, url)
                 if not seed_list:
                     return ToolResult.error("Error: provide url or urls")
-                safe, bad = _validate_urls(
+                # DNS resolution for the SSRF check runs off the loop.
+                safe, bad = await asyncio.to_thread(
+                    _validate_urls,
                     seed_list,
                     enforce_ssrf=not self.config.allow_private_network,
                 )
@@ -1607,7 +1609,8 @@ class ScrapeTool(Tool):
         seed_list = _parse_url_list(urls, url)
         if not seed_list:
             return ToolResult.error("Error: provide sitemap url (or urls)")
-        safe, bad = _validate_urls(
+        safe, bad = await asyncio.to_thread(
+            _validate_urls,
             seed_list,
             enforce_ssrf=not self.config.allow_private_network,
         )
@@ -1615,6 +1618,44 @@ class ScrapeTool(Tool):
             return ToolResult.error("Error: no safe URLs. " + "; ".join(bad[:5]))
         limit = min(int(max_pages or self.config.max_pages), _HARD_MAX_PAGES)
         opts = _options_payload(self.config, max_pages=limit, max_depth=0, enrich=False)
+        enforce_ssrf = not self.config.allow_private_network
+        sitemap_proxy = _select_proxy(opts, safe)
+        if sitemap_proxy and enforce_ssrf:
+            return ToolResult.error(
+                "Error: proxy sitemap fetch requires allow_private_network=true"
+            )
+        # Synchronous httpx + retry back-off (time.sleep) must not run on the
+        # gateway loop: a slow sitemap host would freeze every chat.
+        collected, errors = await asyncio.to_thread(
+            self._sitemap_sync, safe, opts, limit, enforce_ssrf, sitemap_proxy
+        )
+        # Dedupe preserve order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for item in collected:
+            if item not in seen:
+                seen.add(item)
+                unique.append(item)
+        payload: dict[str, Any] = {
+            "urls": unique[:limit],
+            "count": min(len(unique), limit),
+            "sources": safe,
+        }
+        if bad:
+            payload["rejected"] = bad
+        if errors:
+            payload["errors"] = errors
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _sitemap_sync(
+        self,
+        safe: list[str],
+        opts: dict[str, Any],
+        limit: int,
+        enforce_ssrf: bool,
+        sitemap_proxy: str | None,
+    ) -> tuple[list[str], list[str]]:
+        """Blocking part of the sitemap action; always called from a worker thread."""
         # Fetch sitemap XML without treating it as HTML extract for walls.
         collected: list[str] = []
         errors: list[str] = []
@@ -1625,16 +1666,10 @@ class ScrapeTool(Tool):
             "headers": headers,
             "follow_redirects": False,
         }
-        enforce_ssrf = not self.config.allow_private_network
         from navin.security.network import PinnedDNSSyncTransport
 
         kwargs["transport"] = PinnedDNSSyncTransport(enforce_ssrf=enforce_ssrf)
-        sitemap_proxy = _select_proxy(opts, safe)
         if sitemap_proxy:
-            if enforce_ssrf:
-                return ToolResult.error(
-                    "Error: proxy sitemap fetch requires allow_private_network=true"
-                )
             kwargs.pop("transport", None)
             kwargs["proxy"] = sitemap_proxy
         with httpx.Client(**kwargs) as client:
@@ -1681,23 +1716,7 @@ class ScrapeTool(Tool):
                     errors.append(f"{sitemap_url}: {exc}")
                 if len(collected) >= limit:
                     break
-        # Dedupe preserve order
-        seen: set[str] = set()
-        unique: list[str] = []
-        for item in collected:
-            if item not in seen:
-                seen.add(item)
-                unique.append(item)
-        payload: dict[str, Any] = {
-            "urls": unique[:limit],
-            "count": min(len(unique), limit),
-            "sources": safe,
-        }
-        if bad:
-            payload["rejected"] = bad
-        if errors:
-            payload["errors"] = errors
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return collected, errors
 
     async def _diagnose(
         self,
@@ -1726,7 +1745,7 @@ class ScrapeTool(Tool):
         seed_list = _parse_url_list(urls, url)
         if not seed_list:
             return ToolResult.error("Error: provide url/urls or html/text for diagnose")
-        safe, bad = _validate_urls(seed_list)
+        safe, bad = await asyncio.to_thread(_validate_urls, seed_list)
         if not safe:
             return ToolResult.error("Error: no safe URLs. " + "; ".join(bad[:5]))
         raw = await asyncio.to_thread(

@@ -657,6 +657,10 @@ class ComputerTool(Tool):
                 session.config = self.config
                 session.set_live_target(self._bus)
                 session.enable_audit()
+                if action != "status":
+                    # First use builds the backend: native library loads and
+                    # shutil.which probes belong in a worker, not on the loop.
+                    await session.run(session.backend)
                 return await self._dispatch(session, action, kwargs)
         except NotSupportedError as exc:
             return ToolResult.error(f"Error: {exc}")

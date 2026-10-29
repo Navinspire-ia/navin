@@ -84,11 +84,16 @@ describe("App factory entries", () => {
       source.indexOf('key: "learnMore"'),
     );
     expect(appFactoryItems).not.toContain("reverseNew");
-    const appEntriesStart = source.indexOf("...appFactoryMenuItems().map((item) => ({");
-    const appEntries = source.slice(appEntriesStart, appEntriesStart + 400);
-    expect(appEntries).not.toContain("reverseNew");
-    expect(appEntries).not.toContain("onBadgeClick");
-    expect(appEntries).toContain("menu: item.children ?? []");
+    // Mobile/Desktop apps live under Other only: no standalone rail entry, so
+    // no rail-side NEW pill or badge click can exist for them either.
+    expect(source).not.toContain("...appFactoryMenuItems().map((item) => ({");
+    expect(source).not.toContain("menu: item.children ?? []");
+    const otherItems = source.slice(
+      source.indexOf("const appFactoryMenuItems = "),
+      source.indexOf("const moreMenuActive ="),
+    );
+    expect(otherItems).not.toContain("reverseNew");
+    expect(otherItems).not.toContain("onBadgeClick");
     const railBadge = source.slice(source.indexOf("dev-rail-${entry.key}-badge"), source.indexOf("dev-rail-${entry.key}-badge") + 700);
     expect(railBadge).toContain("{entry.badge.text}");
     expect(railBadge).not.toContain("h-1.5 w-1.5");
@@ -96,6 +101,7 @@ describe("App factory entries", () => {
       source.indexOf("const overflowMenuItems"),
       source.indexOf("const restoreAnd"),
     );
+    expect(overflow).toContain("...appFactoryMenuItems(),");
     expect(overflow).not.toContain('key: "tests"');
     expect(overflow).not.toContain('key: "mobile"');
     expect(source).not.toContain("onSeed={onSeedChat}\n");
@@ -119,13 +125,17 @@ describe("Collapsed rail launchers", () => {
     // Regression: an inline `key: "other"` rail entry duplicated the Other button.
     expect(rail).not.toContain('key: "other"');
     expect(source.split('key: "other"').length - 1).toBe(0);
-    // The rail's DevOtherMenu keeps Install skill / Rules / Guardrails / Graph,
-    // only hiding the modules that already have their own rail tab.
+    // The rail's DevOtherMenu keeps Install skill / Evolve / Rules / Guardrails /
+    // Graph, only hiding the modules that already have their own rail tab.
     const railOther = source.slice(railEnd, source.indexOf("/>", railEnd));
-    expect(railOther).toContain('["evolve", "bench", "board"]');
-    for (const key of ["skills", "rules", "guardrails", "graph"]) {
+    expect(railOther).toContain('["bench", "board"]');
+    for (const key of ["skills", "evolve", "rules", "guardrails", "graph"]) {
       expect(railOther, key).toContain(`mode === "${key}"`);
     }
+    // Evolve is in Other only: no standalone rail entry any more.
+    expect(rail).not.toContain('key: "evolve"');
+    const otherItems = source.slice(source.indexOf("const overflowMenuItems"), source.indexOf("const restoreAnd"));
+    expect(otherItems).toContain('key: "evolve"');
   });
 
   it("keeps the layout for Team, Cyber and Reverse: the action lives in the chat or Settings", () => {
@@ -143,5 +153,50 @@ describe("Collapsed rail launchers", () => {
       source.indexOf('key: "computer"', source.indexOf('key: "agi"')),
     );
     expect(agi).not.toContain("keepLayout");
+  });
+});
+
+describe("Task board full screen", () => {
+  const appSource = readFileSync(resolve(__dirname, "../../App.tsx"), "utf8");
+  const boardSource = readFileSync(resolve(__dirname, "DevBoardPanel.tsx"), "utf8");
+
+  it("wires the focus toggle from App through DevWorkbench to the board header", () => {
+    expect(appSource).toContain("workbenchFocus={workbenchFocus}");
+    expect(appSource).toContain("onToggleWorkbenchFocus={");
+    expect(appSource).toContain("const onToggleWorkbenchFocus = useCallback(() => setWorkbenchFocus((v) => !v), [])");
+    expect(source).toContain("fullscreen={Boolean(workbenchFocus)}");
+    expect(source).toContain("onToggleFullscreen={onToggleWorkbenchFocus}");
+    expect(boardSource).toContain('data-testid="board-fullscreen"');
+    expect(boardSource).toContain("Maximize2");
+    expect(boardSource).toContain("Minimize2");
+    expect(boardSource).toContain("aria-pressed={Boolean(fullscreen)}");
+  });
+
+  it("returns to the normal layout when leaving the board", () => {
+    const effect = source.slice(source.indexOf("const focusResetRef"), source.indexOf("const [panelTab, setPanelTab]"));
+    expect(effect).toContain('workbenchFocus && mode !== "board"');
+    expect(effect).toContain("onToggleWorkbenchFocus?.()");
+  });
+});
+
+describe("Task board issue intake", () => {
+  const boardSource = readFileSync(resolve(__dirname, "DevBoardPanel.tsx"), "utf8");
+  const apiSource = readFileSync(resolve(__dirname, "../../lib/api.ts"), "utf8");
+
+  it("shows the automatic sync state the server reports and a Fix issues action", () => {
+    // The payload carries issues_sync only when the project consented.
+    expect(apiSource).toContain("export type BoardIssuesSync = {");
+    expect(apiSource).toContain("issues_sync?: BoardIssuesSync | null;");
+    // The panel renders that state (ok and failed) under the header.
+    expect(boardSource).toContain('data-testid="board-issues-sync"');
+    expect(boardSource).toContain('"dev.board.issuesSyncOk"');
+    expect(boardSource).toContain('"dev.board.issuesSyncFailed"');
+    // Fix issues: only with an agent to run and open issue tasks on the board.
+    const fix = boardSource.slice(boardSource.indexOf('data-testid="board-fix-issues"') - 200, boardSource.indexOf('data-testid="board-fix-issues"') + 200);
+    expect(fix).toContain("onRunAction && openIssueTasks.length > 0");
+    expect(boardSource).toContain('"dev.board.fixIssuesPrompt"');
+    // The prompt ends with the board closing the issue, never a blind close.
+    expect(boardSource).toContain("board action=sync_github");
+    expect(boardSource).toContain("Never close an issue whose fix is not tested and committed");
   });
 });

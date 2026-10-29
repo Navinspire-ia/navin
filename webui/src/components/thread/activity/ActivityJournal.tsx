@@ -21,6 +21,8 @@ import {
   ListChecks,
   Loader2,
   MessageCircleQuestion,
+  Network,
+  Orbit,
   Plug,
   Search,
   ShieldCheck,
@@ -44,6 +46,8 @@ import {
   JOURNAL_DETAIL_LIST_MAX,
   JOURNAL_PREVIEW_MAX,
   formatActivityDuration,
+  indexBackgroundNotice,
+  isIndexTool,
   journalHasDetails,
   journalTaskLink,
   isReportedFailure,
@@ -93,6 +97,7 @@ export const JOURNAL_TONE_CLASS: Record<ActivityJournalTone, string> = {
   browser: "text-[hsl(var(--tone-browser))]",
   media: "text-[hsl(var(--tone-browser))]",
   tool: "text-[hsl(var(--tone-tool))]",
+  index: "text-[hsl(var(--tone-index))]",
   error: "text-[hsl(var(--tone-error))]",
   reasoning: REASONING_LABEL_CLASS,
 };
@@ -111,6 +116,7 @@ const JOURNAL_TONE_BORDER: Record<ActivityJournalTone, string> = {
   browser: "border-[hsl(var(--tone-browser))]/40",
   media: "border-[hsl(var(--tone-browser))]/40",
   tool: "border-[hsl(var(--tone-tool))]/40",
+  index: "border-[hsl(var(--tone-index))]/40",
   error: "border-[hsl(var(--tone-error))]/40",
   reasoning: "border-[hsl(var(--composer-ask))]/40",
 };
@@ -129,6 +135,7 @@ const JOURNAL_TONE_DOT: Record<ActivityJournalTone, string> = {
   browser: "bg-[hsl(var(--tone-browser))]",
   media: "bg-[hsl(var(--tone-browser))]",
   tool: "bg-[hsl(var(--tone-tool))]",
+  index: "bg-[hsl(var(--tone-index))]",
   error: "bg-[hsl(var(--tone-error))]",
   reasoning: "bg-[hsl(var(--composer-ask))]",
 };
@@ -510,9 +517,41 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
  * an error. Icon only - no "Failed" wording, the final message says whether
  * the task worked.
  */
+/**
+ * The mark of the index and graph tools, next to their verb: an orbit for the
+ * code index, a network for the project graph, in the index colour. It spins
+ * while the step runs (the index is being read or built) and settles once
+ * done, so the project's intelligence at work is visible at a glance.
+ */
+function IndexMark({ tool, live, className }: { tool: string | undefined; live: boolean; className?: string }) {
+  const { t } = useTranslation();
+  const Icon = tool === "metagraph" ? Network : Orbit;
+  return (
+    <Icon
+      aria-label={live
+        ? t("message.activityJournalIndexWorking", { defaultValue: "Project index at work" })
+        : t("message.activityJournalIndexUsed", { defaultValue: "Project index" })}
+      className={cn(
+        "h-3.5 w-3.5 shrink-0 self-center",
+        JOURNAL_TONE_CLASS.index,
+        live && "motion-safe:animate-spin [animation-duration:1.6s]",
+        className,
+      )}
+      strokeWidth={2}
+      data-testid="activity-index-mark"
+      data-live={live ? "true" : undefined}
+    />
+  );
+}
+
 /** What a row did, as a quiet icon: the section view carries status on its header. */
 function JournalKindIcon({ entry }: { entry: ActivityJournalEntry }) {
   const tool = entry.tool ?? "";
+  if (entry.kind === "tool" && isIndexTool(tool)) {
+    // Even in the quiet section view the index keeps its colour: it is the
+    // one tool worth telling apart from plain file reads.
+    return <IndexMark tool={tool} live={false} />;
+  }
   const Icon = entry.kind === "read"
     ? FileText
     : entry.kind === "search"
@@ -610,8 +649,15 @@ export function JournalRow({
   mcpPreset?: McpPresetInfo;
 }) {
   const { t } = useTranslation();
-  // Keep exploration and execution visible without an extra click.
-  const [open, setOpen] = useState(() => !plain && (entry.kind === "explore" || entry.kind === "shell" || ["test_run", "verify", "project"].includes(entry.tool ?? "")));
+  // Keep exploration and execution visible without an extra click. The index
+  // and graph tools open too: their query and what the index answered (or
+  // that it is still being built) are the point of the row.
+  const [open, setOpen] = useState(() => !plain && (
+    entry.kind === "explore"
+    || entry.kind === "shell"
+    || ["test_run", "verify", "project"].includes(entry.tool ?? "")
+    || (entry.kind === "tool" && isIndexTool(entry.tool))
+  ));
   const reduceMotion = useReducedMotion();
   const tone = journalToneForEntry(entry);
   const canExpand = journalHasDetails(entry);
@@ -874,12 +920,42 @@ function JournalPreview({
     );
   }
 
+  const notice = indexBackgroundNotice(entry);
+  if (notice) {
+    return (
+      <div className={wrapClass} data-testid="activity-index-notice" data-live={streaming ? "true" : undefined}>
+        <IndexNotice entry={entry} notice={notice} live={streaming} />
+      </div>
+    );
+  }
+
   const text = toolPreviewText(entry);
   if (!text) return null;
   return (
     <div className={wrapClass} data-testid="activity-journal-preview">
       <span className={cn(PREVIEW_LINE_CLASS, "text-[13px] leading-5 text-foreground/50")}>{text}</span>
     </div>
+  );
+}
+
+/**
+ * The index coming online, as a highlighted line rather than muted output:
+ * the colour of the index tools, a spinning orbit while the turn runs. Shown
+ * under a folded row and at the top of its open details.
+ */
+function IndexNotice({ entry, notice, live }: { entry: ActivityJournalEntry; notice: string; live: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[13px] font-medium leading-5",
+        JOURNAL_TONE_CLASS.index,
+        "bg-[hsl(var(--tone-index))]/10 ring-1 ring-inset ring-[hsl(var(--tone-index))]/30",
+      )}
+      title={notice}
+    >
+      <IndexMark tool={entry.tool} live={live} className="h-3 w-3" />
+      <span className="min-w-0 truncate">{notice}</span>
+    </span>
   );
 }
 
@@ -1340,9 +1416,11 @@ function JournalLine({
     defaultValue: entry.defaultValue || "Using",
   });
   const taskLink = compact ? null : journalTaskLink(entry);
+  const indexTool = entry.kind === "tool" && isIndexTool(entry.tool);
   return (
     <span className={wrap}>
-      <span className={verbClass}>{verb}</span>
+      <span className={cn(verbClass, indexTool && !plain && "font-semibold")}>{verb}</span>
+      {indexTool ? <IndexMark tool={entry.tool} live={live} /> : null}
       {taskLink ? (
         <TaskTarget
           link={taskLink}
@@ -1509,6 +1587,11 @@ function JournalDetails({
             {entry.error.slice(0, 2000)}
           </pre>
         </DetailBlock>
+      ) : null}
+      {indexBackgroundNotice(entry) ? (
+        <div className="pb-1">
+          <IndexNotice entry={entry} notice={indexBackgroundNotice(entry)} live={streaming && entry.status === "running"} />
+        </div>
       ) : null}
       {entry.output && entry.kind !== "cli" ? (
         <DetailBlock label={t("message.activityJournalOutput", { defaultValue: "Output" })}>

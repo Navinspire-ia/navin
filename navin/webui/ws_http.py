@@ -4533,7 +4533,7 @@ class GatewayHTTPHandler:
         if got == "/api/webui/sidebar-state":
             return self._handle_webui_sidebar_state(request)
         if got == "/api/webui/sidebar-state/update":
-            return self._handle_webui_sidebar_state_update(request)
+            return await self._handle_webui_sidebar_state_update(request)
         if got == "/api/webui/onboarding":
             return self._handle_webui_onboarding(request)
         if got == "/api/webui/onboarding/update":
@@ -4571,7 +4571,7 @@ class GatewayHTTPHandler:
         if got == "/api/webui/marketing-qa/readiness":
             return self._handle_webui_marketing_qa_readiness(request)
         if got == "/api/webui/marketing-qa/assets":
-            return self._handle_webui_marketing_qa_assets(request)
+            return await self._handle_webui_marketing_qa_assets(request)
         if got == "/api/webui/marketing-qa/reports":
             return self._handle_webui_marketing_qa_reports(request)
         if got == "/api/webui/marketing-qa/run":
@@ -6083,7 +6083,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         return _query_first(query, "state")
 
-    def _handle_webui_sidebar_state_update(self, request: WsRequest) -> Response:
+    async def _handle_webui_sidebar_state_update(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         raw_state = self._sidebar_or_onboarding_state_raw(request)
@@ -6096,7 +6096,9 @@ class GatewayHTTPHandler:
         if not isinstance(decoded, dict):
             return _http_error(400, "state must be an object")
         try:
-            state = write_webui_sidebar_state(decoded)
+            # Normalise + fsync'ed rewrite of ~/.navin state: 2.4 s on the loop
+            # in the gateway log while the sidebar was being reordered.
+            state = await asyncio.to_thread(write_webui_sidebar_state, decoded)
         except ValueError as e:
             return _http_error(400, str(e))
         except OSError:
@@ -6241,7 +6243,7 @@ class GatewayHTTPHandler:
         except MarketingQAApiError as exc:
             return _http_error(exc.status, exc.message)
 
-    def _handle_webui_marketing_qa_assets(self, request: WsRequest) -> Response:
+    async def _handle_webui_marketing_qa_assets(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         from navin.webui.marketing_api import (
@@ -6252,9 +6254,12 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         try:
             limit = int(_query_first(query, "limit") or 500)
+            # A project walk: off the loop (31 s on the loop in the gateway log).
             return _http_json_response(
-                list_marketing_qa_assets(
-                    self._montage_workspace_root(request), limit=limit
+                await asyncio.to_thread(
+                    list_marketing_qa_assets,
+                    self._montage_workspace_root(request),
+                    limit=limit,
                 )
             )
         except ValueError:

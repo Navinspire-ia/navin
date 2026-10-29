@@ -10,6 +10,7 @@ agent can act on a failure instead of guessing from truncated output.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -932,6 +933,114 @@ def related_test_targets(root: Path, changed: list[str]) -> list[str]:
     return list(dict.fromkeys(tests + related))[:_MAX_RELATED_TESTS]
 
 
+# A target names a file or folder when it carries a separator or a source
+# suffix; ``-k expr``, ``TestX.test_y`` and runner options name none.
+_TARGET_SUFFIXES = frozenset({
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".go", ".rs",
+})
+_NAME_FILLER = frozenset({"test", "tests", "spec", "specs"})
+_CLOSE_NAME_RATIO = 0.6
+
+
+def target_path(target: str) -> str | None:
+    """The file or folder a test target points at, or None when it names none.
+
+    ``tests/test_a.py::TestX::test_y`` -> ``tests/test_a.py``; ``./pkg/...`` ->
+    ``./pkg``. A bare test name, a ``-k`` expression, a glob or a shell
+    variable is left to the runner.
+    """
+    head = str(target or "").split("::", 1)[0].strip().replace("\\", "/")
+    if not head or head.startswith("-") or any(ch in head for ch in "*?[$`"):
+        return None
+    if head.endswith("/..."):
+        head = head[:-4] or "."
+    if "/" not in head and Path(head).suffix.lower() not in _TARGET_SUFFIXES:
+        return None
+    return head
+
+
+def _name_words(stem: str) -> set[str]:
+    return {word for word in re.split(r"[_.-]+", stem.lower()) if word and word not in _NAME_FILLER}
+
+
+def closest_test_files(root: Path, rel: str, *, limit: int = 3) -> list[str]:
+    """Existing test files whose name is closest to the missing ``rel``.
+
+    One listing of the nearest existing folder on the way up (``tests/`` for
+    ``tests/test_metagraph_tool.py``), ranked by shared name words then by
+    similarity; no walk.
+    """
+    wanted = Path(rel)
+    try:
+        base = root.resolve(strict=False)
+        folder = (base / wanted.parent).resolve(strict=False)
+    except OSError:
+        return []
+    while not folder.is_dir():
+        if folder.parent == folder:
+            return []
+        folder = folder.parent
+    if folder != base and base not in folder.parents:
+        return []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    wanted_words = _name_words(wanted.stem)
+    ranked: list[tuple[int, float, str]] = []
+    for name in names:
+        if not _TEST_FILE_RE.search(name):
+            continue
+        # Longer shared words weigh more: ``metagraph`` says more than ``tool``.
+        shared = sum(len(word) for word in wanted_words & _name_words(Path(name).stem))
+        ratio = difflib.SequenceMatcher(None, wanted.stem.lower(), Path(name).stem.lower()).ratio()
+        if shared or ratio >= _CLOSE_NAME_RATIO:
+            ranked.append((-shared, -ratio, name))
+    ranked.sort()
+    prefix = folder.relative_to(base).as_posix() if folder != base else ""
+    return [f"{prefix}/{name}" if prefix else name for _, _, name in ranked[:limit]]
+
+
+def missing_target_error(root: Path, target: str) -> str | None:
+    """Why ``target`` cannot run, or None when its file or folder exists.
+
+    pytest stops at the first unknown path ("file or directory not found") and
+    runs nothing, vitest and jest report an empty selection: one guessed name
+    wastes the whole run. Checked before the runner starts, with the existing
+    files whose name is closest, so the next call names a real one.
+    """
+    rel = target_path(target)
+    if rel is None:
+        return None
+    path = Path(os.path.expanduser(rel))
+    if not path.is_absolute():
+        path = root / path
+    try:
+        if path.exists():
+            return None
+    except OSError:
+        # Unreadable rather than absent (permissions, a stale share): the
+        # runner reports that itself, with the real error.
+        return None
+    lines = [f"{rel} does not exist (resolved from {root})."]
+    folder = Path(rel).parent
+    if folder.as_posix() not in ("", ".") and not (root / folder).is_dir():
+        dirs = [name for name in sorted(_TEST_DIR_NAMES) if (root / name).is_dir()]
+        where = f"; test folders here: {', '.join(dirs)}" if dirs else ""
+        lines.append(f"Its folder {folder.as_posix()}/ does not exist either{where}.")
+    close = closest_test_files(root, rel)
+    if close:
+        lines.append("Existing tests with a similar name: " + ", ".join(close) + ".")
+    words = Path(rel).stem.split("_")
+    stem = "_".join(words[:2]) if len(words) > 1 else Path(rel).stem
+    pattern = f"{folder.as_posix()}/{stem}*" if folder.as_posix() not in ("", ".") else f"{stem}*"
+    lines.append(
+        "Run one of those, or list the real files first with find_files "
+        f'glob="{pattern}"; never guess a test path.'
+    )
+    return " ".join(lines)
+
+
 def _inside(path: Path, folder: Path) -> bool:
     try:
         path.resolve().relative_to(folder.resolve())
@@ -1173,6 +1282,7 @@ def _run_one(
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv, timed_out=True)
         if report_path is not None:
             report_path.unlink(missing_ok=True)
         return TestOutcome(
@@ -1186,6 +1296,7 @@ def _run_one(
             report_path.unlink(missing_ok=True)
         return TestOutcome(runner=name, ran=False, skipped_reason=str(exc))
 
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     duration_ms = int((time.monotonic() - started) * 1000)
     output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
     if location is not None and completed.returncode == wsl_route.MISSING_EXIT:

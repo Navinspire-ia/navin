@@ -100,6 +100,24 @@ class WindowsRoutingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--cd", recorder.argv)
         self.assertIn("/mnt/c/proj/api", recorder.argv)
 
+    async def test_wsl_project_launch_failure_flags_wsl_health(self) -> None:
+        """wsl.exe that cannot start marks the distribution suspect, then re-raises."""
+        from navin.utils import wsl_health
+
+        async def failing_exec(*_argv: Any, **_kwargs: Any) -> Any:
+            raise OSError("wsl.exe: Wsl/Service/E_UNEXPECTED")
+
+        suspected: list[str] = []
+        with (
+            unittest.mock.patch.object(shell_mod, "_IS_WINDOWS", True),
+            unittest.mock.patch.object(shell_mod.asyncio, "create_subprocess_exec", failing_exec),
+            unittest.mock.patch.object(wsl, "resolve_distro", lambda name: name),
+            unittest.mock.patch.object(wsl_health, "suspect", suspected.append),
+        ):
+            with self.assertRaises(OSError):
+                await ExecTool._spawn("echo hello", r"\\wsl.localhost\Ubuntu\home\me\proj", {}, None, False)
+        self.assertEqual(suspected, ["Ubuntu"])
+
 
 class PosixSpawnTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_shell_leads_its_own_process_group(self) -> None:

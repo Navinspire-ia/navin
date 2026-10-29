@@ -80,16 +80,8 @@ import {
   buildReverseIntroMessage,
   onReverseLaunch,
 } from "@/lib/reverse-launch";
-import {
-  appendCyberIntro,
-  buildCyberIntroMessage,
-  onCyberLaunch,
-} from "@/lib/cyber-launch";
-import {
-  appendReviewIntro,
-  buildReviewIntroMessage,
-  onReviewLaunch,
-} from "@/lib/review-launch";
+import { onCyberLaunch } from "@/lib/cyber-launch";
+import { onReviewLaunch } from "@/lib/review-launch";
 import { useSessionHistory } from "@/hooks/useSessions";
 import { AppShareHint } from "@/components/thread/AppShareHint";
 import { LIVE_START_EVENT } from "@/lib/live-events";
@@ -2234,27 +2226,21 @@ export function ThreadShell({
     });
   }, [chatId, client, handleComposerTurnModeChange]);
 
-  // Cyber button of the Code rail: switch to Security mode, then ask in the
-  // journal what to audit, in the user's Navin language.
+  // Cyber button of the Code rail: switch to Security mode, nothing else. The
+  // composer badge and accent already show the mode, so the journal stays as
+  // the user left it (no "Security mode is on" line).
   useEffect(() => {
     return onCyberLaunch(() => {
       handleComposerTurnModeChange("security");
-      const intro = buildCyberIntroMessage((key, options) => String(t(key, options)));
-      setMessages((prev) => appendCyberIntro(prev, intro));
-      setScrollToBottomSignal((value) => value + 1);
     });
-  }, [handleComposerTurnModeChange, setMessages, t]);
+  }, [handleComposerTurnModeChange]);
 
-  // Review button of the Code rail: switch to Review mode, then ask in the
-  // journal what to review (changes, branch, PR, commits, folder).
+  // Review button of the Code rail: same silent switch, to Review mode.
   useEffect(() => {
     return onReviewLaunch(() => {
       handleComposerTurnModeChange("review");
-      const intro = buildReviewIntroMessage((key, options) => String(t(key, options)));
-      setMessages((prev) => appendReviewIntro(prev, intro));
-      setScrollToBottomSignal((value) => value + 1);
     });
-  }, [handleComposerTurnModeChange, setMessages, t]);
+  }, [handleComposerTurnModeChange]);
 
   // Reverse button of the Code rail: switch the mode, then ask in the journal
   // which app to reverse, in the user's Navin language.

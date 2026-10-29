@@ -17,10 +17,12 @@ cardboard CRM.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 from navin.quality.linters import Diagnostic, LinterResult
+from navin.utils import git_credentials
 from navin.utils.proc import no_window_kwargs
 
 _EM_DASH = "\u2014"  # U+2014
@@ -357,23 +359,34 @@ def package_json_committed(path: Path) -> bool | None:
     """
     import subprocess
 
+    from navin.utils.git_argv import git_argv
+
     target = Path(str(path))
+    # Routed like every other git call: Windows git refuses a \\wsl.localhost
+    # repository and a bare "git" on a macOS without the developer tools opens
+    # the install dialog instead of answering.
+    git = git_argv(target.parent)
+    if git is None:
+        return None
+    env = git_credentials.apply_noninteractive(dict(os.environ))
     try:
         inside = subprocess.run(
-            ["git", "-C", str(target.parent), "rev-parse", "--is-inside-work-tree"],
+            [*git, "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
+            env=env,
             **no_window_kwargs(),
         )
         if inside.returncode != 0 or inside.stdout.strip() != "true":
             return None
         found = subprocess.run(
-            ["git", "-C", str(target.parent), "cat-file", "-e", f"HEAD:./{target.name}"],
+            [*git, "cat-file", "-e", f"HEAD:./{target.name}"],
             capture_output=True,
             timeout=5,
             check=False,
+            env=env,
             **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):

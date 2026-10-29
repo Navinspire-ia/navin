@@ -9718,8 +9718,7 @@
         "review": "Review",
         "reviewHelp": "Experten-Review: Korrektheit, SQL/Daten, API, Frontend, Tests, Performance + Fix-Plan.",
         "security": "Sicherheit",
-        "securityHelp": "Vollständiges AppSec: SQLi, XSS, Autorisierung, Netzwerk, Secrets, IaC, Datenschutz + Härtungsplan.",
-        "securityIntro": "**Der Sicherheitsmodus ist aktiv.** Was soll ich prüfen: das ganze Projekt, einen Ordner, eine Datei, einen Pull Request oder einen Diff? Ich kann den Code scannen (Filter für Fehlalarme, Source-zu-Sink-Nachweis, HTML-Bericht), Abhängigkeiten, Secrets und APIs prüfen, einen Penetrationstest und ein Bedrohungsmodell durchführen, Code und PRs mit Inline-Kommentaren reviewen, Terraform / IaC, Cloud-Posture (AWS, Azure, GCP), Kubernetes- und Docker-Fehlkonfigurationen sowie den Datenschutz auditieren und dann Korrekturen vorschlagen und im Code anwenden, durch Tests und CI verifiziert und im Aufgabenboard verfolgt. Ohne Ihre Genehmigung wird nichts geändert."
+        "securityHelp": "Vollständiges AppSec: SQLi, XSS, Autorisierung, Netzwerk, Secrets, IaC, Datenschutz + Härtungsplan."
       },
       "modelAuto": "Automatisch routen",
       "modelAutoRow": "Automatisch routen (nach Aufgabe)",

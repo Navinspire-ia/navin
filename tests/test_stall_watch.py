@@ -388,6 +388,50 @@ def test_cron_timer_store_io_runs_off_the_event_loop(tmp_path) -> None:
     assert all(ident != loop_thread for ident in seen)
 
 
+def test_sidebar_state_and_marketing_assets_routes_leave_the_loop() -> None:
+    """Both ran their disk work on the loop: 2.4 s and 31 s in the gateway log."""
+    import inspect
+
+    from navin.webui import marketing_api, ws_http
+
+    source = inspect.getsource(ws_http)
+    assert "await asyncio.to_thread(write_webui_sidebar_state, decoded)" in source
+    assert "state = write_webui_sidebar_state(decoded)" not in source
+    assert "await asyncio.to_thread(\n                    list_marketing_qa_assets," in source
+    # The walk itself no longer descends into dependency trees.
+    assert "root.rglob(" not in inspect.getsource(marketing_api.list_marketing_qa_assets)
+    assert ".rglob(" not in inspect.getsource(marketing_api._image_files)
+
+
+def test_marketing_assets_walk_prunes_dependency_trees(tmp_path) -> None:
+    from navin.webui.marketing_api import list_marketing_qa_assets
+
+    (tmp_path / "marketing").mkdir()
+    (tmp_path / "marketing" / "hero.png").write_bytes(b"png")
+    heavy = tmp_path / "node_modules" / "pkg" / "deep"
+    heavy.mkdir(parents=True)
+    (heavy / "icon.png").write_bytes(b"png")
+    walked: list[str] = []
+    import os
+
+    real_walk = os.walk
+
+    def spy_walk(top, *args, **kwargs):
+        for dirpath, dirnames, filenames in real_walk(top, *args, **kwargs):
+            walked.append(os.path.basename(dirpath))
+            yield dirpath, dirnames, filenames
+
+    import navin.webui.marketing_api as api
+
+    api.os.walk = spy_walk  # type: ignore[assignment]
+    try:
+        payload = list_marketing_qa_assets(tmp_path)
+    finally:
+        api.os.walk = real_walk  # type: ignore[assignment]
+    assert [asset["path"] for asset in payload["assets"]] == ["marketing/hero.png"]
+    assert "node_modules" not in walked and "pkg" not in walked
+
+
 def test_startup_heap_is_frozen_once_and_stacks_are_frequent() -> None:
     import gc
 

@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from navin.quality import wsl_route
 from navin.quality.testing import (
     _detected,
     _runner_argv,
@@ -31,12 +32,16 @@ from navin.quality.testing import (
     runner_table,
 )
 from navin.utils.proc import no_window_kwargs
+from navin.utils.wsl import host_tool_path
 
 _COLLECT_TIMEOUT_S = 25.0
 _MAX_TESTS_PER_SUITE = 2_000
 
 
 def _relative(path: str, workdir: Path) -> str:
+    # A runner inside WSL prints Linux paths; spell them as Windows reads them
+    # before comparing with the UNC workdir.
+    path = host_tool_path(path, str(workdir))
     try:
         return Path(path).resolve().relative_to(workdir.resolve()).as_posix()
     except (ValueError, OSError):
@@ -46,10 +51,13 @@ def _relative(path: str, workdir: Path) -> str:
 def _run_collect(
     argv: list[str], workdir: Path
 ) -> tuple[str, str, int] | tuple[None, str, int]:
+    # wsl.exe cannot start in a UNC folder: the --cd inside its argv already
+    # puts the runner in the project.
+    cwd = wsl_route.launch_cwd() if wsl_route.distro_of(argv) else str(workdir)
     try:
         completed = subprocess.run(  # noqa: S603
             argv,
-            cwd=str(workdir),
+            cwd=cwd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -58,9 +66,11 @@ def _run_collect(
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
+        wsl_route.note_launch(argv, timed_out=True)
         return None, "collection timed out", -1
     except OSError as exc:
         return None, str(exc), -1
+    wsl_route.note_launch(argv, timed_out=False, completed=completed)
     return completed.stdout, completed.stderr, completed.returncode
 
 
@@ -191,6 +201,11 @@ def collect_tests(root: Path) -> dict[str, Any]:
     root = Path(root).resolve()
     table = runner_table()
     rows = detect_suites(root)
+    # A WSL project seen from Windows: the runner, its interpreter and the test
+    # modules it imports live in the distribution. Collecting from the Windows
+    # side ran navin's own pytest over 9P (25 s timeout, missing dependencies)
+    # and could not start node_modules/.bin shell shims at all.
+    location = wsl_route.wsl_root(root)
     has_primary = any(r["available"] and not r["fallback_only"] for r in rows)
     suites: list[dict[str, Any]] = []
     for row in rows:
@@ -214,7 +229,10 @@ def collect_tests(root: Path) -> dict[str, Any]:
             spec = table.get(row["runner"]) or {}
             workdir = _workdir_for(spec, root)
             if _detected(spec, workdir) or _detected(spec, root):
-                launch = _runner_argv(spec, root)
+                if location is not None:
+                    launch = wsl_route.tool_argv(spec, root, workdir, [], location=location)
+                else:
+                    launch = _runner_argv(spec, root)
                 if launch is not None:
                     started = time.monotonic()
                     try:

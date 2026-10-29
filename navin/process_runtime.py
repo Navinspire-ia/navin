@@ -28,6 +28,9 @@ from filelock import FileLock
 _STARTUP_WATCH_S = 0.2
 _FROZEN_STARTUP_WATCH_S = 4.0
 _STARTUP_POLL_S = 0.25
+# taskkill answers in well under a second; past this it is stuck on a process
+# that will not die and the caller falls back to its own exit check.
+_TASKKILL_TIMEOUT_S = 10
 
 # What a PyInstaller bootloader leaves behind so its own re-exec does not unpack
 # the bundle a second time. Names differ across major versions; all are inert
@@ -424,20 +427,22 @@ class ManagedProcessRuntime:
                 ctrl_break_sent = True
             if ctrl_break_sent and self._wait_for_exit(pid, timeout_s):
                 return True
-        self._subprocess_run(
-            ["taskkill", "/PID", str(pid), "/T"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # Bounded and windowless: taskkill waiting on a wedged process (or a
+        # console prompt the windowless gateway never sees) must not hold the
+        # caller forever, and must not flash a console on the desktop.
+        taskkill_kwargs: dict[str, Any] = {
+            "check": False,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "timeout": _TASKKILL_TIMEOUT_S,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        }
+        with suppress(OSError, subprocess.SubprocessError):
+            self._subprocess_run(["taskkill", "/PID", str(pid), "/T"], **taskkill_kwargs)
         if self._wait_for_exit(pid, 2):
             return True
-        self._subprocess_run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        with suppress(OSError, subprocess.SubprocessError):
+            self._subprocess_run(["taskkill", "/PID", str(pid), "/T", "/F"], **taskkill_kwargs)
         return self._wait_for_exit(pid, 2)
 
     def _wait_for_exit(self, pid: int, timeout_s: int | float) -> bool:
