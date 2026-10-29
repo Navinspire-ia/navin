@@ -3,4 +3,4 @@
 
 """Stamped product version. ``set-version.sh`` rewrites this; do not edit by hand."""
 
-__version__ = "2.3.5"
+__version__ = "2.4.0"

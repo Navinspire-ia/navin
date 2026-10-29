@@ -221,6 +221,52 @@ class CredentialScreenTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(opened, ["https://api.notion.com/v1/oauth/authorize?state=x"])
         self.assertEqual(results, [{"status": "connected", "login": "Workspace A"}])
 
+    async def test_connector_sign_in_comes_before_the_key_form(self) -> None:
+        form = {
+            "service": "hubspot",
+            "name": "HubSpot",
+            "key_method": {"type": "api_key", "fields": [
+                {"key": "apiKey", "label": "Private app token", "required": True, "secret": True},
+            ]},
+            "oauth": {"configured": True, "label": "HubSpot", "needs_fields": False},
+        }
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(CredentialScreen("connector", "hubspot", reason="Sync the CRM", connector_form=form))
+
+        app = Host()
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            order = [node.id for node in screen.walk_children() if node.id in {"conn-oauth", "conn-apiKey", "cred-save"}]
+            self.assertEqual(order, ["conn-oauth", "conn-apiKey", "cred-save"])
+            self.assertEqual(screen.query_one("#conn-oauth", Button).variant, "primary")
+            self.assertEqual(screen.query_one("#cred-save", Button).variant, "default")
+            self.assertIs(app.focused, screen.query_one("#conn-oauth", Button))
+
+    async def test_connector_without_a_ready_oauth_app_keeps_the_key_form_first(self) -> None:
+        form = {
+            "service": "hubspot",
+            "name": "HubSpot",
+            "key_method": {"type": "api_key", "fields": [
+                {"key": "apiKey", "label": "Private app token", "required": True, "secret": True},
+            ]},
+            "oauth": {"configured": False, "label": "HubSpot", "needs_fields": False},
+        }
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(CredentialScreen("connector", "hubspot", connector_form=form))
+
+        app = Host()
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            self.assertEqual(len(screen.query("#conn-oauth")), 0)
+            self.assertEqual(screen.query_one("#cred-save", Button).variant, "primary")
+            self.assertIs(app.focused, screen.query_one("#conn-apiKey", Input))
+
 
 if __name__ == "__main__":
     unittest.main()

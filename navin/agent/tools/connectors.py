@@ -13,6 +13,7 @@ the chat and waits for the user; ``test`` re-checks a connection.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from loguru import logger
 
 from navin.agent.credentials import (
     CredentialRequest,
+    already_asked,
     credentials_interactive,
     ensure_connector,
     request_credentials,
@@ -363,6 +365,12 @@ class ConnectorsTool(Tool):
         if not connected:
             text = " ".join(str(reason or "").split())[:240] or f"Connect {row['name']} so I can continue."
             answer = await ensure_connector(row["service"], text)
+            if answer is None:
+                # Asked already in this turn and refused (declined, timed out): say that
+                # again instead of inviting a second card.
+                previous = already_asked("connector", row["service"])
+                if previous is not None and not previous.ok:
+                    answer = dataclasses.replace(previous, repeated=True)
             if answer is None or not answer.ok:
                 note = answer.as_text() if answer is not None else (
                     f"{row['name']} is not connected. Call connectors action=connect service={row['service']} once, "

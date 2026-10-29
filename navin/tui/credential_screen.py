@@ -153,6 +153,11 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
         self._browser = browser
         self._poll_interval = poll_interval
 
+    def _oauth_ready(self) -> bool:
+        """The app signs in with OAuth here: its OAuth app is set up and asks for nothing more."""
+        oauth = self._form.get("oauth") or {}
+        return bool(oauth.get("configured") and not oauth.get("needs_fields"))
+
     def _compose_connector(self) -> ComposeResult:
         name = str(self._form.get("name") or self.host)
         yield Static(f"Connect {escape(name)}", classes="picker-title", markup=True)
@@ -163,6 +168,12 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
             classes="cred-hint",
             markup=True,
         )
+        oauth = self._form.get("oauth") or {}
+        if self._oauth_ready():
+            # Sign-in first whenever the app offers it, as in the web form.
+            yield Button(f"Sign in with {name}", variant="primary", id="conn-oauth")
+            if self._key_fields:
+                yield Static("Or connect with an API key:", classes="field-label")
         for field in self._key_fields:
             label = str(field.get("label") or field["key"]) + ("" if field.get("required") else " (optional)")
             yield Static(escape(label), classes="field-label", markup=True)
@@ -173,8 +184,7 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
                 id=f"conn-{field['key']}",
                 compact=True,
             )
-        oauth = self._form.get("oauth") or {}
-        if oauth and not (oauth.get("configured") and not oauth.get("needs_fields")):
+        if oauth and not self._oauth_ready():
             yield Static(
                 f"To sign in with OAuth, add the {escape(str(oauth.get('label') or name))} OAuth app in "
                 "Settings > Channels > Connectors (web or desktop).",
@@ -185,10 +195,7 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
         yield Static("", id="cred-error")
         with Horizontal():
             if self._key_fields:
-                yield Button("Connect", variant="primary", id="cred-save")
-            if oauth.get("configured") and not oauth.get("needs_fields"):
-                yield Button(f"Sign in with {name}", variant="primary" if not self._key_fields else "default",
-                             id="conn-oauth")
+                yield Button("Connect", variant="default" if self._oauth_ready() else "primary", id="cred-save")
             yield Button("Decline  esc", id="cred-decline")
 
     def compose(self) -> ComposeResult:
@@ -222,6 +229,9 @@ class CredentialScreen(ModalScreen[dict[str, str]]):
                 yield Button("Decline  esc", id="cred-decline")
 
     def on_mount(self) -> None:
+        if self.kind == "connector" and self._oauth_ready():
+            self.query_one("#conn-oauth", Button).focus()
+            return
         first = self.query("Input").first() if self.query("Input") else None
         if first is not None:
             first.focus()
