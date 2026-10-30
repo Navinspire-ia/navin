@@ -977,17 +977,27 @@
       inset-inline-start: 100%;
     }
   }
-  /* Sidebar "agent running" glyph: four dots, one dims at a time, clockwise. */
+  /*
+   * Sidebar "agent running" glyph: four dots, one dims at a time, clockwise.
+   * Discrete on purpose (step-end): each running session shows four looping
+   * dots, and a smoothly interpolated loop asks for a repaint on every frame.
+   * On the Linux desktop shell (WebKitGTK, software paint, 5K window) a dozen
+   * of them held the page at ~22 fps and delayed scrolling and keystrokes;
+   * stepped, each dot repaints 4 times per cycle and the page stays at 60 fps.
+   */
   @keyframes chat-run-dot {
-    0%,
+    0% {
+      opacity: 0.25;
+      transform: scale(0.6);
+    }
+    25%,
     100% {
       opacity: 1;
       transform: scale(1);
     }
-    50% {
-      opacity: 0.25;
-      transform: scale(0.6);
-    }
+  }
+  .chat-run-dot {
+    animation: chat-run-dot 1.2s step-end infinite;
   }
   .run-pulse-icon {
     color: hsl(var(--brand-teal));
@@ -1003,14 +1013,14 @@
     height: 12px;
     width: 12px;
     background: hsl(var(--brand-teal) / 0.22);
-    animation: run-pulse-ring 1.55s ease-out infinite;
+    animation: run-pulse-ring 1.55s steps(10, end) infinite;
   }
   .run-pulse-icon__dot {
     height: 6px;
     width: 6px;
     background: currentColor;
     box-shadow: 0 0 0 1px hsl(var(--brand-teal) / 0.14);
-    animation: run-pulse-dot 1.55s ease-in-out infinite;
+    animation: run-pulse-dot 1.55s steps(10, end) infinite;
   }
   @keyframes queued-prompt-row-enter {
     0% {
@@ -1576,4 +1586,25 @@
 }
 :root[dir="rtl"] :is(pre, .xterm, .cm-editor) {
   text-align: left;
+}
+
+/*
+ * Looping indicators tick instead of interpolating. Each smooth infinite
+ * animation asks the engine for a repaint every frame; the Linux desktop shell
+ * (WebKitGTK, software paint, large window) cannot keep up once a dozen run at
+ * once (many parallel sessions), and scrolling, menus and typing lag behind.
+ * Measured on a 5120x2160 window: 22 fps with them smooth, 57-60 fps stepped.
+ * Unlayered so it applies after the Tailwind `animate-*` shorthands.
+ */
+.animate-spin {
+  animation-timing-function: steps(12, end);
+}
+.animate-ping,
+.animate-pulse {
+  animation-timing-function: steps(8, end);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-run-dot {
+    animation: none;
+  }
 }
