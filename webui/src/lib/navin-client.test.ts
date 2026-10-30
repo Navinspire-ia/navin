@@ -239,4 +239,56 @@ describe("bounded detached-chat buffering", () => {
     expect(received).toHaveLength(1);
     expect(sessionUpdate).not.toHaveBeenCalled();
   });
+
+  it("delivers buffered answers to every subscriber that mounts in the same commit", async () => {
+    // Regression: when the user came back to a chat whose turn had run in the
+    // background, the first subscriber (a child card such as the credential or
+    // merge card, whose effects run before the thread's stream hook) received
+    // the whole buffer and the thread never showed the answers until a restart.
+    const socket = new FakeSocket();
+    const client = new NavinClient({
+      url: "ws://host/ws",
+      socketFactory: () => socket as unknown as WebSocket,
+      reconnect: false,
+    });
+    client.connect();
+    socket.open();
+    const send = (frame: Record<string, unknown>) =>
+      socket.onmessage?.({ data: JSON.stringify({ chat_id: "chat-back", ...frame }) } as MessageEvent);
+    send({ event: "delta", text: "Second answer.", stream_id: "s:1" });
+    send({ event: "stream_end", stream_id: "s:1" });
+    send({ event: "turn_end" });
+
+    const card: string[] = [];
+    const thread: string[] = [];
+    client.onChat("chat-back", (event) => card.push(event.event));
+    client.onChat("chat-back", (event) => thread.push(event.event));
+    send({ event: "delta", text: "Third answer.", stream_id: "s:2" });
+
+    expect(card).toEqual(["delta", "stream_end", "turn_end", "delta"]);
+    expect(thread).toEqual(["delta", "stream_end", "turn_end", "delta"]);
+  });
+
+  it("does not replay buffered frames to a subscriber that mounts later", async () => {
+    const socket = new FakeSocket();
+    const client = new NavinClient({
+      url: "ws://host/ws",
+      socketFactory: () => socket as unknown as WebSocket,
+      reconnect: false,
+    });
+    client.connect();
+    socket.open();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "delta", chat_id: "chat-late", text: "Once." }),
+    } as MessageEvent);
+
+    const first: string[] = [];
+    client.onChat("chat-late", (event) => first.push(event.event));
+    await Promise.resolve();
+    const later: string[] = [];
+    client.onChat("chat-late", (event) => later.push(event.event));
+
+    expect(first).toEqual(["delta"]);
+    expect(later).toEqual([]);
+  });
 });
