@@ -20,6 +20,7 @@ from typing import Any
 
 from loguru import logger
 
+from navin.utils.host_env import failure_detail, host_tool_env
 from navin.utils.proc import no_window_kwargs
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -521,11 +522,11 @@ class PluginManager:
                 errors="replace",
                 timeout=_GIT_CLONE_TIMEOUT_S,
                 check=False,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                env=host_tool_env(GIT_TERMINAL_PROMPT="0"),
                 **no_window_kwargs(),
             )
             if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+                detail = failure_detail(proc.stderr or proc.stdout)
                 raise PluginError(f"git clone failed: {detail}")
             _rmtree_force(tmp / ".git")
             bundle = tmp
@@ -565,10 +566,11 @@ class PluginManager:
                 errors="replace",
                 timeout=_NPX_PACK_TIMEOUT_S,
                 check=False,
+                env=host_tool_env(),
                 **no_window_kwargs(),
             )
             if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+                detail = failure_detail(proc.stderr or proc.stdout)
                 raise PluginError(f"npm pack failed: {detail or package}")
             archives = sorted(tmp.glob("*.tgz")) + sorted(tmp.glob("*.tar.gz"))
             if not archives:
