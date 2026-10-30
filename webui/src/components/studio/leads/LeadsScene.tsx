@@ -3,7 +3,9 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import type { Group } from "three";
 
 import { cn } from "@/lib/utils";
@@ -79,6 +81,7 @@ export function LeadsScene({
   return (
     <div ref={host} className={cn("h-36 w-full overflow-hidden rounded-2xl", className)} role="img" aria-label={label}>
       <Suspense fallback={<div className="h-full w-full bg-muted/40" />}>
+        <SceneBoundary>
         <Canvas
           shadows
           dpr={[1, 2]}
@@ -89,10 +92,11 @@ export function LeadsScene({
           <ambientLight intensity={0.55} />
           <directionalLight position={[2.4, 3.2, 1.6]} intensity={1.15} castShadow />
           <Funnel heat={heat} reduced={!playing} />
-          <Environment preset="city" />
+          <StudioEnvironment />
           <ContactShadows position={[0, -0.55, 0]} opacity={0.35} blur={2.2} scale={6} />
           <OrbitControls enablePan={false} enableZoom={false} dampingFactor={0.12} />
         </Canvas>
+        </SceneBoundary>
       </Suspense>
     </div>
   );

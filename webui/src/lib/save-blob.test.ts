@@ -6,9 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onNotification } from "@/lib/notification-bus";
 import type { NotificationInput } from "@/lib/notifications";
 import {
+  DESKTOP_DOWNLOAD_EVENT,
+  SAVE_NAME_HEADER,
   fileNameFromPath,
   fileNameFromUrl,
   isDesktopShell,
+  listenForDesktopDownloads,
   saveBlob,
   saveDownload,
 } from "@/lib/save-blob";
@@ -149,6 +152,66 @@ describe("saveDownload in the desktop shell", () => {
     unsubscribe();
 
     expect(seen).toHaveLength(0);
+  });
+
+  it("hands the shell the raw bytes and the name in a header, not a JSON array", async () => {
+    const invoke = vi.fn().mockResolvedValue("/home/user/Documents/r.pdf");
+    vi.stubGlobal("window", { __TAURI__: { core: { invoke } }, setTimeout: () => 0 });
+    await saveDownload(new Blob([new Uint8Array([1, 2, 255])]), "exports/Rapport été.pdf");
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const [command, body, options] = invoke.mock.calls[0];
+    expect(command).toBe("save_bytes");
+    expect(body).toBeInstanceOf(Uint8Array);
+    expect(Array.from(body as Uint8Array)).toEqual([1, 2, 255]);
+    expect(options).toEqual({ headers: { [SAVE_NAME_HEADER]: "Rapport%20%C3%A9t%C3%A9.pdf" } });
+  });
+
+  it("falls back to the JSON form once, for a shell that refuses a raw body", async () => {
+    const invoke = vi
+      .fn()
+      .mockRejectedValueOnce("invalid args `filename` for command `save_bytes`: missing required key filename")
+      .mockResolvedValueOnce("/home/user/r.pdf");
+    vi.stubGlobal("window", { __TAURI__: { core: { invoke } }, setTimeout: () => 0 });
+    await saveDownload(new Blob([new Uint8Array([7, 8])]), "r.pdf");
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke.mock.calls[1]).toEqual(["save_bytes", { filename: "r.pdf", contents: [7, 8] }]);
+  });
+
+  it("does not open a second dialog when the save itself failed", async () => {
+    const invoke = vi.fn().mockRejectedValue("Permission denied (os error 13)");
+    vi.stubGlobal("window", { __TAURI__: { core: { invoke } }, setTimeout: () => 0 });
+    stubDom();
+    await saveDownload(new Blob(["x"]), "r.pdf");
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("downloads the desktop shell ran itself", () => {
+  it("announces where the file landed, or why it did not", () => {
+    const target = new EventTarget();
+    const seen: NotificationInput[] = [];
+    const unsubscribe = onNotification((input) => seen.push(input));
+    const stop = listenForDesktopDownloads(target);
+    target.dispatchEvent(
+      new CustomEvent(DESKTOP_DOWNLOAD_EVENT, { detail: { name: "clip.mp4", path: "/home/user/Videos/clip.mp4" } }),
+    );
+    target.dispatchEvent(
+      new CustomEvent(DESKTOP_DOWNLOAD_EVENT, { detail: { name: "clip.mp4", error: "No space left on device" } }),
+    );
+    target.dispatchEvent(new CustomEvent(DESKTOP_DOWNLOAD_EVENT, { detail: null }));
+    stop();
+    target.dispatchEvent(
+      new CustomEvent(DESKTOP_DOWNLOAD_EVENT, { detail: { name: "late.mp4", path: "/tmp/late.mp4" } }),
+    );
+    unsubscribe();
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ level: "success", detail: "/home/user/Videos/clip.mp4" });
+    expect(seen[0].title).toContain("clip.mp4");
+    expect(seen[1]).toMatchObject({ level: "error", detail: "clip.mp4: No space left on device" });
   });
 });
 

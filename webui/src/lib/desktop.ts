@@ -127,9 +127,15 @@ export function isNavinShellUrl(
   }
 }
 
+/** Options of a Tauri 2 invoke: request headers for a raw-body command. */
+export interface TauriInvokeOptions {
+  headers?: Record<string, string>;
+}
+
 export type TauriInvoke = (
   cmd: string,
-  args?: Record<string, unknown>,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: TauriInvokeOptions,
 ) => Promise<unknown>;
 
 interface TauriWindow {

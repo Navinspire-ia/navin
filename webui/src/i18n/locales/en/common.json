@@ -10643,6 +10643,7 @@
         "stalled": "Model stream stalled",
         "cancelled": "Cancelled",
         "limit": "Reached its step limit",
+        "unvalidated": "Changes not validated",
         "other": "Stopped on an error"
       },
       "step": {
@@ -10754,6 +10755,7 @@
       "switch": "Team mode",
       "noMembers": "No teammate yet: add them in Settings > Team",
       "thisChat": "Team for this chat",
+      "switchFailed": "The team could not be changed. Check the connection and pick it again.",
       "none": "No team",
       "chip": "Team",
       "chipHint": "Team mode is on: call teammates by name ({{names}}). Click to show the Team view.",

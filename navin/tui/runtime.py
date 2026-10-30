@@ -1815,6 +1815,15 @@ class TuiRuntime:
         return rows
 
     def session_rows(self) -> list[dict[str, Any]]:
+        """The conversations of the project open here, for the Sessions picker.
+
+        Left out: the engine's own sessions (memory consolidation, heartbeat,
+        cron, system) and desktop chats saved in this folder but opened in
+        another project. The session open now always stays, so it can be
+        named and exported.
+        """
+        from navin.tui.projects import is_internal_key, scoped_elsewhere
+
         loop = self.agent_loop
         if loop is None:
             return []
@@ -1822,7 +1831,17 @@ class TuiRuntime:
             rows = loop.sessions.list_sessions()
         except Exception:  # noqa: BLE001
             return []
-        return [r for r in rows if isinstance(r, dict)]
+        project = getattr(loop.sessions, "workspace", None) or ""
+        current = self.session_key
+        return [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and (
+                str(row.get("key") or "") == current
+                or not (is_internal_key(str(row.get("key") or "")) or scoped_elsewhere(row, project))
+            )
+        ]
 
     def set_session_title(self, key: str, title: str) -> str:
         loop = self.agent_loop

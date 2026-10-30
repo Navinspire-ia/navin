@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import { useReducedMotion } from "framer-motion";
 import type { Group } from "three";
 
@@ -131,6 +132,7 @@ export function TimelineSpatialPreview({
   const animate = !reducedMotion && visible;
   return (
     <div className="h-36 min-h-36 overflow-hidden rounded-xl bg-[#080d19]" role="img" aria-label={label}>
+      <SceneBoundary>
       <Canvas
         shadows
         dpr={[1, 2]}
@@ -140,6 +142,7 @@ export function TimelineSpatialPreview({
       >
         <TrackScene timeline={timeline} selectedIndex={selectedIndex} animate={animate} />
       </Canvas>
+      </SceneBoundary>
     </div>
   );
 }

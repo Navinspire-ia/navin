@@ -3,7 +3,9 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import type { Group, Mesh } from "three";
 
 function Core({
@@ -94,6 +96,7 @@ export function TradingScene({
       ref={host}
       className="h-64 w-full overflow-hidden rounded-[14px] bg-[#161616] shadow-[0_1px_0_rgba(255,255,255,0.04),0_12px_28px_rgba(15,23,42,0.18)] outline outline-1 outline-black/10 dark:outline-white/10"
     >
+      <SceneBoundary>
       <Canvas
         role="img"
         aria-label={label}
@@ -114,11 +117,12 @@ export function TradingScene({
         />
         <Suspense fallback={null}>
           <Core heat={heat} reduced={!playing} />
-          <Environment preset="studio" />
+          <StudioEnvironment />
           <ContactShadows position={[0, -0.72, 0]} opacity={0.46} scale={5.4} blur={2.4} />
         </Suspense>
         <OrbitControls enablePan={false} enableZoom={false} enableDamping dampingFactor={0.12} />
       </Canvas>
+      </SceneBoundary>
     </div>
   );
 }

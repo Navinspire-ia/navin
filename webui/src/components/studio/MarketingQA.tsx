@@ -17,6 +17,8 @@ import {
 } from "@fluentui/react";
 import "@/lib/fluent-icons";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { ContactShadows } from "@react-three/drei";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { Mesh } from "three";
@@ -131,6 +133,7 @@ export function MarketingQA({ projectPath }: { projectPath?: string | null }) {
   const { token } = useClient();
   const { t } = useTranslation();
   const reducedMotion = Boolean(useReducedMotion());
+  const pageVisible = usePageVisible();
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
   const [readiness, setReadiness] = useState<MarketingQAReadiness | null>(null);
@@ -311,18 +314,20 @@ export function MarketingQA({ projectPath }: { projectPath?: string | null }) {
                 </p>
               </div>
               <div className="h-28 overflow-hidden rounded-xl bg-violet-950/[0.06]">
+                <SceneBoundary>
                 <Canvas
                   role="img"
                   aria-label={t("studio.marketingQA.sceneAria")}
                   dpr={[1, 2]}
                   shadows
-                  frameloop={reducedMotion ? "demand" : "always"}
+                  frameloop={reducedMotion || !pageVisible ? "demand" : "always"}
                   camera={{ position: [0, 0.2, 4], fov: 52 }}
                 >
                   <Suspense fallback={null}>
                     <QualityOrb reducedMotion={reducedMotion} />
                   </Suspense>
                 </Canvas>
+                </SceneBoundary>
               </div>
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">

@@ -200,7 +200,7 @@ export function ChannelSetupPanel({
   }
   if (variant === "dialog") {
     return (
-      <div className="flex min-h-0 flex-1 flex-col" data-testid={`channel-setup-${feature.name}`}>
+      <div className="flex max-h-[88dvh] min-h-0 flex-1 flex-col overflow-hidden" data-testid={`channel-setup-${feature.name}`}>
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border/60 px-5 pb-4 pt-5">
           {identity}
           {controls}

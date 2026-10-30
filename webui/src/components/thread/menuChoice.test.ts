@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { commitOnPointerDown, commitOnSelect, resetMenuChoiceForTests } from "./menuChoice";
+import { commitOnPointerDown, commitOnSelect, commitOnSelectKeepOpen, resetMenuChoiceForTests } from "./menuChoice";
 
 type PointerType = "mouse" | "pen" | "touch";
 
@@ -42,6 +42,28 @@ describe("composer menu choice", () => {
     const commit = vi.fn();
     expect(commitOnSelect(commit, () => 5_000)).toBe(true);
     expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the menu open for in-menu controls and still commits once per gesture", () => {
+    // Team rows and switches of the model picker: WebKitGTK / WKWebView may
+    // deliver the click on another row after the menu reflowed.
+    const team = vi.fn();
+    const other = vi.fn();
+    let clock = 1_000;
+    const now = () => clock;
+    expect(commitOnPointerDown(pointer(), team, now)).toBe(true);
+    clock += 90;
+    const select = { preventDefault: vi.fn() };
+    expect(commitOnSelectKeepOpen(select, other, now)).toBe(false);
+    expect(select.preventDefault).toHaveBeenCalledTimes(1);
+    expect(team).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+    // Keyboard (no pointerdown): commits, menu still open.
+    clock += 5_000;
+    const keyboard = { preventDefault: vi.fn() };
+    expect(commitOnSelectKeepOpen(keyboard, other, now)).toBe(true);
+    expect(other).toHaveBeenCalledTimes(1);
+    expect(keyboard.preventDefault).toHaveBeenCalledTimes(1);
   });
 
   it("commits again once the pointer gesture is clearly over", () => {

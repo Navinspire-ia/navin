@@ -30,6 +30,11 @@ FOLDER_COLORS: tuple[str, ...] = (
 )
 
 _CHAT_CHANNELS = frozenset({"cli", "websocket"})
+# Sessions the engine keeps for itself, never a chat to come back to: memory
+# consolidation (dream), scheduled jobs, system turns and the heartbeat. Their
+# first line is a prompt ("You are a memory consolidation engine...").
+_INTERNAL_PREFIXES = ("dream:", "cron:", "system:")
+_INTERNAL_KEYS = frozenset({"heartbeat"})
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,34 @@ def next_visible(shown: int, total: int) -> int:
 def is_chat_key(key: str) -> bool:
     channel, _, rest = (key or "").partition(":")
     return channel in _CHAT_CHANNELS and bool(rest)
+
+
+def is_internal_key(key: str) -> bool:
+    """A session the engine runs for itself (memory, heartbeat, cron, system)."""
+    key = (key or "").strip()
+    return key in _INTERNAL_KEYS or key.startswith(_INTERNAL_PREFIXES)
+
+
+def scoped_elsewhere(row: dict[str, Any], project: str | Path) -> bool:
+    """Whether a chat saved in ``project``'s folder belongs to another project.
+
+    A desktop chat is saved in the folder of the gateway that served it, with
+    the project it was opened in (``workspace_scope.project_path``); the
+    desktop lists it under that project. Read straight from the folder, a chat
+    of ``/home/u/other`` or of a subfolder showed up as one of this project.
+    A chat without a project (every CLI one) belongs to the folder it is in.
+    """
+    scope = row.get("workspace_scope")
+    owner = scope.get("project_path") if isinstance(scope, dict) else None
+    if not isinstance(owner, str) or not owner.strip() or not str(project or "").strip():
+        return False
+    if same_path(owner, project):
+        return False
+    try:
+        return not same_path(Path(owner).resolve(), Path(project).resolve())
+    except (OSError, RuntimeError):
+        # Unresolvable (a loop of links): the paths as written already differ.
+        return True
 
 
 # -- desktop state -----------------------------------------------------------
@@ -187,7 +220,7 @@ def list_project_sessions(path: str, state: dict[str, Any] | None = None) -> lis
     entries: list[SessionEntry] = []
     for row in rows:
         key = str(row.get("key") or "")
-        if not is_chat_key(key) or key in archived:
+        if not is_chat_key(key) or key in archived or scoped_elsewhere(row, path):
             continue
         if not (str(row.get("title") or "").strip() or str(row.get("preview") or "").strip()):
             continue  # opened and left empty: nothing to come back to

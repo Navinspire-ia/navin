@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import { ContactShadows, Environment, Lightformer, OrbitControls } from "@react-three/drei";
 import { CanvasTexture, SRGBColorSpace } from "three";
 
@@ -68,6 +69,9 @@ export default function AgentDesktopScene({ source, label }: { source: string; l
   }, []);
   return (
     <div className="navin-agent-desktop-scene">
+      <SceneBoundary
+        fallback={<img src={source} alt={label} style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
+      >
       <Canvas
         role="img" aria-label={label} shadows dpr={[1, 2]} gl={{ antialias: true }}
         frameloop={visible ? "demand" : "never"} camera={{ position: [0.5, 0.4, 5.4], fov: 50 }}
@@ -84,6 +88,7 @@ export default function AgentDesktopScene({ source, label }: { source: string; l
         <ContactShadows position={[0, -1.7, 0]} opacity={0.5} scale={9} blur={2.5} far={4} frames={1} />
         <OrbitControls enablePan={false} enableDamping dampingFactor={0.12} minDistance={3.3} maxDistance={8} minPolarAngle={0.65} maxPolarAngle={1.65} target={[0, -0.2, 0]} />
       </Canvas>
+      </SceneBoundary>
     </div>
   );
 }

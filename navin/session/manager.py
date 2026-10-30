@@ -26,6 +26,7 @@ from navin.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     public_history_message,
 )
+from navin.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from navin.utils.helpers import (
     ensure_dir,
     estimate_message_tokens,
@@ -141,6 +142,14 @@ def _message_preview_text(message: dict[str, Any]) -> str:
         elif "Skills for this mission" in content:
             return ""
     return _text_preview(content)
+
+
+def _metadata_scope(metadata: Any) -> dict[str, Any] | None:
+    """The project a desktop chat was opened in, as saved in its metadata."""
+    if not isinstance(metadata, dict):
+        return None
+    scope = metadata.get(WORKSPACE_SCOPE_METADATA_KEY)
+    return dict(scope) if isinstance(scope, dict) else None
 
 
 def _metadata_title(metadata: Any) -> str:
@@ -1399,6 +1408,7 @@ class SessionManager:
                                     "title": title,
                                     "preview": preview,
                                     "path": str(path),
+                                    "workspace_scope": _metadata_scope(metadata),
                                 }
                             )
             except Exception:
@@ -1419,6 +1429,7 @@ class SessionManager:
                                 "",
                             ),
                             "path": str(path),
+                            "workspace_scope": _metadata_scope(repaired.metadata),
                         }
                     )
                 continue

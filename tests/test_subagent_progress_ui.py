@@ -214,6 +214,13 @@ class SubagentProgressPublishTest(unittest.TestCase):
         self.assertEqual(line("Sorry, the model took too long.", "timeout"), "Model timed out")
         self.assertEqual(line("cancelled"), "Cancelled")
         self.assertEqual(line("anything", "limit"), "Reached its step limit")
+        # The validation gate's report says "the run stopped": the card names
+        # the cause instead of a bare stop.
+        self.assertEqual(
+            line("## Validation pending\n\nThe agent tried to finish repeatedly ... the run stopped.", "unvalidated"),
+            "Changes not validated",
+        )
+        self.assertEqual(line("## Validation pending\n\nthe run stopped."), "Stopped on an error")
         self.assertEqual(
             line("Error: connection refused by upstream gateway at 10.0.0.1. Retry later please"),
             "Stopped on an error",
@@ -243,6 +250,24 @@ class SubagentProgressPublishTest(unittest.TestCase):
         self.assertEqual(event.error_kind, "other")
         self.assertEqual(event.error, "Stopped on an error")
         self.assertNotIn("10.0.0.1", json.dumps(event.__dict__, default=str))
+
+    def test_progress_frame_names_a_validation_stop(self) -> None:
+        # The validation gate ended the run (edits kept, checks not green): the
+        # card says so instead of a generic error, and the gate's report stays
+        # in the parent's announcement, not on the card.
+        bus = _OutboundBus()
+        mgr = _progress_manager(bus)
+        status = SubagentStatus(
+            task_id="t", label="L", task_description="d", started_at=0.0,
+            phase="error", origin_channel="websocket", origin_chat_id="c",
+            error="## Validation pending\n\nChanges are saved. The task is not validated yet.",
+            error_kind="unvalidated",
+        )
+        mgr._publish_progress(status, force=True, done=True)
+        (event,) = _progress_events(bus)
+        self.assertEqual(event.error_kind, "unvalidated")
+        self.assertEqual(event.error, "Changes not validated")
+        self.assertNotIn("Validation pending", json.dumps(event.__dict__, default=str))
 
     def test_same_line_is_throttled_longer_than_a_changed_one(self) -> None:
         bus = _OutboundBus()

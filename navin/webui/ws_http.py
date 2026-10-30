@@ -91,6 +91,11 @@ from navin.webui.board_api import (
     github_issues_repo_payload,
     github_pr_sync_payload,
 )
+from navin.webui.chat_defaults import (
+    ChatDefaultsError,
+    read_chat_defaults,
+    update_chat_defaults,
+)
 from navin.webui.computer_permissions_api import (
     ComputerPermissionsError,
     audit_payload,
@@ -4592,6 +4597,10 @@ class GatewayHTTPHandler:
             return self._handle_webui_onboarding(request)
         if got == "/api/webui/onboarding/update":
             return self._handle_webui_onboarding_update(request)
+        if got == "/api/webui/chat-defaults":
+            return await self._handle_webui_chat_defaults(request)
+        if got == "/api/webui/chat-defaults/update":
+            return await self._handle_webui_chat_defaults_update(request)
         if got == "/api/webui/exec-policy":
             return self._handle_webui_exec_policy(request)
         if got in {
@@ -6218,6 +6227,34 @@ class GatewayHTTPHandler:
         except OSError:
             self._log.exception("failed to write webui onboarding")
             return _http_error(500, "failed to write onboarding")
+        return _http_json_response(state)
+
+    async def _handle_webui_chat_defaults(self, request: WsRequest) -> Response:
+        """Model and team a new chat starts with (the user's last picks)."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        return _http_json_response(await asyncio.to_thread(read_chat_defaults))
+
+    async def _handle_webui_chat_defaults_update(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        raw_state = self._sidebar_or_onboarding_state_raw(request)
+        if raw_state is None:
+            return _http_error(400, "missing state")
+        try:
+            decoded = json.loads(raw_state)
+        except json.JSONDecodeError:
+            return _http_error(400, "state must be JSON")
+        if not isinstance(decoded, dict):
+            return _http_error(400, "state must be an object")
+        try:
+            # fsync'ed rewrite: off the loop, like the sidebar state.
+            state = await asyncio.to_thread(update_chat_defaults, decoded)
+        except ChatDefaultsError as e:
+            return _http_error(400, str(e))
+        except OSError:
+            self._log.exception("failed to write the chat defaults")
+            return _http_error(500, "failed to write the chat defaults")
         return _http_json_response(state)
 
     # -- navin.live account (Cursor-style sign-in) --------------------------

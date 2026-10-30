@@ -1104,7 +1104,7 @@ export function RunningDots({
           <span
             key={delay}
             className={cn(
-              "h-[5px] w-[5px] rounded-full animate-[chat-run-dot_1.2s_ease-in-out_infinite] motion-reduce:animate-none",
+              "chat-run-dot h-[5px] w-[5px] rounded-full motion-reduce:animate-none",
               RUN_DOT_COLORS[index],
             )}
             style={{ animationDelay: `${delay}ms` }}

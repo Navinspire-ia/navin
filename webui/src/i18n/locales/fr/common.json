@@ -10643,6 +10643,7 @@
         "stalled": "Le flux du modèle s'est bloqué",
         "cancelled": "Annulé",
         "limit": "Limite d'étapes atteinte",
+        "unvalidated": "Modifications non validées",
         "other": "Arrêté sur une erreur"
       },
       "step": {
@@ -10754,6 +10755,7 @@
       "switch": "Mode équipe",
       "noMembers": "Aucun coéquipier : ajoutez-en dans Settings > Équipe",
       "thisChat": "Équipe de ce chat",
+      "switchFailed": "L'équipe n'a pas pu être changée. Vérifiez la connexion et choisissez-la à nouveau.",
       "none": "Aucune équipe",
       "chip": "Équipe",
       "chipHint": "Mode équipe actif : appelez les coéquipiers par leur nom ({{names}}). Cliquez pour afficher la vue Équipe.",

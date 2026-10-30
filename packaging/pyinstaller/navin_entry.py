@@ -233,6 +233,12 @@ def _report_desktop_failure(message: str) -> None:
 if __name__ == "__main__":
     # Required for frozen executables that spawn worker processes.
     multiprocessing.freeze_support()
+    # Before anything starts a host program: the bootloader pointed the loader
+    # at the bundle's own libraries, and a host git, curl, node or npm started
+    # with that environment loads them and aborts (issue #15).
+    from navin.utils.host_env import sanitize_process_environment
+
+    sanitize_process_environment()
     # Double-clicked with no arguments → behave like the launcher: start the
     # WebUI (which prepares the WebSocket channel, starts the gateway, and
     # opens the browser). With arguments, behave like the normal navin CLI.

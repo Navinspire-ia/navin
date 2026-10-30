@@ -4,7 +4,8 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ThreadComposer } from "./ThreadComposer";
+import { resetMenuChoiceForTests } from "./menuChoice";
+import { ThreadComposer, type ComposerTeamMode } from "./ThreadComposer";
 
 const mock = vi.hoisted(() => ({
   t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key,
@@ -29,6 +30,63 @@ function enter(content: string) {
   fireEvent.keyDown(input, { key: "Enter" });
   return input as HTMLTextAreaElement;
 }
+
+describe("team picker in the model menu", () => {
+  function renderPicker(team: Partial<ComposerTeamMode> = {}) {
+    const onSelectTeam = vi.fn();
+    const onModelSelect = vi.fn();
+    const view = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        modelLabel="GLM 5.2"
+        modelOptions={[
+          { name: "glm", label: "GLM 5.2", model: "z-ai/glm-5.2", provider: "zai", active: true },
+          { name: "opus", label: "Opus", model: "anthropic/claude-opus-5", provider: "anthropic", active: false },
+        ]}
+        onModelSelect={onModelSelect}
+        teamMode={{
+          enabled: true,
+          teamId: "dev",
+          teams: [{ id: "dev", name: "Dev" }, { id: "sales", name: "Sales" }],
+          members: [],
+          onToggle: vi.fn(),
+          onSelectTeam,
+          ...team,
+        }}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Choose model" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    return { ...view, onSelectTeam, onModelSelect };
+  }
+
+  beforeEach(() => resetMenuChoiceForTests());
+
+  it("switches the team on press, once, even when WebKit lands the click on another row", async () => {
+    const { onSelectTeam, onModelSelect } = renderPicker();
+    const sales = await screen.findByTestId("composer-team-option-sales");
+    fireEvent.pointerDown(sales, { button: 0, pointerType: "mouse" });
+    // WebKitGTK / WKWebView: the click of that same press reaches another row.
+    fireEvent.click(screen.getByTestId("composer-team-option-off"));
+
+    expect(onSelectTeam).toHaveBeenCalledTimes(1);
+    expect(onSelectTeam).toHaveBeenCalledWith("sales");
+    expect(onModelSelect).not.toHaveBeenCalled();
+    // The menu stays open so the user sees the check move.
+    expect(screen.getByTestId("composer-team-picker")).toBeTruthy();
+  });
+
+  it("still switches from the keyboard or a tap, and shows a failed switch", async () => {
+    const { onSelectTeam } = renderPicker({ switchFailed: true });
+    fireEvent.click(await screen.findByTestId("composer-team-option-off"));
+    expect(onSelectTeam).toHaveBeenCalledWith("off");
+    expect(screen.getByRole("alert").textContent).toContain("The team could not be changed");
+    // The current team is not sent again.
+    fireEvent.click(screen.getByTestId("composer-team-option-dev"));
+    expect(onSelectTeam).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("configuration commands in the chat composer", () => {
   it.each([

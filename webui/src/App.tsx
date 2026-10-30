@@ -49,6 +49,7 @@ import { HeaderUsageIndicator } from "@/components/HeaderUsageIndicator";
 import { ZoomIndicator } from "@/components/ZoomIndicator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { needsFirstRunWizard, hydrateOnboardingFromServer, markOnboardingComplete } from "@/lib/onboarding";
+import { hydrateChatDefaults } from "@/lib/chat-defaults";
 import { useAccount } from "@/hooks/useAccount";
 import { useExternalLinkOpener } from "@/hooks/useExternalLinkOpener";
 
@@ -189,6 +190,7 @@ import {
   shellHashesEqual,
 } from "@/lib/last-shell-route";
 import { isDesktopShell, isInternalDesktopUrl, openNavinWindow } from "@/lib/desktop";
+import { listenForDesktopDownloads } from "@/lib/save-blob";
 import {
   dismissUpdateToast,
   nextAvailableUpdate,
@@ -2309,6 +2311,8 @@ function Shell({
   // Hydrate from ~/.navin and auto-complete when the install is ready.
   useEffect(() => {
     let cancelled = false;
+    // Model and team picked last: shared by every window and engine.
+    void hydrateChatDefaults(token);
     void hydrateOnboardingFromServer(token).then((state) => {
       if (cancelled) return;
       if (state.completed) setShowFirstRunWizard(false);
@@ -4562,6 +4566,8 @@ function Shell({
       document.documentElement.classList.remove("native-host");
     };
   }, [showHostChrome]);
+  // Downloads the desktop shell ran itself report where they landed.
+  useEffect(() => (isDesktopShell() ? listenForDesktopDownloads() : undefined), []);
   useChatDensityAttribute();
 
   useEffect(() => {

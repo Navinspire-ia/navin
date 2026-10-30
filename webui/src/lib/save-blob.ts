@@ -21,6 +21,10 @@ import { isDesktopShell, tauriInvoke } from "@/lib/desktop";
 
 /** Long enough for a slow save dialog, short enough not to leak a session. */
 const REVOKE_DELAY_MS = 60_000;
+/** Header that names the file when the bytes go to the shell as a raw body. */
+export const SAVE_NAME_HEADER = "x-navin-filename";
+/** DOM event the shell dispatches when a download it ran has landed or failed. */
+export const DESKTOP_DOWNLOAD_EVENT = "navin:desktop-download";
 
 // Re-exported because most download call sites reach for it from here.
 export { isDesktopShell } from "@/lib/desktop";
@@ -74,27 +78,47 @@ type DesktopSaveResult =
   | { status: "unavailable" };
 
 /**
+ * A shell from an older release reads `{filename, contents}` and refuses a raw
+ * body while parsing its arguments, before any dialog opens: only then is the
+ * JSON form worth a second try.
+ */
+function refusedRawBody(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /invalid args|missing required key|filename/i.test(message);
+}
+
+/**
  * Native save dialog in the desktop shell (Windows, macOS, Linux).
  *
  * Distinguishes "the user cancelled the dialog" (do nothing, silently) from
  * "the shell is not there / failed" (fall back to the browser path). Newer
  * shells return the saved path; older ones only returned true.
+ *
+ * The bytes go as the raw IPC body. The JSON form (`Array.from` then one
+ * number per byte) held the page's thread 1.2 s for a 20 MB file and sent
+ * 71 MB of text; it stays only for a shell that does not read raw bodies.
  */
 async function desktopSave(blob: Blob, filename: string): Promise<DesktopSaveResult> {
   const invoke = tauriInvoke();
   if (!invoke) return { status: "unavailable" };
+  const name = fileNameFromPath(filename);
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  let saved: unknown;
   try {
-    const saved = await invoke("save_bytes", {
-      filename: fileNameFromPath(filename),
-      contents: Array.from(bytes),
+    saved = await invoke("save_bytes", bytes, {
+      headers: { [SAVE_NAME_HEADER]: encodeURIComponent(name) },
     });
-    if (typeof saved === "string" && saved) return { status: "saved", path: saved };
-    if (saved === true) return { status: "saved", path: null };
-    return { status: "cancelled" };
-  } catch {
-    return { status: "unavailable" };
+  } catch (error) {
+    if (!refusedRawBody(error)) return { status: "unavailable" };
+    try {
+      saved = await invoke("save_bytes", { filename: name, contents: Array.from(bytes) });
+    } catch {
+      return { status: "unavailable" };
+    }
   }
+  if (typeof saved === "string" && saved) return { status: "saved", path: saved };
+  if (saved === true) return { status: "saved", path: null };
+  return { status: "cancelled" };
 }
 
 /** Browser-only <a download>. Callers that already tried the desktop path use this. */
@@ -144,8 +168,9 @@ export function saveTextFile(filename: string, content: string, mime: string): v
 
 /**
  * Last-resort HTTP download for a URL that already carries auth (token in
- * the query). The desktop `on_download` handler turns Content-Disposition
- * into a save dialog; a browser just follows the attachment.
+ * the query). The desktop `on_download` handler streams it to a temp file,
+ * then asks where it goes and reports back with {@link DESKTOP_DOWNLOAD_EVENT};
+ * a browser just follows the attachment.
  */
 export function startHttpAttachmentDownload(url: string): void {
   const frame = document.createElement("iframe");
@@ -156,9 +181,41 @@ export function startHttpAttachmentDownload(url: string): void {
   window.setTimeout(() => {
     frame.remove();
   }, 60_000);
-  // On desktop this opens the shell's own save dialog whose outcome is
-  // unknown here; only a plain browser download is worth announcing.
+  // On desktop the shell reports the outcome itself once the user picked a
+  // place; only a plain browser download is worth announcing here.
   if (!isDesktopShell()) {
     notifyDownloadDone(fileNameFromUrl(url), null);
   }
+}
+
+/**
+ * Announce the downloads the desktop shell ran itself (an attachment link,
+ * {@link startHttpAttachmentDownload}): where the file landed, or why not.
+ * Returns the function that stops listening.
+ */
+export function listenForDesktopDownloads(target: EventTarget = window): () => void {
+  const onDownload = (event: Event) => {
+    const detail = (event as CustomEvent<unknown>).detail;
+    if (!detail || typeof detail !== "object") return;
+    const { name, path, error } = detail as { name?: unknown; path?: unknown; error?: unknown };
+    const fileName = typeof name === "string" && name ? name : "download";
+    if (typeof path === "string" && path) {
+      notifyDownloadDone(fileName, path);
+      return;
+    }
+    if (typeof error === "string" && error) {
+      publishNotification({
+        level: "error",
+        source: "session",
+        toast: true,
+        key: `download-failed:${fileName}`,
+        title: i18n.t("notifications.downloadFailed", {
+          defaultValue: "Could not download this file.",
+        }),
+        detail: `${fileName}: ${error}`,
+      });
+    }
+  };
+  target.addEventListener(DESKTOP_DOWNLOAD_EVENT, onDownload);
+  return () => target.removeEventListener(DESKTOP_DOWNLOAD_EVENT, onDownload);
 }

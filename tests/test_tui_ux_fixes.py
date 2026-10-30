@@ -177,6 +177,7 @@ class SessionTitlesLatencyTests(unittest.IsolatedAsyncioTestCase):
 
         runtime = TuiRuntime.__new__(TuiRuntime)
         runtime.agent_loop = Loop()
+        runtime.channel, runtime.chat_id = "cli", "direct"
         return runtime, peeks, saved
 
     async def test_untitled_rows_are_capped_and_previewed_rows_skipped(self):
@@ -206,6 +207,55 @@ class SessionTitlesLatencyTests(unittest.IsolatedAsyncioTestCase):
         runtime, peeks, _ = self._runtime(rows)
         runtime.ensure_session_titles()
         self.assertEqual(peeks, [])
+
+
+class SessionPickerScopeTests(unittest.TestCase):
+    """The CLI Sessions picker lists the conversations of the project open here.
+
+    Opening financeIa-v2 listed memory consolidation runs ("You are a memory
+    consolidation engine..."), the heartbeat, and desktop chats saved in that
+    folder but opened in another project (a subfolder, /home/aymen/bbac).
+    """
+
+    PROJECT = "/home/u/financeIa-v2"
+
+    def _rows(self, rows, current="cli:direct"):
+        class Sessions:
+            workspace = Path(self.PROJECT)
+
+            def list_sessions(self):
+                return rows
+
+        runtime = TuiRuntime.__new__(TuiRuntime)
+        runtime.agent_loop = SimpleNamespace(sessions=Sessions())
+        runtime.channel, _, runtime.chat_id = current.partition(":")
+        return [row["key"] for row in runtime.session_rows()]
+
+    def test_engine_sessions_are_not_chats(self):
+        rows = [
+            {"key": "cli:1", "title": "facture filtre"},
+            {"key": "dream:20261028-204804", "title": "You are a memory consolidation engine"},
+            {"key": "heartbeat", "title": "[Your response will be delivered"},
+            {"key": "cron:job-1", "title": "daily report"},
+            {"key": "system:boot", "title": "x"},
+            {"key": "sdk:abc", "title": "sdk chat"},
+        ]
+        self.assertEqual(self._rows(rows), ["cli:1", "sdk:abc"])
+
+    def test_desktop_chats_of_other_projects_are_left_out(self):
+        rows = [
+            {"key": "websocket:mine", "title": "ici", "workspace_scope": {"project_path": self.PROJECT}},
+            {"key": "websocket:slash", "title": "ici", "workspace_scope": {"project_path": self.PROJECT + "/"}},
+            {"key": "websocket:sub", "title": "test", "workspace_scope": {"project_path": self.PROJECT + "/test"}},
+            {"key": "websocket:other", "title": "Audit", "workspace_scope": {"project_path": "/home/u/bbac"}},
+            {"key": "websocket:unscoped", "title": "old", "workspace_scope": None},
+            {"key": "cli:2", "title": "cli chat"},
+        ]
+        self.assertEqual(self._rows(rows), ["websocket:mine", "websocket:slash", "websocket:unscoped", "cli:2"])
+
+    def test_the_open_session_always_stays(self):
+        rows = [{"key": "websocket:other", "title": "x", "workspace_scope": {"project_path": "/elsewhere"}}]
+        self.assertEqual(self._rows(rows, current="websocket:other"), ["websocket:other"])
 
 
 class UiFilePreviewDispatchTests(unittest.IsolatedAsyncioTestCase):

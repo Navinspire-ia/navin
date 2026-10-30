@@ -423,6 +423,43 @@ class ApplyTest(unittest.TestCase):
         # The already-set default model is a user-visible choice by now: kept.
         self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
 
+    def test_a_sync_keeps_the_effort_and_context_the_user_picked(self):
+        """Regression: the composer saves Thinking effort and the context
+        window on the preset, and the catalog sync that runs each time the
+        model picker opens put both back to the defaults on Navin models."""
+        config = Config()
+        apply_catalog(config, parse_catalog(SITE_PAYLOAD), force_managed=True)
+        key = slug_preset_key("z-ai/glm-5.2")
+        config.model_presets[key].reasoning_effort = "high"
+        config.model_presets[key].context_window_tokens = 500_000
+        config.model_presets["executor"].reasoning_effort = "medium"
+
+        self.assertFalse(apply_catalog(config, parse_catalog(SITE_PAYLOAD), force_managed=True))
+
+        self.assertEqual(config.model_presets[key].reasoning_effort, "high")
+        self.assertEqual(config.model_presets[key].context_window_tokens, 500_000)
+        self.assertEqual(config.model_presets["executor"].reasoning_effort, "medium")
+
+    def test_a_new_model_under_the_key_starts_on_the_defaults(self):
+        config = Config()
+        apply_catalog(config, parse_catalog(SITE_PAYLOAD))
+        config.model_presets["executor"].reasoning_effort = "high"
+        config.model_presets["executor"].context_window_tokens = 1_000_000
+        moved = dict(SITE_PAYLOAD, defaultModel="z-ai/glm-5.2")
+        moved["models"] = [
+            {"slug": "z-ai/glm-5.2", "name": "GLM 5.2", "tier": "executor"},
+        ]
+
+        apply_catalog(config, parse_catalog(moved))
+
+        executor = config.model_presets["executor"]
+        self.assertEqual(executor.model, "z-ai/glm-5.2")
+        # The old model's settings may not even be valid for the new one.
+        self.assertEqual(executor.reasoning_effort, ModelPresetConfig(model="x").reasoning_effort)
+        self.assertEqual(
+            executor.context_window_tokens, ModelPresetConfig(model="x").context_window_tokens
+        )
+
 
 class SyncTest(unittest.TestCase):
     def setUp(self):

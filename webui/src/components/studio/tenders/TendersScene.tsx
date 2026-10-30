@@ -3,6 +3,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { Group } from "three";
 import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
@@ -83,6 +84,7 @@ export function TendersScene({
       aria-label={label}
     >
       <Suspense fallback={<div className="h-full w-full bg-muted/40" />}>
+        <SceneBoundary>
         <Canvas
           shadows
           dpr={[1, 2]}
@@ -103,6 +105,7 @@ export function TendersScene({
           <StudioEnvironment />
           <OrbitControls enablePan={false} enableZoom={false} enableDamping dampingFactor={0.08} />
         </Canvas>
+        </SceneBoundary>
       </Suspense>
     </div>
   );

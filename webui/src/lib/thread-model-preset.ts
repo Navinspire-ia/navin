@@ -10,10 +10,16 @@
  * `agents.defaults.model_preset`: that account-wide default is what other
  * sessions fall back to, and writing it from the composer switched the model
  * of chats that were already running.
+ *
+ * The last pick is also kept on the gateway (chat-defaults.ts), so a new
+ * chat in another window, after a desktop restart on another port or in a
+ * reset webview still opens on it.
  */
 
+import { LAST_MODEL_PICK_KEY, rememberChatDefault } from "@/lib/chat-defaults";
+
 const STORAGE_KEY = "navin.thread-model-presets";
-const LAST_PICK_KEY = "navin.thread-model-last-pick";
+const LAST_PICK_KEY = LAST_MODEL_PICK_KEY;
 const MAX_ENTRIES = 200;
 
 function readAll(): Record<string, string> {
@@ -54,12 +60,7 @@ export function loadLastModelPick(): string | null {
 }
 
 export function saveLastModelPick(preset: string | null): void {
-  try {
-    if (preset) window.localStorage.setItem(LAST_PICK_KEY, preset);
-    else window.localStorage.removeItem(LAST_PICK_KEY);
-  } catch {
-    // The pick just will not survive a reload.
-  }
+  rememberChatDefault("model_preset", preset);
 }
 
 const EFFORT_KEY = "navin.thread-reasoning-efforts";

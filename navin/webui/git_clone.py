@@ -10,7 +10,6 @@ explicit parent), then the WebUI opens and remembers the resulting path.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -23,6 +22,7 @@ from navin.config.paths import is_navin_internal_path
 from navin.quality import wsl_route
 from navin.utils import wsl
 from navin.utils.git_argv import git_argv
+from navin.utils.host_env import host_tool_env
 from navin.utils.proc import no_window_kwargs
 
 _GIT_CLONE_TIMEOUT_S = 300
@@ -115,22 +115,7 @@ def _host_git_env() -> dict[str, str]:
     3.0) while the host ``libcurl`` needs ``OPENSSL_3.2.0``/``3.5.0`` and
     aborts. Git is a host binary: it must use host libraries.
     """
-    env = dict(os.environ)
-    marker = "navin-dist"
-    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
-        value = env.get(key)
-        if not value or marker not in value:
-            continue
-        kept = [
-            part
-            for part in value.split(os.pathsep)
-            if part and marker not in part and "_internal" not in part
-        ]
-        if kept:
-            env[key] = os.pathsep.join(kept)
-        else:
-            env.pop(key, None)
-    return env
+    return host_tool_env()
 
 
 def _clone_failure(

@@ -10385,6 +10385,7 @@
         "stalled": "Modell-Stream hängt",
         "cancelled": "Abgesagt",
         "limit": "Schrittlimit erreicht",
+        "unvalidated": "Änderungen nicht validiert",
         "other": "Wegen eines Fehlers gestoppt"
       },
       "step": {
@@ -10496,6 +10497,7 @@
       "switch": "Team-Modus",
       "noMembers": "Noch kein Teammitglied: Fügen Sie eines unter Einstellungen > Team hinzu",
       "thisChat": "Team für diesen Chat",
+      "switchFailed": "Das Team konnte nicht gewechselt werden. Prüfen Sie die Verbindung und wählen Sie es erneut.",
       "none": "Kein Team",
       "chip": "Team",
       "chipHint": "Team-Modus ist aktiv: Rufen Sie Teammitglieder beim Namen ({{names}}). Klicken, um die Team-Ansicht zu zeigen.",

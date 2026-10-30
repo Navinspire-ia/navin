@@ -23,6 +23,7 @@ skip, and one that is missed shows the agent its own duplicate of every file.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import threading
@@ -65,6 +66,21 @@ _STATUS_CHEAP = ("status", "--porcelain", "--ignored=matching")
 # a hook created reads as the same line and would be subtracted away.
 _STATUS_PRECISE = ("status", "--porcelain", "--ignored=traditional", "-uall")
 
+# A checkout holds tracked files only, so a JS project arrives without its
+# node_modules: vitest, tsc and vite are missing, npx fetches an unpinned copy,
+# and the subagent's checks fail (or never run) for a reason unrelated to its
+# change. The packages the user already installed are linked in instead.
+_DEPENDENCY_DIR = "node_modules"
+# The folders a checkout linked, kept in its own git directory: invisible to
+# the subagent's tools, still there after a restart, gone with the checkout.
+_LINKED_RECORD = "navin-linked-deps"
+# Package folders linked per checkout, so a monorepo with hundreds of
+# packages does not turn a spawn into a long walk.
+_LINK_LIMIT = 50
+# A folder link on Windows needs a privilege or a junction, and git cleaning a
+# junction has been known to empty its target: checkouts there get no links.
+_LINKS_SUPPORTED = os.name != "nt"
+
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
@@ -80,15 +96,24 @@ class _Entry:
     fingerprint: tuple[int, int] | None
 
 
+def _status_path(line: str) -> str:
+    """The path a porcelain status line names."""
+    # "XY path", and for a rename "XY old -> new"; the arrival is what exists.
+    return line[3:].strip().split(" -> ")[-1].strip('"')
+
+
 def _fingerprint(root: Path, line: str) -> tuple[int, int] | None:
     """``(mtime_ns, size)`` for the path a porcelain status line names."""
-    # "XY path", and for a rename "XY old -> new"; the arrival is what exists.
-    path = line[3:].strip().split(" -> ")[-1].strip('"')
     try:
-        stat = (root / path).stat()
+        stat = (root / _status_path(line)).stat()
     except OSError:
         return None
     return (stat.st_mtime_ns, stat.st_size)
+
+
+def _inside(line: str, folders: tuple[str, ...]) -> bool:
+    path = _status_path(line)
+    return any(path == folder or path.startswith(folder + "/") for folder in folders)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,11 +210,35 @@ class Worktree:
             entry.line for entry in self.initial
             if entry.fingerprint == _fingerprint(self.path, entry.line)
         }
+        # The user's packages linked in at creation are not the subagent's
+        # output, nor is a cache vite or vitest writes beside them: counted,
+        # every isolated run on a JS project would keep its checkout forever.
+        linked = self.linked()
         entries = tuple(
             line for line in status.splitlines()
-            if line.strip() and line not in untouched
+            if line.strip() and line not in untouched and not _inside(line, linked)
         )
         return Changes(entries=entries, commits=commits, moved=moved)
+
+    def linked(self) -> tuple[str, ...]:
+        """Repo-relative dependency folders linked into this checkout.
+
+        Empty when the record cannot be read: the links then count as output,
+        which keeps the checkout rather than deleting work.
+        """
+        record = _record_path(self.path)
+        if record is None:
+            return ()
+        try:
+            text = record.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # Not an error: a checkout made before links existed, or on a
+            # platform without them, simply has nothing linked.
+            return ()
+        except OSError as exc:
+            logger.warning("worktree: cannot read {}: {}", record, exc)
+            return ()
+        return tuple(line for line in text.splitlines() if line.strip())
 
     def _status_argv(self) -> list[str]:
         return list(_STATUS_PRECISE if self.precise else _STATUS_CHEAP)
@@ -354,6 +403,10 @@ def _finish_create(origin: Path, target: Path, task_id: str, base: str) -> Workt
     if precise:
         lines = _status_lines(target, _STATUS_PRECISE)
     initial = tuple(_Entry(line, _fingerprint(target, line)) for line in lines)
+    # After the snapshot: the links are filtered by their record, and listed
+    # in it they would switch every JS checkout to the file-by-file listing.
+    linked = _link_dependencies(origin, target)
+    _write_record(target, linked)
     logger.info("worktree: subagent [{}] isolated at {}", task_id, target)
     return Worktree(
         path=target,
@@ -363,6 +416,156 @@ def _finish_create(origin: Path, target: Path, task_id: str, base: str) -> Workt
         initial=initial,
         precise=precise,
     )
+
+
+def _link_dependencies(origin: Path, target: Path) -> tuple[str, ...]:
+    """Link the user's installed ``node_modules`` into a fresh checkout.
+
+    Only a folder the checkout's own ignore rules exclude is linked, so no
+    ``git add -A`` there can commit it and no merge can carry it back. The
+    folder itself is real and each package in it is a link: deleting it in the
+    checkout (``rm -rf``, ``npm ci``, ``git clean``, removing the checkout)
+    drops links, never the packages they point at. ``.bin`` and ``@scope``
+    folders are split the same way one level down, so an install in the
+    checkout adds its tool or scoped package there, not in the user's tree.
+    Other hidden entries are left out: vite and vitest keep their caches there,
+    and a shared cache would be rewritten under the user's running dev server.
+
+    Not on Windows, where a folder link needs a privilege or a junction, and
+    git cleaning a junction has been known to empty its target.
+    """
+    if not _LINKS_SUPPORTED:
+        return ()
+    listed = _git(["ls-files", "-z", "--", "package.json", "*/package.json"], cwd=target)
+    if not listed:
+        return ()
+    folders: set[str] = set()
+    for entry in listed.split("\0"):
+        parts = entry.split("/")
+        if parts[-1] != "package.json" or _DEPENDENCY_DIR in parts:
+            continue
+        folders.add("/".join(parts[:-1]))
+    linked: list[str] = []
+    for folder in sorted(folders):
+        if len(linked) >= _LINK_LIMIT:
+            logger.info("worktree: linked {} package folders into {}, not more", _LINK_LIMIT, target)
+            break
+        rel = f"{folder}/{_DEPENDENCY_DIR}" if folder else _DEPENDENCY_DIR
+        source = origin / rel
+        dest = target / rel
+        if not source.is_dir() or dest.exists() or dest.is_symlink():
+            continue
+        try:
+            dest.mkdir()
+        except OSError as exc:
+            logger.warning("worktree: cannot create {}: {}", dest, exc)
+            continue
+        if not _is_ignored(target, rel):
+            # A folder this checkout would commit: linking it could carry the
+            # user's packages into the subagent's merge.
+            dest.rmdir()
+            continue
+        try:
+            _link_entries(source, dest, origin, target)
+        except OSError as exc:
+            # Half a node_modules fails in stranger ways than none at all.
+            logger.warning("worktree: cannot link {} into {}: {}", source, dest, exc)
+            _drop_links(dest)
+            continue
+        linked.append(rel)
+    if linked:
+        logger.info("worktree: linked {} into {}", ", ".join(linked), target)
+    return tuple(linked)
+
+
+def _link_entries(source: Path, dest: Path, origin: Path, target: Path) -> None:
+    origin_real = origin.resolve()
+    with os.scandir(source) as entries:
+        for entry in entries:
+            name = entry.name
+            if name == ".bin" or name.startswith("@"):
+                if entry.is_dir():
+                    folder = dest / name
+                    folder.mkdir()
+                    with os.scandir(entry.path) as children:
+                        for child in children:
+                            os.symlink(_link_source(child, origin_real, target), folder / child.name)
+                continue
+            if name.startswith("."):
+                continue
+            os.symlink(_link_source(entry, origin_real, target), dest / name)
+
+
+def _link_source(entry: os.DirEntry[str], origin_real: Path, target: Path) -> str:
+    """Where a link in the checkout points for one installed entry.
+
+    A workspace package (npm, yarn or pnpm workspaces link it from the
+    project's own tree) points at the checkout's copy: a test there then
+    imports the package as the subagent edited it, not as the user left it.
+    Everything else points at the user's installed copy.
+    """
+    if not entry.is_symlink():
+        return entry.path
+    try:
+        rel = Path(entry.path).resolve().relative_to(origin_real)
+    except (OSError, ValueError):
+        # Outside the project (a global store, a broken link).
+        return entry.path
+    if _DEPENDENCY_DIR in rel.parts:
+        return entry.path
+    mirrored = target / rel
+    # A package the checkout does not carry (untracked in the user's tree)
+    # keeps the user's copy rather than a dangling link.
+    return str(mirrored) if mirrored.exists() else entry.path
+
+
+def _drop_links(dest: Path) -> None:
+    try:
+        # rmtree unlinks a link without following it: the user's packages stay.
+        shutil.rmtree(dest)
+    except OSError as exc:
+        logger.warning("worktree: cannot remove the partial links in {}: {}", dest, exc)
+
+
+def _is_ignored(target: Path, rel: str) -> bool:
+    """Whether ``rel`` (an existing folder) is excluded by the checkout's rules."""
+    try:
+        completed = subprocess.run(
+            ["git", "check-ignore", "-q", "--", rel],
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_S,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("worktree: git check-ignore {} failed: {}", rel, exc)
+        return False
+    # 0: ignored, 1: not ignored; anything else is git failing, read as "not
+    # ignored" so nothing is linked on a guess.
+    if completed.returncode not in (0, 1):
+        logger.warning("worktree: git check-ignore {} exited {}", rel, completed.returncode)
+    return completed.returncode == 0
+
+
+def _record_path(target: Path) -> Path | None:
+    found = _git(["rev-parse", "--git-path", _LINKED_RECORD], cwd=target)
+    if found is None:
+        return None
+    path = Path(found.strip())
+    return path if path.is_absolute() else target / path
+
+
+def _write_record(target: Path, linked: tuple[str, ...]) -> None:
+    # Written even when empty: a pooled checkout reused for a project that
+    # has since lost a package folder must not filter a stale path.
+    record = _record_path(target)
+    if record is None:
+        return
+    try:
+        record.write_text("".join(f"{rel}\n" for rel in linked), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("worktree: cannot write {}: {}; its links will read as output", record, exc)
 
 
 def _status_lines(target: Path, argv: tuple[str, ...]) -> list[str]:

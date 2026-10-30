@@ -1,10 +1,14 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Suspense, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { Group } from "three";
+
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
+import { usePageVisible } from "@/hooks/usePageVisible";
 
 const STAGES = [
   { x: -1.6, color: "#7c3aed" },
@@ -38,35 +42,58 @@ function PipelineRings({ reduced }: { reduced: boolean }) {
   );
 }
 
+/**
+ * Animates only while on screen: it used to draw 60 frames a second for as
+ * long as the CRM stayed open, scrolled away or not, like no other scene.
+ */
 export function CrmPipelineScene() {
+  const host = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(true);
+  const pageVisible = usePageVisible();
   const reduced =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const playing = inView && pageVisible && !reduced;
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const obs = new IntersectionObserver(
+      ([entry]) => setInView(Boolean(entry?.isIntersecting)),
+      { threshold: 0.15 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   return (
-    <div className="h-36 w-full overflow-hidden rounded-xl bg-muted/30">
-      <Canvas
-        role="img"
-        aria-label="Pipeline commercial en volume"
-        shadows
-        camera={{ position: [0, 1.4, 3.2], fov: 50 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true }}
-      >
-        <ambientLight intensity={0.55} />
-        <directionalLight
-          position={[3, 5, 2]}
-          intensity={1.1}
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-        />
-        <Suspense fallback={null}>
-          <PipelineRings reduced={reduced} />
-          <Environment preset="city" />
-          <ContactShadows position={[0, -0.55, 0]} opacity={0.4} scale={6} blur={2.2} />
-        </Suspense>
-        <OrbitControls enablePan={false} enableZoom={false} dampingFactor={0.12} />
-      </Canvas>
+    <div ref={host} className="h-36 w-full overflow-hidden rounded-xl bg-muted/30">
+      <SceneBoundary>
+        <Canvas
+          role="img"
+          aria-label="Pipeline commercial en volume"
+          shadows
+          frameloop={playing ? "always" : "demand"}
+          camera={{ position: [0, 1.4, 3.2], fov: 50 }}
+          dpr={[1, 2]}
+          gl={{ antialias: true }}
+        >
+          <ambientLight intensity={0.55} />
+          <directionalLight
+            position={[3, 5, 2]}
+            intensity={1.1}
+            castShadow
+            shadow-mapSize-width={1024}
+            shadow-mapSize-height={1024}
+          />
+          <Suspense fallback={null}>
+            <PipelineRings reduced={!playing} />
+            <StudioEnvironment />
+            <ContactShadows position={[0, -0.55, 0]} opacity={0.4} scale={6} blur={2.2} />
+          </Suspense>
+          <OrbitControls enablePan={false} enableZoom={false} dampingFactor={0.12} />
+        </Canvas>
+      </SceneBoundary>
     </div>
   );
 }

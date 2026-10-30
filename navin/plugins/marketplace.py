@@ -22,7 +22,6 @@ of the marketplace clone, a git URL or a GitHub shorthand.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -41,6 +40,7 @@ from navin.plugins.manager import (
     git_url_for,
     plugins_root,
 )
+from navin.utils.host_env import failure_detail, host_tool_env
 from navin.utils.proc import no_window_kwargs
 
 _REGISTRY_FILE = "marketplaces.json"
@@ -339,13 +339,13 @@ def _git(args: list[str]) -> None:
             errors="replace",
             timeout=_GIT_TIMEOUT_S,
             check=False,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=host_tool_env(GIT_TERMINAL_PROMPT="0"),
             **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise PluginError(f"git {args[0]} failed: {exc}") from exc
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+        detail = failure_detail(proc.stderr or proc.stdout)
         raise PluginError(f"git {args[0]} failed: {detail}")
 
 

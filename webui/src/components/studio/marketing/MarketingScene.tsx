@@ -3,6 +3,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { SceneBoundary } from "@/components/three/SceneBoundary";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { Group, Mesh } from "three";
 import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
@@ -87,6 +88,7 @@ export function MarketingScene({
       ref={host}
       className="h-64 w-full overflow-hidden rounded-[14px] bg-[#0f172a] shadow-[0_1px_0_rgba(255,255,255,0.04),0_12px_28px_rgba(15,23,42,0.18)] outline outline-1 outline-black/10 dark:outline-white/10"
     >
+      <SceneBoundary>
       <Canvas
         role="img"
         aria-label={label}
@@ -106,6 +108,7 @@ export function MarketingScene({
         </Suspense>
         <OrbitControls enablePan={false} enableZoom={false} enableDamping dampingFactor={0.12} />
       </Canvas>
+      </SceneBoundary>
     </div>
   );
 }

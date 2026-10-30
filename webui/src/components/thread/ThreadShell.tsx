@@ -143,6 +143,11 @@ import {
   saveThreadModelPreset,
 } from "@/lib/thread-model-preset";
 import {
+  CHAT_DEFAULTS_EVENT,
+  loadLastTeamPick,
+  rememberChatDefault,
+} from "@/lib/chat-defaults";
+import {
   AUTO_MODEL_PRESET,
   isAutoModelPreset,
   routeSwaps,
@@ -1002,6 +1007,16 @@ export function ThreadShell({
   useEffect(() => {
     setThreadModelPreset((chatId ? loadThreadModelPreset(chatId) : null) ?? loadLastModelPick());
   }, [chatId]);
+  // The gateway copy of the last pick can land after mount (another window,
+  // another port): a chat with no pick of its own follows it.
+  useEffect(() => {
+    const onDefaults = () => {
+      if (chatId && loadThreadModelPreset(chatId)) return;
+      setThreadModelPreset(loadLastModelPick());
+    };
+    window.addEventListener(CHAT_DEFAULTS_EVENT, onDefaults);
+    return () => window.removeEventListener(CHAT_DEFAULTS_EVENT, onDefaults);
+  }, [chatId]);
   const [liveTaskHint, setLiveTaskHint] = useState<{
     modelLabel?: string;
     taskRole?: string;
@@ -1795,6 +1810,14 @@ export function ThreadShell({
         if (threadModelPresetRef.current) {
           saveThreadModelPreset(newId, threadModelPresetRef.current);
         }
+        // So does the team picked last (here or in another chat). It goes out
+        // before the first message, on the same socket, so the first turn
+        // already works with it.
+        const team = loadLastTeamPick();
+        if (team) {
+          void client.querySubagents<unknown>(newId, "team_select", { target: team })
+            .catch((err) => console.error("Could not give the new chat its team", err));
+        }
         setPendingFirstTargetChatId(newId);
       } catch {
         pendingFirstRef.current = null;
@@ -1802,7 +1825,7 @@ export function ThreadShell({
         setBooting(false);
       }
     },
-    [booting, chatId, isViewer, onCreateChat, send, withSendDefaults, workspaceScope],
+    [booting, chatId, client, isViewer, onCreateChat, send, withSendDefaults, workspaceScope],
   );
 
   const handleComposerNewChat = useCallback(() => {
@@ -2111,6 +2134,14 @@ export function ThreadShell({
   } | null>(null);
   const [teamFeed, setTeamFeed] = useState<TeamFeedEntry[]>([]);
   const [teamOpen, setTeamOpen] = useState(false);
+  // Team picked last: what the landing composer shows and a new chat gets.
+  const [lastTeamPick, setLastTeamPick] = useState<string | null>(() => loadLastTeamPick());
+  const [teamSwitchFailed, setTeamSwitchFailed] = useState(false);
+  useEffect(() => {
+    const onDefaults = () => setLastTeamPick(loadLastTeamPick());
+    window.addEventListener(CHAT_DEFAULTS_EVENT, onDefaults);
+    return () => window.removeEventListener(CHAT_DEFAULTS_EVENT, onDefaults);
+  }, []);
   // Closed by hand: a new exchange must not pop the view open again.
   const teamDismissedRef = useRef(false);
   const applyTeamAnswer = useCallback((answer: unknown) => {
@@ -2145,6 +2176,7 @@ export function ThreadShell({
     setTeamInfo(null);
     setTeamFeed([]);
     setTeamOpen(false);
+    setTeamSwitchFailed(false);
     teamDismissedRef.current = false;
     if (!chatId) return;
     let live = true;
@@ -2169,18 +2201,32 @@ export function ThreadShell({
     (enabled: boolean) => {
       void setCollabEnabled(token, enabled)
         .then(() => Promise.all([refreshModelSettings(), reloadTeam()]))
-        .catch(() => undefined);
+        .catch((err) => console.error("Could not switch Team mode", err));
     },
     [refreshModelSettings, reloadTeam, token],
   );
   const selectChatTeam = useCallback(
     (teamId: string) => {
+      rememberChatDefault("team", teamId);
+      setLastTeamPick(teamId);
+      setTeamSwitchFailed(false);
+      // Landing composer: the chat does not exist yet, it gets the team when
+      // the first message creates it (handleWelcomeSend).
       if (!chatId) return;
+      // The check moves at once: the engine answers through the agent loop,
+      // which can take seconds while a turn runs, and a menu that does not
+      // react reads as broken.
+      const previous = teamInfo;
+      setTeamInfo((info) => (info ? { ...info, team: teamId } : info));
       void client.querySubagents<unknown>(chatId, "team_select", { target: teamId })
         .then(applyTeamAnswer)
-        .catch(() => undefined);
+        .catch((err) => {
+          console.error("Could not switch the chat team", err);
+          setTeamInfo(previous);
+          setTeamSwitchFailed(true);
+        });
     },
-    [applyTeamAnswer, chatId, client],
+    [applyTeamAnswer, chatId, client, teamInfo],
   );
   const teamActiveNames = useSyncExternalStore(
     subagentStore.subscribe,
@@ -2196,7 +2242,10 @@ export function ThreadShell({
     if (!teams.length && !(settings?.collab_members?.length)) return null;
     return {
       enabled: collabEnabled,
-      teamId: teamInfo?.team ?? settings?.collab_default_team ?? "off",
+      teamId: chatId
+        ? teamInfo?.team ?? settings?.collab_default_team ?? "off"
+        : lastTeamPick ?? settings?.collab_default_team ?? "off",
+      switchFailed: teamSwitchFailed,
       teams,
       members: (teamInfo?.members ?? []).map((member) => ({
         name: member.name,
@@ -2215,7 +2264,7 @@ export function ThreadShell({
       teamOpen,
       activeNames: teamActiveNames ? teamActiveNames.split("\n") : [],
     };
-  }, [collabEnabled, selectChatTeam, settings, teamActiveNames, teamInfo, teamOpen, toggleTeamMode]);
+  }, [chatId, collabEnabled, lastTeamPick, selectChatTeam, settings, teamActiveNames, teamInfo, teamOpen, teamSwitchFailed, toggleTeamMode]);
 
   // Agent tool set_composer_mode (+ workflow auto-emit): sync menu + accent color.
   useEffect(() => {

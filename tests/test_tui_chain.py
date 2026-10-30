@@ -54,6 +54,11 @@ def test_result_summaries_are_short_outcomes():
 def test_agent_errors_are_humanized_and_labels_say_what_happened():
     assert humanize_agent_error("httpx.ReadTimeout: The read operation timed out", retrying=True) == "Model timed out, retrying"
     assert humanize_agent_error("Error code: 429 - rate limit exceeded") == "Rate limited"
+    # A run the validation gate ended keeps its own reason in the CLI row,
+    # instead of collapsing to a bare "Stopped" like a cancelled one.
+    assert humanize_agent_error("Changes not validated") == "Changes not validated"
+    assert humanize_agent_error("Reached its step limit") == "Reached its step limit"
+    assert humanize_agent_error("Cancelled") == "Stopped"
     assert activity_label("spawn", {"label": "auditor", "task": "Audit login"}) == "Agent auditor"
     assert activity_label("spawn", {"task": "Audit the login flow\nthen report"}) == "Agent Audit the login flow"
     assert activity_label("board", {"action": "move", "task_id": "T3", "status": "done"}) == "Completed task T3"

@@ -8551,7 +8551,7 @@ function ToolsSettings({
               {selectedChannel ? (
                 <DialogContent
                   showCloseButton={false}
-                  className="flex max-h-[88vh] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:rounded-2xl"
+                  className="flex max-h-[88dvh] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:rounded-2xl"
                   data-testid="channel-detail"
                 >
                   <DialogTitle className="sr-only">{channelDisplayName(selectedChannel)}</DialogTitle>

@@ -321,6 +321,214 @@ class WorktreePoolTest(unittest.TestCase):
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+# Platform guard, not a shortcut: Windows checkouts take the no-link path by
+# design, which NoDependencyLinkTest checks on every platform.
+@unittest.skipUnless(worktree._LINKS_SUPPORTED, "no folder links on this platform")
+class DependencyLinkTest(unittest.TestCase):
+    """A checkout borrows the user's node_modules instead of arriving without.
+
+    Tracked files only, a JS checkout had no vitest, tsc or vite: the
+    subagent's checks could not run, so it was stopped as unvalidated for a
+    reason that had nothing to do with its change.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "project"
+        web = self.root / "web"
+        web.mkdir(parents=True)
+        git(["init", "-b", "main"], self.root)
+        git(["config", "user.email", "test@example.com"], self.root)
+        git(["config", "user.name", "Test"], self.root)
+        (web / "package.json").write_text("{}\n")
+        (web / ".gitignore").write_text("node_modules/\n")
+        (web / "app.js").write_text("export const x = 1\n")
+        # A package whose node_modules this project does not ignore.
+        (self.root / "lib").mkdir()
+        (self.root / "lib" / "package.json").write_text("{}\n")
+        # A workspace package, linked from web/node_modules like npm does.
+        shared = self.root / "packages" / "shared"
+        shared.mkdir(parents=True)
+        (shared / "package.json").write_text("{}\n")
+        (shared / "index.js").write_text("export const v = 'committed'\n")
+        git(["add", "."], self.root)
+        git(["commit", "-m", "first"], self.root)
+
+        modules = web / "node_modules"
+        (modules / "react").mkdir(parents=True)
+        (modules / "react" / "index.js").write_text("module.exports = 'react'\n")
+        (modules / "@scope" / "pkg").mkdir(parents=True)
+        (modules / "@scope" / "pkg" / "index.js").write_text("scoped\n")
+        (modules / ".bin").mkdir()
+        (modules / ".bin" / "tool").write_text("#!/bin/sh\necho tool\n")
+        (modules / ".vite" / "deps").mkdir(parents=True)
+        (modules / ".vite" / "deps" / "cache.js").write_text("user cache\n")
+        (self.root / "lib" / "node_modules" / "left").mkdir(parents=True)
+        (modules / "shared").symlink_to(Path("..") / ".." / "packages" / "shared")
+        (modules / "@scope" / "shared").symlink_to(shared)
+        # Only in the user's tree, so the checkout has no copy of it.
+        local = self.root / "packages" / "local-only"
+        local.mkdir()
+        (local / "index.js").write_text("local\n")
+        (modules / "local-only").symlink_to(local)
+        self.modules = modules
+
+        self.store = Path(self._tmp.name) / "worktrees"
+        patcher = unittest.mock.patch.object(worktree, "worktrees_root", lambda: self.store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(worktree.clear_pool)
+
+    def _create(self, task_id: str = "deps", pool_size: int = 0) -> worktree.Worktree:
+        checkout = worktree.create(self.root, task_id, pool_size=pool_size)
+        assert checkout is not None
+        return checkout
+
+    def _users_packages_intact(self) -> None:
+        self.assertEqual((self.modules / "react" / "index.js").read_text(), "module.exports = 'react'\n")
+        self.assertEqual((self.modules / "@scope" / "pkg" / "index.js").read_text(), "scoped\n")
+        self.assertTrue((self.modules / ".bin" / "tool").is_file())
+        self.assertEqual((self.modules / ".vite" / "deps" / "cache.js").read_text(), "user cache\n")
+
+    def test_installed_packages_are_reachable_from_the_checkout(self) -> None:
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        linked = checkout.path / "web" / "node_modules"
+        self.assertTrue(linked.is_dir())
+        self.assertFalse(linked.is_symlink())
+        self.assertTrue((linked / "react").is_symlink())
+        self.assertEqual((linked / "react").resolve(), (self.modules / "react").resolve())
+        self.assertEqual((linked / "react" / "index.js").read_text(), "module.exports = 'react'\n")
+        # Split one level down, so an install there lands in the checkout.
+        self.assertFalse((linked / "@scope").is_symlink())
+        self.assertTrue((linked / "@scope" / "pkg").is_symlink())
+        self.assertFalse((linked / ".bin").is_symlink())
+        self.assertTrue((linked / ".bin" / "tool").is_symlink())
+        # The user's vite cache stays theirs.
+        self.assertFalse((linked / ".vite").exists())
+        self.assertEqual(checkout.linked(), ("web/node_modules",))
+
+    def test_a_workspace_package_resolves_to_the_checkouts_copy(self) -> None:
+        # A test in the checkout must import the package as the subagent
+        # edited it, not the user's version of it.
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        mine = checkout.path / "packages" / "shared"
+        linked = checkout.path / "web" / "node_modules"
+        self.assertEqual((linked / "shared").resolve(), mine.resolve())
+        self.assertEqual((linked / "@scope" / "shared").resolve(), mine.resolve())
+        (mine / "index.js").write_text("export const v = 'edited'\n")
+        self.assertEqual((linked / "shared" / "index.js").read_text(), "export const v = 'edited'\n")
+        self.assertEqual(
+            (self.root / "packages" / "shared" / "index.js").read_text(), "export const v = 'committed'\n",
+        )
+        # Not carried by the checkout: the user's copy, never a dangling link.
+        self.assertEqual((linked / "local-only" / "index.js").read_text(), "local\n")
+
+    def test_a_folder_the_project_would_commit_is_not_linked(self) -> None:
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        self.assertFalse((checkout.path / "lib" / "node_modules").exists())
+
+    def test_the_links_never_reach_a_commit(self) -> None:
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        git(["add", "-A"], checkout.path)
+        staged = git(["diff", "--cached", "--name-only"], checkout.path).stdout
+        self.assertEqual(staged.strip(), "")
+
+    def test_the_links_and_caches_beside_them_are_not_work(self) -> None:
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        cache = checkout.path / "web" / "node_modules" / ".vite" / "vitest"
+        cache.mkdir(parents=True)
+        (cache / "results.json").write_text("{}\n")
+        changes = checkout.inspect()
+        assert changes is not None
+        self.assertTrue(changes.empty, changes.render())
+        # Real work next to them still counts.
+        (checkout.path / "web" / "app.js").write_text("export const x = 2\n")
+        changes = checkout.inspect()
+        assert changes is not None
+        self.assertEqual([line.split()[-1] for line in changes.entries], ["web/app.js"])
+
+    def test_a_resumed_checkout_still_knows_its_links(self) -> None:
+        # After a restart the checkout is rebuilt with no creation snapshot
+        # and the file-by-file listing, which names every link.
+        made = self._create()
+        self.addCleanup(lambda: worktree.remove(made))
+        resumed = worktree.Worktree(
+            path=made.path, origin=made.origin, task_id=made.task_id,
+            base=made.base, initial=(), precise=True,
+        )
+        changes = resumed.inspect()
+        assert changes is not None
+        self.assertTrue(changes.empty, changes.render())
+
+    def test_deleting_the_folder_in_the_checkout_keeps_the_users_packages(self) -> None:
+        checkout = self._create()
+        self.addCleanup(lambda: worktree.remove(checkout))
+        subprocess.run(["rm", "-rf", "web/node_modules/"], cwd=checkout.path, check=True)
+        self._users_packages_intact()
+
+    def test_removing_the_checkout_keeps_the_users_packages(self) -> None:
+        checkout = self._create()
+        worktree.remove(checkout)
+        self.assertFalse(checkout.path.exists())
+        self._users_packages_intact()
+
+    def test_a_pooled_checkout_is_cleaned_then_linked_again(self) -> None:
+        first = self._create("one", pool_size=2)
+        # git clean -fdx runs on release: it must drop the links, not follow them.
+        self.assertTrue(worktree.release(first, pool_size=2))
+        self._users_packages_intact()
+        second = self._create("two", pool_size=2)
+        self.addCleanup(lambda: worktree.remove(second))
+        self.assertEqual(second.path, first.path)
+        self.assertTrue((second.path / "web" / "node_modules" / "react").is_symlink())
+        changes = second.inspect()
+        assert changes is not None
+        self.assertTrue(changes.empty, changes.render())
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not installed")
+class NoDependencyLinkTest(unittest.TestCase):
+    """Where folder links are off (Windows), a checkout is made exactly as before."""
+
+    def test_nothing_is_linked_and_nothing_is_hidden(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            (root / "web").mkdir(parents=True)
+            git(["init", "-b", "main"], root)
+            git(["config", "user.email", "test@example.com"], root)
+            git(["config", "user.name", "Test"], root)
+            (root / "web" / "package.json").write_text("{}\n")
+            (root / "web" / ".gitignore").write_text("node_modules/\n")
+            git(["add", "."], root)
+            git(["commit", "-m", "first"], root)
+            (root / "web" / "node_modules" / "react").mkdir(parents=True)
+            store = Path(tmp) / "worktrees"
+            with (
+                unittest.mock.patch.object(worktree, "worktrees_root", lambda: store),
+                unittest.mock.patch.object(worktree, "_LINKS_SUPPORTED", False),
+            ):
+                checkout = worktree.create(root, "nolinks", pool_size=0)
+                assert checkout is not None
+                try:
+                    self.assertFalse((checkout.path / "web" / "node_modules").exists())
+                    self.assertEqual(checkout.linked(), ())
+                    # A folder the subagent creates there still counts as its output.
+                    (checkout.path / "web" / "new.js").write_text("x\n")
+                    changes = checkout.inspect()
+                    assert changes is not None
+                    self.assertFalse(changes.empty)
+                finally:
+                    worktree.remove(checkout)
+            self.assertTrue((root / "web" / "node_modules" / "react").is_dir())
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not installed")
 class UnsupportedWorkspaceTest(unittest.TestCase):
     """Not every workspace can be isolated, and that is not a failure."""
 

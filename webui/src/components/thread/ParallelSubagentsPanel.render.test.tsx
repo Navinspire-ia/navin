@@ -182,6 +182,21 @@ describe("ParallelSubagentsPanel", () => {
     expect(screen.getByRole("alert").textContent).toBe("Cannot relaunch: agent is still active.");
   });
 
+  it("names a validation stop instead of a generic error", () => {
+    const unvalidated = {
+      ...failedCard,
+      taskId: "v",
+      statusLine: "Changes not validated",
+      errorKind: "unvalidated",
+      error: "## Validation pending\n\nChanges are saved. The task is not validated yet.",
+    };
+    render(<ParallelSubagentsPanel cards={[unvalidated]} />);
+    const row = screen.getByTestId("subagent-card-v");
+    expect(row.textContent).toContain("Changes not validated");
+    expect(row.textContent).not.toContain("Stopped on an error");
+    expect(row.textContent).not.toContain("Validation pending");
+  });
+
   it("draws an agent waiting for approval in amber", () => {
     const waiting = { ...failedCard, taskId: "w", done: false, phase: "awaiting_approval", statusLine: "Waiting for your approval", error: undefined, errorKind: undefined };
     render(<ParallelSubagentsPanel cards={[waiting]} onAction={() => undefined} />);

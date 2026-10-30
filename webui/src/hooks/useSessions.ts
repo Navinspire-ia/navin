@@ -50,6 +50,42 @@ export async function fetchThreadWithRetry<T>(
   }
 }
 const OLDER_HISTORY_PAGE_LIMIT = 120;
+export const SESSION_UPDATE_DEBOUNCE_MS = 1200;
+export const SESSION_UPDATE_MAX_WAIT_MS = 4000;
+
+function sameSessionRow(a: ChatSummary, b: ChatSummary): boolean {
+  return (
+    a.key === b.key &&
+    a.channel === b.channel &&
+    a.chatId === b.chatId &&
+    a.title === b.title &&
+    a.preview === b.preview &&
+    a.updatedAt === b.updatedAt &&
+    a.createdAt === b.createdAt &&
+    a.runStartedAt === b.runStartedAt &&
+    JSON.stringify(a.workspaceScope ?? null) === JSON.stringify(b.workspaceScope ?? null)
+  );
+}
+
+/**
+ * Keep object identity for rows that did not change, and the previous array
+ * when nothing changed at all, so a background refresh does not re-render
+ * (and re-mount icons in) every sidebar row.
+ */
+export function reconcileSessionRows(
+  prev: ChatSummary[],
+  next: ChatSummary[],
+): ChatSummary[] {
+  const byKey = new Map(prev.map((row) => [row.key, row]));
+  let changed = prev.length !== next.length;
+  const merged = next.map((row, index) => {
+    const old = byKey.get(row.key);
+    const keep = old && sameSessionRow(old, row) ? old : row;
+    if (keep !== prev[index]) changed = true;
+    return keep;
+  });
+  return changed ? merged : prev;
+}
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
 const HISTORY_CACHE_MAX = 20;
 
@@ -136,31 +172,70 @@ export function useSessions(): {
   const creatingChatRef = useRef<Promise<string> | null>(null);
   tokenRef.current = token;
 
-  const refresh = useCallback(async () => {
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
+
+  const runRefresh = useCallback(async (background: boolean) => {
     try {
-      setLoading(true);
+      if (!background) setLoading(true);
       const rows = (await listSessions(tokenRef.current)).filter(
         isListedSidebarSession,
       );
       const serverKeys = new Set(rows.map((row) => row.key));
-      setSessions((prev) => [
-        ...rows,
-        ...prev.filter(
-          (session) =>
-            optimisticKeysRef.current.has(session.key) &&
-            !serverKeys.has(session.key),
+      setSessions((prev) =>
+        reconcileSessionRows(
+          prev,
+          [
+            ...rows,
+            ...prev.filter(
+              (session) =>
+                optimisticKeysRef.current.has(session.key) &&
+                !serverKeys.has(session.key),
+            ),
+          ],
         ),
-      ]);
+      );
       for (const key of Array.from(optimisticKeysRef.current)) {
         if (serverKeys.has(key)) optimisticKeysRef.current.delete(key);
       }
-      setError(null);
+      setError((prev) => (prev === null ? prev : null));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError((prev) => (prev === message ? prev : message));
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
+
+  /**
+   * Refresh the sidebar list. Concurrent calls coalesce: while one request is
+   * in flight, further calls queue a single follow-up instead of stacking
+   * parallel `/api/sessions` reads (each one a server thread) when many
+   * sessions report updates at once.
+   */
+  const refresh = useCallback(
+    async (options?: { background?: boolean }) => {
+      const background = options?.background === true;
+      if (refreshInFlightRef.current) {
+        refreshQueuedRef.current = true;
+        return refreshInFlightRef.current;
+      }
+      const run = (async () => {
+        try {
+          await runRefresh(background);
+          while (refreshQueuedRef.current) {
+            refreshQueuedRef.current = false;
+            await runRefresh(true);
+          }
+        } finally {
+          refreshInFlightRef.current = null;
+        }
+      })();
+      refreshInFlightRef.current = run;
+      return run;
+    },
+    [runRefresh],
+  );
 
   /** Update sidebar / header title as soon as the user sends the first message. */
   const noteUserMessage = useCallback((chatId: string, text: string) => {
@@ -199,12 +274,26 @@ export function useSessions(): {
   }, [refresh]);
 
   useEffect(() => {
+    // Trailing debounce with a max wait: a pure debounce never fires while
+    // many parallel sessions keep emitting updates, and an undebounced
+    // listener would refetch the whole list on every event.
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let firstPendingAt: number | null = null;
+    const fire = () => {
+      timer = null;
+      firstPendingAt = null;
+      void refresh({ background: true });
+    };
     const unsubscribe = client.onSessionUpdate(() => {
+      const now = Date.now();
+      if (firstPendingAt == null) firstPendingAt = now;
       if (timer != null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void refresh();
-      }, 1200);
+      const waited = now - firstPendingAt;
+      const delay = Math.max(
+        0,
+        Math.min(SESSION_UPDATE_DEBOUNCE_MS, SESSION_UPDATE_MAX_WAIT_MS - waited),
+      );
+      timer = setTimeout(fire, delay);
     });
     return () => {
       if (timer != null) clearTimeout(timer);

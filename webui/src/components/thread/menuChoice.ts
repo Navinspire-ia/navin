@@ -51,6 +51,20 @@ export function commitOnSelect(
 }
 
 /**
+ * `onSelect` body of a control that lives inside an open menu (a switch, the
+ * team rows of the model picker): same single commit as `commitOnSelect`,
+ * but the menu stays open so the user sees the change land.
+ */
+export function commitOnSelectKeepOpen(
+  event: Pick<Event, "preventDefault">,
+  commit: () => void,
+  now: () => number = Date.now,
+): boolean {
+  event.preventDefault();
+  return commitOnSelect(commit, now);
+}
+
+/**
  * The press that opens a menu ends with a pointerup. Radix treats a pointerup
  * on a row as a pick (press on the trigger, release on a row), and WebKit
  * sometimes reports it as an interaction outside the menu: either way the

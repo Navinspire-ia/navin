@@ -405,6 +405,33 @@
   }
 
   /*
+   * Every other vertical scroll container (dialogs, sheets, popovers, file
+   * explorer, previews, project/chat lists) keeps a thin rail too, so a list
+   * that overflows is visibly scrollable. Tab strips and chip rows that opt out
+   * with `[scrollbar-width:none]` or `.no-scrollbar`, and horizontal-only
+   * strips, stay hidden.
+   */
+  html.native-host :is([class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"]):not([class*="scrollbar-width:none"]):not(.no-scrollbar) {
+    scrollbar-width: thin !important;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent !important;
+  }
+
+  html.native-host :is([class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"]):not([class*="scrollbar-width:none"]):not(.no-scrollbar)::-webkit-scrollbar {
+    display: block !important;
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  html.native-host :is([class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"]):not([class*="scrollbar-width:none"]):not(.no-scrollbar)::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 8px;
+  }
+
+  html.native-host :is([class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"]):not([class*="scrollbar-width:none"]):not(.no-scrollbar)::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /*
    * WebKitGTK (Linux AppImage / .deb / .rpm / .pkg.tar.zst): backdrop-filter and
    * `hsl(token / alpha)` either paint transparent or re-blur the whole
    * window on every view change. Solid paint keeps clicks and menus as
@@ -453,6 +480,17 @@
 
   html.webkit-gtk .host-window-shell,
   html.webkit-gtk .host-sidebar-glass {
+    background-attachment: scroll !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /*
+   * WKWebView (macOS) too: the window is opaque, so the shell's backdrop blur
+   * has nothing to blur, yet WebKit ran it over the whole window on every
+   * repaint, and a fixed background repainted the shell on every scroll.
+   */
+  html.webkit-engine .host-window-shell {
     background-attachment: scroll !important;
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
@@ -969,25 +1007,41 @@
       opacity: 0;
     }
   }
+  [dir="rtl"] {
+    --progress-dir: -1;
+  }
+  /* transform, not inset-inline-start: moving an offset ran layout on every
+     frame for as long as a task ran. The bar is a third of its track, so
+     -105% / 300% of itself is the old -35% / 100% of the track. */
   @keyframes task-progress-slide {
     0% {
-      inset-inline-start: -35%;
+      transform: translateX(calc(-105% * var(--progress-dir, 1)));
     }
     100% {
-      inset-inline-start: 100%;
+      transform: translateX(calc(300% * var(--progress-dir, 1)));
     }
   }
-  /* Sidebar "agent running" glyph: four dots, one dims at a time, clockwise. */
+  /*
+   * Sidebar "agent running" glyph: four dots, one dims at a time, clockwise.
+   * Discrete on purpose (step-end): each running session shows four looping
+   * dots, and a smoothly interpolated loop asks for a repaint on every frame.
+   * On the Linux desktop shell (WebKitGTK, software paint, 5K window) a dozen
+   * of them held the page at ~22 fps and delayed scrolling and keystrokes;
+   * stepped, each dot repaints 4 times per cycle and the page stays at 60 fps.
+   */
   @keyframes chat-run-dot {
-    0%,
+    0% {
+      opacity: 0.25;
+      transform: scale(0.6);
+    }
+    25%,
     100% {
       opacity: 1;
       transform: scale(1);
     }
-    50% {
-      opacity: 0.25;
-      transform: scale(0.6);
-    }
+  }
+  .chat-run-dot {
+    animation: chat-run-dot 1.2s step-end infinite;
   }
   .run-pulse-icon {
     color: hsl(var(--brand-teal));
@@ -1003,14 +1057,14 @@
     height: 12px;
     width: 12px;
     background: hsl(var(--brand-teal) / 0.22);
-    animation: run-pulse-ring 1.55s ease-out infinite;
+    animation: run-pulse-ring 1.55s steps(10, end) infinite;
   }
   .run-pulse-icon__dot {
     height: 6px;
     width: 6px;
     background: currentColor;
     box-shadow: 0 0 0 1px hsl(var(--brand-teal) / 0.14);
-    animation: run-pulse-dot 1.55s ease-in-out infinite;
+    animation: run-pulse-dot 1.55s steps(10, end) infinite;
   }
   @keyframes queued-prompt-row-enter {
     0% {
@@ -1061,8 +1115,10 @@
         drop-shadow(0 0 38px hsl(var(--brand-teal) / 0.2));
     }
   }
+  /* Stepped: a smooth drop-shadow loop repainted the whole composer every
+     frame (while typing in it) for as long as a goal ran. */
   .goal-shell-glow {
-    animation: goal-shell-glow-breathe 4.8s ease-in-out infinite;
+    animation: goal-shell-glow-breathe 4.8s steps(12, end) infinite;
   }
 
   /* Concrete HSL triples (not nested var()) so hsl(var(--composer-mode)/a) works. */
@@ -1576,4 +1632,25 @@
 }
 :root[dir="rtl"] :is(pre, .xterm, .cm-editor) {
   text-align: left;
+}
+
+/*
+ * Looping indicators tick instead of interpolating. Each smooth infinite
+ * animation asks the engine for a repaint every frame; the Linux desktop shell
+ * (WebKitGTK, software paint, large window) cannot keep up once a dozen run at
+ * once (many parallel sessions), and scrolling, menus and typing lag behind.
+ * Measured on a 5120x2160 window: 22 fps with them smooth, 57-60 fps stepped.
+ * Unlayered so it applies after the Tailwind `animate-*` shorthands.
+ */
+.animate-spin {
+  animation-timing-function: steps(12, end);
+}
+.animate-ping,
+.animate-pulse {
+  animation-timing-function: steps(8, end);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-run-dot {
+    animation: none;
+  }
 }

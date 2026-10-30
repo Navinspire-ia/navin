@@ -23,7 +23,6 @@ prompt would simply hang until the timeout.
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 import shutil
 import subprocess
@@ -38,6 +37,7 @@ from navin.quality import wsl_route
 from navin.utils import git_credentials, wsl
 from navin.utils.git_argv import git_route
 from navin.utils.git_state import RepoState, clear_cache, repo_state
+from navin.utils.host_env import host_tool_env
 from navin.utils.proc import no_window_kwargs
 
 _TIMEOUT = 30.0
@@ -133,7 +133,7 @@ def _git_env() -> dict[str, str]:
     / ``tea`` already read, so HTTPS helpers see what the Code panel uses.
     """
 
-    env = dict(os.environ)
+    env = host_tool_env()
     # GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never, SSH BatchMode: the same
     # non-interactive contract as every other git subprocess Navin starts.
     git_credentials.apply_noninteractive(env)

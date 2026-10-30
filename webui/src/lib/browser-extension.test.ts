@@ -26,7 +26,9 @@ describe("extension packages in Tauri", () => {
       const invoke = vi.fn().mockResolvedValue(path);
       vi.stubGlobal("window", { __TAURI__: { core: { invoke } } });
       await saveExtensionPackage({ name: "chrome.zip", mime: "application/zip", data: "UEsDBAD/" });
-      expect(invoke).toHaveBeenCalledWith("save_bytes", { filename: "chrome.zip", contents: [80, 75, 3, 4, 0, 255] });
+      expect(invoke).toHaveBeenCalledWith("save_bytes", new Uint8Array([80, 75, 3, 4, 0, 255]), {
+        headers: { "x-navin-filename": "chrome.zip" },
+      });
     },
   );
 

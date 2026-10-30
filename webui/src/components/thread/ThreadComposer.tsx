@@ -112,7 +112,7 @@ import {
   DocumentTemplateChip,
   DocumentTemplatePicker,
 } from "@/components/thread/DocumentTemplatePicker";
-import { commitOnPointerDown, commitOnSelect } from "@/components/thread/menuChoice";
+import { commitOnPointerDown, commitOnSelect, commitOnSelectKeepOpen } from "@/components/thread/menuChoice";
 import {
   WorkspaceProjectPicker,
   workspaceProjectPickerVisible,
@@ -323,6 +323,8 @@ export interface ComposerTeamMode {
   members: Array<{ name: string; title?: string; avatar?: string; color?: string }>;
   onToggle: (enabled: boolean) => void;
   onSelectTeam: (teamId: string) => void;
+  /** The last team switch did not reach the engine. */
+  switchFailed?: boolean;
   /** Open (or close) the split Team view beside the chat. */
   onOpenTeam?: () => void;
   teamOpen?: boolean;
@@ -3824,9 +3826,11 @@ function ComposerModelPicker({
           ) : null}
           {routing?.onToggle ? (
             <DropdownMenuItem
+              onPointerDown={(event) => {
+                commitOnPointerDown(event, () => routing.onToggle?.(!routingOn));
+              }}
               onSelect={(event) => {
-                event.preventDefault();
-                routing.onToggle?.(!routingOn);
+                commitOnSelectKeepOpen(event, () => routing.onToggle?.(!routingOn));
               }}
               className="mb-1 flex min-h-[40px] cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5"
               data-testid="composer-routing-toggle"
@@ -3854,9 +3858,14 @@ function ComposerModelPicker({
           ) : null}
           {team && !query ? (
             <DropdownMenuItem
+              // Commit on press like the model rows: WebKitGTK and WKWebView
+              // deliver the click on another row once the menu reflows (the
+              // team list appears right under this switch).
+              onPointerDown={(event) => {
+                commitOnPointerDown(event, () => team.onToggle(!team.enabled));
+              }}
               onSelect={(event) => {
-                event.preventDefault();
-                team.onToggle(!team.enabled);
+                commitOnSelectKeepOpen(event, () => team.onToggle(!team.enabled));
               }}
               className="mb-1 flex min-h-[40px] cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5"
               data-testid="composer-team-toggle"
@@ -3889,14 +3898,20 @@ function ComposerModelPicker({
               </p>
               {[...team.teams, { id: "off", name: t("thread.team.none", { defaultValue: "No team" }) }].map((option) => {
                 const selected = team.teamId === option.id;
+                const pick = () => {
+                  if (!selected) team.onSelectTeam(option.id);
+                };
                 return (
                   <DropdownMenuItem
                     key={option.id}
+                    onPointerDown={(event) => {
+                      commitOnPointerDown(event, pick);
+                    }}
                     onSelect={(event) => {
-                      event.preventDefault();
-                      if (!selected) team.onSelectTeam(option.id);
+                      commitOnSelectKeepOpen(event, pick);
                     }}
                     data-active={selected ? "true" : undefined}
+                    data-testid={`composer-team-option-${option.id}`}
                     className="flex min-h-[32px] cursor-default items-center gap-2 rounded-lg px-1.5 py-1"
                   >
                     <span className="min-w-0 flex-1 truncate text-[12.5px]">{option.name}</span>
@@ -3904,6 +3919,13 @@ function ComposerModelPicker({
                   </DropdownMenuItem>
                 );
               })}
+              {team.switchFailed ? (
+                <p role="alert" className="px-1.5 pt-0.5 text-[11px] leading-4 text-destructive">
+                  {t("thread.team.switchFailed", {
+                    defaultValue: "The team could not be changed. Check the connection and pick it again.",
+                  })}
+                </p>
+              ) : null}
             </div>
           ) : null}
           {visibleOptions.length === 0 ? (

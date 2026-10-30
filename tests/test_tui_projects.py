@@ -71,6 +71,41 @@ class ProjectDataTests(unittest.TestCase):
             self.assertEqual(projects.list_project_sessions(tmp, {}), [])
             self.assertFalse((Path(tmp) / ".navin").exists())
 
+    def test_a_desktop_chat_opened_in_another_project_is_not_listed_here(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "financeIa-v2"
+            root.mkdir()
+            _write_session(root, "cli:1", "cli chat", "2026-03-01T10:00:00")
+            for key, owner in (("websocket:mine", str(root)), ("websocket:sub", str(root / "test")),
+                               ("websocket:other", "/home/u/bbac")):
+                _write_session(root, key, f"chat {key}", "2026-02-01T10:00:00")
+                path = root / ".navin" / "sessions" / f"{key.replace(':', '_')}.jsonl"
+                lines = path.read_text(encoding="utf-8").splitlines()
+                head = json.loads(lines[0])
+                head["metadata"]["workspace_scope"] = {"project_path": owner, "access_mode": "full"}
+                path.write_text("\n".join([json.dumps(head), *lines[1:]]) + "\n", encoding="utf-8")
+            rows = projects.list_project_sessions(str(root), {})
+            self.assertEqual([r.key for r in rows], ["cli:1", "websocket:mine"])
+
+    def test_scoped_elsewhere_reads_the_project_a_chat_was_opened_in(self) -> None:
+        with TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real"
+            real.mkdir()
+            link = Path(tmp) / "link"
+            link.symlink_to(real)
+            # The same folder written two ways is the same project.
+            self.assertFalse(projects.scoped_elsewhere({"workspace_scope": {"project_path": str(link)}}, real))
+            self.assertTrue(projects.scoped_elsewhere({"workspace_scope": {"project_path": f"{real}/sub"}}, real))
+        # No project recorded (every CLI chat): it belongs to its folder.
+        for row in ({}, {"workspace_scope": None}, {"workspace_scope": {"project_path": ""}}):
+            self.assertFalse(projects.scoped_elsewhere(row, "/p"))
+
+    def test_engine_sessions_are_internal(self) -> None:
+        for key in ("heartbeat", "dream:20261028-204804", "cron:abc", "system:x"):
+            self.assertTrue(projects.is_internal_key(key), key)
+        for key in ("cli:1", "websocket:abc", "sdk:x", "dreamer:1", ""):
+            self.assertFalse(projects.is_internal_key(key), key)
+
     def test_known_projects_keep_desktop_order_and_include_the_current_one(self) -> None:
         state = {"recent_projects": [{"path": "/a", "name": ""}, {"path": "/b", "name": ""}, {"path": "/a/", "name": ""}]}
         self.assertEqual(projects.known_project_paths("/c", state), ["/c", "/a", "/b"])

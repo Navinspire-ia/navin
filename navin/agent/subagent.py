@@ -365,6 +365,9 @@ _ERROR_REASONS = {
     "stalled": "Model stream stalled",
     "timeout": "Model timed out",
     "limit": "Reached its step limit",
+    # The validation gate ended the run: its edits are kept, but their checks
+    # failed or never passed. Not an error of the model or of the run itself.
+    "unvalidated": "Changes not validated",
     "other": "Stopped on an error",
 }
 
@@ -387,6 +390,8 @@ def _humanize_error(err: str | None, kind: str | None = None) -> tuple[str, str]
         return "timeout", _ERROR_REASONS["timeout"]
     if kind == "limit" or low.startswith(_LIMIT_PREFIX):
         return "limit", _ERROR_REASONS["limit"]
+    if kind == "unvalidated":
+        return "unvalidated", _ERROR_REASONS["unvalidated"]
     return "other", _ERROR_REASONS["other"]
 
 
@@ -2678,7 +2683,10 @@ class SubagentManager:
                 # Known from the stop reason. The text is not consulted: for
                 # no_progress it is the model's own prose, which can say
                 # "timed out" or "cancelled" about anything.
-                status.error_kind = "limit" if result.stop_reason == "max_iterations" else "other"
+                status.error_kind = {
+                    "max_iterations": "limit",
+                    "validation_failed": "unvalidated",
+                }.get(result.stop_reason, "other")
                 status.tool_events = list(result.tool_events)
                 self._publish_progress(status, force=True, done=True)
                 await self._announce_result(

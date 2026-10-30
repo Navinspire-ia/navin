@@ -4201,6 +4201,37 @@ export async function updateOnboardingState(
   );
 }
 
+/** Model and team a new chat starts with (the user's last picks, kept in ~/.navin). */
+export type ChatDefaultsPayload = {
+  model_preset: string | null;
+  team: string | null;
+  updated_at?: string;
+};
+
+export async function fetchChatDefaults(
+  token: string,
+  base: string = "",
+): Promise<ChatDefaultsPayload> {
+  return request<ChatDefaultsPayload>(
+    `${base}/api/webui/chat-defaults`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function updateChatDefaults(
+  token: string,
+  patch: Partial<Pick<ChatDefaultsPayload, "model_preset" | "team">>,
+  base: string = "",
+): Promise<ChatDefaultsPayload> {
+  return request<ChatDefaultsPayload>(
+    `${base}/api/webui/chat-defaults/update`,
+    token,
+    { headers: bodyHeaders(JSON.stringify(patch)) },
+  );
+}
+
 export type BoardTaskStatus =
   | "backlog"
   | "planned"

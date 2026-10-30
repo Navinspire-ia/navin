@@ -467,6 +467,12 @@ export class NavinClient {
   private static readonly PENDING_INBOUND_MAX = 2000;
   /** Chats whose bounded live buffer overflowed and need canonical HTTP history. */
   private pendingInboundOverflowChats = new Set<string>();
+  /** Frames just flushed from ``pendingInboundByChat``, kept until the end of the
+   *  current task so every subscriber mounting in the same React commit gets them.
+   *  Child components subscribe before their parent's hook: without this the first
+   *  one (a credential or merge card) swallowed the buffered answers and the
+   *  thread never showed them until a reload. */
+  private replayInboundByChat = new Map<string, InboundEvent[]>();
   // chat_ids we've attached to since connect; re-attached after reconnects
   private knownChats = new Set<string>();
   /** Wall-clock run strip: updated from ``goal_status`` even with no ``onChat`` subscriber. */
@@ -992,8 +998,22 @@ export class NavinClient {
     if (pending !== undefined && pending.length > 0) {
       const flushed = pending.splice(0);
       this.pendingInboundByChat.delete(chatId);
+      const replay = this.replayInboundByChat.get(chatId);
+      if (replay) {
+        replay.push(...flushed);
+      } else {
+        this.replayInboundByChat.set(chatId, flushed);
+        queueMicrotask(() => this.replayInboundByChat.delete(chatId));
+      }
       for (const ev of flushed) {
         handler(ev);
+      }
+    } else {
+      const replay = this.replayInboundByChat.get(chatId);
+      if (replay !== undefined) {
+        for (const ev of replay) {
+          handler(ev);
+        }
       }
     }
     this.attach(chatId);
@@ -2397,6 +2417,9 @@ export class NavinClient {
   private dispatch(chatId: string, ev: InboundEvent): void {
     const handlers = this.chatHandlers.get(chatId);
     if (handlers !== undefined && handlers.size > 0) {
+      // Keep the replay window in order: a subscriber joining later in this
+      // task must see this frame after the buffered ones.
+      this.replayInboundByChat.get(chatId)?.push(ev);
       for (const h of handlers) {
         h(ev);
       }

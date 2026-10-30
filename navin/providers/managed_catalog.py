@@ -985,6 +985,10 @@ def _known_managed_slugs() -> set[str]:
     return slugs
 
 
+# Preset fields the user tunes and the catalog leaves at their defaults.
+_USER_TUNED_FIELDS = ("reasoning_effort", "context_window_tokens", "max_tokens", "temperature")
+
+
 def catalog_presets(catalog: Catalog) -> dict[str, ModelPresetConfig]:
     """Tier aliases (routing) + selectable presets (chat + média)."""
     presets: dict[str, ModelPresetConfig] = {}
@@ -1065,6 +1069,13 @@ def apply_catalog(
             continue
         if previous is not None and previous.enabled is False:
             preset.enabled = False
+        if previous is not None and previous.model == preset.model:
+            # Thinking effort, context window and the other generation knobs
+            # are the user's (composer pickers, Settings), the catalog never
+            # declares them: a sync used to reset them on every opening of
+            # the model picker. A new model under the key starts fresh.
+            for field in _USER_TUNED_FIELDS:
+                setattr(preset, field, getattr(previous, field))
         if config.model_presets.get(name) != preset:
             config.model_presets[name] = preset
             changed = True
