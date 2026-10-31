@@ -78,19 +78,23 @@ def backup_before_install(from_version: str, to_version: str) -> Path | None:
     at its first start.
     """
     config = navin_home() / "config.json"
-    if not config.is_file():
+    try:
+        data = config.read_bytes()
+    except FileNotFoundError:
+        # No config yet (first start) or removed meanwhile: nothing to back up.
         return None
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    # Nanoseconds in the name: seven backups in one second still sort in the
+    # order they were made (a 4 ms mtime tick and "2.4.10" < "2.4.4" did not).
+    now_ns = time.time_ns()
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now_ns // 1_000_000_000))
+    stamp = f"{stamp}.{now_ns % 1_000_000_000:09d}"
     target = backups_dir() / f"{stamp}-{from_version or 'unknown'}-to-{to_version or 'unknown'}"
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(config, target / "config.json")
+    (target / "config.json").write_bytes(data)
     (target / "data-version.json").write_text(
         json.dumps({"dataVersion": local_data_version()}) + "\n", encoding="utf-8",
     )
-    folders = sorted(
-        (path for path in backups_dir().iterdir() if path.is_dir()),
-        key=lambda path: (path.stat().st_mtime_ns, path.name),
-    )
+    folders = sorted(path for path in backups_dir().iterdir() if path.is_dir())
     for old in folders[:-_BACKUPS_KEPT]:
         shutil.rmtree(old)
     return target

@@ -189,20 +189,25 @@ class PackageInstallTest(unittest.TestCase):
         start.assert_not_called()
 
     def test_install_update_dispatches_package_kinds(self):
-        with (
-            mock.patch.object(service, "_install_kind", return_value="linux-pacman"),
-            mock.patch.object(
-                service,
-                "_STATE",
-                {"path": "/tmp/navin-update.pkg.tar.zst", "update": {"installKind": "linux-pacman", "latestVersion": "2.0.0"}},
-            ),
-            mock.patch.object(Path, "is_file", return_value=True),
-            mock.patch.object(service, "_install_linux_package") as install,
-            mock.patch.object(service, "_record_pending_install"),
-            mock.patch.object(service, "_schedule_shutdown"),
-            mock.patch.object(service, "notify"),
-        ):
-            result = service.install_update()
+        # Install now backs up config.json and writes the update history under
+        # ~/.navin: point home at a scratch folder (CI has no config there).
+        with TemporaryDirectory() as home, mock.patch.object(Path, "home", return_value=Path(home)):
+            with (
+                mock.patch.object(service, "_install_kind", return_value="linux-pacman"),
+                mock.patch.object(
+                    service,
+                    "_STATE",
+                    {"path": "/tmp/navin-update.pkg.tar.zst", "update": {"installKind": "linux-pacman", "latestVersion": "2.0.0"}},
+                ),
+                mock.patch.object(Path, "is_file", return_value=True),
+                mock.patch.object(service, "_install_linux_package") as install,
+                mock.patch.object(service, "_record_pending_install"),
+                mock.patch.object(service, "_schedule_shutdown"),
+                mock.patch.object(service, "notify"),
+            ):
+                result = service.install_update()
+            # No config.json yet: nothing to back up, the install still goes on.
+            self.assertFalse((Path(home) / ".navin" / "updates" / "backups").exists())
         self.assertEqual(result["state"], "restarting")
         install.assert_called_once()
         self.assertEqual(install.call_args.args[1], "linux-pacman")
