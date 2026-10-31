@@ -62,3 +62,57 @@ describe("useSessionHistory cache", () => {
     expect(result.current.messages[0]?.content).toBe("B-v1");
   });
 });
+
+describe("useSessionHistory loadOlderUntil", () => {
+  beforeEach(() => {
+    clearSessionHistoryCache();
+    mocks.fetchThread.mockReset();
+  });
+
+  /** Page N holds prompt N of a 4-prompt chat; the latest page is prompt 3. */
+  function paged(failBefore?: string) {
+    return async (_t: string, _key: string, options?: { before?: string | null }) => {
+      if (failBefore && options?.before === failBefore) throw new Error("offline");
+      const at = options?.before ? Number(options.before) - 1 : 3;
+      return {
+        messages: [{ id: `u${at}`, role: "user", content: `prompt ${at}`, createdAt: at }],
+        page: {
+          before_cursor: at > 0 ? String(at) : null,
+          has_more_before: at > 0,
+          user_message_offset: at,
+        },
+      };
+    };
+  }
+
+  it("loads older pages until the prompt is in, in order", async () => {
+    mocks.fetchThread.mockImplementation(paged());
+    const { result } = renderHook(() => useSessionHistory("A"));
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    expect(result.current.userMessageOffset).toBe(3);
+    let reached = false;
+    await act(async () => { reached = await result.current.loadOlderUntil(1); });
+    expect(reached).toBe(true);
+    expect(result.current.messages.map((m) => m.content)).toEqual(["prompt 1", "prompt 2", "prompt 3"]);
+    expect(result.current.userMessageOffset).toBe(1);
+    expect(result.current.hasMoreBefore).toBe(true);
+    expect(result.current.loadingOlder).toBe(false);
+    // Already loaded: no request.
+    const calls = mocks.fetchThread.mock.calls.length;
+    await act(async () => { reached = await result.current.loadOlderUntil(2); });
+    expect(reached).toBe(true);
+    expect(mocks.fetchThread.mock.calls.length).toBe(calls);
+  });
+
+  it("reports a failed load and keeps what was on screen", async () => {
+    mocks.fetchThread.mockImplementation(paged("2"));
+    const { result } = renderHook(() => useSessionHistory("A"));
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    let reached = true;
+    await act(async () => { reached = await result.current.loadOlderUntil(0); });
+    expect(reached).toBe(false);
+    expect(result.current.messages.map((m) => m.content)).toEqual(["prompt 3"]);
+    expect(result.current.error).toBe("offline");
+    expect(result.current.loadingOlder).toBe(false);
+  });
+});

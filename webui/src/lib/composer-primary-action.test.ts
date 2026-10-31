@@ -27,11 +27,11 @@ describe("composerPrimaryAction", () => {
     ).toBe("stop");
   });
 
-  it("a typed ordinary message never turns into a stop: it is sent to the live turn", () => {
+  it("a typed ordinary message never turns into a stop: it goes to the queue", () => {
     // Regression: "salut" + click on the round button used to send /stop and
-    // kill the running mission ("Stopped 1 task(s)."). Then it parked the
-    // message in the queue until the turn ended, so the agent never saw it
-    // mid-run. Now the message is sent: the gateway injects it into the turn.
+    // kill the running mission ("Stopped 1 task(s)."). Then 2.4.0 sent it
+    // into the live turn, so several messages could no longer be lined up
+    // with the queue's options (edit, send now, Start Multitasking).
     expect(
       composerPrimaryAction({
         ...base,
@@ -39,10 +39,10 @@ describe("composerPrimaryAction", () => {
         hasComposerContent: true,
         canQueueGuidance: true,
       }),
-    ).toBe("send");
+    ).toBe("queue");
   });
 
-  it("the queue is never the implicit action of the round button", () => {
+  it("content that cannot queue is sent, never stopped", () => {
     expect(
       composerPrimaryAction({
         ...base,

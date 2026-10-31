@@ -8,6 +8,7 @@ import type { UIMessage } from "@/lib/types";
 import {
   displayedPromptText,
   layoutScrollTop,
+  navigatorPrompts,
   plainAnswerText,
   userPromptAnchors,
 } from "./promptNavigation";
@@ -49,6 +50,50 @@ describe("userPromptAnchors", () => {
     const anchors = userPromptAnchors([message("user", "/forge", "u1")]);
     expect(anchors[0].label).toBe("/forge");
     expect(anchors[0].preview).toBe("/forge");
+  });
+});
+
+describe("navigatorPrompts", () => {
+  it("lists the prompts of pages not loaded yet before the loaded ones", () => {
+    // The first page of a tool-heavy chat held its last two prompts only.
+    const loaded = userPromptAnchors([
+      message("user", "/forge fourth", "u3"),
+      message("assistant", "ok", "a3"),
+      message("user", "fifth", "u4"),
+    ]);
+    const listed = ["first", "/forge second", "third", "fourth", "fifth"].map((text, index) => ({
+      index,
+      text,
+      created_at: 1_000 + index,
+    }));
+    const rows = navigatorPrompts(loaded, listed, 3);
+    expect(rows.map((row) => [row.index, row.preview, row.id ?? null])).toEqual([
+      [0, "first", null],
+      [1, "second", null],
+      [2, "third", null],
+      [3, "fourth", "u3"],
+      [4, "fifth", "u4"],
+    ]);
+    expect(rows[0].createdAt).toBe(1_000);
+    expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
+  });
+
+  it("keeps a prompt sent live, and the loaded prompts alone while the list is unknown", () => {
+    const loaded = userPromptAnchors([
+      message("user", "on screen", "u2"),
+      message("user", "just sent", "u3"),
+    ]);
+    const listed = [{ index: 0, text: "a" }, { index: 1, text: "b" }, { index: 2, text: "on screen" }];
+    expect(navigatorPrompts(loaded, listed, 2).map((row) => row.preview)).toEqual([
+      "a", "b", "on screen", "just sent",
+    ]);
+    expect(navigatorPrompts(loaded, null, 2).map((row) => row.index)).toEqual([2, 3]);
+  });
+
+  it("numbers a prompt without text over the whole chat", () => {
+    const loaded = userPromptAnchors([message("user", "", "u7")]);
+    expect(navigatorPrompts(loaded, null, 7)[0].label).toBe("Prompt 8");
+    expect(navigatorPrompts([], [{ index: 0, text: "" }], 1)[0].label).toBe("Prompt 1");
   });
 });
 

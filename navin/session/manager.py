@@ -12,6 +12,7 @@ import threading
 import weakref
 from collections import OrderedDict
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -39,6 +40,17 @@ from navin.utils.helpers import (
 from navin.utils.subagent_channel_display import scrub_subagent_announce_body
 
 FILE_MAX_MESSAGES = 2000
+# Messages that leave the live session (idle compaction, /compact, the file
+# cap) stay readable on screen: they go, oldest first, to a display-only file
+# in ``.navin/sessions/earlier/``. The model never replays it.
+EARLIER_DIR_NAME = "earlier"
+EARLIER_MAX_MESSAGES = 4000
+# Rewriting the file on every turn past the cap would cost a full write per
+# turn: it is trimmed back to EARLIER_MAX_MESSAGES once it is this much over.
+_EARLIER_TRIM_SLACK = 500
+# A tool result shows in a folded card; its full text stays out of the file.
+_EARLIER_TOOL_RESULT_CHARS = 4000
+_EARLIER_HEADER_TYPE = "earlier"
 # Session metadata: when the conversation on this key last started over (/new),
 # as epoch seconds. Absent for a conversation never restarted.
 CONVERSATION_STARTED_KEY = "conversation_started_at"
@@ -470,15 +482,23 @@ class Session:
         self,
         on_archive: Any = None,
         limit: int = FILE_MAX_MESSAGES,
+        on_earlier: Any = None,
     ) -> None:
-        """Bound session message growth by archiving and trimming old prefixes."""
+        """Bound session message growth by archiving and trimming old prefixes.
+
+        ``on_earlier`` receives the dropped messages that came before the kept
+        ones, oldest first, so the chat can still show them.
+        """
         if limit <= 0 or len(self.messages) <= limit:
             return
 
+        original = list(self.messages)
         result = self.retain_recent_legal_suffix(limit)
         if not result.dropped:
             return
 
+        if on_earlier:
+            on_earlier(messages_before_kept(original, self.messages))
         archive_chunk = result.dropped[result.already_consolidated_count:]
         if archive_chunk and on_archive:
             on_archive(archive_chunk)
@@ -490,6 +510,38 @@ class Session:
             len(self.messages),
         )
 
+
+
+def messages_before_kept(
+    original: list[dict[str, Any]], kept: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The prefix of ``original`` that sits before the first kept message.
+
+    Retention keeps a suffix (the same dict objects), so this is what left the
+    live session, in reading order. Messages dropped after a kept window (an
+    assistant-only tail) are not included: shown before the kept ones they
+    would be out of order.
+    """
+    kept_ids = {id(message) for message in kept}
+    first = next(
+        (index for index, message in enumerate(original) if id(message) in kept_ids),
+        len(original),
+    )
+    return original[:first]
+
+
+def _earlier_row(message: dict[str, Any]) -> dict[str, Any]:
+    """A message as the earlier-messages file keeps it (display only)."""
+    content = message.get("content")
+    if (
+        message.get("role") == "tool"
+        and isinstance(content, str)
+        and len(content) > _EARLIER_TOOL_RESULT_CHARS
+    ):
+        row = dict(message)
+        row["content"] = content[:_EARLIER_TOOL_RESULT_CHARS] + "\n... (truncated)"
+        return row
+    return message
 
 
 DEFAULT_MAX_CACHED_SESSIONS = 256
@@ -703,6 +755,12 @@ class SessionManager:
         self._save_locks: dict[str, threading.Lock] = {}
         self._save_requested: dict[str, int] = {}
         self._save_written: dict[str, int] = {}
+        # Earlier-messages files: written in order by one worker thread, with
+        # the message count of each file once it has been counted.
+        self._earlier_guard = threading.Lock()
+        self._earlier_executor: ThreadPoolExecutor | None = None
+        self._earlier_pending: dict[str, Future[None]] = {}
+        self._earlier_counts: dict[str, int] = {}
 
     @property
     def max_cached_sessions(self) -> int:
@@ -751,6 +809,148 @@ class SessionManager:
     def _get_legacy_session_path(self, key: str) -> Path:
         """Legacy global session path (~/.navin/sessions/)."""
         return self.legacy_sessions_dir / f"{self.safe_key(key)}.jsonl"
+
+    def earlier_messages_path(self, key: str) -> Path:
+        """Display-only file of the messages that left the live session."""
+        return self.sessions_dir / EARLIER_DIR_NAME / f"{self._storage_key(key)}.jsonl"
+
+    def keep_earlier_messages(
+        self, session: Session, messages: list[dict[str, Any]],
+    ) -> Future[None] | None:
+        """Keep messages that left the live session readable in the chat.
+
+        Idle compaction, ``/compact`` and the file cap drop the oldest
+        messages from the session the model replays; the CLI paints its
+        history from that session, so they vanished from the screen. They are
+        appended here, oldest first, for this conversation only (a ``/new``
+        on the same key starts the file over).
+
+        The write runs on one worker thread (appends stay in order and the
+        event loop never waits for the disk); the returned future completes
+        when the rows are on disk. Readers of this session wait for it.
+        """
+        rows = [_earlier_row(message) for message in messages if isinstance(message, dict)]
+        if not rows:
+            return None
+        key = session.key
+        stamp = session.metadata.get(CONVERSATION_STARTED_KEY)
+        with self._earlier_guard:
+            if self._earlier_executor is None:
+                self._earlier_executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="session-earlier",
+                )
+            future = self._earlier_executor.submit(self._write_earlier_rows, key, stamp, rows)
+            self._earlier_pending[key] = future
+        return future
+
+    def _wait_earlier_write(self, key: str) -> None:
+        with self._earlier_guard:
+            future = self._earlier_pending.get(key)
+        if future is None:
+            return
+        # _write_earlier_rows logs its own failures and never raises.
+        future.result()
+        with self._earlier_guard:
+            if self._earlier_pending.get(key) is future:
+                del self._earlier_pending[key]
+
+    def _write_earlier_rows(self, key: str, stamp: Any, rows: list[dict[str, Any]]) -> None:
+        try:
+            self._append_earlier_rows(key, stamp, rows)
+        except (OSError, ValueError) as exc:
+            # A display copy of messages the session already dropped: losing
+            # it must not fail the turn or the compaction. ValueError covers a
+            # file that does not decode as UTF-8 and a row that does not
+            # serialise.
+            logger.warning("Could not keep the earlier messages of {}: {}", key, exc)
+
+    def _append_earlier_rows(self, key: str, stamp: Any, rows: list[dict[str, Any]]) -> None:
+        path = self.earlier_messages_path(key)
+        cache_key = str(path)
+        if self._earlier_header_stamp(path) == (True, stamp):
+            count = self._earlier_counts.get(cache_key)
+            if count is None:
+                count = self._count_earlier_rows(path)
+            if count + len(rows) <= EARLIER_MAX_MESSAGES + _EARLIER_TRIM_SLACK:
+                lines = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(lines)
+                self._pending_fsync.add(path)
+                self._earlier_counts[cache_key] = count + len(rows)
+                return
+            rows = self._read_earlier_rows(path, key) + rows
+        kept = rows[-EARLIER_MAX_MESSAGES:]
+        ensure_dir(path.parent)
+        header = {
+            "_type": _EARLIER_HEADER_TYPE,
+            "key": key,
+            CONVERSATION_STARTED_KEY: stamp,
+        }
+        self._write_file(path, header, kept, fsync=False)
+        self._earlier_counts[cache_key] = len(kept)
+
+    def earlier_messages(self, session: Session) -> list[dict[str, Any]]:
+        """Messages that left the live session, oldest first (display only).
+
+        Blocking (waits for a pending write, then reads the file): call it
+        from a worker thread.
+        """
+        self._wait_earlier_write(session.key)
+        path = self.earlier_messages_path(session.key)
+        stamp = session.metadata.get(CONVERSATION_STARTED_KEY)
+        if self._earlier_header_stamp(path) != (True, stamp):
+            return []
+        return self._read_earlier_rows(path, session.key)
+
+    @staticmethod
+    def _earlier_header_stamp(path: Path) -> tuple[bool, Any]:
+        """``(True, conversation stamp)`` of a readable file, else ``(False, None)``."""
+        try:
+            with open(path, encoding="utf-8") as handle:
+                header = json.loads(handle.readline() or "null")
+        except FileNotFoundError:
+            return False, None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logger.warning("Unreadable earlier-messages file {}: {}", path, exc)
+            return False, None
+        if not isinstance(header, dict) or header.get("_type") != _EARLIER_HEADER_TYPE:
+            logger.warning("Earlier-messages file {} has no header; it starts over", path)
+            return False, None
+        return True, header.get(CONVERSATION_STARTED_KEY)
+
+    @staticmethod
+    def _count_earlier_rows(path: Path) -> int:
+        with open(path, encoding="utf-8") as handle:
+            next(handle, None)
+            return sum(1 for line in handle if line.strip())
+
+    @staticmethod
+    def _read_earlier_rows(path: Path, key: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        skipped = 0
+        try:
+            with open(path, encoding="utf-8") as handle:
+                next(handle, None)
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        # A line cut by a crash mid-append: the rest is fine.
+                        skipped += 1
+                        continue
+                    if isinstance(row, dict):
+                        rows.append(row)
+        except FileNotFoundError:
+            return []
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Could not read the earlier messages of {}: {}", key, exc)
+            return []
+        if skipped:
+            logger.warning("Skipped {} unreadable earlier message(s) of {}", skipped, key)
+        return rows
 
     @staticmethod
     def _stored_key_for_path(path: Path) -> str | None:
@@ -1174,6 +1374,14 @@ class SessionManager:
             self._get_legacy_session_path(key),
         ]
         self.invalidate(key)
+        # A write still queued would bring the file back after the unlink.
+        self._wait_earlier_write(key)
+        earlier = self.earlier_messages_path(key)
+        self._earlier_counts.pop(str(earlier), None)
+        try:
+            earlier.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Failed to delete earlier messages {}: {}", earlier, e)
         deleted = False
         for path in paths:
             if not path.exists():

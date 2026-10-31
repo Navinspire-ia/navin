@@ -9171,7 +9171,7 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Il modello sta lavorando. Invio gli manda subito il messaggio; Alt+Invio lo mette in coda.",
+      "placeholderStreaming": "L'agente lavora. Invio mette in coda, Alt+Invio invia",
       "placeholderThread": "Type your message…",
       "queued": {
         "add": "Metti in coda questo messaggio per il turno successivo (Alt+Invio). Invio lo manda subito all'agente.",

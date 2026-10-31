@@ -263,4 +263,18 @@ describe("composer dock", () => {
     const dock = source.slice(source.indexOf('data-testid="thread-composer-dock"'));
     expect(dock).toMatch(/thread-composer-dock-fade[\s\S]{0,200}bottom-full[\s\S]{0,80}from-background/);
   });
+
+  it("follows the tail when the composer grows, never jumps back to the sent prompt", async () => {
+    // Typing a line or queueing a message resizes the dock. Re-pinning the
+    // prompt there fought the tail-follow while the agent worked: the chat
+    // jumped up to the prompt at each key and back down at each frame.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./ThreadViewport.tsx", import.meta.url), "utf8");
+    const effect = source.match(
+      /useIsomorphicLayoutEffect\(\(\) => \{[^}]*\}, \[composerDockHeight[^\]]*\]\);/,
+    );
+    expect(effect?.[0]).toBeTruthy();
+    expect(effect?.[0]).toContain("scrollToBottom(false, 2)");
+    expect(effect?.[0]).not.toContain("scrollToPromptTopNow");
+  });
 });

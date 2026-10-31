@@ -39,6 +39,7 @@ const SESSION_READS = new Set([
   "review-file",
   "search",
   "symbols",
+  "webui-prompts",
   "webui-thread",
 ]);
 

@@ -27,6 +27,9 @@ type Measurable = {
   scrollHeight: number;
   style: { height: string };
   parentElement?: { offsetHeight: number; style: { minHeight: string } } | null;
+  /** Real textareas: an empty one is measured without its placeholder. */
+  value?: string;
+  placeholder?: string;
 };
 
 /**
@@ -67,8 +70,16 @@ export function fitTextareaHeight(
   const previousMin = parent ? parent.style.minHeight : "";
   if (parent) parent.style.minHeight = `${parent.offsetHeight}px`;
   const previous = el.style.height;
+  // Chromium (WebView2) and WebKit count a wrapped placeholder in
+  // `scrollHeight`. The placeholder changes while the agent works, so the
+  // empty composer grew a line, shrank at the first key and grew again once
+  // the message was queued: the whole chat moved while typing. An empty
+  // composer is one line tall whatever its placeholder says.
+  const placeholder = el.value === "" && el.placeholder ? el.placeholder : null;
+  if (placeholder !== null) el.placeholder = "";
   el.style.height = "auto";
   const next = Math.min(el.scrollHeight, max);
+  if (placeholder !== null) el.placeholder = placeholder;
   const nextPx = `${next}px`;
   el.style.height = previous === nextPx ? previous : nextPx;
   if (parent) parent.style.minHeight = previousMin;

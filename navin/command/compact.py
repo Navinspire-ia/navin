@@ -97,6 +97,8 @@ async def summarize_around_checkpoint(ctx: Any, store: Any, session: Any, rest: 
         "content": SUMMARY_PREFIX.format(count=len(chunk), side=side, name=name) + brief,
     }
     if direction == "upto":
+        # The summarized turns leave the session; the chat keeps showing them.
+        loop.sessions.keep_earlier_messages(session, chunk)
         session.messages = [note, *messages[marker:]]
     else:
         session.messages = [*messages[:marker], note]

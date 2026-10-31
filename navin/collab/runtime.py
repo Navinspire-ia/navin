@@ -211,19 +211,19 @@ def current_collab() -> Any:
     """
     import json
 
-    from navin.config.loader import get_config_path
+    from navin.config.loader import _file_signature, get_config_path
     from navin.config.schema import CollabConfig
 
     path = get_config_path()
-    try:
-        stamp = (str(path), path.stat().st_mtime_ns)
-    except OSError:
-        stamp = (str(path), 0)
+    # mtime alone missed a switch saved twice within one timestamp tick (coarse
+    # on some file systems): the feed then reported the old value until a
+    # restart. size, inode and ctime change with every save_config replace.
+    stamp = (str(path), _file_signature(path))
     cached = _COLLAB_CACHE.get("value")
     if cached is not None and _COLLAB_CACHE.get("stamp") == stamp:
         return cached
     data: Any = {}
-    if stamp[1]:
+    if stamp[1] is not None:
         try:
             data = json.loads(path.read_text(encoding="utf-8")).get("collab") or {}
         except (OSError, ValueError, AttributeError):

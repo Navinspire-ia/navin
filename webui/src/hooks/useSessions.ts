@@ -20,6 +20,7 @@ import type {
   SessionAutomationJob,
   SessionDeleteResult,
   UIMessage,
+  WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "@/lib/types";
 
@@ -50,6 +51,8 @@ export async function fetchThreadWithRetry<T>(
   }
 }
 const OLDER_HISTORY_PAGE_LIMIT = 120;
+/** A jump from the prompt list loads at most this many older pages. */
+const MAX_PROMPT_JUMP_PAGES = 50;
 export const SESSION_UPDATE_DEBOUNCE_MS = 1200;
 export const SESSION_UPDATE_MAX_WAIT_MS = 4000;
 
@@ -141,6 +144,55 @@ function hasPendingToolCallsFromThread(
     return body.has_pending_tool_calls;
   }
   return hasPendingAgentActivity(messages);
+}
+
+interface HistoryState {
+  key: string | null;
+  messages: UIMessage[];
+  loading: boolean;
+  loadingOlder: boolean;
+  error: string | null;
+  hasPendingToolCalls: boolean;
+  forkBoundaryMessageCount: number | null;
+  beforeCursor: string | null;
+  hasMoreBefore: boolean;
+  userMessageOffset: number;
+  version: number;
+}
+
+/** One older page put in front of what is loaded; an empty page ends the history. */
+function prependOlderPage(
+  prev: HistoryState,
+  body: WebuiThreadPersistedPayload | null,
+): HistoryState {
+  if (!body?.messages?.length) {
+    return {
+      ...prev,
+      loadingOlder: false,
+      hasMoreBefore: false,
+      beforeCursor: null,
+    };
+  }
+  const older = persistedMessagesToUi(body.messages);
+  const olderBoundary = typeof body.fork_boundary_message_count === "number"
+    ? Math.max(0, Math.min(body.fork_boundary_message_count, older.length))
+    : null;
+  const shiftedBoundary = prev.forkBoundaryMessageCount === null
+    ? null
+    : prev.forkBoundaryMessageCount + older.length;
+  const nextMessages = [...older, ...prev.messages];
+  return {
+    ...prev,
+    messages: nextMessages,
+    loadingOlder: false,
+    error: null,
+    hasPendingToolCalls: hasPendingAgentActivity(nextMessages),
+    forkBoundaryMessageCount: olderBoundary ?? shiftedBoundary,
+    beforeCursor: body.page?.before_cursor ?? null,
+    hasMoreBefore: body.page?.has_more_before === true,
+    userMessageOffset: Math.max(0, body.page?.user_message_offset ?? 0),
+    version: prev.version + 1,
+  };
 }
 
 /** Sidebar state: fetches the full session list and exposes create / delete actions. */
@@ -399,6 +451,12 @@ export function useSessionHistory(key: string | null): {
   error: string | null;
   refresh: () => void;
   loadOlder: () => Promise<void>;
+  /**
+   * Load older pages until the prompt at ``userIndex`` (counted over the
+   * whole chat) is in, for a jump from the prompt list. Resolves false when
+   * it could not be reached (load failed, chat switched or reloaded).
+   */
+  loadOlderUntil: (userIndex: number) => Promise<boolean>;
   hasMoreBefore: boolean;
   userMessageOffset: number;
   version: number;
@@ -412,19 +470,7 @@ export function useSessionHistory(key: string | null): {
   const refresh = useCallback(() => {
     setRefreshSeq((value) => value + 1);
   }, []);
-  const [state, setState] = useState<{
-    key: string | null;
-    messages: UIMessage[];
-    loading: boolean;
-    loadingOlder: boolean;
-    error: string | null;
-    hasPendingToolCalls: boolean;
-    forkBoundaryMessageCount: number | null;
-    beforeCursor: string | null;
-    hasMoreBefore: boolean;
-    userMessageOffset: number;
-    version: number;
-  }>({
+  const [state, setState] = useState<HistoryState>({
     key: null,
     messages: [],
     loading: false,
@@ -593,37 +639,7 @@ export function useSessionHistory(key: string | null): {
         limit: OLDER_HISTORY_PAGE_LIMIT,
         before,
       });
-      setState((prev) => {
-        if (prev.key !== key) return prev;
-        if (!body?.messages?.length) {
-          return {
-            ...prev,
-            loadingOlder: false,
-            hasMoreBefore: false,
-            beforeCursor: null,
-          };
-        }
-        const older = persistedMessagesToUi(body.messages);
-        const olderBoundary = typeof body.fork_boundary_message_count === "number"
-          ? Math.max(0, Math.min(body.fork_boundary_message_count, older.length))
-          : null;
-        const shiftedBoundary = prev.forkBoundaryMessageCount === null
-          ? null
-          : prev.forkBoundaryMessageCount + older.length;
-        const nextMessages = [...older, ...prev.messages];
-        return {
-          ...prev,
-          messages: nextMessages,
-          loadingOlder: false,
-          error: null,
-          hasPendingToolCalls: hasPendingAgentActivity(nextMessages),
-          forkBoundaryMessageCount: olderBoundary ?? shiftedBoundary,
-          beforeCursor: body.page?.before_cursor ?? null,
-          hasMoreBefore: body.page?.has_more_before === true,
-          userMessageOffset: Math.max(0, body.page?.user_message_offset ?? 0),
-          version: prev.version + 1,
-        };
-      });
+      setState((prev) => (prev.key === key ? prependOlderPage(prev, body) : prev));
     } catch (e) {
       setState((prev) => prev.key === key
         ? {
@@ -643,6 +659,53 @@ export function useSessionHistory(key: string | null): {
     token,
   ]);
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const loadOlderUntil = useCallback(async (userIndex: number): Promise<boolean> => {
+    if (!key || loadingOlderRef.current) return false;
+    const start = stateRef.current;
+    if (start.key !== key) return false;
+    if (start.userMessageOffset <= userIndex) return true;
+    if (!start.beforeCursor || !start.hasMoreBefore) return false;
+    loadingOlderRef.current = true;
+    setState((prev) => prev.key === key ? { ...prev, loadingOlder: true, error: null } : prev);
+    const pages: Array<WebuiThreadPersistedPayload | null> = [];
+    let before: string | null = start.beforeCursor;
+    let offset = start.userMessageOffset;
+    try {
+      for (let page = 0; page < MAX_PROMPT_JUMP_PAGES && before && offset > userIndex; page += 1) {
+        const body = await fetchWebuiThread(token, key, {
+          limit: OLDER_HISTORY_PAGE_LIMIT,
+          before,
+        });
+        pages.push(body);
+        if (!body?.messages?.length) break;
+        offset = Math.max(0, body.page?.user_message_offset ?? 0);
+        before = body.page?.has_more_before === true ? body.page?.before_cursor ?? null : null;
+      }
+    } catch (e) {
+      setState((prev) => prev.key === key
+        ? { ...prev, loadingOlder: false, error: (e as Error).message }
+        : prev);
+      return false;
+    } finally {
+      loadingOlderRef.current = false;
+    }
+    // A reload or a switch meanwhile replaced the pages the cursor came from.
+    const current = stateRef.current;
+    if (current.key !== key || current.beforeCursor !== start.beforeCursor) {
+      setState((prev) => prev.key === key ? { ...prev, loadingOlder: false } : prev);
+      return false;
+    }
+    setState((prev) => {
+      if (prev.key !== key || prev.beforeCursor !== start.beforeCursor) {
+        return prev.key === key ? { ...prev, loadingOlder: false } : prev;
+      }
+      return pages.reduce<HistoryState>(prependOlderPage, prev);
+    });
+    return offset <= userIndex;
+  }, [key, token]);
+
   if (!key) {
     return {
       messages: EMPTY_MESSAGES,
@@ -651,6 +714,7 @@ export function useSessionHistory(key: string | null): {
       error: null,
       refresh,
       loadOlder,
+      loadOlderUntil,
       hasMoreBefore: false,
       userMessageOffset: 0,
       version: 0,
@@ -671,6 +735,7 @@ export function useSessionHistory(key: string | null): {
         error: null,
         refresh,
         loadOlder,
+        loadOlderUntil,
         hasMoreBefore: cachedNow.hasMoreBefore,
         userMessageOffset: cachedNow.userMessageOffset,
         version: 1,
@@ -685,6 +750,7 @@ export function useSessionHistory(key: string | null): {
       error: null,
       refresh,
       loadOlder,
+      loadOlderUntil,
       hasMoreBefore: false,
       userMessageOffset: 0,
       version: 0,
@@ -700,6 +766,7 @@ export function useSessionHistory(key: string | null): {
     error: state.error,
     refresh,
     loadOlder,
+    loadOlderUntil,
     hasMoreBefore: state.hasMoreBefore,
     userMessageOffset: state.userMessageOffset,
     version: state.version,

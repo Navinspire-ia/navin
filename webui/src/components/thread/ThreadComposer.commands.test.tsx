@@ -86,6 +86,20 @@ describe("team picker in the model menu", () => {
     fireEvent.click(screen.getByTestId("composer-team-option-dev"));
     expect(onSelectTeam).toHaveBeenCalledTimes(1);
   });
+
+  it("turns Team mode off from the switch and says so when it could not", async () => {
+    const onToggle = vi.fn();
+    renderPicker({ onToggle, toggleFailed: true, enabled: false });
+    // Off: no team list under the switch, but the failure stays readable.
+    expect(screen.queryByTestId("composer-team-picker")).toBeNull();
+    expect((await screen.findByTestId("composer-team-toggle-failed")).textContent).toContain(
+      "Team mode could not be switched",
+    );
+    fireEvent.pointerDown(screen.getByTestId("composer-team-toggle"), { button: 0, pointerType: "mouse" });
+    fireEvent.click(screen.getByTestId("composer-team-toggle"));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
 });
 
 describe("configuration commands in the chat composer", () => {
@@ -183,4 +197,81 @@ describe("configuration commands in the chat composer", () => {
       if (command.startsWith("/permission")) expect(send.mock.calls[0][2]).toMatchObject({ sideChannel: true });
     },
   );
+});
+
+describe("messages typed while the agent works", () => {
+  function typeAndPress(content: string, init: { altKey?: boolean } = {}) {
+    const input = screen.getByRole("textbox", { name: "thread.composer.inputAria" });
+    fireEvent.change(input, { target: { value: content } });
+    fireEvent.keyDown(input, { key: "Enter", ...init });
+  }
+
+  it("line up in the queue with their options instead of joining the live turn", async () => {
+    const send = vi.fn();
+    render(<ThreadComposer onSend={send} onStop={vi.fn()} isStreaming />);
+    typeAndPress("first follow-up");
+    typeAndPress("second follow-up");
+    expect(send).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("composer-queue-list")).toBeTruthy();
+    expect(screen.getAllByTestId("composer-queue-send")).toHaveLength(2);
+    expect(screen.getAllByTestId("composer-queue-delete")).toHaveLength(2);
+    // The round button queues too: it never stops the run nor sends.
+    fireEvent.change(screen.getByRole("textbox", { name: "thread.composer.inputAria" }), {
+      target: { value: "third follow-up" },
+    });
+    const queueButtons = screen.getAllByRole("button", { name: "Queue this message" });
+    fireEvent.click(queueButtons[queueButtons.length - 1]);
+    expect(screen.getAllByTestId("composer-queue-send")).toHaveLength(3);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("Alt+Enter and Send now still reach the agent in the live turn", async () => {
+    const send = vi.fn();
+    render(<ThreadComposer onSend={send} onStop={vi.fn()} isStreaming />);
+    typeAndPress("look at the logs first", { altKey: true });
+    expect(send).toHaveBeenCalledTimes(1);
+    // The chat's turn mode may add its prefix (/forge in Build): the text is the user's.
+    expect(send.mock.calls[0][0]).toMatch(/(^|\s)look at the logs first$/);
+    expect(screen.queryByTestId("composer-queue-list")).toBeNull();
+
+    typeAndPress("then fix the test");
+    fireEvent.click(await screen.findByTestId("composer-queue-send"));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0]).toMatch(/(^|\s)then fix the test$/);
+  });
+
+  it("keeps the composer's footprint while typing, so the chat does not move", () => {
+    // The queue button used to appear at the first key and leave when the
+    // message was queued: the chips beside it shrank and grew while typing.
+    render(<ThreadComposer onSend={vi.fn()} onStop={vi.fn()} isStreaming />);
+    const buttonsBefore = screen.getAllByRole("button").length;
+    const queue = screen.getByTestId("composer-queue-add") as HTMLButtonElement;
+    expect(queue.disabled).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "thread.composer.inputAria" }), {
+      target: { value: "one more thing" },
+    });
+    expect((screen.getByTestId("composer-queue-add") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getAllByRole("button")).toHaveLength(buttonsBefore);
+  });
+
+  it("does not show the queue button when the agent is idle", () => {
+    render(<ThreadComposer onSend={vi.fn()} onStop={vi.fn()} />);
+    expect(screen.queryByTestId("composer-queue-add")).toBeNull();
+  });
+
+  it("keeps the 'agent working' hint short in every language, so it fits one line", () => {
+    // A long hint wrapped in a narrow chat column, the empty composer grew a
+    // line, and the chat jumped at every first key and every queued message.
+    const locales = import.meta.glob<{ thread: { composer: { placeholderStreaming: string } } }>(
+      "../../i18n/locales/*/common.json",
+      { eager: true, import: "default" },
+    );
+    const entries = Object.entries(locales);
+    expect(entries.length).toBeGreaterThanOrEqual(10);
+    for (const [file, json] of entries) {
+      const hint = json.thread.composer.placeholderStreaming;
+      expect(hint.length, file).toBeLessThanOrEqual(56);
+      expect(hint, file).toMatch(/Alt\+/);
+    }
+  });
 });

@@ -25,6 +25,8 @@ import { MetagraphSidePanel } from "@/components/thread/MetagraphSidePanel";
 import { resolveArtifactPlacement } from "@/lib/artifact-placement";
 import { modelDisplayName } from "@/lib/model-display-name";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
+import { userPromptAnchors } from "@/components/thread/promptNavigation";
+import { useTeamModeToggle } from "@/components/thread/useTeamModeToggle";
 import {
   SessionInfoPopover,
   createLoopComposerSeed,
@@ -100,6 +102,7 @@ import {
   fetchInstalledCliApps,
   fetchMcpPresets,
   fetchSettings,
+  fetchWebuiPrompts,
   listSlashCommands,
   setModelRoutingEnabled,
   setCollabEnabled,
@@ -671,6 +674,7 @@ export function ThreadShell({
     loading,
     loadingOlder,
     loadOlder,
+    loadOlderUntil,
     hasMoreBefore,
     userMessageOffset,
     hasPendingToolCalls,
@@ -916,6 +920,34 @@ export function ThreadShell({
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
+
+  // The prompt list names every prompt of the chat; one in a page not loaded
+  // yet is reached by loading the older pages, then jumping once the
+  // conversation on screen holds it.
+  const loadAllPrompts = useCallback(async () => {
+    if (!historyKey) return [];
+    return (await fetchWebuiPrompts(token, historyKey)).prompts;
+  }, [historyKey, token]);
+  const [pendingPromptIndex, setPendingPromptIndex] = useState<number | null>(null);
+  const jumpToPromptIndex = useCallback(async (index: number) => {
+    const reached = await loadOlderUntil(index);
+    if (reached) setPendingPromptIndex(index);
+    return reached;
+  }, [loadOlderUntil]);
+  useEffect(() => {
+    setPendingPromptIndex(null);
+  }, [historyKey]);
+  useEffect(() => {
+    if (pendingPromptIndex === null) return;
+    const local = pendingPromptIndex - userMessageOffset;
+    if (local < 0) return;
+    // `historical` and the offset come from the same page state; the chat on
+    // screen catches up a render later, so wait until it holds the prompt.
+    const promptId = userPromptAnchors(historical)[local]?.id;
+    if (!promptId || !displayMessages.some((message) => message.id === promptId)) return;
+    setPendingPromptIndex(null);
+    viewportRef.current?.jumpToUserPrompt(promptId);
+  }, [displayMessages, historical, pendingPromptIndex, userMessageOffset]);
   // Chips in prose carry what the model typed (`schema.sql`); the file_edit
   // rows of this thread carry where the tool wrote it. Resolve through them
   // first, so a file written outside the folder the editor shows, or one of
@@ -2196,15 +2228,41 @@ export function ThreadShell({
       if (!teamDismissedRef.current) setTeamOpen(true);
     });
   }, [chatId, client]);
-  const collabEnabled = teamInfo?.enabled ?? settings?.collab_enabled === true;
-  const toggleTeamMode = useCallback(
-    (enabled: boolean) => {
-      void setCollabEnabled(token, enabled)
-        .then(() => Promise.all([refreshModelSettings(), reloadTeam()]))
-        .catch((err) => console.error("Could not switch Team mode", err));
-    },
-    [refreshModelSettings, reloadTeam, token],
+  // Team mode is one switch for every chat. Whatever answers last is the
+  // truth: the team feed of this chat, a settings refresh (the model picker
+  // re-reads them on open, Settings > Team changes them), or the switch itself.
+  // A feed read once when the chat opened must not hide a newer value.
+  const applyCollabEnabled = useCallback((enabled: boolean) => {
+    setTeamInfo((info) => (info && info.enabled !== enabled ? { ...info, enabled } : info));
+    setSettings((prev) => (
+      prev && prev.collab_enabled !== enabled ? { ...prev, collab_enabled: enabled } : prev
+    ));
+  }, []);
+  const settingsCollabEnabled = settings?.collab_enabled;
+  useEffect(() => {
+    if (typeof settingsCollabEnabled !== "boolean") return;
+    setTeamInfo((info) => (
+      info && info.enabled !== settingsCollabEnabled ? { ...info, enabled: settingsCollabEnabled } : info
+    ));
+  }, [settingsCollabEnabled]);
+  const saveTeamMode = useCallback(
+    async (enabled: boolean) => Boolean((await setCollabEnabled(token, enabled)).collab?.enabled),
+    [token],
   );
+  const onTeamModeSaved = useCallback(
+    (enabled: boolean) => {
+      applyCollabEnabled(enabled);
+      // Members, teams and this chat's team: refreshed in the background. A
+      // slow agent loop no longer holds the switch, and its failure no longer
+      // leaves the old value on screen.
+      void refreshModelSettings();
+      void reloadTeam().catch((err) => console.error("Could not reload the team", err));
+    },
+    [applyCollabEnabled, refreshModelSettings, reloadTeam],
+  );
+  const teamModeSwitch = useTeamModeToggle(saveTeamMode, onTeamModeSaved);
+  const collabEnabled = teamModeSwitch.pending ?? teamInfo?.enabled ?? settings?.collab_enabled === true;
+  const toggleTeamMode = teamModeSwitch.toggle;
   const selectChatTeam = useCallback(
     (teamId: string) => {
       rememberChatDefault("team", teamId);
@@ -2246,6 +2304,7 @@ export function ThreadShell({
         ? teamInfo?.team ?? settings?.collab_default_team ?? "off"
         : lastTeamPick ?? settings?.collab_default_team ?? "off",
       switchFailed: teamSwitchFailed,
+      toggleFailed: teamModeSwitch.failed,
       teams,
       members: (teamInfo?.members ?? []).map((member) => ({
         name: member.name,
@@ -2264,7 +2323,7 @@ export function ThreadShell({
       teamOpen,
       activeNames: teamActiveNames ? teamActiveNames.split("\n") : [],
     };
-  }, [chatId, collabEnabled, lastTeamPick, selectChatTeam, settings, teamActiveNames, teamInfo, teamOpen, teamSwitchFailed, toggleTeamMode]);
+  }, [chatId, collabEnabled, lastTeamPick, selectChatTeam, settings, teamActiveNames, teamInfo, teamModeSwitch.failed, teamOpen, teamSwitchFailed, toggleTeamMode]);
 
   // Agent tool set_composer_mode (+ workflow auto-emit): sync menu + accent color.
   useEffect(() => {
@@ -3074,7 +3133,10 @@ export function ThreadShell({
   const promptNavigatorAction = historyKey ? (
     <PromptNavigator
       messages={displayMessages}
+      userMessageOffset={userMessageOffset}
+      loadPrompts={loadAllPrompts}
       onJumpToPrompt={(promptId) => viewportRef.current?.jumpToUserPrompt(promptId)}
+      onJumpToPromptIndex={jumpToPromptIndex}
     />
   ) : undefined;
 

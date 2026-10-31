@@ -17,6 +17,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from loguru import logger
+
 from navin.agent.memory import (
     CARRIED_USER_MESSAGES_HEADING,
     Consolidator,
@@ -676,6 +678,11 @@ class CheckpointSummarizeTest(ManualCompactTest):
         self.assertEqual(len(kept), before - 6 + 1)
         self.assertTrue(kept[0]["content"].startswith("[Summary of 6 earlier messages"))
         self.assertTrue(any("focus on: the parser" in p for p in self.provider.prompts))
+        # The summarized turns stay readable in the chat, before the note.
+        earlier = self.sessions.earlier_messages(self.sessions.get_or_create("cli:c"))
+        self.assertEqual(
+            [m["content"] for m in earlier], [m["content"] for m in self._conversation(3)],
+        )
 
     def test_from_keeps_the_conversation_up_to_the_checkpoint(self) -> None:
         loop, name = self._setup()
@@ -686,6 +693,132 @@ class CheckpointSummarizeTest(ManualCompactTest):
         self.assertIn("after checkpoint", kept[-1]["content"])
         usage = self._dispatch(loop, "/checkpoint summarize")
         self.assertIn("Usage", usage.content)
+
+
+class EarlierMessagesStayVisibleTest(_HandoffTest):
+    """Compaction drops old turns from the session the model replays.
+
+    The CLI paints a chat from that session, so a long conversation could no
+    longer be scrolled past its last few exchanges once it sat idle. What
+    leaves the session must stay readable, in order, for that conversation.
+    """
+
+    @staticmethod
+    def _turns(prefix: str, count: int) -> list[dict]:
+        rows: list[dict] = []
+        for i in range(count):
+            rows.append({"role": "user", "content": f"{prefix} question {i}"})
+            rows.append({"role": "assistant", "content": f"{prefix} answer {i}"})
+        return rows
+
+    def _compact(self, key: str) -> None:
+        _run(self.consolidator.compact_idle_session(key, runtime=self._runtime(), max_suffix=8))
+
+    def _shown(self, sessions: SessionManager, key: str) -> list[str]:
+        session = sessions.get_or_create(key)
+        return [m["content"] for m in [*sessions.earlier_messages(session), *session.messages]]
+
+    def test_idle_compaction_keeps_the_dropped_turns_readable_in_order(self) -> None:
+        session = self.sessions.get_or_create("cli:long")
+        session.messages = self._turns("first", 20)
+        self.sessions.save(session)
+        expected = [m["content"] for m in session.messages]
+        self._compact("cli:long")
+        live = self.sessions.get_or_create("cli:long").messages
+        self.assertLessEqual(len(live), 8)
+        self.assertEqual(self._shown(self.sessions, "cli:long"), expected)
+
+        session = self.sessions.get_or_create("cli:long")
+        session.messages += self._turns("second", 15)
+        self.sessions.save(session)
+        expected = [*expected, *(m["content"] for m in self._turns("second", 15))]
+        self._compact("cli:long")
+        self.assertEqual(self._shown(self.sessions, "cli:long"), expected)
+        # After a restart the chat still reads the same.
+        reopened = SessionManager(Path(self._tmp.name) / "sessions")
+        self.assertEqual(self._shown(reopened, "cli:long"), expected)
+        # The model never replays them.
+        replayed = [m["content"] for m in reopened.get_or_create("cli:long").get_history()]
+        self.assertNotIn("first question 0", replayed)
+
+    def test_a_new_conversation_on_the_same_key_starts_over(self) -> None:
+        session = self.sessions.get_or_create("cli:direct")
+        session.messages = self._turns("old", 20)
+        self.sessions.save(session)
+        self._compact("cli:direct")
+        session = self.sessions.get_or_create("cli:direct")
+        session.clear()
+        session.messages = self._turns("new", 20)
+        self.sessions.save(session)
+        self.assertEqual(self.sessions.earlier_messages(session), [])
+        self._compact("cli:direct")
+        shown = self._shown(self.sessions, "cli:direct")
+        self.assertEqual(shown, [m["content"] for m in self._turns("new", 20)])
+
+    def test_the_file_cap_keeps_what_it_trims(self) -> None:
+        from functools import partial
+
+        session = self.sessions.get_or_create("cli:capped")
+        session.messages = self._turns("cap", 15)
+        expected = [m["content"] for m in session.messages]
+        session.enforce_file_cap(
+            limit=10, on_earlier=partial(self.sessions.keep_earlier_messages, session),
+        )
+        self.assertLessEqual(len(session.messages), 10)
+        self.sessions.save(session)
+        self.assertEqual(self._shown(self.sessions, "cli:capped"), expected)
+
+    def test_the_file_stays_bounded_and_keeps_the_newest(self) -> None:
+        from unittest import mock
+
+        from navin.session import manager as manager_module
+
+        session = self.sessions.get_or_create("cli:bounded")
+        with mock.patch.object(manager_module, "EARLIER_MAX_MESSAGES", 10), \
+                mock.patch.object(manager_module, "_EARLIER_TRIM_SLACK", 5):
+            for batch in range(10):
+                rows = [{"role": "user", "content": f"b{batch} m{i}"} for i in range(4)]
+                self.sessions.keep_earlier_messages(session, rows)
+            kept = [m["content"] for m in self.sessions.earlier_messages(session)]
+        self.assertLessEqual(len(kept), 15)
+        self.assertEqual(kept[-1], "b9 m3")
+        everything = [f"b{batch} m{i}" for batch in range(10) for i in range(4)]
+        self.assertEqual(kept, everything[-len(kept):])
+
+    def test_long_tool_output_is_cut_and_a_broken_line_is_skipped(self) -> None:
+        session = self.sessions.get_or_create("cli:tools")
+        rows = [
+            {"role": "user", "content": "run it"},
+            {"role": "tool", "tool_call_id": "c1", "content": "x" * 20_000},
+        ]
+        self.sessions.keep_earlier_messages(session, rows).result()
+        path = self.sessions.earlier_messages_path("cli:tools")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write('{"role": "user", "content": "cut by a cra\n')
+        self.sessions.keep_earlier_messages(session, [{"role": "user", "content": "after"}])
+        warnings: list[str] = []
+        sink = logger.add(lambda message: warnings.append(str(message)), level="WARNING")
+        try:
+            kept = self.sessions.earlier_messages(session)
+        finally:
+            logger.remove(sink)
+        self.assertEqual([m["role"] for m in kept], ["user", "tool", "user"])
+        self.assertTrue(any("unreadable earlier message" in w for w in warnings), warnings)
+        self.assertLess(len(kept[1]["content"]), 5000)
+        self.assertTrue(kept[1]["content"].endswith("(truncated)"))
+        # The live session row was not touched.
+        self.assertEqual(len(rows[1]["content"]), 20_000)
+
+    def test_deleting_the_chat_deletes_its_earlier_messages(self) -> None:
+        session = self.sessions.get_or_create("cli:gone")
+        session.messages = self._turns("gone", 20)
+        self.sessions.save(session)
+        self._compact("cli:gone")
+        path = self.sessions.earlier_messages_path("cli:gone")
+        self.assertTrue(path.is_file())
+        self.assertTrue(self.sessions.delete_session("cli:gone"))
+        self.assertFalse(path.exists())
+        self.assertEqual(self.sessions.earlier_messages(self.sessions.get_or_create("cli:gone")), [])
 
 
 if __name__ == "__main__":

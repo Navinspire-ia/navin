@@ -10,11 +10,11 @@
  * tasks. A typed ordinary message must never turn into a stop - with content
  * present the button sends it, and Stop only acts on an empty composer.
  *
- * A message typed while the agent works is sent right away: the gateway
- * injects it into the live turn, so the agent reads it at its next step.
- * Parking it in the queue until the turn ended (the old "queue" action) is
- * what made the agent look blind to anything typed mid-run. The queue stays
- * an explicit gesture (ListPlus button, Alt+Enter).
+ * A message typed while the agent works goes to the queue: the user lines up
+ * several messages and keeps the queue's options on each (edit, send now,
+ * Start Multitasking, reorder). Sending one into the live turn is the explicit
+ * gesture (Send now on the queued row, Alt+Enter, Enter on an empty composer
+ * right after queueing). Making send the default (2.4.0) took that away.
  */
 export type ComposerPrimaryAction = "stop" | "queue" | "configure" | "send";
 
@@ -22,21 +22,21 @@ export function composerPrimaryAction({
   isStreaming,
   hasStopHandler,
   hasComposerContent,
+  canQueueGuidance = false,
   modelNeedsSetup,
 }: {
   isStreaming: boolean;
   hasStopHandler: boolean;
   hasComposerContent: boolean;
-  /** Streaming + plain text (no slash command): kept for callers, no longer
-   * selects the queue; the mid-run default is to send. */
+  /** Streaming + plain text (no slash command): the message goes to the queue. */
   canQueueGuidance?: boolean;
   modelNeedsSetup: boolean;
 }): ComposerPrimaryAction {
   if (isStreaming && hasStopHandler) {
     if (!hasComposerContent) return "stop";
-    // Content typed mid-run (plain text or a slash command) is sent: submit()
-    // owns its lifecycle (an explicit "/stop" still stops; other commands
-    // dispatch without ending the run; plain text joins the live turn).
+    if (canQueueGuidance) return "queue";
+    // Slash command typed mid-run: submit() owns its lifecycle (an explicit
+    // "/stop" still stops; other commands dispatch without ending the run).
     return "send";
   }
   if (modelNeedsSetup) return "configure";

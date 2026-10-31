@@ -9171,10 +9171,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "モデルは作業中です。Enter で今すぐ送信、Alt+Enter で後回しにキューへ。",
+      "placeholderStreaming": "エージェント作業中。Enter でキュー、Alt+Enter で今すぐ送信",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "このメッセージを次のターン用にキューへ (Alt+Enter)。Enter で今すぐエージェントに送信。",
+        "add": "このメッセージを次のターン用にキューへ (Enter)。Alt+Enter で今すぐエージェントに送信。",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

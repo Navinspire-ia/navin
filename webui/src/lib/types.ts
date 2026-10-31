@@ -3444,6 +3444,19 @@ export interface WebuiThreadPersistedPayload {
   workspace_scope?: WorkspaceScopePayload;
 }
 
+/** One prompt of ``GET .../webui-prompts``: every prompt of the chat, oldest first. */
+export interface WebuiPromptEntry {
+  /** Position among the chat's prompts, counted like ``page.user_message_offset``. */
+  index: number;
+  text: string;
+  created_at?: number | null;
+}
+
+export interface WebuiPromptsPayload {
+  sessionKey?: string;
+  prompts: WebuiPromptEntry[];
+}
+
 export type FilePreviewKind =
   | "text"
   | "image"

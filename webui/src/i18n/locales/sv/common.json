@@ -9171,7 +9171,7 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Modellen arbetar. Retur skickar meddelandet nu; Alt+Retur köar det.",
+      "placeholderStreaming": "Agenten arbetar. Retur köar, Alt+Retur skickar nu",
       "placeholderThread": "Type your message…",
       "queued": {
         "add": "Köa detta meddelande till nästa runda (Alt+Retur). Retur skickar det till agenten nu.",

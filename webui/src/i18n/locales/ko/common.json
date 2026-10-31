@@ -9171,10 +9171,10 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "모델이 작업 중입니다. Enter는 지금 보내고, Alt+Enter는 대기열에 넣습니다.",
+      "placeholderStreaming": "에이전트 작업 중. Enter는 대기열, Alt+Enter는 지금 보내기",
       "placeholderThread": "Type your message…",
       "queued": {
-        "add": "이 메시지를 다음 턴용으로 대기열에 추가 (Alt+Enter). Enter는 지금 에이전트에 보냅니다.",
+        "add": "이 메시지를 다음 턴용으로 대기열에 추가 (Enter). Alt+Enter는 지금 에이전트에 보냅니다.",
         "attachmentOnly": "File attachment",
         "attachments": "Attachments kept with this message",
         "clearAll": "Clear all",

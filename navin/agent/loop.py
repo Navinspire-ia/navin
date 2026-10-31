@@ -3622,7 +3622,8 @@ class AgentLoop:
         )
         self._runtime_events().record_turn_latency(key, latency_ms)
         session.enforce_file_cap(
-            on_archive=partial(self.context.memory.raw_archive, session_key=key)
+            on_archive=partial(self.context.memory.raw_archive, session_key=key),
+            on_earlier=partial(self.sessions.keep_earlier_messages, session),
         )
         self._clear_runtime_checkpoint(session)
         await self.sessions.save_async(session)
@@ -4218,7 +4219,8 @@ class AgentLoop:
         )
         if not ctx.ephemeral:
             ctx.session.enforce_file_cap(
-                on_archive=partial(self.context.memory.raw_archive, session_key=ctx.session_key)
+                on_archive=partial(self.context.memory.raw_archive, session_key=ctx.session_key),
+                on_earlier=partial(self.sessions.keep_earlier_messages, ctx.session),
             )
             self._schedule_background(
                 self.consolidator.maybe_consolidate_by_tokens(

@@ -325,6 +325,8 @@ export interface ComposerTeamMode {
   onSelectTeam: (teamId: string) => void;
   /** The last team switch did not reach the engine. */
   switchFailed?: boolean;
+  /** The last Team mode on/off could not be saved; the switch shows the saved value. */
+  toggleFailed?: boolean;
   /** Open (or close) the split Team view beside the chat. */
   onOpenTeam?: () => void;
   teamOpen?: boolean;
@@ -2314,11 +2316,12 @@ function ThreadComposerImpl({
       e.preventDefault();
       const live = e.currentTarget.value;
       if (live !== value) setValue(live);
-      // Alt+Enter while the agent works: park the message in the queue for
-      // the next turn. Plain Enter sends it into the live turn (the gateway
-      // injects it at the agent's next step), so nothing typed mid-run is
-      // held back until the turn ends.
-      if (canQueueGuidance && e.altKey) {
+      // While the agent works, Enter parks the message in the queue (Edit,
+      // Send now, Start Multitasking, reorder) and the queue drains turn after
+      // turn. Alt+Enter sends it into the live turn instead (the gateway
+      // injects it at the agent's next step), like Send now on a queued row
+      // or Enter on an empty composer right after queueing.
+      if (canQueueGuidance && !e.altKey) {
         if (!e.repeat) queueGuidancePrompt();
         return;
       }
@@ -2788,7 +2791,7 @@ function ThreadComposerImpl({
             aria-label={t("thread.composer.inputAria")}
             className={cn(
               inputTextClasses,
-              "relative z-10 caret-foreground placeholder:text-muted-foreground/70",
+              "relative z-10 caret-foreground placeholder:truncate placeholder:text-muted-foreground/70",
               "focus:outline-none focus-visible:outline-none",
               "disabled:cursor-not-allowed",
               hasMentionDecorations && "text-transparent selection:bg-primary/20",
@@ -2993,14 +2996,19 @@ function ThreadComposerImpl({
                 </Tooltip>
               </TooltipProvider>
             ) : null}
-            {canQueueGuidance ? (
+            {isStreaming && !disabled ? (
+              // Shown for the whole run, enabled once there is something to
+              // queue: appearing at the first key and leaving on clear made
+              // the chips on the left shrink and grow while typing.
               <Button
                 type="button"
                 size="icon"
                 variant="ghost"
                 aria-label={queueButtonLabel}
                 title={queueButtonLabel}
+                disabled={!canQueueGuidance}
                 onClick={queueGuidancePrompt}
+                data-testid="composer-queue-add"
                 className="h-7 w-7 shrink-0 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground"
               >
                 <ListPlus className="h-3.5 w-3.5" />
@@ -3890,6 +3898,17 @@ function ComposerModelPicker({
                 />
               </span>
             </DropdownMenuItem>
+          ) : null}
+          {team?.toggleFailed && !query ? (
+            <p
+              role="alert"
+              data-testid="composer-team-toggle-failed"
+              className="mb-1 px-2.5 text-[11px] leading-4 text-destructive"
+            >
+              {t("thread.team.toggleFailed", {
+                defaultValue: "Team mode could not be switched. Check the connection and try again.",
+              })}
+            </p>
           ) : null}
           {team?.enabled && !query ? (
             <div className="mb-1.5 ms-6 border-s border-border/60 ps-2" data-testid="composer-team-picker">

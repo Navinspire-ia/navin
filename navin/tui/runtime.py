@@ -1897,16 +1897,24 @@ class TuiRuntime:
             return [], 0
         from navin.tui.history import visible_chat_rows
 
-        return visible_chat_rows(session.messages, limit=limit)
+        return visible_chat_rows(
+            [*loop.sessions.earlier_messages(session), *session.messages], limit=limit,
+        )
 
     def history_snapshot(self) -> list[Any]:
-        """Stable source for paging, without eagerly formatting old turns."""
+        """Stable source for paging, without eagerly formatting old turns.
+
+        Messages that compaction moved out of the live session come first: the
+        chat keeps showing them when the reader scrolls up.
+        """
         if self.agent_loop is None:
             return []
         try:
-            return list(self.agent_loop.sessions.get_or_create(self.session_key).messages)
+            sessions = self.agent_loop.sessions
+            session = sessions.get_or_create(self.session_key)
         except Exception:  # noqa: BLE001 - match history() for unavailable sessions
             return []
+        return [*sessions.earlier_messages(session), *session.messages]
 
     def slash_commands(self) -> list[dict[str, Any]]:
         from navin.command.builtin import BUILTIN_COMMAND_SPECS

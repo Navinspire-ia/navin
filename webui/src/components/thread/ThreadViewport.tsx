@@ -756,12 +756,14 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     measureComposerDock();
   }, [composerMeasureKey, hasMessages, measureComposerDock]);
 
+  // The composer grew or shrank (a line typed, the queue opening): keep the
+  // tail in view, as a send does. Pinning the sent prompt to the top here
+  // fought the tail-follow below while the agent worked: the chat jumped to
+  // the prompt at each key and back down at each streamed frame.
   useIsomorphicLayoutEffect(() => {
     if (!hasMessages || userReadingHistoryRef.current) return;
-    const promptId = activeTurnPromptRef.current;
-    if (promptId && scrollToPromptTopNow(promptId)) return;
     scrollToBottom(false, 2);
-  }, [composerDockHeight, hasMessages, scrollToBottom, scrollToPromptTopNow]);
+  }, [composerDockHeight, hasMessages, scrollToBottom]);
 
   // The thread grows without a `messages` change and without a scroll event:
   // markdown that finishes rendering a frame later, a tool card unfolding, an

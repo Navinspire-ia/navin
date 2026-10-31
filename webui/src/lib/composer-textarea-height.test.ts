@@ -67,6 +67,30 @@ describe("fitTextareaHeight", () => {
     expect(fitTextareaHeight(null)).toBeNull();
     expect(fitTextareaHeight(undefined)).toBeNull();
   });
+
+  it("measures an empty composer without its placeholder, so it keeps one line", () => {
+    // A wrapped placeholder counts in scrollHeight: the long "agent is
+    // working" hint made the empty box two lines tall, and the chat moved at
+    // every first key and every queued message.
+    const placeholder = "L'agent travaille. Entrée met en file, Alt+Entrée envoie tout de suite";
+    const el = {
+      clientWidth: 320,
+      value: "",
+      placeholder,
+      style: { height: "22px" },
+      get scrollHeight() {
+        return this.placeholder ? 44 : 22;
+      },
+    };
+    expect(fitTextareaHeight(el)).toBe(22);
+    expect(el.style.height).toBe("22px");
+    expect(el.placeholder).toBe(placeholder);
+
+    // With text, the text sets the height (the placeholder is not shown).
+    const typed = { ...el, value: "a much longer message", get scrollHeight() { return 44; } };
+    expect(fitTextareaHeight(typed)).toBe(44);
+    expect(typed.placeholder).toBe(placeholder);
+  });
 });
 
 describe("observeTextareaWidth", () => {

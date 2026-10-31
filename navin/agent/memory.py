@@ -20,7 +20,7 @@ from loguru import logger
 
 from navin.agent.token_budget import input_budget_for
 from navin.runtime_context import public_history_messages
-from navin.session.manager import Session, SessionManager
+from navin.session.manager import Session, SessionManager, messages_before_kept
 from navin.utils.gitstore import GitStore
 from navin.utils.helpers import (
     ensure_dir,
@@ -1814,6 +1814,13 @@ class Consolidator:
             if resume:
                 self._persist_resume_brief(session, resume)
 
+            # What leaves the live session stays on screen (the CLI paints its
+            # history from the session): a display-only copy, queued here
+            # without yielding (no turn can change the history between the
+            # check above and the truncation below) and written off the loop.
+            earlier = messages_before_kept(snapshot, messages_to_keep)
+            if earlier:
+                self.sessions.keep_earlier_messages(session, earlier)
             session.messages = messages_to_keep + current[len(snapshot):]
             session.last_consolidated = 0
             self.sessions.save(session)

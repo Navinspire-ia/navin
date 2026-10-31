@@ -798,6 +798,34 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
     return lines
 
 
+# Enough for the prompt list's preview and search; a pasted file stays out.
+_PROMPT_INDEX_TEXT_CHARS = 4000
+
+
+def transcript_user_prompts(session_key: str) -> list[dict[str, Any]]:
+    """Every prompt of a display thread, oldest first, without the answers.
+
+    ``index`` counts user rows the way a page's ``user_message_offset`` does,
+    so the prompt list can name prompts of pages not loaded yet and the client
+    reaches one by loading older pages until the offset is at or below it.
+    """
+    prompts: list[dict[str, Any]] = []
+    for chunk in _chunk_turn_refs(session_key):
+        for turn in _read_chunk_turns(session_key, chunk.chunk_id):
+            for row in turn:
+                if not _is_user_transcript_row(row):
+                    continue
+                raw = row.get("text")
+                if not isinstance(raw, str):
+                    raw = row.get("content") if isinstance(row.get("content"), str) else ""
+                prompts.append({
+                    "index": len(prompts),
+                    "text": raw[:_PROMPT_INDEX_TEXT_CHARS],
+                    "created_at": _valid_created_at_ms(row.get("created_at_ms")),
+                })
+    return prompts
+
+
 def _write_transcript_lines(session_key: str, rows: list[dict[str, Any]]) -> None:
     with _transcript_lock:
         delete_webui_transcript(session_key)

@@ -293,6 +293,7 @@ from navin.webui.thread_disk import delete_webui_thread
 from navin.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
     build_webui_thread_response,
+    transcript_user_prompts,
 )
 from navin.webui.ui_zoom_debug import handle_ui_zoom_debug
 from navin.webui.workspaces import WebUIWorkspaceController
@@ -862,6 +863,13 @@ class GatewayHTTPHandler:
                 self._handle_webui_thread_get, request, m.group(1),
             )
 
+        m = re.match(r"^/api/sessions/([^/]+)/webui-prompts$", got)
+        if m:
+            # Reads every segment of a long chat: off the gateway loop.
+            return await asyncio.to_thread(
+                self._handle_webui_prompts_get, request, m.group(1),
+            )
+
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
             return await asyncio.to_thread(
@@ -1340,6 +1348,21 @@ class GatewayHTTPHandler:
             }
         data["workspace_scope"] = scope.payload()
         return _http_json_response(data)
+
+    def _handle_webui_prompts_get(self, request: WsRequest, key: str) -> Response:
+        """Every prompt of a chat, for the prompt list: the thread itself is
+        paged, so the pages loaded on screen hold only the latest prompts."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        return _http_json_response({
+            "sessionKey": decoded_key,
+            "prompts": transcript_user_prompts(decoded_key),
+        })
 
     def _handle_file_preview(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):

@@ -91,6 +91,43 @@ def test_closing_cli_flushes_conversation_history(tmp_path):
     asyncio.run(run())
 
 
+def test_scrolling_up_reaches_turns_that_compaction_moved_out_of_the_session(tmp_path):
+    """An idle chat is compacted to its last exchanges; the CLI paints its
+    history from the session, so scrolling up stopped there."""
+    from navin.session.manager import SessionManager
+    from navin.tui.history import visible_chat_page
+
+    runtime = TuiRuntime(SimpleNamespace(workspace_path=tmp_path), on_event=lambda _: None)
+    sessions = SessionManager(tmp_path)
+    runtime.agent_loop = SimpleNamespace(sessions=sessions)
+    session = sessions.get_or_create(runtime.session_key)
+    old = [
+        row
+        for i in range(30)
+        for row in ({"role": "user", "content": f"old {i}"}, {"role": "assistant", "content": f"reply {i}"})
+    ]
+    session.messages = [{"role": "user", "content": "latest"}, {"role": "assistant", "content": "done"}]
+    sessions.save(session)
+    sessions.keep_earlier_messages(session, old)
+
+    snapshot = runtime.history_snapshot()
+    assert [m["content"] for m in snapshot] == [m["content"] for m in old] + ["latest", "done"]
+    rows, older = runtime.history()
+    assert (rows[0]["content"], rows[-1]["content"], older) == ("old 0", "done", 0)
+
+    # Page backwards the way the transcript does when the reader scrolls up.
+    seen: list[str] = []
+    cursor = None
+    while True:
+        page, cursor = visible_chat_page(snapshot, before=cursor)
+        seen = [row["content"] for row in page] + seen
+        if cursor is None:
+            break
+    assert seen[0] == "old 0"
+    assert seen[-2:] == ["latest", "done"]
+    assert len(seen) == 62
+
+
 def test_editing_queue_preserves_the_full_pasted_draft(tmp_path):
     async def run():
         app = make_app(tmp_path)

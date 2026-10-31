@@ -12,6 +12,8 @@ export interface PromptAnchor {
   preview: string;
   createdAt: number;
   index: number;
+  /** No visible text (an image alone): label and preview are "Prompt N". */
+  blank: boolean;
 }
 
 export function userPromptAnchors(messages: UIMessage[]): PromptAnchor[] {
@@ -26,10 +28,69 @@ export function userPromptAnchors(messages: UIMessage[]): PromptAnchor[] {
       preview: promptPreview(shown, index),
       createdAt: message.createdAt,
       index,
+      blank: !shown.trim(),
     };
     index += 1;
     return [anchor];
   });
+}
+
+/** A prompt the engine listed (``GET .../webui-prompts``), loaded or not. */
+export interface ListedPrompt {
+  index: number;
+  text: string;
+  created_at?: number | null;
+}
+
+/** A row of the prompt list: on screen (``id``) or in a page not loaded yet. */
+export interface NavigatorPrompt {
+  key: string;
+  /** Position among all the chat's prompts. */
+  index: number;
+  /** Message id once the prompt is loaded; absent for an older page. */
+  id?: string;
+  label: string;
+  preview: string;
+  createdAt: number | null;
+}
+
+/**
+ * Every prompt of the chat, oldest first. The thread is paged: the loaded
+ * messages start at prompt ``userMessageOffset``, so the engine's list
+ * supplies the prompts before it and the loaded messages (which also hold
+ * prompts sent live, not in the list yet) supply the rest.
+ */
+export function navigatorPrompts(
+  loaded: PromptAnchor[],
+  listed: ListedPrompt[] | null,
+  userMessageOffset: number,
+): NavigatorPrompt[] {
+  const offset = Math.max(0, userMessageOffset);
+  const earlier = (listed ?? [])
+    .filter((prompt) => prompt.index < offset)
+    .map((prompt): NavigatorPrompt => {
+      const shown = displayedPromptText(prompt.text);
+      return {
+        key: `listed-${prompt.index}`,
+        index: prompt.index,
+        label: promptLabel(shown, prompt.index),
+        preview: promptPreview(shown, prompt.index),
+        createdAt: typeof prompt.created_at === "number" ? prompt.created_at : null,
+      };
+    });
+  const onScreen = loaded.map((anchor): NavigatorPrompt => {
+    const index = offset + anchor.index;
+    return {
+      key: anchor.id,
+      index,
+      id: anchor.id,
+      // A blank prompt is named by its number, counted over the whole chat.
+      label: anchor.blank ? promptLabel("", index) : anchor.label,
+      preview: anchor.blank ? promptPreview("", index) : anchor.preview,
+      createdAt: anchor.createdAt,
+    };
+  });
+  return [...earlier, ...onScreen];
 }
 
 /**

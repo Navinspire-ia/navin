@@ -295,6 +295,17 @@ def test_settings_save_validates_and_resets_the_team(tmp_path, monkeypatch):
         assert saved["collab"]["members"][-1]["id"] == "nour"
         assert load_config().collab.members[1].prompt == "Toujours en TypeScript strict."
         assert collab_runtime.current_collab().enabled
+        # The chat switch: off then on again, read back at once each time.
+        import os
+
+        stat = path.stat()
+        assert collab_api.update_collab({"enabled": False})["collab"]["enabled"] is False
+        # Same timestamp as the previous save (a coarse clock): still seen.
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert collab_runtime.current_collab().enabled is False
+        assert collab_api.update_collab({"enabled": True})["collab"]["enabled"] is True
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert collab_runtime.current_collab().enabled is True
 
         with pytest.raises(WebUISettingsError, match="share a name"):
             collab_api.update_collab({"members": [{"name": "A"}, {"name": "a"}]})

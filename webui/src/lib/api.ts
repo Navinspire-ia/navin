@@ -101,6 +101,7 @@ import type {
   SemanticSearchSettingsUpdate,
   WorkspacesPayload,
   WebuiThreadPersistedPayload,
+  WebuiPromptsPayload,
   WorkspaceScopePayload,
 } from "./types";
 import i18n from "@/i18n";
@@ -427,6 +428,20 @@ export async function fetchWebuiThread(
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
   return (await res.json()) as WebuiThreadPersistedPayload;
+}
+
+/** Every prompt of a chat (the thread itself is paged), oldest first. */
+export async function fetchWebuiPrompts(
+  token: string,
+  key: string,
+  base: string = "",
+): Promise<WebuiPromptsPayload> {
+  return request<WebuiPromptsPayload>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/webui-prompts`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
 }
 
 function appendFileRoot(query: URLSearchParams, root?: string | null): void {
