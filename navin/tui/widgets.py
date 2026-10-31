@@ -871,7 +871,17 @@ class ReasoningBlock(Vertical):
         self.toggle()
 
 
-_BELL_AND_ERASE_RE = re.compile(r"\x07|\x1b\[[0-2]?K|\x1b\[\?25[hl]")
+# Every terminal control a command can print: OSC (titles, links), CSI (colors,
+# cursor moves, erase), the other two-byte escapes and the C0 controls except
+# tab, newline and carriage return. Painted as text they reached the real
+# terminal: vitest's cursor moves shifted the sessions column on the right and
+# left "[31m" / "[2m" in the transcript (CLI capture of 2026-10-31).
+_BELL_AND_ERASE_RE = re.compile(
+    r"\x1b\][^\x07\x1b\n]*(?:\x07|\x1b\\)?"
+    r"|\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|\x1b[ -/]*[0-~]"
+    r"|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x9b]"
+)
 
 
 def terminal_lines(text: str) -> list[str]:

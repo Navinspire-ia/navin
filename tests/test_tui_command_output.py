@@ -266,6 +266,17 @@ def test_ran_rows_stay_short_and_redraws_do_not_add_noise():
     assert activity_label("exec", {"command": "cat > a.py <<EOF\nx\nEOF"}).endswith("lines")
 
     assert terminal_lines("a\r\nb\n10%\r60%\r100%\nc\x07\x1b[2K\n") == ["a", "b", "100%", "c"]
+    # vitest output of 2026-10-31: colors, cursor moves and titles painted as
+    # text moved the sessions column and left "[31m" in the transcript.
+    assert terminal_lines(
+        "\x1b[31m----[4/4]\x1b[0m\n\x1b[2m Test Files \x1b[22m\x1b[31m1 failed\x1b[39m\n"
+        "\x1b[1A\x1b[G\x1b[?25lx\x1b]0;vitest\x07y\x1b]8;;http://a\x1b\\link\x1b]8;;\x1b\\\n"
+        "tab\there\x1b7\x1b8\x1b(B\x08\x7f end\n"
+    ) == ["----[4/4]", " Test Files 1 failed", "xylink", "tab\there end"]
+    # An unterminated title ends at the line, it never eats the next ones.
+    assert terminal_lines("a\x1b]0;open title\nb\n") == ["a", "b"]
+    for line in terminal_lines("\x1b[38;2;1;2;3mz\x1b[0m\x1b[3J\x1b[H\x9b2J\n"):
+        assert not any(ord(ch) < 32 and ch != "\t" or ch in "\x7f\x9b" for ch in line), repr(line)
 
     card = ToolCall("c1", "exec", {"command": "pytest -q"})
     card.apply(phase="output", output="....  [ 50%]\n")
