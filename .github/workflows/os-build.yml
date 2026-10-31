@@ -383,11 +383,12 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
-          # Intel PyInstaller runs under Rosetta on this Apple Silicon runner.
+            runner: macos-15
+          # Intel PyInstaller runs under Rosetta on this Apple Silicon runner
+          # (macos-15: the macos-14 images are retired on 2026-11-02).
           # Rust cross-compiles the shell, and the DMG is packed here too.
           - arch: x64
-            runner: macos-14
+            runner: macos-15
     steps:
       - name: Checkout workflows
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
