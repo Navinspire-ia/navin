@@ -179,7 +179,7 @@ def store(tmp_path: Path) -> ConnectorStore:
 
 @pytest.fixture(autouse=True)
 def _gateway(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(oauth, "suggested_redirect_uri", lambda: "http://127.0.0.1:8765" + oauth.CALLBACK_PATH)
+    monkeypatch.setattr(oauth, "suggested_redirect_uri", lambda: "http://localhost:8765" + oauth.CALLBACK_PATH)
 
 
 def _use_store(monkeypatch: pytest.MonkeyPatch, store: ConnectorStore) -> None:
@@ -591,7 +591,7 @@ def test_oauth_start_builds_a_valid_authorization_url(store: ConnectorStore, ser
     assert url.scheme == "https" and url.hostname == expected.hostname and "{" not in started["authorization_url"]
     names = {**oauth._AUTH_NAMES, **(item.get("authorizationRequestFields") or {})}
     assert query[names["clientId"]] == ["cid-123"]
-    assert query[names["redirectUri"]] == ["http://127.0.0.1:8765/api/connectors/oauth/callback"]
+    assert query[names["redirectUri"]] == ["http://localhost:8765/api/connectors/oauth/callback"]
     assert len(query["state"][0]) >= 40
     if names.get("scope") and item.get("scopes"):
         assert query[names["scope"]][0] == (item.get("scopeSeparator") or " ").join(item["scopes"])

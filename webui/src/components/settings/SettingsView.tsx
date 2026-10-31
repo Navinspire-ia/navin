@@ -185,9 +185,11 @@ import {
   updateWebSearchSettings,
   updateSemanticSearchSettings,
   updatePreferences,
+  type UpdateChannel,
   type UpdateInfo,
   type UpdateStatus,
 } from "@/lib/api";
+import { UpdateActivity } from "@/components/settings/UpdateActivity";
 import { notifyCliAppsChanged } from "@/lib/cli-app-events";
 import { copyTextOrNotify, copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -235,6 +237,7 @@ import {
 import { shortWorkspacePath } from "@/lib/workspace";
 import { useClient } from "@/providers/ClientProvider";
 import type {
+  AgentTestingDepth,
   AutomationsPayload,
   AutomationUpdatePayload,
   CliAppInfo,
@@ -533,11 +536,13 @@ const DEFAULT_CUSTOM_MCP_FORM: CustomMcpForm = {
   toolTimeout: "30",
 };
 
-interface SettingsViewProps {
+export interface SettingsViewProps {
   theme: "light" | "dark";
   initialSection?: SettingsSectionKey;
   initialSettings?: SettingsPayload | null;
   showSidebar?: boolean;
+  /** Inside a window over the chat: no "Back to chat" link, the window closes instead. */
+  embedded?: boolean;
   onToggleTheme: () => void;
   onBackToChat: () => void;
   /** Opens the app sidebar when the window is too narrow to show it. */
@@ -927,6 +932,7 @@ export function SettingsView({
   initialSection = "overview",
   initialSettings = null,
   showSidebar = true,
+  embedded = false,
   onToggleTheme,
   onBackToChat,
   onToggleSidebar,
@@ -2954,7 +2960,7 @@ export function SettingsView({
           )}
         >
           <div className="mb-7">
-            {!showSidebar ? (
+            {!showSidebar && !embedded ? (
               <button
                 type="button"
                 onClick={onBackToChat}
@@ -3399,7 +3405,7 @@ function OverviewSettings({
   );
 }
 
-function VersionCheckRow({
+export function VersionCheckRow({
   currentVersion,
   preferences,
 }: {
@@ -3415,9 +3421,8 @@ function VersionCheckRow({
   const [result, setResult] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoCheck, setAutoCheck] = useState(preferences?.autoCheck ?? true);
-  const [channel, setChannel] = useState<"stable" | "beta">(
-    preferences?.channel ?? "stable",
-  );
+  const [autoInstall, setAutoInstall] = useState(preferences?.autoInstall ?? true);
+  const [channel, setChannel] = useState<UpdateChannel>(preferences?.channel ?? "stable");
 
   const handleCheck = async (force = true) => {
     setChecking(true);
@@ -3431,13 +3436,26 @@ function VersionCheckRow({
     }
   };
 
-  const savePreferences = async (nextAuto: boolean, nextChannel: "stable" | "beta") => {
-    setAutoCheck(nextAuto);
-    setChannel(nextChannel);
+  const savePreferences = async (next: {
+    autoCheck?: boolean;
+    autoInstall?: boolean;
+    channel?: UpdateChannel;
+  }) => {
+    const previous = { autoCheck, autoInstall, channel };
+    if (next.autoCheck !== undefined) setAutoCheck(next.autoCheck);
+    if (next.autoInstall !== undefined) setAutoInstall(next.autoInstall);
+    if (next.channel !== undefined) setChannel(next.channel);
     setError(null);
     try {
-      await updatePreferences(token, { autoCheck: nextAuto, channel: nextChannel });
+      const saved = await updatePreferences(token, next);
+      setAutoCheck(saved.autoCheck);
+      setAutoInstall(saved.autoInstall);
+      setChannel(saved.channel);
     } catch (err) {
+      // Show what is really saved, not the choice that failed.
+      setAutoCheck(previous.autoCheck);
+      setAutoInstall(previous.autoInstall);
+      setChannel(previous.channel);
       setError((err as Error).message);
     }
   };
@@ -3468,20 +3486,47 @@ function VersionCheckRow({
             <input
               type="checkbox"
               checked={autoCheck}
-              onChange={(event) => void savePreferences(event.target.checked, channel)}
+              data-testid="update-auto-check"
+              onChange={(event) => void savePreferences({ autoCheck: event.target.checked })}
               className="accent-foreground"
             />
             {tx("settings.about.autoCheck", "Check automatically")}
           </label>
           <span aria-hidden>·</span>
-          <button
-            type="button"
-            onClick={() => void savePreferences(autoCheck, channel === "stable" ? "beta" : "stable")}
-            className="underline-offset-2 hover:underline"
-          >
-            {tx("settings.about.channel", "Channel")}: {channel}
-          </button>
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={autoInstall}
+              disabled={!autoCheck}
+              data-testid="update-auto-install"
+              onChange={(event) => void savePreferences({ autoInstall: event.target.checked })}
+              className="accent-foreground"
+            />
+            {tx("settings.about.autoInstall", "Install automatically when Navin is idle")}
+          </label>
+          <span aria-hidden>·</span>
+          <label className="inline-flex items-center gap-1.5">
+            {tx("settings.about.channel", "Channel")}
+            <select
+              value={channel}
+              data-testid="update-channel"
+              onChange={(event) => void savePreferences({ channel: event.target.value as UpdateChannel })}
+              className="h-6 rounded-md border border-border/70 bg-background px-1.5 text-[11px] text-foreground"
+            >
+              <option value="stable">{tx("settings.about.channelStable", "Stable")}</option>
+              <option value="beta">{tx("settings.about.channelBeta", "Beta")}</option>
+              <option value="enterprise">{tx("settings.about.channelEnterprise", "Enterprise")}</option>
+            </select>
+          </label>
         </div>
+        {autoCheck && autoInstall ? (
+          <p className="max-w-md text-[11px] leading-4 text-muted-foreground">
+            {tx(
+              "settings.about.autoInstallHint",
+              "Updates download in the background and install when no agent is working. Your settings, sessions and memories are kept.",
+            )}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
         <div className="flex gap-2">
@@ -3555,6 +3600,7 @@ function VersionCheckRow({
 function AboutSettings({ settings }: { settings: SettingsPayload }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+  const { token } = useClient();
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const [licenseText, setLicenseText] = useState<string | null>(null);
@@ -3684,6 +3730,7 @@ function AboutSettings({ settings }: { settings: SettingsPayload }) {
             currentVersion={settings.version?.current}
             preferences={settings.updates}
           />
+          <UpdateActivity token={token} />
         </SettingsGroup>
       </section>
 
@@ -9886,6 +9933,82 @@ function RuntimeSettings({
  * Machine-wide kill-switches for board task git automation. Per-project
  * consent lives in the Tasks panel (Autonomy toggle); these override it.
  */
+/**
+ * Settings > Advanced: how much the agent tests a change before it reports.
+ * Essential (default): one or two tests, run once after the last edit.
+ * Thorough: every test tied to the change, failure cases included. Slower.
+ */
+export function AgentTestingSettings({ settings }: { settings: SettingsPayload }) {
+  const { t } = useTranslation();
+  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+  const { token } = useClient();
+  const saved: AgentTestingDepth = settings.agent?.testing_depth === "thorough" ? "thorough" : "essential";
+  const [depth, setDepth] = useState<AgentTestingDepth>(saved);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDepth(saved);
+  }, [saved]);
+
+  const choose = async (next: AgentTestingDepth) => {
+    if (!token || next === depth) return;
+    const previous = depth;
+    setDepth(next);
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = await updateSettings(token, { testingDepth: next });
+      setDepth(payload.agent?.testing_depth === "thorough" ? "thorough" : "essential");
+    } catch (err) {
+      // Show what is really saved, not the choice that failed.
+      setDepth(previous);
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const title = tx("settings.rows.agentTestingDepth", "Tests after a change");
+  return (
+    <section data-testid="agent-testing-settings">
+      <SettingsSectionTitle>{tx("settings.sections.agentTesting", "Agent tests")}</SettingsSectionTitle>
+      <SettingsGroup>
+        <SettingsRow
+          title={title}
+          description={
+            depth === "thorough"
+              ? tx(
+                "settings.help.agentTestingThorough",
+                "Every test tied to the change, failure cases included. Slower: a small task can spend more time testing than coding.",
+              )
+              : tx(
+                "settings.help.agentTestingEssential",
+                "One or two tests per change: the closest test and at most one integration test, run once after the last edit. Recommended.",
+              )
+          }
+        >
+          <SegmentedControl
+            value={depth}
+            label={title}
+            disabled={saving || !token}
+            options={[
+              { value: "essential", label: tx("settings.values.testingEssential", "Essential") },
+              { value: "thorough", label: tx("settings.values.testingThorough", "Thorough") },
+            ]}
+            onChange={(value) => void choose(value === "thorough" ? "thorough" : "essential")}
+          />
+        </SettingsRow>
+      </SettingsGroup>
+      {error ? (
+        <p role="alert" className="px-1 pt-2 text-[12px] text-destructive">
+          {tx("settings.help.agentTestingError", "Could not save this choice.")} {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function BoardGitSettings({
   settings,
   onOpenGitSettings,
@@ -10084,6 +10207,8 @@ function AdvancedSettings({
         </SettingsSectionTitle>
         <ExecPolicySettings />
       </section>
+
+      <AgentTestingSettings settings={settings} />
 
       <BoardGitSettings settings={settings} onOpenGitSettings={onOpenGitSettings} />
 
@@ -11191,20 +11316,30 @@ function SegmentedControl({
   value,
   options,
   onChange,
+  disabled = false,
+  label,
 }: {
   value: string;
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
+  disabled?: boolean;
+  label?: string;
 }) {
   return (
-    <div className="inline-flex min-h-8 max-w-full flex-wrap items-center gap-0.5 rounded-full bg-muted p-0.5 text-[12px] font-medium text-muted-foreground">
+    <div
+      role={label ? "group" : undefined}
+      aria-label={label}
+      className="inline-flex min-h-8 max-w-full flex-wrap items-center gap-0.5 rounded-full bg-muted p-0.5 text-[12px] font-medium text-muted-foreground"
+    >
       {options.map((option) => (
         <button
           key={option.value}
           type="button"
+          disabled={disabled}
+          aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
-            "rounded-full px-3 py-1 transition-colors",
+            "rounded-full px-3 py-1 transition-colors disabled:opacity-60",
             value === option.value && "bg-background text-foreground shadow-sm",
           )}
         >

@@ -150,10 +150,27 @@ export function DevGitPanel({
   /** What the automatic Git setup did after the last connect, and a reload tick. */
   const [gitSetupActions, setGitSetupActions] = useState<GitSetupAction[] | undefined>(undefined);
   const [gitMachineKey, setGitMachineKey] = useState(0);
+  // Every answer is tagged with the session (hence project) it was asked for;
+  // one that lands after a project switch is dropped instead of painting the
+  // previous repository's files, branch, PR or CI on the new project.
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
   useEffect(() => {
     setAuthHost(null);
     retryAfterConnectRef.current = null;
     setGitSetupActions(undefined);
+    setPayload(null);
+    setError(null);
+    setSelected(new Set());
+    setPrView(null);
+    setCi(null);
+    setBranches([]);
+    setBranchOpen(false);
+    setMenuOpen(false);
+    setMessage("");
+    setPendingPush(false);
+    setDiscardTarget(null);
+    setStashDropTarget(null);
   }, [sessionKey]);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const branchRef = useRef<HTMLDivElement | null>(null);
@@ -166,10 +183,13 @@ export function DevGitPanel({
   );
 
   const refreshChanges = useCallback(() => {
+    const askedFor = sessionKey;
+    const stale = () => sessionKeyRef.current !== askedFor;
     setLoading(true);
     setError(null);
     fetchGitChanges(token, sessionKey)
       .then((next) => {
+        if (stale()) return;
         setPayload(next);
         setSelected((prev) => {
           if (!next.is_repo) return new Set();
@@ -179,10 +199,13 @@ export function DevGitPanel({
         });
       })
       .catch((err) => {
+        if (stale()) return;
         setError(err instanceof Error ? err.message : String(err));
         setPayload(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!stale()) setLoading(false);
+      });
   }, [sessionKey, token]);
 
   // PR and CI status ask the forge (network + git on the workspace): seconds
@@ -190,12 +213,14 @@ export function DevGitPanel({
   const forgeFetchedAtRef = useRef(0);
   const refreshForge = useCallback(() => {
     forgeFetchedAtRef.current = Date.now();
+    const askedFor = sessionKey;
+    const fresh = () => sessionKeyRef.current === askedFor;
     void fetchGithubPr(token, sessionKey)
-      .then(setPrView)
-      .catch(() => setPrView(null));
+      .then((next) => fresh() && setPrView(next))
+      .catch(() => fresh() && setPrView(null));
     void fetchGithubChecks(token, sessionKey)
-      .then(setCi)
-      .catch(() => setCi(null));
+      .then((next) => fresh() && setCi(next))
+      .catch(() => fresh() && setCi(null));
   }, [sessionKey, token]);
 
   const refresh = useCallback(() => {

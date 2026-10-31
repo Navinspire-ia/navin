@@ -56,6 +56,7 @@ def readable_validation_report(text: str) -> str | None:
         "whole suite: the full suite is for shared code",
         "Tests covering the changed files",
         "Pick the tests closest to the changed code",
+        "Pick the one or two tests closest to the changed code",
         "Wait for the test process to finish, inspect its results",
         "Run an appropriate check after the latest edits.",
     )

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SubagentProgressUpdate } from "@/lib/navin-client";
-import { createSubagentCardStore } from "./ParallelSubagentsPanel";
+import { createSubagentCardStore, LiveSubagentsPanel } from "./ParallelSubagentsPanel";
 import { SubagentStatusBar } from "./SubagentStatusBar";
 
 function frame(partial: Partial<SubagentProgressUpdate> & { taskId: string }): SubagentProgressUpdate {
@@ -76,5 +76,70 @@ describe("SubagentStatusBar", () => {
     render(<SubagentStatusBar store={store} />);
     fireEvent.click(screen.getByRole("button", { name: "Audit" }));
     expect(store.getSnapshot().expanded.has("a")).toBe(true);
+  });
+
+  // The reported duplicate: the journal card and the bar row both showed the
+  // same running subagent. The bar keeps it (with its model and time), the
+  // journal shows it only once opened from the bar or once finished.
+  it("shows a running subagent once, in the bar, and opens its journal card from the name", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const store = createSubagentCardStore();
+    render(
+      <>
+        <LiveSubagentsPanel store={store} attentionInStatusBar />
+        <SubagentStatusBar store={store} onAction={() => undefined} />
+      </>,
+    );
+    act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service", model: "anthropic/claude-opus-5.5" })));
+    expect(screen.getAllByText("pm-install-service")).toHaveLength(1);
+    expect(screen.queryByTestId("subagent-card-pm")).toBeNull();
+    expect(screen.queryByText("Waiting for subagent")).toBeNull();
+    expect(screen.getByTestId("subagent-status-meta-pm").textContent).toMatch(/^anthropic\/claude-opus-5\.5 · \d+s$/);
+    expect(gAction("cancel", "pm")).toBeTruthy();
+    const name = screen.getByRole("button", { name: "pm-install-service" });
+    expect(name.getAttribute("title")).toBe("Show details");
+
+    fireEvent.click(name);
+    expect(await screen.findByTestId("subagent-card-pm")).toBeTruthy();
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+  });
+
+  it("hands a finished subagent to the journal and keeps only the count in the bar", async () => {
+    const store = createSubagentCardStore();
+    render(
+      <>
+        <LiveSubagentsPanel store={store} attentionInStatusBar />
+        <SubagentStatusBar store={store} />
+      </>,
+    );
+    act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service" })));
+    act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service", done: true, phase: "done" })));
+    expect(screen.getByTestId("subagent-card-pm")).toBeTruthy();
+    // The row leaves with its exit animation.
+    await waitFor(() => expect(screen.queryByTestId("subagent-status-row-pm")).toBeNull());
+    expect(screen.getAllByText("pm-install-service")).toHaveLength(1);
+    expect(screen.getByTestId("subagent-status-bar").querySelector("[data-chip='done']")).toBeTruthy();
+  });
+
+  it("shows a failed subagent once, in the bar, with Relaunch and Dismiss", async () => {
+    const store = createSubagentCardStore();
+    const onAction = vi.fn(async () => ({ ok: true }));
+    render(
+      <>
+        <LiveSubagentsPanel store={store} attentionInStatusBar onAction={onAction} />
+        <SubagentStatusBar store={store} onAction={onAction} />
+      </>,
+    );
+    act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service", done: true, phase: "error", error: "boom" })));
+    expect(screen.getAllByText("pm-install-service")).toHaveLength(1);
+    expect(screen.queryByTestId("subagent-card-pm")).toBeNull();
+    expect(screen.getByTestId("subagent-status-bar").querySelector("[data-chip='failed']")).toBeTruthy();
+    await act(async () => fireEvent.click(gAction("retry", "pm")));
+    expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ taskId: "pm" }), "retry");
+
+    // Its details stay one click away.
+    fireEvent.click(screen.getByRole("button", { name: "pm-install-service" }));
+    expect(await screen.findByTestId("subagent-card-pm")).toBeTruthy();
   });
 });

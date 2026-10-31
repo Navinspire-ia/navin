@@ -147,6 +147,44 @@ describe("ParallelSubagentsPanel", () => {
     expect(screen.getByTestId("subagent-card-live").textContent).toContain("Writing report");
   });
 
+  it("leaves a running subagent to the status bar until it finishes or is opened", () => {
+    const store = createSubagentCardStore();
+    render(<LiveSubagentsPanel store={store} attentionInStatusBar />);
+    act(() => store.upsert({ chatId: "c", taskId: "run", label: "Audit", phase: "running", statusLine: "Reading files", iteration: 1, done: false }));
+    act(() => store.upsert({ chatId: "c", taskId: "wait", label: "Queue", phase: "queued", statusLine: "", iteration: 0, done: false }));
+    expect(screen.queryByTestId("parallel-subagents-panel")).toBeNull();
+
+    // Opened from the bar: the card and its details come into the journal.
+    act(() => store.setExpanded(new Set(["run"])));
+    expect(screen.getByTestId("subagent-card-run")).toBeTruthy();
+    expect(screen.queryByTestId("subagent-card-wait")).toBeNull();
+    expect(screen.queryByText(/Waiting for|queued, waiting/)).toBeNull();
+
+    act(() => store.setExpanded(new Set()));
+    act(() => store.upsert({ chatId: "c", taskId: "run", label: "Audit", phase: "done", statusLine: "Report written", iteration: 3, done: true }));
+    expect(screen.getByTestId("subagent-card-run").textContent).toContain("Audit");
+    expect(screen.queryByTestId("subagent-card-wait")).toBeNull();
+    expect(screen.queryByText("Subagents finished")).toBeNull();
+  });
+
+  it("leaves a failed or stopped subagent to the status bar until it is opened", () => {
+    const store = createSubagentCardStore();
+    render(<LiveSubagentsPanel store={store} attentionInStatusBar />);
+    act(() => store.upsert({ ...failedCard, taskId: "bad" }));
+    // A stop on request arrives as an error frame of kind "cancelled".
+    act(() => store.upsert({ ...failedCard, taskId: "stop", phase: "error", errorKind: "cancelled", error: "Cancelled" }));
+    expect(screen.queryByTestId("subagent-card-bad")).toBeNull();
+    expect(screen.queryByTestId("subagent-card-stop")).toBeNull();
+
+    // Opened from the bar: the failure and its details read in the journal.
+    act(() => store.setExpanded(new Set(["bad"])));
+    const card = screen.getByTestId("subagent-card-bad");
+    expect(card.textContent).toContain("Translate ar");
+    expect(card.textContent).toContain("Model timed out");
+    expect(screen.getByTestId("subagent-details-bad").textContent).toContain("Translate common.json to Arabic");
+    expect(screen.queryByTestId("subagent-card-stop")).toBeNull();
+  });
+
   it("offers Relaunch and Dismiss on a failed card, as siblings of the toggle", async () => {
     const onAction = vi.fn(async () => ({ ok: true }));
     render(<ParallelSubagentsPanel cards={[failedCard]} onAction={onAction} />);

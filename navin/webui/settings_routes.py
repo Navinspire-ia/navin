@@ -42,6 +42,9 @@ from navin.update import (
     start_update_download,
     update_status,
 )
+from navin.update import policy as update_policy
+from navin.update.auto import current_save_sessions, prepare_for_install
+from navin.update.service import update_policy_for
 from navin.webui.channel_login import (
     ChannelLoginError,
     cancel_channel_login,
@@ -92,6 +95,10 @@ QueryParams = dict[str, list[str]]
 # The update check is a network round trip; reusing it for a few minutes is
 # invisible to the user and keeps the shared thread pool free.
 _VERSION_CHECK_CACHE_TTL_S = 300.0
+# Steps the desktop shell's Tauri updater reports into the update history.
+_UPDATE_REPORT_EVENTS = frozenset(
+    {"checked", "downloaded", "installing", "installed", "rollback", "error"}
+)
 # The model catalog fetch reaches navin.live. Awaited on the gateway loop it
 # froze every request and the WebSocket for the resolver's 10 s each time the
 # WSL network dropped (26 stalls of 10 to 20 s in one log; "engine not
@@ -300,6 +307,16 @@ class WebUISettingsRouter:
             return await self._handle_settings_update_install(connection, request)
         if path == "/api/settings/update-preferences":
             return self._handle_settings_update_preferences(request)
+        if path == "/api/settings/update-policy":
+            return await self._handle_settings_update_policy(request)
+        if path == "/api/settings/update-prepare":
+            return await self._handle_settings_update_prepare(connection, request)
+        if path == "/api/settings/update-engine":
+            return self._handle_settings_update_engine(connection, request)
+        if path == "/api/settings/update-report":
+            return self._handle_settings_update_report(connection, request)
+        if path == "/api/settings/update-history":
+            return self._handle_settings_update_history(request)
         mcp_action = _MCP_PRESET_ACTIONS_BY_PATH.get(path)
         if mcp_action is not None:
             return await self._handle_settings_mcp_presets(request, mcp_action)
@@ -1408,22 +1425,100 @@ class WebUISettingsRouter:
         config = load_config()
         channel = _query_first(query, "channel")
         auto_check = _query_first(query, "autoCheck")
+        auto_install = _query_first(query, "autoInstall")
         skipped = _query_first(query, "skippedVersion")
         if channel is not None:
-            if channel not in {"stable", "beta"}:
+            if channel not in update_policy.CHANNELS:
                 return self._error_response(400, "invalid update channel")
             config.updates.channel = channel
         if auto_check is not None:
             if auto_check not in {"true", "false", "1", "0"}:
                 return self._error_response(400, "invalid autoCheck value")
             config.updates.auto_check = auto_check in {"true", "1"}
+        if auto_install is not None:
+            if auto_install not in {"true", "false", "1", "0"}:
+                return self._error_response(400, "invalid autoInstall value")
+            config.updates.auto_install = auto_install in {"true", "1"}
         if skipped is not None:
             config.updates.skipped_version = skipped.strip()
         save_config(config)
         return self._json_response({
             "autoCheck": config.updates.auto_check,
+            "autoInstall": config.updates.auto_install,
             "channel": config.updates.channel,
             "skippedVersion": config.updates.skipped_version,
+        })
+
+    async def _handle_settings_update_policy(self, request: WsRequest) -> Response:
+        """The desktop shell asks before its Tauri updater installs a version."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        version = (_query_first(self._query(request), "version") or "").strip()
+        if not version:
+            return self._error_response(400, "version is required")
+        try:
+            return self._json_response(await asyncio.to_thread(update_policy_for, version))
+        except UpdateError as exc:
+            return self._error_response(exc.status, str(exc))
+
+    async def _handle_settings_update_prepare(self, connection: Any, request: WsRequest) -> Response:
+        """Checkpoint before an install: refuse while work runs, else save sessions."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        if not _is_local_browser_request(connection, request.headers):
+            return self._error_response(403, "updates can only be prepared locally")
+        return self._json_response(
+            await asyncio.to_thread(prepare_for_install, current_save_sessions())
+        )
+
+    def _handle_settings_update_engine(self, connection: Any, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if not _is_local_browser_request(connection, request.headers):
+            return self._error_response(403, "the update engine is set locally")
+        query = self._query(request)
+        try:
+            note = update_policy.note_engine(
+                (_query_first(query, "engine") or "").strip(),
+                (_query_first(query, "version") or "").strip(),
+            )
+        except ValueError as exc:
+            return self._error_response(400, str(exc))
+        return self._json_response({"ok": True, **note})
+
+    def _handle_settings_update_report(self, connection: Any, request: WsRequest) -> Response:
+        """One step of the shell's updater, kept in the update history."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        if not _is_local_browser_request(connection, request.headers):
+            return self._error_response(403, "update reports are local")
+        query = self._query(request)
+        event = (_query_first(query, "event") or "").strip()
+        if event not in _UPDATE_REPORT_EVENTS:
+            return self._error_response(400, "invalid update event")
+        engine = (_query_first(query, "engine") or "tauri").strip()
+        if engine not in {"tauri", "navin"}:
+            return self._error_response(400, "invalid update engine")
+        entry = update_policy.record_event(
+            event,
+            version=(_query_first(query, "version") or "").strip(),
+            engine=engine,
+            detail=(_query_first(query, "detail") or "").strip(),
+            ok=event != "error",
+        )
+        return self._json_response({"ok": True, "entry": entry})
+
+    def _handle_settings_update_history(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        raw_limit = _query_first(self._query(request), "limit") or "50"
+        try:
+            limit = max(1, min(200, int(raw_limit)))
+        except ValueError:
+            return self._error_response(400, "invalid limit")
+        return self._json_response({
+            "history": update_policy.read_history(limit),
+            "status": update_status(),
         })
 
 

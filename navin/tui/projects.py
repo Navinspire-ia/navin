@@ -302,3 +302,42 @@ def new_session_key() -> str:
     import time
 
     return f"cli:{int(time.time() * 1000)}"
+
+
+def session_saved_in(path: str | Path, key: str) -> bool:
+    """Whether the chat ``key`` is saved in ``path``'s own sessions folder.
+
+    Read only: never creates ``.navin/sessions``. Used before resuming a
+    session by key, so a key of another project is never reopened here.
+    """
+    from navin.session.manager import SessionManager, sessions_dir_for
+
+    key = str(key or "").strip()
+    if not key or not str(path or "").strip():
+        return False
+    folder = sessions_dir_for(Path(path))
+    try:
+        return (folder / f"{SessionManager._storage_key(key)}.jsonl").is_file() or (
+            folder / f"{SessionManager.safe_key(key)}.jsonl"
+        ).is_file()
+    except OSError:
+        return False
+
+
+def latest_cli_session(path: str | Path) -> str:
+    """The most recent CLI chat of this project with something in it, or ``""``."""
+    if not (Path(path) / ".navin" / "sessions").is_dir():
+        return ""
+    from navin.session.manager import SessionManager
+
+    try:
+        rows = SessionManager(Path(path)).list_sessions()
+    except (OSError, ValueError):
+        return ""
+    for row in rows:  # most recent first
+        key = str(row.get("key") or "")
+        if not key.startswith("cli:") or scoped_elsewhere(row, path):
+            continue
+        if str(row.get("title") or "").strip() or str(row.get("preview") or "").strip():
+            return key
+    return ""

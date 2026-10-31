@@ -1375,6 +1375,11 @@ class WebSocketChannel(BaseChannel):
     ) -> None:
         """Route one typed inbound envelope (``new_chat`` / ``attach`` / ``message``)."""
         t = envelope.get("type")
+        if t in {"message", "new_chat"}:
+            # Someone is using Navin: an automatic update waits for a quiet spell.
+            from navin.update.activity import mark_activity
+
+            mark_activity()
         if t in {"subagents_list", "subagent_history", "subagent_recover", "subagent_relaunch",
                  "subagent_retry", "subagent_cancel",
                  "subagent_team_feed", "subagent_team_message", "subagent_team_assign",

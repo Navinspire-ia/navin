@@ -125,3 +125,44 @@ class CorePromptStaysLeanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EssentialTestingGuidanceTest(unittest.TestCase):
+    """Default guidance: one or two tests per change; thorough keeps the old breadth.
+
+    Reported: tasks took forever because every edit asked for happy path,
+    failure cases and every related test file.
+    """
+
+    def test_both_contracts_ask_for_one_or_two_tests_by_default(self):
+        for name in ("agent/tool_contract.md", "agent/tool_contract_slim.md"):
+            essential = render_template(name).lower()
+            self.assertIn("one or two test", essential, name)
+            self.assertIn("never the whole suite", essential, name)
+            self.assertNotIn("get real tests", essential, name)
+            thorough = render_template(name, testing_depth="thorough").lower()
+            self.assertIn("get real tests", thorough, name)
+            self.assertNotIn("one or two test", thorough, name)
+
+    def test_the_validation_reminder_follows_the_setting(self):
+        from unittest import mock
+
+        from navin.utils.runtime import (
+            VERIFY_BEFORE_DONE_THOROUGH_PROMPT,
+            build_verify_before_done_message,
+            is_harness_nudge,
+        )
+
+        essential = build_verify_before_done_message(depth="essential")["content"]
+        self.assertIn("one or two tests, no more", essential)
+        self.assertIn("Never the whole suite", essential)
+        self.assertNotIn("relevant failure cases", essential)
+        self.assertEqual(
+            build_verify_before_done_message(depth="thorough")["content"], VERIFY_BEFORE_DONE_THOROUGH_PROMPT,
+        )
+        # Both stay recognised as Navin's own reminders, never as the user's words.
+        self.assertTrue(is_harness_nudge(essential))
+        self.assertTrue(is_harness_nudge(VERIFY_BEFORE_DONE_THOROUGH_PROMPT))
+        with mock.patch("navin.quality.check_budget.testing_depth", return_value="thorough"):
+            self.assertIn("relevant failure cases", build_verify_before_done_message()["content"])
+        self.assertEqual(build_verify_before_done_message("custom")["content"], "custom")

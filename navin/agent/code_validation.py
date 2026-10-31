@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from navin.quality.check_budget import current_budget
 from navin.quality.evidence import VerificationEvidence
 from navin.utils import wsl
 from navin.utils.proc import no_window_kwargs
@@ -556,7 +557,8 @@ def _related_targets(root: Path, paths: list[str]) -> list[str]:
     try:
         from navin.quality.testing import related_test_targets
 
-        return related_test_targets(root, paths)
+        # Within the testing budget (Settings > Advanced): one or two files by default.
+        return related_test_targets(root, paths, budget=current_budget())
     except Exception:  # noqa: BLE001 - a hint only
         return []
 
@@ -904,6 +906,10 @@ class CodeValidationState:
                 )
             else:
                 details.append(
+                    "Run the tests that cover the changed files (one or two, listed below) once "
+                    "after the latest edits: never the whole suite, never a green test again "
+                    "without a new edit."
+                    if current_budget().essential else
                     "Run the tests that cover the changed files after the latest edits, not the "
                     "whole suite: the full suite is for shared code or a final delivery check."
                 )
@@ -947,10 +953,14 @@ class CodeValidationState:
         self._related_cache = (key, targets)
 
     def _targeted_tests_hint(self) -> str:
+        budget = current_budget()
         targets = self._related_tests() or sorted(path for path in self.paths if (
             PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
-        ))
+        ))[: budget.max_files]
         if not targets:
+            if budget.essential:
+                return ("Pick the one or two tests closest to the changed code (its test file, or a "
+                        "-k filter on the changed behavior) and run only those.")
             return ("Pick the tests closest to the changed code (its test file, or a -k filter "
                     "on the changed behavior) and run only those.")
         python = [path for path in targets if path.endswith(".py") or "." not in PurePosixPath(path).name]
@@ -1008,7 +1018,7 @@ class CodeValidationState:
         lines.extend(["", "### Next step", ""])
         targets = sorted(path for path in self.paths if (
             PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
-        ))
+        ))[: current_budget().max_files]
         if self.pending_tests:
             lines.append("Wait for the running tests to finish and inspect their results before retrying completion.")
         elif self.needs_tests:

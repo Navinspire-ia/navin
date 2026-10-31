@@ -1071,8 +1071,7 @@ class NavinApp(App[None]):
             try:
                 await asyncio.to_thread(self._session_store.save, key, draft=draft, queue=queue, paused=paused)
                 self._saved_session_states[key] = state
-                if self.prefs.last_session != self.runtime.session_key:
-                    self.prefs.last_session = self.runtime.session_key
+                if self.prefs.remember_session(self.runtime.workspace, self.runtime.session_key):
                     self._save_prefs_in_background()
             except OSError as exc:
                 if self._requested_session_states.get(key) == state:
@@ -1489,7 +1488,7 @@ class NavinApp(App[None]):
             self._runtime_close_task = asyncio.create_task(self.runtime.close())
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self._flush_unsent_work(), self.UNMOUNT_WAIT_S)
-        self.prefs.last_session = self.runtime.session_key
+        self.prefs.remember_session(self.runtime.workspace, self.runtime.session_key)
         # Final save goes through the same single writer, so a background
         # write still in flight cannot land after it with older values.
         writer = self._save_prefs_in_background()
@@ -4303,7 +4302,7 @@ class NavinApp(App[None]):
         replay = getattr(self.runtime, "replay_subagents", None)
         if replay is not None:
             await replay()
-        self.prefs.last_session = key
+        self.prefs.remember_session(self.runtime.workspace, key)
         self._save_prefs_in_background()
         await self._clear_chat_view()
         self._activity.clear()
@@ -5101,8 +5100,11 @@ def run_tui(
 ) -> None:
     prefs = TuiPrefs.load()
     if not session_id:
-        # Resume where the user left off unless a session was given explicitly.
-        session_id = prefs.last_session or "cli:direct"
+        # Resume where the user left off in THIS project unless a session was
+        # given explicitly. The last session of the CLI as a whole belonged to
+        # whichever project was open last: resumed here, its key was reused in
+        # another folder and the two chats shared titles and history.
+        session_id = prefs.session_for(project_root or Path(config.workspace_path))
     if project_root is not None:
         # `navin-cli [folder]`: the launch folder wins over the remembered one.
         prefs.project_root = str(project_root)

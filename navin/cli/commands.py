@@ -4015,7 +4015,17 @@ def update(
         return
 
     latest = str(info.get("latestVersion") or "")
-    console.print(f"{__logo__} navin [bold]{latest}[/bold] is available (you have {__version__}).")
+    if info.get("rollback"):
+        # The running version was withdrawn and the publisher signed an older
+        # build to go back to (same data format, checked before offering it).
+        console.print(
+            f"[yellow]navin {__version__} was withdrawn by the publisher.[/yellow] "
+            f"navin [bold]{latest}[/bold] is the signed version to go back to."
+        )
+    else:
+        console.print(f"{__logo__} navin [bold]{latest}[/bold] is available (you have {__version__}).")
+    if info.get("mandatory"):
+        console.print("[yellow]This update is required: the current version is no longer supported.[/yellow]")
     notes = str(info.get("notes") or "").strip()
     if notes:
         console.print(f"[dim]{escape(notes)}[/dim]")

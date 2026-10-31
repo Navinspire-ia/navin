@@ -34,7 +34,13 @@ class TuiPrefs:
     show_reasoning: bool = True
     show_tools: bool = True
     compact_tools: bool = False
+    # Session on screen when the CLI last closed, whatever the project. Kept
+    # for files written by earlier builds only: read it through session_for.
     last_session: str = "cli:direct"
+    # Last session of each project, by folder. One key for every project made
+    # a CLI opened in project B resume the chat of project A under the same
+    # key, so its title, pins, display history and agents mixed with A's.
+    last_sessions: dict[str, str] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     vim_submit: bool = False  # when True, Enter inserts newline and Ctrl+Enter/Ctrl+S submits
     project_root: str = ""  # folder analysed by Graph / Evolve ("" = launch directory)
@@ -62,6 +68,11 @@ class TuiPrefs:
                 setattr(prefs, key, value)
         if not isinstance(prefs.history, list):
             prefs.history = []
+        if not isinstance(prefs.last_sessions, dict):
+            prefs.last_sessions = {}
+        prefs.last_sessions = {
+            str(k): str(v) for k, v in prefs.last_sessions.items() if str(k).strip() and str(v).strip()
+        }
         prefs.history = [str(h) for h in prefs.history][-200:]
         if not prefs.theme_explicit and prefs.theme in _LEGACY_DEFAULT_THEMES:
             # Files written by earlier builds carry the old default; follow the new one.
@@ -92,6 +103,35 @@ class TuiPrefs:
         except Exception:  # noqa: BLE001
             pass
 
+    def remember_session(self, workspace: str | Path, key: str) -> bool:
+        """Note ``key`` as the last session of ``workspace``; True when it changed."""
+        key = str(key or "").strip()
+        folder = _folder_id(workspace)
+        if not key or not folder:
+            return False
+        changed = self.last_sessions.get(folder) != key or self.last_session != key
+        self.last_sessions[folder] = key
+        self.last_session = key
+        return changed
+
+    def session_for(self, workspace: str | Path) -> str:
+        """The session to open in ``workspace``: never one of another project.
+
+        The project's own last session first; else the global last session
+        only when that chat is saved in this project; else the most recent
+        CLI chat of the project; else a new key, unique to this project.
+        """
+        from navin.tui.projects import latest_cli_session, new_session_key, session_saved_in
+
+        folder = _folder_id(workspace)
+        remembered = self.last_sessions.get(folder) if folder else None
+        if remembered:
+            return remembered
+        legacy = str(self.last_session or "").strip()
+        if legacy and session_saved_in(workspace, legacy):
+            return legacy
+        return latest_cli_session(workspace) or new_session_key()
+
     def remember(self, text: str) -> None:
         text = text.strip()
         if not text:
@@ -100,3 +140,15 @@ class TuiPrefs:
             return
         self.history.append(text)
         self.history = self.history[-200:]
+
+
+def _folder_id(workspace: str | Path) -> str:
+    """One spelling per project folder, as the map of last sessions keys it."""
+    text = str(workspace or "").strip()
+    if not text:
+        return ""
+    try:
+        text = str(Path(text).expanduser().resolve())
+    except (OSError, RuntimeError):
+        pass
+    return text.replace("\\", "/").rstrip("/") or text

@@ -1,6 +1,10 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,6 +12,7 @@ import {
   externalHttpUrl,
   hrefActionFromClick,
   ideNavigationHash,
+  isIdeRouteHash,
   shouldUseWindowOpenFallback,
 } from "./external-url";
 
@@ -196,6 +201,63 @@ describe("externalHttpUrl", () => {
       externalHttpUrl("https://ted.europa.eu/en/notice/-/detail/1", "http://tauri.localhost"),
     ).toContain("ted.europa.eu");
   });
+
+  // The reported bug: a link in the chat to the project's own dev server was
+  // read as a Navin screen (#/dashboard), the router did not know it and the
+  // click landed on an empty Code chat instead of the page.
+  it("opens a project dev server on localhost in the browser, not a new chat", () => {
+    for (const self of ["http://127.0.0.1:8766", "http://tauri.localhost", "http://127.0.0.1:5180"]) {
+      for (const href of [
+        "http://localhost:3000/dashboard",
+        "http://127.0.0.1:4173/login?next=/admin",
+        "http://localhost:3000/#/settings",
+        "http://[::1]:8080/code",
+      ]) {
+        expect(ideNavigationHash(href, self), `${href} from ${self}`).toBeNull();
+        expect(externalHttpUrl(href, self), `${href} from ${self}`).toBe(new URL(href).href);
+      }
+    }
+  });
+
+  it("keeps Navin's own loopback links in the app", () => {
+    expect(ideNavigationHash("http://localhost:8766/#/crm", "http://tauri.localhost")).toBe("#/crm");
+    expect(ideNavigationHash("http://127.0.0.1:5180/#/code", "http://127.0.0.1:5180")).toBe("#/code");
+    expect(ideNavigationHash("http://127.0.0.1:5180/notes", "http://127.0.0.1:5180")).toBe("#/notes");
+  });
+
+  it("never turns an unknown hash or path into a route", () => {
+    for (const href of ["#section", "#/dashboard", "#user-content-fn-1", "#/chat/", "#"]) {
+      expect(ideNavigationHash(href, "http://127.0.0.1:8766"), href).toBeNull();
+    }
+    expect(ideNavigationHash("/dashboard", "http://127.0.0.1:8766")).toBeNull();
+    expect(ideNavigationHash("http://127.0.0.1:8766/#intro", "http://127.0.0.1:8766")).toBeNull();
+    expect(ideNavigationHash("tauri://localhost/#/nowhere", "http://tauri.localhost")).toBeNull();
+    expect(isIdeRouteHash("#/")).toBe(true);
+    expect(isIdeRouteHash("#/tenders/abc")).toBe(true);
+    expect(isIdeRouteHash("#/codex")).toBe(false);
+  });
+
+  it("knows every screen the app router serves", () => {
+    // Kept in step with readShellRoute: a route missing here would open in the
+    // browser, a route kept here after it left the router would open Code.
+    const app = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../App.tsx"), "utf8");
+    const body = app.slice(app.indexOf("function readShellRoute"), app.indexOf("function shellRouteHash"));
+    const exact = [...body.matchAll(/path === "(\/[a-z-]+)"/g)].map((match) => match[1]);
+    const prefixes = [...body.matchAll(/path\.startsWith\("(\/[a-z-]+\/)"\)/g)].map((match) => match[1]);
+    const legacy = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "code-panel-route.ts"), "utf8");
+    const legacyBody = legacy.slice(legacy.indexOf("export function legacyCodePanelForPath"));
+    const legacyPaths = [...legacyBody.slice(0, legacyBody.indexOf("\n}")).matchAll(/path === "(\/[a-z-]+)"/g)]
+      .map((match) => match[1]);
+    expect(exact.length).toBeGreaterThan(20);
+    expect(prefixes).toEqual(expect.arrayContaining(["/chat/", "/tenders/", "/crm/"]));
+    expect(legacyPaths).toEqual(["/project", "/home", "/templates", "/evolve"]);
+    for (const path of [...exact, ...legacyPaths].filter((item) => item !== "/")) {
+      expect(isIdeRouteHash(`#${path}`), path).toBe(true);
+    }
+    for (const prefix of prefixes) {
+      expect(isIdeRouteHash(`#${prefix}x`), prefix).toBe(true);
+    }
+  });
 });
 
 describe("attachmentDownloadUrl", () => {
@@ -335,6 +397,27 @@ describe("hrefActionFromClick", () => {
 
   it("never intercepts a blob: download anchor", () => {
     expect(click("blob:http://127.0.0.1:5173/abc", "deck.json")).toBeNull();
+  });
+
+  it("opens a localhost project link in the browser from the chat", () => {
+    expect(click("http://localhost:3000/dashboard")).toEqual({
+      kind: "external",
+      href: "http://localhost:3000/dashboard",
+    });
+    expect(click("https://github.com/Navinspire-ia/navin")).toEqual({
+      kind: "external",
+      href: "https://github.com/Navinspire-ia/navin",
+    });
+  });
+
+  it("scrolls to an in-page anchor instead of changing the route", () => {
+    expect(click("#user-content-fn-1")).toEqual({ kind: "anchor", id: "user-content-fn-1" });
+    expect(click("#r%C3%A9sum%C3%A9")).toEqual({ kind: "anchor", id: "résumé" });
+    expect(click("#100%")).toEqual({ kind: "anchor", id: "100%" });
+    expect(click("#/settings?section=channels")).toEqual({
+      kind: "internal",
+      hash: "#/settings?section=channels",
+    });
   });
 
   it("never intercepts data: or javascript: anchors", () => {

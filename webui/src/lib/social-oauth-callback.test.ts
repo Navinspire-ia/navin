@@ -12,14 +12,14 @@ const prod = { protocol: "https:", hostname: "desk.navin.live", port: "", host: 
 describe("ideOauthCallbackUrl", () => {
   it("never uses the Vite :5173 origin", () => {
     expect(ideOauthCallbackUrl("reddit", { location: vite })).toBe(
-      `http://127.0.0.1:8766${OAUTH_CALLBACK_PATH}`,
+      `http://localhost:8766${OAUTH_CALLBACK_PATH}`,
     );
     expect(ideOauthCallbackUrl("instagram", { location: vite })).toBe("");
   });
 
-  it("uses the local IDE gateway when the page is already that origin", () => {
+  it("names the local IDE gateway localhost, never a raw IP", () => {
     expect(ideOauthCallbackUrl("reddit", { location: ide })).toBe(
-      `http://127.0.0.1:8766${OAUTH_CALLBACK_PATH}`,
+      `http://localhost:8766${OAUTH_CALLBACK_PATH}`,
     );
   });
 
@@ -39,9 +39,9 @@ describe("ideOauthCallbackUrl", () => {
     expect(
       ideOauthCallbackUrl("reddit", {
         location: vite,
-        saved: `http://127.0.0.1:8766${OAUTH_CALLBACK_PATH}`,
+        saved: `http://localhost:8766${OAUTH_CALLBACK_PATH}`,
       }),
-    ).toBe(`http://127.0.0.1:8766${OAUTH_CALLBACK_PATH}`);
+    ).toBe(`http://localhost:8766${OAUTH_CALLBACK_PATH}`);
     expect(
       ideOauthCallbackUrl("instagram", {
         location: vite,

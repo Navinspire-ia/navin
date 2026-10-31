@@ -11,6 +11,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { fetchExecPolicy, updateExecPolicy } from "@/lib/api";
@@ -53,21 +56,11 @@ const MODES: Array<{
 ];
 
 /**
- * The confirmation posture, visible where the work starts instead of three
- * levels deep in Settings, so nobody grants the same right turn after turn
- * without knowing a mode exists.
+ * The confirmation posture read from and saved to the gateway. Shared by the
+ * toolbar menu and the narrow composer's More menu, so only the one on screen
+ * fetches it. `mode` stays null until the gateway answered: no guessed value.
  */
-export function ComposerPermissionMenu({
-  disabled,
-  compact = false,
-  iconOnly = false,
-}: {
-  disabled?: boolean;
-  compact?: boolean;
-  /** Icon alone in the toolbar (the mode's name is the tooltip); the list keeps icon and text. */
-  iconOnly?: boolean;
-}) {
-  const { t } = useTranslation();
+export function useExecApprovalMode() {
   const { token } = useClient();
   const [mode, setMode] = useState<ExecApprovalMode | null>(null);
   const [saving, setSaving] = useState(false);
@@ -99,6 +92,109 @@ export function ComposerPermissionMenu({
     [mode, token],
   );
 
+  return { mode, saving, choose };
+}
+
+export type ExecApprovalModeState = ReturnType<typeof useExecApprovalMode>;
+
+function PermissionItems({
+  mode,
+  choose,
+}: {
+  mode: ExecApprovalMode;
+  choose: (next: ExecApprovalMode) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {MODES.map((item) => {
+        const ItemIcon = item.icon;
+        const selected = item.mode === mode;
+        return (
+          <DropdownMenuItem
+            key={item.mode}
+            data-testid={`composer-permission-${item.mode}`}
+            onPointerDown={(event) => commitOnPointerDown(event, () => choose(item.mode))}
+            onSelect={() => commitOnSelect(() => choose(item.mode))}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px]",
+              selected && "bg-foreground/[0.06]",
+            )}
+          >
+            <ItemIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium">
+                {t(item.labelKey, { defaultValue: item.labelDefault })}
+              </span>
+              <span className="block text-[11.5px] text-muted-foreground">
+                {t(item.hintKey, { defaultValue: item.hintDefault })}
+              </span>
+            </span>
+            {selected ? (
+              <Check className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+            ) : (
+              <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            )}
+          </DropdownMenuItem>
+        );
+      })}
+    </>
+  );
+}
+
+/** The same choice as a submenu row, for the narrow composer's More menu. */
+export function ComposerPermissionSubmenu({
+  state,
+  disabled,
+}: {
+  state: ExecApprovalModeState;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const { mode, saving, choose } = state;
+  if (!mode) return null;
+  const current = MODES.find((item) => item.mode === mode) ?? MODES[0];
+  const Icon = current.icon;
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger
+        disabled={disabled || saving}
+        data-testid="composer-tools-permission"
+        className="gap-2 text-[13px]"
+      >
+        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">
+          {t("thread.composer.permission.aria", { defaultValue: "Permissions" })}
+        </span>
+        <span className="max-w-[7rem] truncate text-[12px] text-muted-foreground">
+          {t(current.labelKey, { defaultValue: current.labelDefault })}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="min-w-[13rem] p-1">
+        <PermissionItems mode={mode} choose={choose} />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+/**
+ * The confirmation posture, visible where the work starts instead of three
+ * levels deep in Settings, so nobody grants the same right turn after turn
+ * without knowing a mode exists.
+ */
+export function ComposerPermissionMenu({
+  disabled,
+  compact = false,
+  iconOnly = false,
+}: {
+  disabled?: boolean;
+  compact?: boolean;
+  /** Icon alone in the toolbar (the mode's name is the tooltip); the list keeps icon and text. */
+  iconOnly?: boolean;
+}) {
+  const { t } = useTranslation();
+  const { mode, saving, choose } = useExecApprovalMode();
+
   if (!mode) return null;
   const current = MODES.find((item) => item.mode === mode) ?? MODES[0];
   const Icon = current.icon;
@@ -126,37 +222,7 @@ export function ComposerPermissionMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={iconOnly ? "end" : "start"} sideOffset={6} className="min-w-[13rem] p-1">
-        {MODES.map((item) => {
-          const ItemIcon = item.icon;
-          const selected = item.mode === mode;
-          return (
-            <DropdownMenuItem
-              key={item.mode}
-              data-testid={`composer-permission-${item.mode}`}
-              onPointerDown={(event) => commitOnPointerDown(event, () => choose(item.mode))}
-              onSelect={() => commitOnSelect(() => choose(item.mode))}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px]",
-                selected && "bg-foreground/[0.06]",
-              )}
-            >
-              <ItemIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium">
-                  {t(item.labelKey, { defaultValue: item.labelDefault })}
-                </span>
-                <span className="block text-[11.5px] text-muted-foreground">
-                  {t(item.hintKey, { defaultValue: item.hintDefault })}
-                </span>
-              </span>
-              {selected ? (
-                <Check className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
-              ) : (
-                <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              )}
-            </DropdownMenuItem>
-          );
-        })}
+        <PermissionItems mode={mode} choose={choose} />
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -2755,6 +2755,8 @@ export async function fetchSettingsUsage(
   );
 }
 
+export type UpdateChannel = "stable" | "beta" | "enterprise";
+
 export interface UpdateInfo {
   currentVersion: string;
   latestVersion?: string;
@@ -2762,7 +2764,9 @@ export interface UpdateInfo {
   configured: boolean;
   supported?: boolean;
   installKind: string;
-  channel: "stable" | "beta";
+  channel: UpdateChannel;
+  /** The running version was withdrawn: this is the signed build to go back to. */
+  rollback?: boolean;
   notes?: string;
   mandatory?: boolean;
   /** Why this install cannot replace itself, when `supported` is false. */
@@ -2785,6 +2789,10 @@ export interface UpdateStatus extends Partial<UpdateInfo> {
   phase?: "preparing" | "restarting";
   error?: string | null;
   update?: UpdateInfo;
+  /** Who installs this format: the desktop shell (Tauri), Navin, or the user. */
+  strategy?: { installKind: string; engine: "tauri" | "navin" | "manual" | string; mode: string };
+  /** Layout version of the local data (~/.navin), only ever goes up. */
+  dataVersion?: number;
 }
 
 export async function checkVersion(
@@ -2872,22 +2880,45 @@ export async function downloadAndInstallUpdate(
   return status;
 }
 
+export interface UpdateHistoryEntry {
+  /** Seconds since the epoch. */
+  at: number;
+  event: "checked" | "downloaded" | "installing" | "installed" | "rollback" | "error" | string;
+  version: string;
+  /** "navin" (built-in engine) or "tauri" (desktop shell updater). */
+  engine: string;
+  ok: boolean;
+  detail: string;
+}
+
+export async function fetchUpdateHistory(
+  token: string,
+  limit: number = 20,
+  base: string = "",
+): Promise<{ history: UpdateHistoryEntry[]; status: UpdateStatus }> {
+  return request(`${base}/api/settings/update-history?limit=${limit}`, token, undefined, 15_000);
+}
+
 export async function updatePreferences(
   token: string,
   values: {
     autoCheck?: boolean;
-    channel?: "stable" | "beta";
+    autoInstall?: boolean;
+    channel?: UpdateChannel;
     skippedVersion?: string;
   },
   base: string = "",
 ): Promise<{
   autoCheck: boolean;
-  channel: "stable" | "beta";
+  autoInstall: boolean;
+  channel: UpdateChannel;
   skippedVersion: string;
 }> {
   const params = new URLSearchParams();
   if (values.autoCheck !== undefined)
     params.set("autoCheck", String(values.autoCheck));
+  if (values.autoInstall !== undefined)
+    params.set("autoInstall", String(values.autoInstall));
   if (values.channel) params.set("channel", values.channel);
   if (values.skippedVersion !== undefined)
     params.set("skippedVersion", values.skippedVersion);
@@ -7201,6 +7232,7 @@ export async function updateSettings(
   if (update.toolHintMaxLength !== undefined) {
     query.set("tool_hint_max_length", String(update.toolHintMaxLength));
   }
+  if (update.testingDepth !== undefined) query.set("testing_depth", update.testingDepth);
   if (update.browserHeadless !== undefined) {
     query.set("browser_headless", String(update.browserHeadless));
   }

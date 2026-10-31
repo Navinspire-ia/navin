@@ -161,7 +161,7 @@ export function SocialOauthSetup({
           onChange={(event) => setRedirectUri(event.target.value)}
           placeholder={
             feature.name === "reddit"
-              ? "http://127.0.0.1:8766/api/marketing/oauth/callback"
+              ? "http://localhost:8766/api/marketing/oauth/callback"
               : "https://ton-domaine/api/marketing/oauth/callback"
           }
           className="h-9"

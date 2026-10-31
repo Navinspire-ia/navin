@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -137,16 +138,20 @@ def _node_field(node: Any, name: str) -> Any:
     return getattr(node, name, None)
 
 
+# Hosts that mean "this machine". OAuth callbacks always name them ``localhost``:
+# several providers (Google web clients, Meta, LinkedIn, Slack...) refuse a raw
+# IP address such as 127.0.0.1 in a registered redirect URI.
+LOOPBACK_HOSTS = frozenset({"", "0.0.0.0", "::", "[::]", "127.0.0.1", "localhost", "::1", "[::1]"})
+
+
 def ide_gateway_origin(config: Any | None = None) -> str:
-    """HTTP origin of the local IDE gateway (not the Vite :5173 proxy)."""
+    """HTTP origin of the local IDE gateway (not the Vite :5173 proxy), named ``localhost``."""
     from navin.config.loader import load_config
 
     websocket = _node_field(_node_field(config or load_config(), "channels"), "websocket")
-    host = str(_node_field(websocket, "host") or "127.0.0.1").strip()
-    if host in {"0.0.0.0", "::", "[::]", ""}:
-        host = "127.0.0.1"
-    elif host == "localhost":
-        host = "127.0.0.1"
+    host = str(_node_field(websocket, "host") or "localhost").strip()
+    if host.lower() in LOOPBACK_HOSTS:
+        host = "localhost"
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     try:
@@ -154,6 +159,23 @@ def ide_gateway_origin(config: Any | None = None) -> str:
     except (TypeError, ValueError):
         port = 8765
     return f"http://{host}:{port}"
+
+
+def loopback_callback(saved: str, callback_path: str, *, config: Any | None = None) -> str:
+    """Upgrade a callback Navin filled itself with ``127.0.0.1`` to the ``localhost`` default.
+
+    Older builds wrote ``http://127.0.0.1:<gateway port><path>`` into the book
+    on the first Connect. Only that exact value is rewritten; any other
+    address the user typed is kept as is.
+    """
+    value = str(saved or "").strip()
+    if not value.startswith("http://127.0.0.1:"):
+        return value
+    current = ide_gateway_origin(config) + callback_path
+    if not current.startswith("http://localhost:"):
+        return value
+    legacy = "http://127.0.0.1:" + current[len("http://localhost:"):]
+    return current if value == legacy else value
 
 
 def public_install_origin(store: MarketingStore) -> str:
@@ -167,7 +189,7 @@ def public_install_origin(store: MarketingStore) -> str:
 def suggested_redirect_uri(store: MarketingStore, provider: str, *, config: Any | None = None) -> str:
     """Callback to register: public HTTPS install, else the IDE gateway for Reddit."""
     provider = _provider(provider)
-    saved = str(_book(store).get(provider, {}).get("redirect_uri") or "").strip()
+    saved = loopback_callback(str(_book(store).get(provider, {}).get("redirect_uri") or ""), CALLBACK_PATH, config=config)
     if saved:
         return saved
     public = public_install_origin(store)
@@ -221,7 +243,7 @@ def connection_status(store: MarketingStore, provider: str) -> dict[str, Any]:
     status = str(row.get("status") or "not_connected")
     env_id, env_secret = env_app_credentials(provider)
     client_id = str(row.get("client_id") or env_id or "")
-    redirect_uri = str(row.get("redirect_uri") or "") or suggested_redirect_uri(store, provider)
+    redirect_uri = loopback_callback(str(row.get("redirect_uri") or ""), CALLBACK_PATH) or suggested_redirect_uri(store, provider)
     secret_set = bool(store.get_secret(f"{provider}_client_secret") or env_secret)
     if status == "connected" and not token_present:
         status = "not_connected"
@@ -279,7 +301,8 @@ def start_connection(
         if env_secret and not store.get_secret(f"{provider}_client_secret"):
             store.save_secret(f"{provider}_client_secret", env_secret)
         redirect_uri = _valid_redirect(
-            str(config.get("redirect_uri") or "") or suggested_redirect_uri(store, provider),
+            loopback_callback(str(config.get("redirect_uri") or ""), CALLBACK_PATH)
+            or suggested_redirect_uri(store, provider),
             provider,
         )
         if client_id != config.get("client_id") or redirect_uri != config.get("redirect_uri"):
@@ -317,6 +340,41 @@ def start_connection(
         cookie_header += "; Secure"
     return {"provider": provider, "authorization_url": _AUTH_URLS[provider] + "?" + urllib.parse.urlencode(params),
             "expires_at": now + STATE_TTL, "_set_cookie": cookie_header}
+
+
+HOP_PARAM = "navin_hop"
+HOP_TTL = 120
+_hops: dict[str, dict[str, Any]] = {}
+_hops_lock = threading.Lock()
+
+
+def browser_hop(cookie_header: str, authorization_url: str, redirect_uri: str) -> str:
+    """One-use first stop on the callback origin that plants the state cookie there.
+
+    The page may run on ``127.0.0.1`` while the callback says ``localhost``:
+    a cookie set by the page would never reach the callback. The browser
+    instead opens this hop on the callback origin, which sets the cookie and
+    sends it on to the provider.
+    """
+    parsed = urllib.parse.urlsplit(redirect_uri)
+    ticket = secrets.token_urlsafe(32)
+    now = time.time()
+    with _hops_lock:
+        for key in [key for key, hop in _hops.items() if hop["expires_at"] <= now]:
+            _hops.pop(key, None)
+        if len(_hops) >= 12:
+            raise MarketingError("Too many pending connections; finish one or wait two minutes", status=429)
+        _hops[_digest(ticket)] = {"cookie": cookie_header, "url": authorization_url, "expires_at": now + HOP_TTL}
+    return f"{parsed.scheme}://{parsed.netloc}{CALLBACK_PATH}?" + urllib.parse.urlencode({HOP_PARAM: ticket})
+
+
+def redeem_hop(ticket: str) -> tuple[str, str]:
+    """``(Set-Cookie header, provider authorization URL)`` of a hop, usable once."""
+    with _hops_lock:
+        hop = _hops.pop(_digest(str(ticket or "")), None)
+    if not hop or hop["expires_at"] <= time.time():
+        raise MarketingError("Authorization expired or already used; reconnect from Settings > Channels", status=400)
+    return hop["cookie"], hop["url"]
 
 
 def _token_form(store: MarketingStore, provider: str, config: Mapping[str, Any], **fields: str) -> tuple[dict[str, Any], dict[str, str]]:

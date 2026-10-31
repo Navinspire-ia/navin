@@ -3,26 +3,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { OPEN_SETTINGS_DIALOG_EVENT } from "@/lib/settings-events";
 import { resetMenuChoiceForTests } from "./menuChoice";
+import { ComposerToolsMenu } from "./ComposerToolsMenu";
 import { ThreadComposer, type ComposerTeamMode } from "./ThreadComposer";
 
 const mock = vi.hoisted(() => ({
   t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key,
+  token: null as string | null,
+  fetchExecPolicy: vi.fn(async () => ({ approval_mode: "risky" as const })),
+  updateExecPolicy: vi.fn(async (_token: string, state: { approval_mode?: string }) => state),
 }));
 vi.mock("react-i18next", async (importOriginal) => ({
   ...await importOriginal<typeof import("react-i18next")>(),
   useTranslation: () => ({ t: mock.t, i18n: { language: "en" } }),
 }));
-vi.mock("@/providers/ClientProvider", () => ({ useClient: () => ({ token: null }) }));
+vi.mock("@/providers/ClientProvider", () => ({ useClient: () => ({ token: mock.token }) }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/api")>(),
+  fetchExecPolicy: mock.fetchExecPolicy,
+  updateExecPolicy: mock.updateExecPolicy,
+}));
 
 beforeEach(() => {
   window.localStorage.clear();
   window.location.hash = "#/code?chat=websocket%3Ademo";
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
+  mock.token = null;
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+/** Records the sections the composer asks to open in the settings window. */
+function captureSettingsDialog(): () => string[] {
+  const seen: string[] = [];
+  const listener = (event: Event) => seen.push((event as CustomEvent<{ section: string }>).detail.section);
+  window.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, listener);
+  onTestFinished(() => window.removeEventListener(OPEN_SETTINGS_DIALOG_EVENT, listener));
+  return () => [...seen];
+}
 
 function enter(content: string) {
   const input = screen.getByRole("textbox", { name: "thread.composer.inputAria" });
@@ -116,21 +136,28 @@ describe("configuration commands in the chat composer", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("opens the channels and app connectors from the Connector button without sending", () => {
+  it("opens the channels and app connectors in a window from the Connector button without sending", () => {
     const send = vi.fn();
+    const opened = captureSettingsDialog();
     render(<ThreadComposer onSend={send} sessionKey="websocket:demo" turnMode="agent" />);
     const button = screen.getByRole("button", { name: "Connector" });
+    // An icon like its neighbours: the word is gone from the chat, the name stays for screen readers.
+    expect(button.textContent).toBe("");
     expect(button.getAttribute("title")).toBe("Connect apps the agent can use");
     fireEvent.click(button);
-    expect(window.location.hash).toBe("#/settings?chat=websocket%3Ademo&section=channels");
+    // A window over the chat: no trip to the Settings page.
+    expect(opened()).toEqual(["channels"]);
+    expect(window.location.hash).toBe("#/code?chat=websocket%3Ademo");
     expect(send).not.toHaveBeenCalled();
   });
 
   it("disables the Connector button with the composer", () => {
+    const opened = captureSettingsDialog();
     render(<ThreadComposer onSend={vi.fn()} disabled />);
     const button = screen.getByRole("button", { name: "Connector" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);
+    expect(opened()).toEqual([]);
     expect(window.location.hash).toBe("#/code?chat=websocket%3Ademo");
   });
 
@@ -259,19 +286,178 @@ describe("messages typed while the agent works", () => {
     expect(screen.queryByTestId("composer-queue-add")).toBeNull();
   });
 
-  it("keeps the 'agent working' hint short in every language, so it fits one line", () => {
-    // A long hint wrapped in a narrow chat column, the empty composer grew a
-    // line, and the chat jumped at every first key and every queued message.
-    const locales = import.meta.glob<{ thread: { composer: { placeholderStreaming: string } } }>(
+  it("shows no text inside the box while the agent works", () => {
+    const { rerender } = render(<ThreadComposer onSend={vi.fn()} onStop={vi.fn()} isStreaming />);
+    const box = () => screen.getByRole("textbox", { name: "thread.composer.inputAria" }) as HTMLTextAreaElement;
+    expect(box().placeholder).toBe("");
+    rerender(<ThreadComposer onSend={vi.fn()} onStop={vi.fn()} isStreaming placeholder="Ask anything" />);
+    expect(box().placeholder).toBe("");
+    // Once the turn ends the usual prompt comes back.
+    rerender(<ThreadComposer onSend={vi.fn()} onStop={vi.fn()} placeholder="Ask anything" />);
+    expect(box().placeholder).toBe("Ask anything");
+  });
+
+  it("no language keeps the old 'agent working' hint", () => {
+    const locales = import.meta.glob<{ thread: { composer: Record<string, string> } }>(
       "../../i18n/locales/*/common.json",
       { eager: true, import: "default" },
     );
     const entries = Object.entries(locales);
     expect(entries.length).toBeGreaterThanOrEqual(10);
     for (const [file, json] of entries) {
-      const hint = json.thread.composer.placeholderStreaming;
-      expect(hint.length, file).toBeLessThanOrEqual(56);
-      expect(hint, file).toMatch(/Alt\+/);
+      expect(json.thread.composer, file).not.toHaveProperty("placeholderStreaming");
     }
+  });
+});
+
+describe("narrow composer toolbar", () => {
+  const TEMPLATE = { category: "ppt", name: "pitch", title: "Pitch deck", item_count: 8 };
+  let restoreWidth: (() => void) | null = null;
+
+  function composerWidth(width: number) {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => width });
+    restoreWidth = () => {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    };
+  }
+
+  beforeEach(() => resetMenuChoiceForTests());
+  afterEach(() => {
+    restoreWidth?.();
+    restoreWidth = null;
+  });
+
+  function renderComposer(props: Partial<Parameters<typeof ThreadComposer>[0]> = {}) {
+    const handlers = {
+      onSend: vi.fn(),
+      onTurnModeChange: vi.fn(),
+      onOpenTeam: vi.fn(),
+      onSelectDocumentTemplate: vi.fn(),
+    };
+    render(
+      <ThreadComposer
+        onSend={handlers.onSend}
+        onSelectDocumentTemplate={handlers.onSelectDocumentTemplate}
+        onStop={vi.fn()}
+        sessionKey="websocket:demo"
+        turnMode="agent"
+        onTurnModeChange={handlers.onTurnModeChange}
+        modelLabel="GLM 5.2"
+        modelOptions={[
+          { name: "glm", label: "GLM 5.2", model: "z-ai/glm-5.2", provider: "zai", active: true },
+        ]}
+        onModelSelect={vi.fn()}
+        effortValue="high"
+        effortOptions={["low", "medium", "high"]}
+        onEffortSelect={vi.fn()}
+        contextWindowValue={200_000}
+        onContextWindowSelect={vi.fn()}
+        onTranscribeAudio={vi.fn(async () => "")}
+        documentTemplates={[TEMPLATE]}
+        teamMode={{
+          enabled: true,
+          teamId: "dev",
+          teams: [{ id: "dev", name: "Dev" }],
+          members: [{ name: "Mark", avatar: "bot", color: "#1d6af0" }],
+          onToggle: vi.fn(),
+          onSelectTeam: vi.fn(),
+          onOpenTeam: handlers.onOpenTeam,
+        }}
+        {...props}
+      />,
+    );
+    return handlers;
+  }
+
+  async function openMore() {
+    const trigger = screen.getByRole("button", { name: "More options" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    return screen.findByRole("menu");
+  }
+
+  it("keeps the model, effort, context and send on the row and moves the rest to More", () => {
+    composerWidth(480);
+    renderComposer();
+    expect(screen.getByRole("button", { name: "Choose model" }).textContent).toContain("GLM 5.2");
+    expect(screen.getByRole("button", { name: "Choose thinking effort" })).toBeTruthy();
+    expect(screen.getByTestId("composer-context-picker").textContent).toContain("200K");
+    expect(screen.getByRole("button", { name: "thread.composer.send" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "More options" })).toBeTruthy();
+    // Everything else left the row.
+    expect(screen.queryByRole("button", { name: "Turn mode" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "thread.composer.attachImage" })).toBeNull();
+    expect(screen.queryByTestId("composer-connectors")).toBeNull();
+    expect(screen.queryByTestId("document-template-picker-button")).toBeNull();
+    expect(screen.queryByTestId("composer-team-chip")).toBeNull();
+    expect(screen.queryByRole("button", { name: "thread.composer.tools.voice" })).toBeNull();
+  });
+
+  it("keeps the full row on a wide composer", () => {
+    composerWidth(900);
+    renderComposer();
+    expect(screen.getByRole("button", { name: "Turn mode" })).toBeTruthy();
+    expect(screen.getByTestId("composer-connectors")).toBeTruthy();
+    expect(screen.getByTestId("composer-team-chip")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "More options" })).toBeNull();
+  });
+
+  it("runs every moved control from the More menu", async () => {
+    composerWidth(480);
+    const { onTurnModeChange, onOpenTeam, onSend, onSelectDocumentTemplate } = renderComposer();
+
+    await openMore();
+    expect(screen.getByTestId("composer-tools-attach").textContent).toContain("thread.composer.attachImage");
+    expect(screen.getByTestId("composer-tools-voice").textContent).toContain("thread.composer.tools.voice");
+    fireEvent.click(screen.getByTestId("composer-tools-team"));
+    expect(onOpenTeam).toHaveBeenCalledTimes(1);
+
+    await openMore();
+    fireEvent.click(screen.getByTestId("composer-tools-mode"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Plan" }));
+    expect(onTurnModeChange).toHaveBeenCalledWith("plan");
+
+    await openMore();
+    fireEvent.click(screen.getByTestId("composer-tools-template"));
+    expect(await screen.findByTestId("document-template-gallery")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("document-template-option-ppt-pitch"));
+    expect(onSelectDocumentTemplate).toHaveBeenCalledWith(TEMPLATE);
+    expect(screen.queryByTestId("document-template-gallery")).toBeNull();
+
+    await openMore();
+    const opened = captureSettingsDialog();
+    const connect = screen.getByTestId("composer-tools-connectors");
+    expect(connect.textContent).toBe("Connect apps");
+    fireEvent.click(connect);
+    expect(opened()).toEqual(["channels"]);
+    expect(window.location.hash).toBe("#/code?chat=websocket%3Ademo");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("queues from More while the agent works and keeps the row still while typing", async () => {
+    composerWidth(480);
+    renderComposer({ isStreaming: true });
+    const buttonsBefore = screen.getAllByRole("button").length;
+    fireEvent.change(screen.getByRole("textbox", { name: "thread.composer.inputAria" }), {
+      target: { value: "check the logs next" },
+    });
+    expect(screen.getAllByRole("button")).toHaveLength(buttonsBefore);
+    await openMore();
+    // The mode cannot change during a turn, like on the wide row.
+    expect(screen.getByTestId("composer-tools-mode").getAttribute("data-disabled")).not.toBeNull();
+    fireEvent.click(screen.getByTestId("composer-tools-queue"));
+    expect(await screen.findByTestId("composer-queue-list")).toBeTruthy();
+  });
+
+  it("changes the permissions from the More menu", async () => {
+    mock.token = "tok";
+    mock.updateExecPolicy.mockClear();
+    render(<ComposerToolsMenu mode="agent" onModeChange={vi.fn()} />);
+    await openMore();
+    const row = await screen.findByTestId("composer-tools-permission");
+    expect(row.textContent).toContain("Ask before deleting");
+    fireEvent.click(row);
+    fireEvent.click(await screen.findByTestId("composer-permission-always"));
+    expect(mock.updateExecPolicy).toHaveBeenCalledWith("tok", { approval_mode: "always" });
   });
 });

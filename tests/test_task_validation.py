@@ -878,3 +878,31 @@ def test_validation_reminders_have_a_total_cap_even_when_state_moves():
         state.edited({f"a{index}.py"}, require_tests=True)
         assert state.nudge() == 1, "every reminder looks new to the per-state cap"
     assert state.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES
+
+
+def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monkeypatch):
+    from navin.agent import code_validation as cv
+    from navin.quality.check_budget import budget_for
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "widgets.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_widgets.py").write_text("def test_a():\n    pass\n")
+    for name in ("clipboard", "paste", "menu"):
+        (tmp_path / "tests" / f"test_{name}.py").write_text("from pkg import widgets\n")
+
+    monkeypatch.setattr(cv, "current_budget", lambda: budget_for("essential"))
+    state = CodeValidationState(root=tmp_path)
+    state.edited({"pkg/widgets.py"}, require_tests=True)
+    missing = state.missing()
+    assert "one or two, listed below" in missing
+    assert "never the whole suite" in missing
+    assert "tests/test_widgets.py tests/test_clipboard.py" in missing
+    assert "test_paste.py" not in missing and "test_menu.py" not in missing
+
+    monkeypatch.setattr(cv, "current_budget", lambda: budget_for("thorough"))
+    state = CodeValidationState(root=tmp_path)
+    state.edited({"pkg/widgets.py"}, require_tests=True)
+    missing = state.missing()
+    assert "final delivery check" in missing
+    assert "test_paste.py" in missing and "test_menu.py" in missing

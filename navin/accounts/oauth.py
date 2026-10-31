@@ -123,8 +123,8 @@ def start(store: AccountStore, provider: str, permissions: dict[str, Any] | None
 
     server = HTTPServer(("127.0.0.1", 0), Callback)
     server.timeout = 1
-    host = "127.0.0.1" if provider == "google" else "localhost"
-    flow["redirect_uri"] = f"http://{host}:{server.server_port}/callback"
+    # Providers refuse raw IPs in redirect URIs: name the loopback "localhost".
+    flow["redirect_uri"] = f"http://localhost:{server.server_port}/callback"
     with _flow_lock:
         for old_id, old in list(_flows.items()):
             if old["expires_at"] < time.time():

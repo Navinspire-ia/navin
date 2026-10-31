@@ -52,7 +52,7 @@ INVALID = "navin-invalid-0000000000000000"
 # push protection flag these shapes even when every digit is zero.
 MAILCHIMP_KEY = "0" * 32 + "-us1"
 HUBSPOT_TOKEN = "pat-" + "na1-" + "-".join(["0" * 8, "0" * 4, "0" * 4, "0" * 4, "0" * 12])
-REDIRECT = "http://127.0.0.1:8765" + oauth.CALLBACK_PATH
+REDIRECT = "http://localhost:8765" + oauth.CALLBACK_PATH
 # Values that reach a real host for apps whose API lives on the customer's own domain.
 TENANT: dict[str, dict[str, str]] = {
     "agora": {"customerId": "navin-invalid"},

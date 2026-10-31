@@ -77,8 +77,8 @@ function respond(url: URL): unknown {
       base_url: "https://api.hubapi.com",
       oauth_app: {
         family: "hubspot", label: "HubSpot", client_id: "cid", has_secret: true, configured: true,
-        redirect_uri: "http://127.0.0.1:8765/api/connectors/oauth/callback",
-        suggested_redirect_uri: "http://127.0.0.1:8765/api/connectors/oauth/callback",
+        redirect_uri: "http://localhost:8765/api/connectors/oauth/callback",
+        suggested_redirect_uri: "http://localhost:8765/api/connectors/oauth/callback",
         app_url: "", services: ["hubspot"], scopes: [],
       },
       actions_page: { service: "hubspot", items: [], total: 0, page: 1, page_size: 10, pages: 1 },
@@ -93,8 +93,8 @@ function respond(url: URL): unknown {
       base_url: "https://slack.com/api",
       oauth_app: {
         family: "slack", label: "Slack", client_id: "cid", has_secret: true, configured: true,
-        redirect_uri: "http://127.0.0.1:8765/api/connectors/oauth/callback",
-        suggested_redirect_uri: "http://127.0.0.1:8765/api/connectors/oauth/callback",
+        redirect_uri: "http://localhost:8765/api/connectors/oauth/callback",
+        suggested_redirect_uri: "http://localhost:8765/api/connectors/oauth/callback",
         app_url: "https://api.slack.com/apps", services: ["slack", "slackbot"], scopes: ["chat:write"],
       },
       actions_page: { service: "slack", items: [], total: 0, page: 1, page_size: 10, pages: 1 },

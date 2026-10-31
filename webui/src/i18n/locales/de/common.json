@@ -879,7 +879,7 @@
     },
     "agiTab": "AGI",
     "teamTab": "Team",
-    "teamHint": "Team einrichten: öffnet Einstellungen > Team",
+    "teamHint": "Team einrichten: Teammitglieder, Modelle, Prompts, Tools und Skills",
     "channelsTab": "Kanäle",
     "reverseTab": "Reverse",
     "reverseNew": "NEU",
@@ -4136,6 +4136,9 @@
     "reload": "Neu laden"
   },
   "settings": {
+    "dialog": {
+      "description": "Änderungen werden sofort gespeichert. Schließen Sie dieses Fenster, um zu Ihrer Arbeit zurückzukehren."
+    },
     "picker": {
       "search": "Suchen oder Wert eingeben",
       "noResults": "Keine passenden Optionen.",
@@ -4179,7 +4182,12 @@
       "version": "Version",
       "viewLicenses": "Lizenzen anzeigen",
       "viewNavinLicense": "Lizenz anzeigen",
-      "website": "Website"
+      "website": "Website",
+      "autoInstall": "Automatisch installieren, wenn Navin inaktiv ist",
+      "autoInstallHint": "Updates werden im Hintergrund geladen und installiert, wenn kein Agent arbeitet. Einstellungen, Sitzungen und Erinnerungen bleiben erhalten.",
+      "channelStable": "Stabil",
+      "channelBeta": "Beta",
+      "channelEnterprise": "Enterprise"
     },
     "account": {
       "connectTimeout": "Die Anmeldung wurde nicht abgeschlossen. Führen Sie die Browser-Schritte aus (anmelden, dann connect), oder versuchen Sie es erneut.",
@@ -4686,7 +4694,10 @@
       "videoProvider": "Wählen Sie den provider, den generate_video verwendet (Veo über gemini, sora über OpenAI, hailuo über MiniMax).",
       "videoProviderStatus": "Die videoerzeugung nutzt provider-Zugangsdaten aus provider.",
       "webuiDefaultAccess": "Dies ist eine andere Einstellung als \"Auf workspace beschränken\".\nstandard-berechtigung: Der chat bleibt im gewählten Ordner, mit Bestätigung für riskante Aktionen.\nvollzugriff: Der agent kann überall auf diesem Rechner hin. Klicken Sie auf Speichern. Das gilt meist für neue chats. Ein bereits geöffneter chat behält seinen vorherigen modus.",
-      "webuiDefaultAccessNative": "Dies ist eine andere Einstellung als \"Auf workspace beschränken\".\nstandard-berechtigung: Der chat bleibt im gewählten Ordner, mit Bestätigung für riskante Aktionen.\nvollzugriff: Der agent kann überall auf diesem Mac hin. Klicken Sie auf Speichern. Das gilt meist für neue chats. Ein bereits geöffneter chat behält seinen vorherigen modus."
+      "webuiDefaultAccessNative": "Dies ist eine andere Einstellung als \"Auf workspace beschränken\".\nstandard-berechtigung: Der chat bleibt im gewählten Ordner, mit Bestätigung für riskante Aktionen.\nvollzugriff: Der agent kann überall auf diesem Mac hin. Klicken Sie auf Speichern. Das gilt meist für neue chats. Ein bereits geöffneter chat behält seinen vorherigen modus.",
+      "agentTestingEssential": "Ein oder zwei Tests pro Änderung: der nächstliegende Test und höchstens ein Integrationstest, einmal nach der letzten Änderung. Empfohlen.",
+      "agentTestingThorough": "Alle Tests zur Änderung, einschließlich Fehlerfällen. Langsamer: eine kleine Aufgabe kann mehr Zeit mit Tests als mit Code verbringen.",
+      "agentTestingError": "Diese Auswahl konnte nicht gespeichert werden."
     },
     "image": {
       "configureProvider": "provider konfigurieren",
@@ -5151,7 +5162,8 @@
       "videoSaveDir": "Speicherverzeichnis",
       "voiceLimits": "Limits",
       "webuiDefaultAccess": "Standardzugriff",
-      "workspacePath": "Standard-Arbeitsbereich"
+      "workspacePath": "Standard-Arbeitsbereich",
+      "agentTestingDepth": "Tests nach einer Änderung"
     },
     "sections": {
       "about": "Über",
@@ -5184,7 +5196,8 @@
       "webBehavior": "Verhalten",
       "webSearch": "Websuche",
       "webuiSafety": "Web-Sicherheit",
-      "semanticSearch": "Semantische Codesuche"
+      "semanticSearch": "Semantische Codesuche",
+      "agentTesting": "Agent-Tests"
     },
     "sidebar": {
       "ariaLabel": "Einstellungsbereiche",
@@ -5491,7 +5504,9 @@
       "restartPending": "Neustart ausstehend",
       "restartingEngine": "Neustart läuft",
       "summary": "Zusammenfassung",
-      "unixSocket": "Unix-Socket"
+      "unixSocket": "Unix-Socket",
+      "testingEssential": "Wesentlich",
+      "testingThorough": "Gründlich"
     },
     "video": {
       "configureProvider": "Provider konfigurieren",
@@ -6144,6 +6159,24 @@
       "modelSearch": "Modell suchen",
       "paneGeneral": "Allgemein",
       "panes": "Team-Einstellungen"
+    },
+    "updates": {
+      "historyTitle": "Update-Aktivität",
+      "historyEmpty": "Noch keine Update-Aktivität.",
+      "historyError": "Update-Aktivität konnte nicht geladen werden.",
+      "refresh": "Aktualisieren",
+      "installedBy": "Installiert von: {{engine}}",
+      "engineTauri": "Desktop-Updater",
+      "engineNavin": "Navin-Updater",
+      "engineManual": "Manuell",
+      "events": {
+        "checked": "Geprüft",
+        "downloaded": "Heruntergeladen",
+        "installing": "Wird installiert",
+        "installed": "Installiert",
+        "rollback": "Zurückgesetzt",
+        "error": "Fehlgeschlagen"
+      }
     }
   },
   "sidebar": {
@@ -9630,6 +9663,8 @@
       "attachImage": "Dateien anhängen",
       "connectors": "Konnektor",
       "connectorsHint": "Apps verbinden, die der Agent nutzen kann",
+      "connectApps": "Apps verbinden",
+      "moreTools": "Weitere Optionen",
       "budgetFilterNote": "Bei {{percent}}% Nutzung sind Opus 5+, Fable 5+ und GPT 5.6 pausiert. Weitere Modelle des Plans bleiben bis zur Verlängerung verfügbar.",
       "clearModelSearch": "Suche löschen",
       "configureModel": "Modell konfigurieren",
@@ -9742,7 +9777,6 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (automatisch)",
       "placeholderHero": "Fragen Sie alles...",
       "placeholderOpening": "Neuer Chat wird geöffnet…",
-      "placeholderStreaming": "Agent arbeitet. Enter reiht ein, Alt+Enter sendet sofort",
       "placeholderThread": "Nachricht eingeben…",
       "queued": {
         "add": "Nachricht für den nächsten Durchlauf einreihen (Enter). Alt+Enter sendet sie dem Agenten sofort.",

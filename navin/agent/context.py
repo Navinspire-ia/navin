@@ -237,11 +237,15 @@ class ContextBuilder:
         if style_section := _output_style_section(root):
             parts.append(style_section)
 
+        from navin.quality.check_budget import testing_depth
+
         parts.append(
             render_template(
                 "agent/tool_contract_slim.md"
                 if slim_skill_preload
-                else "agent/tool_contract.md"
+                else "agent/tool_contract.md",
+                # Settings > Advanced: essential (one or two tests) or thorough.
+                testing_depth=testing_depth(),
             )
         )
         if evidence_only:

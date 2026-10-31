@@ -3156,16 +3156,27 @@ class GatewayHTTPHandler:
             context = self._studio_request_context("marketing", action, query, body)
         except ValueError as exc:
             return _http_error(400, str(exc))
+        hop_target = ""
         try:
             if action == "oauth-connect":
                 from urllib.parse import urlsplit
 
-                from navin.marketing.oauth import connection_status
+                from navin.marketing.oauth import LOOPBACK_HOSTS, connection_status
                 from navin.marketing.store import MarketingStore
 
                 target = connection_status(MarketingStore(), str(body.get("provider") or ""))["redirect_uri"]
                 host = _safe_host_header(_case_insensitive_header(request.headers, "Host"))
-                if target and urlsplit(target).netloc.lower() != host.lower():
+                wanted, page = urlsplit(target), urlsplit(f"//{host}")
+                try:
+                    same_port = wanted.port == page.port
+                except ValueError:
+                    same_port = False
+                # 127.0.0.1 page, localhost callback: same server, other cookie jar.
+                if (target and host and wanted.scheme == "http" and wanted.netloc.lower() != host.lower() and same_port
+                        and (wanted.hostname or "").lower() in LOOPBACK_HOSTS
+                        and (page.hostname or "").lower() in LOOPBACK_HOSTS):
+                    hop_target = target
+                elif target and wanted.netloc.lower() != host.lower():
                     origin = f"{urlsplit(target).scheme}://{urlsplit(target).netloc}"
                     return _http_error(
                         400,
@@ -3179,6 +3190,16 @@ class GatewayHTTPHandler:
             self._log.exception("marketing desk failed action={}", action)
             return _http_error(500, str(exc) or "marketing desk failed")
         cookie = (payload.get("oauth") or {}).pop("_set_cookie", "")
+        if cookie and hop_target and payload["oauth"].get("authorization_url"):
+            from navin.marketing.oauth import browser_hop
+
+            try:
+                payload["oauth"]["authorization_url"] = browser_hop(
+                    cookie, payload["oauth"]["authorization_url"], hop_target,
+                )
+            except MarketingError as exc:
+                return _http_error(exc.status, exc.message)
+            cookie = ""
         response = _http_json_response(payload)
         response.headers["Cache-Control"] = "no-store"
         if cookie:
@@ -3190,10 +3211,35 @@ class GatewayHTTPHandler:
         from urllib.parse import urlencode
 
         from navin.marketing.errors import MarketingError
-        from navin.marketing.oauth import CALLBACK_PATH, cookie_name, finish_connection
+        from navin.marketing.oauth import (
+            CALLBACK_PATH,
+            HOP_PARAM,
+            cookie_name,
+            finish_connection,
+            redeem_hop,
+        )
         from navin.marketing.store import MarketingStore
 
         query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
+        if HOP_PARAM in query:
+            # First stop on the callback origin: plant the state cookie, then go to the provider.
+            try:
+                cookie, authorization_url = redeem_hop(query[HOP_PARAM])
+            except MarketingError as exc:
+                return _http_response(
+                    b"", status=303,
+                    extra_headers=[
+                        ("Location", "/#/settings?section=channels&" + urlencode({"oauth_error": exc.message})),
+                        ("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer"),
+                    ],
+                )
+            return _http_response(
+                b"", status=303,
+                extra_headers=[
+                    ("Location", authorization_url), ("Set-Cookie", cookie),
+                    ("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer"),
+                ],
+            )
         destination = {"pane": "settings"}
         landing = ""
         try:

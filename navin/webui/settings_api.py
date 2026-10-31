@@ -2504,6 +2504,8 @@ def settings_payload(
             "bot_name": defaults.bot_name,
             "bot_icon": defaults.bot_icon,
             "tool_hint_max_length": defaults.tool_hint_max_length,
+            # Settings > Advanced > Agent tests: essential (1-2 tests) or thorough.
+            "testing_depth": defaults.testing_depth,
         },
         "model_presets": model_presets,
         "model_routes": dict(config.model_routes),
@@ -2747,6 +2749,7 @@ def settings_payload(
         "updates": {
             "enabled": config.updates.enabled,
             "autoCheck": config.updates.auto_check,
+            "autoInstall": config.updates.auto_install,
             "channel": config.updates.channel,
             "configured": updates_configured(),
             "skippedVersion": config.updates.skipped_version,
@@ -2914,6 +2917,17 @@ def update_agent_settings(query: QueryParams) -> dict[str, Any]:
         parsed_flag = _parse_bool(board_open_pr, "board_open_pr")
         if config.tools.board_git.open_pr_enabled != parsed_flag:
             config.tools.board_git.open_pr_enabled = parsed_flag
+            changed = True
+
+    # Settings > Advanced > Agent tests. Read at each validation step, so it
+    # applies to the next edit without a restart.
+    testing_depth = _query_first_alias(query, "testing_depth", "testingDepth")
+    if testing_depth is not None:
+        depth = testing_depth.strip().lower()
+        if depth not in {"essential", "thorough"}:
+            raise WebUISettingsError("testing_depth must be essential or thorough")
+        if defaults.testing_depth != depth:
+            defaults.testing_depth = depth
             changed = True
 
     # Forge tokens (Settings > Git): what makes Create PR work on GitHub,

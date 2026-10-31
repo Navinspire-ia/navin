@@ -2837,6 +2837,9 @@ class AgentLoop:
             external = recovery_session_key is None and recovery_channel == "websocket"
             if external:
                 await asyncio.to_thread(self._adopt_interrupted_turns)
+                # The gateway owns automatic updates: check at start and every
+                # 2 h, download in the background, install only while idle.
+                self._start_auto_update()
             recovered = await asyncio.to_thread(
                 self.turn_recovery.discover,
                 channel=recovery_channel, session_key=recovery_session_key, external=external,
@@ -4540,6 +4543,29 @@ class AgentLoop:
             if self.turn_recovery.adopt(session, request, started_at=float(at)):
                 adopted.append(key)
         return adopted
+
+    def _start_auto_update(self) -> None:
+        """Register what the update must wait for, then start its cycle.
+
+        A restart for an update waits until no turn, lock or subagent of this
+        loop is live and no background command runs (navin/update/activity).
+        """
+        from navin.agent.tool_demand import exec_sessions_are_open
+        from navin.update import activity
+        from navin.update.auto import start_auto_updater
+
+        activity.register_busy_probe("agents", lambda: len(self._busy_session_keys()))
+        activity.register_busy_probe("subagents", self.subagents.get_running_count)
+        activity.register_busy_probe("commands", lambda: int(exec_sessions_are_open()))
+        start_auto_updater(save_sessions=self.save_cached_sessions)
+
+    def save_cached_sessions(self) -> int:
+        """Write every session held in memory, before a restart. Returns the count."""
+        saved = 0
+        for session in self.sessions.cached_sessions():
+            self.sessions.save(session, fsync=True)
+            saved += 1
+        return saved
 
     _INTERRUPTED_TURN_NOTE = "This request was interrupted by a restart before it finished."
     _STOPPED_TURN_NOTE = "Stopped before a reply was produced."

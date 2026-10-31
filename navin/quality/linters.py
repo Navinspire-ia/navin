@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from navin.quality import wsl_route
-from navin.utils.proc import no_window_kwargs
+from navin.utils.proc import run_killing_tree
 from navin.utils.wsl import host_tool_path
 
 _TABLE_PATH = Path(__file__).with_name("linters.json")
@@ -639,7 +639,9 @@ def _finish_linter(
 
     started = time.monotonic()
     try:
-        completed = subprocess.run(  # noqa: S603
+        # The timeout must take the whole tree: `pyright` is a pip shim that
+        # starts node, and a plain subprocess.run left that node at 100% CPU.
+        completed = run_killing_tree(
             argv,
             cwd=cwd,
             capture_output=True,
@@ -647,7 +649,6 @@ def _finish_linter(
             encoding="utf-8",
             errors="replace",
             timeout=float(spec.get("timeout_s", 30)),
-            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         wsl_route.note_launch(argv, timed_out=True)

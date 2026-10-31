@@ -249,7 +249,7 @@ import { cn } from "@/lib/utils";
 import { requestCyberLaunch } from "@/lib/cyber-launch";
 import { requestReviewLaunch } from "@/lib/review-launch";
 import { requestReverseLaunch } from "@/lib/reverse-launch";
-import { openSettingsSection } from "@/lib/settings-events";
+import { openSettingsDialog } from "@/lib/settings-events";
 import { isDesktopShell } from "@/lib/desktop";
 import { shouldUseWindowOpenFallback } from "@/lib/external-url";
 import {
@@ -821,30 +821,44 @@ export function DevWorkbench({
       }),
     [currentRoot, environment, environmentDistro],
   );
-  const gitRefreshInFlight = useRef(false);
+  // In-flight guard and stale-answer filter are keyed by project + session.
+  // A single boolean used to skip the new project's first refresh while the
+  // old one was still running, then the old answers landed on the new
+  // project: its footer and Git counts showed another repository's branch.
+  const gitScopeKey = `${treeKey}|${gitRoot ?? ""}`;
+  const gitScopeKeyRef = useRef(gitScopeKey);
+  gitScopeKeyRef.current = gitScopeKey;
+  const gitRefreshInFlight = useRef<string | null>(null);
   const refreshGitStatus = useCallback(() => {
-    if (gitRefreshInFlight.current) return;
-    gitRefreshInFlight.current = true;
+    const scopeKey = `${treeKey}|${gitRoot ?? ""}`;
+    if (gitRefreshInFlight.current === scopeKey) return;
+    gitRefreshInFlight.current = scopeKey;
+    const current = () => gitScopeKeyRef.current === scopeKey;
+    const keep =
+      <T,>(set: (value: T) => void) =>
+      (value: T) => {
+        if (current()) set(value);
+      };
     const jobs: Promise<unknown>[] = [
       fetchContextUsage(tokenRef.current, treeKey)
-        .then(setContextUsage)
-        .catch(() => setContextUsage(null)),
+        .then(keep(setContextUsage))
+        .catch(() => keep(setContextUsage)(null)),
       fetchGithubChecks(tokenRef.current, treeKey)
-        .then(setCiStatus)
-        .catch(() => setCiStatus(null)),
+        .then(keep(setCiStatus))
+        .catch(() => keep(setCiStatus)(null)),
     ];
     if (gitRoot) {
       jobs.push(
         fetchGitStatus(tokenRef.current, gitRoot)
-          .then(setGitStatus)
-          .catch(() => setGitStatus(null)),
+          .then(keep(setGitStatus))
+          .catch(() => keep(setGitStatus)(null)),
         fetchGitChanges(tokenRef.current, treeKey)
-          .then(setGitChanges)
-          .catch(() => setGitChanges(null)),
+          .then(keep(setGitChanges))
+          .catch(() => keep(setGitChanges)(null)),
       );
     }
     void Promise.allSettled(jobs).finally(() => {
-      gitRefreshInFlight.current = false;
+      if (gitRefreshInFlight.current === scopeKey) gitRefreshInFlight.current = null;
     });
   }, [gitRoot, tokenRef, treeKey]);
 
@@ -5226,8 +5240,8 @@ export function DevWorkbench({
           {(
             [
               {
-                // Team launcher, right above Reverse: opens Settings > Team
-                // (teammates, models, prompts, tools and skills).
+                // Team launcher, right above Reverse: opens Team (teammates,
+                // models, prompts, tools and skills) in a window over Code.
                 key: "team",
                 icon: <UsersRound className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.teamTab", "Team"),
@@ -5235,11 +5249,11 @@ export function DevWorkbench({
                   text: tx("dev.reverseNew", "NEW"),
                   tone: "bg-amber-400/80",
                   dot: true,
-                  title: tx("dev.teamHint", "Set up your team: opens Settings > Team"),
+                  title: tx("dev.teamHint", "Set up your team: teammates, models, prompts, tools and skills"),
                 },
                 active: false,
                 keepLayout: true,
-                go: () => openSettingsSection("team"),
+                go: () => openSettingsDialog("team"),
               },
               {
                 // Cyber launcher, right above Reverse: switches the chat to the
@@ -5381,15 +5395,15 @@ export function DevWorkbench({
                 },
               },
               {
-                // Channels launcher, right under Browser: opens Settings >
-                // Channels (chat and social channels, app connectors), so it
-                // keeps the layout like Team.
+                // Channels launcher, right under Browser: opens Channels (chat
+                // and social channels, app connectors) in a window over Code,
+                // so it keeps the layout like Team.
                 key: "channels",
                 icon: <Radio className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.channelsTab", "Channels"),
                 active: false,
                 keepLayout: true,
-                go: () => openSettingsSection("channels"),
+                go: () => openSettingsDialog("channels"),
               },
               // Evolve lives under Other (overflowMenuItems): the rail keeps
               // the everyday modules only.
@@ -6649,6 +6663,9 @@ export function DevWorkbench({
           <PanelErrorBoundary>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <DevGitPanel
+                // Remount per project: no answer, selection, PR, CI, history
+                // or checkpoint list from the previous repository survives.
+                key={`${treeKey}|${currentRoot ?? ""}`}
                 token={token}
                 sessionKey={treeKey}
                 selectedPath={null}

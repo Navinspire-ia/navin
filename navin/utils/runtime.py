@@ -216,7 +216,26 @@ DELIVERY_CONTINUE_PROMPT = (
     "short outline. Do not describe what you plan to do - do it."
 )
 
+# Essential testing (the default, Settings > Advanced): one or two tests per
+# change. The old wording asked for happy path + failure cases + Preview after
+# every edit, and tasks spent more time testing than coding.
 VERIFY_BEFORE_DONE_CONTINUE_PROMPT = (
+    "You edited code but have not verified the current result yet. Validate it "
+    "with one or two tests, no more: the test file closest to the change (reuse "
+    "an existing one when it covers it) and, when the change crosses modules, one "
+    "integration test showing the feature works end to end without errors. Add a "
+    "test only for new behavior or a reported bug: one test, not a battery of "
+    "cases, and none for a text or style edit. Run them once after the last edit "
+    "(`verify action=check` runs the changed files' tests within that budget), "
+    "then the build of the unit you changed. Never the whole suite, never a green "
+    "test again without a new edit. A discovery call, a test still running or a "
+    "result from before the last edit is not validation. Do not install test "
+    "tooling or chase failures in files you did not change; name them in one "
+    "line. Continue without asking the user to resume."
+)
+
+# Thorough testing (opt-in): the broader validation Navin used before.
+VERIFY_BEFORE_DONE_THOROUGH_PROMPT = (
     "You edited code but have not verified the current result yet. Finish the "
     "accepted development task: add or adapt meaningful tests for the requested "
     "behavior, including the reported bug and relevant failure cases. Use "
@@ -611,6 +630,7 @@ def is_harness_nudge(content: object) -> bool:
         for prompt in (
             DELIVERY_CONTINUE_PROMPT,
             VERIFY_BEFORE_DONE_CONTINUE_PROMPT,
+            VERIFY_BEFORE_DONE_THOROUGH_PROMPT,
             VERIFY_FAILED_CONTINUE_PROMPT,
             NO_PROGRESS_CONTINUE_PROMPT,
             NO_ACTION_CONTINUE_PROMPT,
@@ -702,9 +722,24 @@ def build_delivery_continue_message(custom: str | None = None) -> dict[str, str]
     return {"role": "user", "content": custom or DELIVERY_CONTINUE_PROMPT}
 
 
-def build_verify_before_done_message(custom: str | None = None) -> dict[str, str]:
-    """Prompt the model to run verify/lint/tests before closing a Build turn."""
-    return {"role": "user", "content": custom or VERIFY_BEFORE_DONE_CONTINUE_PROMPT}
+def build_verify_before_done_message(
+    custom: str | None = None,
+    *,
+    depth: str | None = None,
+) -> dict[str, str]:
+    """Prompt the model to run verify/lint/tests before closing a Build turn.
+
+    ``depth``: "essential" (one or two tests) or "thorough"; None reads the
+    setting (Settings > Advanced > Agent tests).
+    """
+    if custom:
+        return {"role": "user", "content": custom}
+    if depth is None:
+        from navin.quality.check_budget import testing_depth
+
+        depth = testing_depth()
+    prompt = VERIFY_BEFORE_DONE_THOROUGH_PROMPT if depth == "thorough" else VERIFY_BEFORE_DONE_CONTINUE_PROMPT
+    return {"role": "user", "content": prompt}
 
 
 def build_verify_failed_message(

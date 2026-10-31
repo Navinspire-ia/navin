@@ -3979,6 +3979,9 @@
     "reload": "Reload"
   },
   "settings": {
+    "dialog": {
+      "description": "Endringer lagres med en gang. Lukk dette vinduet for å gå tilbake til arbeidet."
+    },
     "picker": {
       "search": "Search or enter a value",
       "noResults": "No matching options.",
@@ -4022,7 +4025,12 @@
       "version": "Version",
       "viewLicenses": "View licenses",
       "viewNavinLicense": "View license",
-      "website": "Website"
+      "website": "Website",
+      "autoInstall": "Installer automatisk når Navin er inaktiv",
+      "autoInstallHint": "Oppdateringer lastes ned i bakgrunnen og installeres når ingen agent jobber. Innstillinger, økter og minner beholdes.",
+      "channelStable": "Stabil",
+      "channelBeta": "Beta",
+      "channelEnterprise": "Enterprise"
     },
     "account": {
       "connectTimeout": "Sign-in did not finish. Complete the browser steps (sign in, then Connect), or try again.",
@@ -4515,7 +4523,10 @@
       "videoProvider": "Choose the provider used by generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).",
       "videoProviderStatus": "Video generation reuses provider credentials from Providers.",
       "webuiDefaultAccess": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this machine. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
-      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode."
+      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
+      "agentTestingEssential": "Én eller to tester per endring: den nærmeste testen og høyst én integrasjonstest, kjørt én gang etter siste endring. Anbefalt.",
+      "agentTestingThorough": "Alle tester knyttet til endringen, også feiltilfeller. Tregere: en liten oppgave kan bruke mer tid på testing enn på koding.",
+      "agentTestingError": "Kunne ikke lagre dette valget."
     },
     "image": {
       "configureProvider": "Configure provider",
@@ -4977,7 +4988,8 @@
       "videoSaveDir": "Save directory",
       "voiceLimits": "Limits",
       "webuiDefaultAccess": "Default access",
-      "workspacePath": "Default workspace"
+      "workspacePath": "Default workspace",
+      "agentTestingDepth": "Tester etter en endring"
     },
     "sections": {
       "about": "About",
@@ -5010,7 +5022,8 @@
       "webBehavior": "Behavior",
       "webSearch": "Web search",
       "webuiSafety": "Web safety",
-      "semanticSearch": "Semantic code search"
+      "semanticSearch": "Semantic code search",
+      "agentTesting": "Agenttester"
     },
     "sidebar": {
       "ariaLabel": "Settings sections",
@@ -5317,7 +5330,9 @@
       "restartPending": "Restart pending",
       "restartingEngine": "Restarting",
       "summary": "Summary",
-      "unixSocket": "Unix socket"
+      "unixSocket": "Unix socket",
+      "testingEssential": "Viktigste",
+      "testingThorough": "Grundig"
     },
     "video": {
       "configureProvider": "Configure provider",
@@ -5619,6 +5634,24 @@
       "save": "Save",
       "saveHint": "Applies to new semantic searches; the index rebuilds on the next query.",
       "saving": "Saving..."
+    },
+    "updates": {
+      "historyTitle": "Oppdateringsaktivitet",
+      "historyEmpty": "Ingen oppdateringsaktivitet ennå.",
+      "historyError": "Kunne ikke laste oppdateringsaktiviteten.",
+      "refresh": "Oppdater",
+      "installedBy": "Installeres av: {{engine}}",
+      "engineTauri": "Skrivebordsoppdatering",
+      "engineNavin": "Navin-oppdatering",
+      "engineManual": "Manuell",
+      "events": {
+        "checked": "Sjekket",
+        "downloaded": "Lastet ned",
+        "installing": "Installerer",
+        "installed": "Installert",
+        "rollback": "Rullet tilbake",
+        "error": "Mislyktes"
+      }
     }
   },
   "sidebar": {
@@ -9059,6 +9092,8 @@
       "attachImage": "Attach files",
       "connectors": "Kobling",
       "connectorsHint": "Koble til apper agenten kan bruke",
+      "connectApps": "Koble til apper",
+      "moreTools": "Flere valg",
       "budgetFilterNote": "At {{percent}}% usage, Opus 5+, Fable 5+ and GPT 5.6 are paused. Other plan models stay available until renewal.",
       "clearModelSearch": "Clear search",
       "configureModel": "Configure model",
@@ -9171,7 +9206,6 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Agenten jobber. Enter legger i kø, Alt+Enter sender nå",
       "placeholderThread": "Type your message…",
       "queued": {
         "add": "Legg denne meldingen i kø for neste runde (Enter). Alt+Enter sender den til agenten nå.",

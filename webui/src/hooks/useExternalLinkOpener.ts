@@ -25,6 +25,12 @@ export function useExternalLinkOpener(token: string): void {
         window.location.hash = action.hash;
         return;
       }
+      if (action.kind === "anchor") {
+        if (action.id) {
+          document.getElementById(action.id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+        return;
+      }
       if (action.kind === "external") {
         void openInOsBrowser(token, action.href);
         return;

@@ -879,7 +879,7 @@
     },
     "agiTab": "AGI",
     "teamTab": "Team",
-    "teamHint": "Configurer votre équipe : ouvre Paramètres > Team",
+    "teamHint": "Configurer votre équipe : coéquipiers, modèles, prompts, outils et skills",
     "channelsTab": "Canaux",
     "reverseTab": "Reverse",
     "reverseNew": "NOUVEAU",
@@ -4187,6 +4187,9 @@
     "reload": "Recharger"
   },
   "settings": {
+    "dialog": {
+      "description": "Les changements sont enregistrés tout de suite. Fermez cette fenêtre pour revenir à votre travail."
+    },
     "picker": {
       "search": "Rechercher ou saisir une valeur",
       "noResults": "Aucune option correspondante.",
@@ -4230,7 +4233,12 @@
       "version": "Version",
       "viewLicenses": "View licenses",
       "viewNavinLicense": "View license",
-      "website": "Website"
+      "website": "Website",
+      "autoInstall": "Installer automatiquement quand Navin est inactif",
+      "autoInstallHint": "Les mises à jour se téléchargent en arrière-plan et s'installent quand aucun agent ne travaille. Vos réglages, sessions et mémoires sont conservés.",
+      "channelStable": "Stable",
+      "channelBeta": "Bêta",
+      "channelEnterprise": "Entreprise"
     },
     "account": {
       "connectTimeout": "La connexion n'a pas abouti. Terminez les étapes dans le navigateur (connexion, puis Connecter), ou réessayez.",
@@ -4737,7 +4745,10 @@
       "videoProvider": "Choisissez le fournisseur utilisé par generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).",
       "videoProviderStatus": "La génération de vidéos réutilise les identifiants des fournisseurs.",
       "webuiDefaultAccess": "C'est un autre réglage que « Restreindre au projet ».\nPermission par défaut : le chat reste dans le dossier choisi, avec confirmation pour les actions risquées.\nAccès complet : il peut aller n'importe où sur cette machine. Cliquez sur Enregistrer. Cela s'applique surtout aux nouveaux chats. Un chat déjà ouvert garde son ancien mode.",
-      "webuiDefaultAccessNative": "C'est un autre réglage que « Restreindre au projet ».\nPermission par défaut : le chat reste dans le dossier choisi, avec confirmation pour les actions risquées.\nAccès complet : il peut aller n'importe où sur ce Mac. Cliquez sur Enregistrer. Cela s'applique surtout aux nouveaux chats. Un chat déjà ouvert garde son ancien mode."
+      "webuiDefaultAccessNative": "C'est un autre réglage que « Restreindre au projet ».\nPermission par défaut : le chat reste dans le dossier choisi, avec confirmation pour les actions risquées.\nAccès complet : il peut aller n'importe où sur ce Mac. Cliquez sur Enregistrer. Cela s'applique surtout aux nouveaux chats. Un chat déjà ouvert garde son ancien mode.",
+      "agentTestingEssential": "Un ou deux tests par modification : le test le plus proche et au plus un test d'intégration, lancés une fois après la dernière modification. Recommandé.",
+      "agentTestingThorough": "Tous les tests liés à la modification, cas d'échec compris. Plus lent : une petite tâche peut passer plus de temps à tester qu'à coder.",
+      "agentTestingError": "Impossible d'enregistrer ce choix."
     },
     "image": {
       "configureProvider": "Configurer le fournisseur",
@@ -5202,7 +5213,8 @@
       "videoSaveDir": "Dossier d’enregistrement",
       "voiceLimits": "Limites",
       "webuiDefaultAccess": "Accès par défaut",
-      "workspacePath": "Espace de travail par défaut"
+      "workspacePath": "Espace de travail par défaut",
+      "agentTestingDepth": "Tests après une modification"
     },
     "sections": {
       "about": "À propos",
@@ -5235,7 +5247,8 @@
       "webBehavior": "Comportement",
       "webSearch": "Recherche web",
       "webuiSafety": "Sécurité WebUI",
-      "semanticSearch": "Recherche de code semantique"
+      "semanticSearch": "Recherche de code semantique",
+      "agentTesting": "Tests de l'agent"
     },
     "sidebar": {
       "ariaLabel": "Sections des réglages",
@@ -5554,7 +5567,9 @@
       "restartPending": "Redémarrage en attente",
       "restartingEngine": "Redémarrage",
       "summary": "Résumé",
-      "unixSocket": "Socket Unix"
+      "unixSocket": "Socket Unix",
+      "testingEssential": "Essentiel",
+      "testingThorough": "Complet"
     },
     "video": {
       "configureProvider": "Configurer le fournisseur",
@@ -6377,6 +6392,24 @@
       },
       "moreCategories": "Plus de catégories ({{count}})",
       "fewerCategories": "Moins de catégories"
+    },
+    "updates": {
+      "historyTitle": "Activité des mises à jour",
+      "historyEmpty": "Aucune activité de mise à jour pour l'instant.",
+      "historyError": "Impossible de charger l'activité des mises à jour.",
+      "refresh": "Actualiser",
+      "installedBy": "Installée par : {{engine}}",
+      "engineTauri": "Mise à jour du desktop",
+      "engineNavin": "Mise à jour Navin",
+      "engineManual": "Manuelle",
+      "events": {
+        "checked": "Vérifiée",
+        "downloaded": "Téléchargée",
+        "installing": "Installation",
+        "installed": "Installée",
+        "rollback": "Retour arrière",
+        "error": "Échec"
+      }
     }
   },
   "sidebar": {
@@ -9866,6 +9899,8 @@
       "attachImage": "Joindre des fichiers",
       "connectors": "Connecteur",
       "connectorsHint": "Connecter les applications que l'agent peut utiliser",
+      "connectApps": "Connecter des apps",
+      "moreTools": "Plus d'options",
       "budgetFilterNote": "At {{percent}}% usage, Opus 5+, Fable 5+ and GPT 5.6 are paused. Other plan models stay available until renewal.",
       "clearModelSearch": "Clear search",
       "configureModel": "Configurer le modèle",
@@ -9982,7 +10017,6 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Qu’avez-vous en tête ?",
       "placeholderOpening": "Ouverture d’une nouvelle discussion…",
-      "placeholderStreaming": "L'agent travaille. Entrée met en file, Alt+Entrée envoie",
       "placeholderThread": "Saisissez votre message…",
       "queued": {
         "add": "Mettre ce message en file pour le tour suivant (Entrée). Alt+Entrée l'envoie à l'agent tout de suite.",

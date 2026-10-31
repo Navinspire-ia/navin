@@ -518,6 +518,12 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("followupReasoningEffort"),
         serialization_alias="followupReasoningEffort",
     )  # Effort for the steps that only follow tool results (e.g. low). The configured effort still applies to the first step and after a failed verify. None = the configured effort applies to every step
+    # How much the agent tests a change before it reports (Settings > Advanced).
+    # "essential": the one or two test files closest to the change (its own
+    # test, then one integration test), run once after the last edit.
+    # "thorough": every test file tied to the change (up to 24) and whole
+    # folders for a conftest edit. See navin/quality/check_budget.py.
+    testing_depth: Literal["essential", "thorough"] = "essential"
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
 
@@ -780,7 +786,15 @@ class UpdatesConfig(Base):
         validation_alias=AliasChoices("autoCheck", "auto_check"),
         serialization_alias="autoCheck",
     )
-    channel: Literal["stable", "beta"] = "stable"
+    channel: Literal["stable", "beta", "enterprise"] = "stable"
+    # Download in the background and install while Navin is idle, without
+    # interrupting a running agent. Off: the update is announced, the user
+    # installs it from the card or Settings.
+    auto_install: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("autoInstall", "auto_install"),
+        serialization_alias="autoInstall",
+    )
     base_url: str = Field(
         default="",
         validation_alias=AliasChoices("baseUrl", "base_url"),

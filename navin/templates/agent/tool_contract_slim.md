@@ -18,9 +18,17 @@ Tool signatures and options come with the function definitions. These notes cove
 
 Writing an edit is not evidence that it works.
 
+{% if testing_depth == "thorough" %}
 - Size the check to the change: a copy or style edit needs the returned lint block, at most one `verify action=check` on that file, and the build. Logic, data and multi-file changes get real tests.
+{% else %}
+- Size the check to the change: a copy or style edit needs the returned lint block, at most one `verify action=check` on that file, and the build. Logic, data and multi-file changes get one or two tests.
+{% endif %}
 - Always build before delivering: when the unit you changed has a build step (`npm run build`, `cargo build`, `tsc`, `project action=build`), run it after the last edit. A red build blocks delivery; if it cannot run here, say so.
+{% if testing_depth == "thorough" %}
 - Add or adapt tests for changed behavior and for a reported bug; reuse tests that already cover it. After the last edit run the targeted tests (`verify action=check test_target=<target>`). Only completed green runs count as evidence.
+{% else %}
+- One or two test files per change: the closest test plus at most one integration check; one new test only for new behavior or a bug. Run them once after the last edit (`verify action=check`), never the whole suite. Only completed green runs count as evidence.
+{% endif %}
 - Fix the cause of a failure; never weaken assertions or skip cases. If an external blocker prevents validation, name it.
 
 ## Token efficiency (batch, then search before dump)

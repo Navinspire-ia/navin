@@ -158,6 +158,8 @@ import { ApiError, fetchProjectFiles, spawnMultitaskPrompt } from "@/lib/api";
 import { fetchReusableMediaFile, onMediaReuse } from "@/lib/media-reuse";
 import { useClient } from "@/providers/ClientProvider";
 import { ComposerPermissionMenu } from "@/components/thread/ComposerPermissionMenu";
+import { ComposerToolsMenu } from "@/components/thread/ComposerToolsMenu";
+import { openSettingsDialog } from "@/lib/settings-events";
 import {
   inferProviderFromModelName,
   logoFallbackUrls,
@@ -935,6 +937,14 @@ function GoalStatusStrip({
   );
 }
 
+/**
+ * Below this composer width the toolbar keeps the model, the effort, the
+ * context size and the send button; the other controls move to the More menu
+ * so those four are never clipped. A width of 0 is a composer not laid out yet
+ * (hidden tab, first paint), which keeps the full row.
+ */
+export const COMPOSER_TOOLBAR_COLLAPSE_PX = 720;
+
 function ThreadComposerImpl({
   onSend,
   disabled,
@@ -1040,6 +1050,9 @@ function ThreadComposerImpl({
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** Side-panel chats (code / studio) are often ~500px - densify like Cursor. */
   const [toolbarCompact, setToolbarCompact] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const chipRefs = useRef(new Map<string, HTMLButtonElement>());
   const queuedPromptCounterRef = useRef(0);
   // Only the prompt queued by the immediately preceding Enter can use the second-Enter shortcut.
@@ -1054,7 +1067,11 @@ function ThreadComposerImpl({
   useEffect(() => {
     const el = formRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const update = () => setToolbarCompact(el.clientWidth < 460);
+    const update = () => {
+      const width = el.clientWidth;
+      setToolbarCompact(width < 460);
+      setToolbarCollapsed(width > 0 && width < COMPOSER_TOOLBAR_COLLAPSE_PX);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -1080,8 +1097,9 @@ function ThreadComposerImpl({
     storeQueuedPrompts(queuedPromptStorageKey, queuedPrompts);
   }, [queuedPromptStorageKey, queuedPrompts]);
 
+  // While the agent works the box stays empty: no hint text inside the chat.
   const resolvedPlaceholder = isStreaming
-    ? t("thread.composer.placeholderStreaming")
+    ? ""
     : placeholder ?? t("thread.composer.placeholderThread");
 
   const maxAttachments = ingressLimits?.attachments.max_count
@@ -2411,6 +2429,14 @@ function ThreadComposerImpl({
   // push-to-talk dictation button would only compete with it.
   const liveVoiceActive =
     liveVoice !== null && liveVoice.state !== "off" && liveVoice.state !== "error";
+  // On the narrow row the voice conversation button shows only while it runs.
+  const liveVoiceRunning = liveVoiceActive || liveVoice?.state === "starting";
+  const teamChip = !voiceRecorder.isRecording
+    && teamMode?.enabled
+    && teamMode.teamId !== "off"
+    && teamMode.members.length > 0
+    ? teamMode
+    : null;
   const showVoiceButton = Boolean(onTranscribeAudio) && !liveVoiceActive;
   const liveVoiceLabel = liveVoiceActive
     ? t("thread.composer.liveVoice.toggleOff", { defaultValue: "End voice conversation" })
@@ -2467,6 +2493,10 @@ function ThreadComposerImpl({
     controls: workspaceControls,
     onChange: onWorkspaceScopeChange,
   });
+  const openConnectors = useCallback(() => {
+    // A window over the chat: connecting an app does not leave the conversation.
+    openSettingsDialog("channels");
+  }, []);
   const attachmentTools = voiceRecorder.isRecording ? null : (
     <>
       <Button
@@ -2487,21 +2517,20 @@ function ThreadComposerImpl({
         disabled={disabled}
         isHero
       />
-      {/* App connectors and channels (Settings > Channels), next to the document picker. */}
+      {/* App connectors and channels (Settings > Channels), next to the document
+          picker: an icon like its neighbours, its name in the tooltip. */}
       <Button
         type="button"
-        size="sm"
+        size="icon"
         variant="ghost"
         disabled={disabled}
+        aria-label={t("thread.composer.connectors", { defaultValue: "Connector" })}
         title={t("thread.composer.connectorsHint", { defaultValue: "Connect apps the agent can use" })}
         data-testid="composer-connectors"
-        onClick={() => {
-          window.location.hash = configurationHash("channels", sessionKey);
-        }}
-        className="h-7 shrink-0 gap-1 rounded-md border-transparent px-2 text-[12px] text-muted-foreground hover:bg-muted/65 hover:text-foreground"
+        onClick={openConnectors}
+        className="h-7 w-7 shrink-0 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground"
       >
         <Plug className="h-3.5 w-3.5" aria-hidden />
-        <span>{t("thread.composer.connectors", { defaultValue: "Connector" })}</span>
       </Button>
       {sessionAction}
     </>
@@ -2811,19 +2840,23 @@ function ThreadComposerImpl({
         ) : null}
         {/* Style Cursor : Mode + Modèle + Think à gauche ; icônes + envoi à droite. */}
         <div
+          ref={toolbarRef}
+          data-toolbar-collapsed={toolbarCollapsed ? "" : undefined}
           className={cn(
             "flex flex-nowrap items-center justify-between gap-x-2",
             isHero ? "px-3 pb-3.5 sm:px-4" : toolbarCompact ? "px-2 pb-1.5" : "px-2.5 pb-2 sm:px-3",
           )}
         >
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
-            <ComposerModeMenu
-              mode={turnMode}
-              disabled={disabled || isStreaming}
-              isHero={isHero}
-              compact={toolbarCompact}
-              onChange={setTurnMode}
-            />
+            {toolbarCollapsed ? null : (
+              <ComposerModeMenu
+                mode={turnMode}
+                disabled={disabled || isStreaming}
+                isHero={isHero}
+                compact={toolbarCompact}
+                onChange={setTurnMode}
+              />
+            )}
             {modelLabel && !voiceRecorder.isRecording ? (
               !modelNeedsSetup && onModelSelect && modelOptions.length > 0 ? (
                 <ComposerModelPicker
@@ -2854,8 +2887,8 @@ function ThreadComposerImpl({
                 />
               )
             ) : null}
-            {!voiceRecorder.isRecording && teamMode?.enabled && teamMode.teamId !== "off" && teamMode.members.length > 0 ? (
-              <ComposerTeamChip team={teamMode} compact={toolbarCompact} />
+            {!toolbarCollapsed && teamChip ? (
+              <ComposerTeamChip team={teamChip} compact={toolbarCompact} />
             ) : null}
             {!voiceRecorder.isRecording && onEffortSelect && effortOptions.length > 1 ? (
               <ComposerEffortPicker
@@ -2895,11 +2928,28 @@ function ThreadComposerImpl({
               hidden
               onChange={onFilePick}
             />
-            {workspaceRowVisible ? null : attachmentTools}
-            {!voiceRecorder.isRecording ? (
+            {toolbarCollapsed
+              ? (workspaceRowVisible || voiceRecorder.isRecording ? null : sessionAction)
+              : workspaceRowVisible ? null : attachmentTools}
+            {toolbarCollapsed && !workspaceRowVisible ? (
+              // No button of its own here: the More menu opens the gallery.
+              <DocumentTemplatePicker
+                templates={documentTemplates}
+                selected={selectedDocumentTemplate}
+                onSelect={setSelectedDocumentTemplate}
+                disabled={disabled}
+                hideTrigger
+                open={templateGalleryOpen}
+                onOpenChange={setTemplateGalleryOpen}
+                anchorRef={toolbarRef}
+              />
+            ) : null}
+            {!toolbarCollapsed && !voiceRecorder.isRecording ? (
               <ComposerPermissionMenu disabled={disabled} iconOnly />
             ) : null}
-            {showVoiceButton ? (
+            {/* Narrow: dictation and the voice conversation stay on the row only
+                while they run, so they can be stopped in one click. */}
+            {showVoiceButton && (!toolbarCollapsed || voiceRecorder.state !== "idle") ? (
               <TooltipProvider delayDuration={220} skipDelayDuration={80}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -2946,7 +2996,7 @@ function ThreadComposerImpl({
               </TooltipProvider>
             ) : null}
             {/* Voice conversation: an icon right of the microphone, its name in the tooltip. */}
-            {liveVoice && !voiceRecorder.isRecording ? (
+            {liveVoice && !voiceRecorder.isRecording && (!toolbarCollapsed || liveVoiceRunning) ? (
               <TooltipProvider delayDuration={220} skipDelayDuration={80}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -2996,7 +3046,7 @@ function ThreadComposerImpl({
                 </Tooltip>
               </TooltipProvider>
             ) : null}
-            {isStreaming && !disabled ? (
+            {isStreaming && !disabled && !toolbarCollapsed ? (
               // Shown for the whole run, enabled once there is something to
               // queue: appearing at the first key and leaving on clear made
               // the chips on the left shrink and grow while typing.
@@ -3013,6 +3063,66 @@ function ThreadComposerImpl({
               >
                 <ListPlus className="h-3.5 w-3.5" />
               </Button>
+            ) : null}
+            {toolbarCollapsed && !voiceRecorder.isRecording ? (
+              <ComposerToolsMenu
+                disabled={disabled}
+                mode={turnMode}
+                modeDisabled={disabled || isStreaming}
+                onModeChange={setTurnMode}
+                attach={workspaceRowVisible ? null : {
+                  label: t("thread.composer.attachImage"),
+                  disabled: attachButtonDisabled,
+                  onSelect: () => fileInputRef.current?.click(),
+                }}
+                documentTemplate={!workspaceRowVisible && documentTemplates.length > 0 ? {
+                  label: t("thread.composer.documentTemplate.button", {
+                    defaultValue: "Choose a document template",
+                  }),
+                  disabled,
+                  active: Boolean(selectedDocumentTemplate),
+                  onSelect: () => setTemplateGalleryOpen(true),
+                } : null}
+                connectors={workspaceRowVisible ? null : {
+                  label: t("thread.composer.connectApps", { defaultValue: "Connect apps" }),
+                  disabled,
+                  onSelect: openConnectors,
+                }}
+                voice={showVoiceButton && voiceRecorder.state === "idle" ? {
+                  label: voiceButtonLabel,
+                  disabled: voiceRecorder.buttonDisabled,
+                  onSelect: voiceRecorder.handleClick,
+                } : null}
+                liveVoice={liveVoice && !liveVoiceRunning ? {
+                  label: liveVoiceLabel,
+                  disabled: disabled || liveVoice.disabled,
+                  onSelect: liveVoice.toggle,
+                } : null}
+                queue={isStreaming && !disabled ? {
+                  label: queueButtonLabel,
+                  disabled: !canQueueGuidance,
+                  onSelect: queueGuidancePrompt,
+                } : null}
+                team={teamChip?.onOpenTeam ? {
+                  label: teamChip.teams.find((option) => option.id === teamChip.teamId)?.name
+                    ?? t("thread.team.chip", { defaultValue: "Team" }),
+                  active: Boolean(teamChip.teamOpen),
+                  onSelect: teamChip.onOpenTeam,
+                  leading: (
+                    <span className="flex shrink-0 -space-x-1.5 rtl:space-x-reverse" aria-hidden>
+                      {teamChip.members.slice(0, 3).map((member) => (
+                        <TeamBotAvatar
+                          key={member.name}
+                          avatar={member.avatar}
+                          color={member.color}
+                          size={16}
+                          className="ring-2 ring-popover"
+                        />
+                      ))}
+                    </span>
+                  ),
+                } : null}
+              />
             ) : null}
             <Button
               type={primaryAction === "send" ? "submit" : "button"}

@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -218,7 +219,7 @@ export function formatElapsed(ms: number): string {
 }
 
 /** Re-render once a second, but only while something is still running. */
-function useElapsedClock(active: boolean): number {
+export function useElapsedClock(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -349,27 +350,45 @@ export type SubagentActionHandler = (
   action: SubagentAction,
 ) => Promise<SubagentActionResult> | void;
 
-/** The panel for a thread's card store. */
+/**
+ * The panel for a thread's card store.
+ *
+ * With ``attentionInStatusBar`` the bar above the composer is the one view of
+ * a subagent that still needs the user: at work, queued, waiting for an
+ * approval, failed or stopped (name, step, model, time and its actions). The
+ * journal shows a card once it finished fine, or while the user opened its
+ * details from the bar. Showing both put every such subagent on screen twice.
+ */
 export function LiveSubagentsPanel({
   store,
   className,
   onAction,
   canManage,
+  attentionInStatusBar = false,
 }: {
   store: SubagentCardStore;
   className?: string;
   onAction?: SubagentActionHandler;
   canManage?: boolean;
+  attentionInStatusBar?: boolean;
 }) {
   const { cards, expanded } = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const shown = useMemo(
+    () =>
+      attentionInStatusBar
+        ? cards.filter((card) => subagentCardState(card) === "ok" || expanded.has(card.taskId))
+        : cards,
+    [attentionInStatusBar, cards, expanded],
+  );
   return (
     <ParallelSubagentsPanel
-      cards={cards}
+      cards={shown}
       className={className}
       expandedIds={expanded}
       onExpandedChange={store.setExpanded}
       onAction={onAction}
       canManage={canManage}
+      showSummary={!attentionInStatusBar}
     />
   );
 }
@@ -389,6 +408,7 @@ export function ParallelSubagentsPanel({
   onExpandedChange,
   onAction,
   canManage = true,
+  showSummary = true,
 }: {
   cards: ParallelSubagentCard[];
   className?: string;
@@ -398,6 +418,8 @@ export function ParallelSubagentsPanel({
   onAction?: SubagentActionHandler;
   /** False for viewers: only the local Dismiss stays. */
   canManage?: boolean;
+  /** The "Waiting for subagent" line; off when the status bar already counts them. */
+  showSummary?: boolean;
 }) {
   const { t } = useTranslation();
   const [localExpanded, setLocalExpanded] = useState<ReadonlySet<string>>(
@@ -485,7 +507,7 @@ export function ParallelSubagentsPanel({
               })}
         </button>
       ) : null}
-      <p className="px-1 pt-0.5 text-[12px] text-muted-foreground">{waiting}</p>
+      {showSummary ? <p className="px-1 pt-0.5 text-[12px] text-muted-foreground">{waiting}</p> : null}
     </div>
   );
 }

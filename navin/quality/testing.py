@@ -22,10 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from loguru import logger
+
 from navin.quality import wsl_route
+from navin.quality.check_budget import CheckBudget
 from navin.quality.linters import _binary_for, _read_json
 from navin.utils import wsl
-from navin.utils.proc import no_window_kwargs
+from navin.utils.proc import detached_no_window_kwargs, kill_process_tree, run_killing_tree
 
 _TABLE_PATH = Path(__file__).with_name("test_runners.json")
 _MAX_FAILURES = 50
@@ -235,6 +238,39 @@ def _target_for_workdir(target: str, workdir: Path, root: Path) -> str:
     except (OSError, ValueError):
         return target
     return f"{rel.as_posix()}{sep}{rest}"
+
+
+def _outside_project_root(root: Path, targets: list[str]) -> Path | None:
+    """The repository the targets live in, when it is not the one being run from.
+
+    A session opened on ``app/test`` that edited ``app/frontend`` asks for
+    ``/abs/app/frontend/src/x.test.ts``. Searched from ``app/test``, Vitest
+    found no test file, exited 1, and the run read "runner exited nonzero
+    without reporting tests" forever, so the board could never close the step.
+    The runner has to start in the target's own project, with its own
+    node_modules or virtualenv. Only absolute targets that all sit in one other
+    git repository move the run; anything else keeps the given root.
+    """
+    found: Path | None = None
+    for item in targets:
+        path = Path(item.split("::", 1)[0])
+        if not path.is_absolute():
+            return None
+        try:
+            resolved = path.resolve()
+            inside = resolved.is_relative_to(root.resolve())
+        except OSError:
+            return None
+        if inside:
+            return None
+        repo = next(
+            (parent for parent in resolved.parents if (parent / ".git").exists()),
+            None,
+        )
+        if repo is None or (found is not None and repo != found):
+            return None
+        found = repo
+    return found
 
 
 def _detected(spec: dict[str, Any], root: Path) -> bool:
@@ -864,6 +900,18 @@ def _python_related(
     texts: dict[str, str | None] | None = None,
     deadline: float | None = None,
 ) -> list[str]:
+    named, importers = _python_related_parts(root, rel, cache, texts, deadline)
+    return named + importers
+
+
+def _python_related_parts(
+    root: Path,
+    rel: str,
+    cache: dict[str, list[str]],
+    texts: dict[str, str | None] | None = None,
+    deadline: float | None = None,
+) -> tuple[list[str], list[str]]:
+    """Tests named after the module, then the ones importing it (dropped for a hub)."""
     stem = Path(rel).stem
     module = rel[: -len(Path(rel).suffix)].replace("/", ".")
     if stem == "__init__":
@@ -887,7 +935,7 @@ def _python_related(
         text = _test_text(root / test, texts)
         if text is not None and imports.search(text):
             importers.append(test)
-    return named + (importers if len(importers) <= _MAX_IMPORTERS else [])
+    return named, (importers if len(importers) <= _MAX_IMPORTERS else [])
 
 
 def _js_related(root: Path, rel: str) -> list[str]:
@@ -902,16 +950,28 @@ def _js_related(root: Path, rel: str) -> list[str]:
     return found
 
 
-def related_test_targets(root: Path, changed: list[str]) -> list[str]:
-    """The test files that exercise the changed files, changed tests first.
+def related_test_targets(
+    root: Path,
+    changed: list[str],
+    *,
+    budget: CheckBudget | None = None,
+) -> list[str]:
+    """The test files that exercise the changed files, closest first.
 
     A change is judged by its own tests: the edited test files, tests next to
-    the edited source (``a.ts`` -> ``a.test.ts``), and Python tests named after
-    or importing the edited module. Never the whole suite, so a slow or broken
-    test elsewhere cannot send the agent off repairing code nobody asked about.
+    or named after the edited source (``a.ts`` -> ``a.test.ts``,
+    ``pkg/widgets.py`` -> ``test_widgets.py``), then Python tests importing
+    the edited module (the integration side). Never the whole suite, so a
+    slow or broken test elsewhere cannot send the agent off repairing code
+    nobody asked about. ``budget`` caps the list (2 files by default in
+    Settings); without one the old breadth applies (24, conftest folders).
     """
+    limit = budget.max_files if budget is not None else _MAX_RELATED_TESTS
+    whole_folders = budget.whole_folders if budget is not None else True
     tests: list[str] = []
-    related: list[str] = []
+    named: list[str] = []
+    folders: list[str] = []
+    importers: list[str] = []
     cache: dict[str, list[str]] = {}
     texts: dict[str, str | None] = {}
     deadline = time.monotonic() + _IMPORT_SCAN_BUDGET_S
@@ -925,12 +985,15 @@ def related_test_targets(root: Path, changed: list[str]) -> list[str]:
                 tests.append(rel)
         elif suffix == ".py":
             if Path(rel).name == "conftest.py":
-                related.append(Path(rel).parent.as_posix() or ".")
+                if whole_folders:
+                    folders.append(Path(rel).parent.as_posix() or ".")
             else:
-                related.extend(_python_related(root, rel, cache, texts, deadline))
+                own, using = _python_related_parts(root, rel, cache, texts, deadline)
+                named.extend(own)
+                importers.extend(using)
         elif suffix in _JS_SOURCE_SUFFIXES:
-            related.extend(_js_related(root, rel))
-    return list(dict.fromkeys(tests + related))[:_MAX_RELATED_TESTS]
+            named.extend(_js_related(root, rel))
+    return list(dict.fromkeys(tests + named + folders + importers))[:limit]
 
 
 # A target names a file or folder when it carries a separator or a source
@@ -1079,17 +1142,19 @@ def run_tests_for_changes(
     changed: list[str],
     *,
     on_output: Callable[[str], None] | None = None,
+    budget: CheckBudget | None = None,
 ) -> tuple[list[TestOutcome], list[str]]:
     """Run only the tests of the changed files, each with its own runner.
 
     Go and Rust keep their tests inside the package, so a change there runs
     that language's suite. Files no test can see (docs, JSON, styles) run
     nothing: the notes say so instead of a red run of unrelated suites.
+    ``budget`` caps the test files (see related_test_targets).
     """
     table = runner_table()
     notes: list[str] = []
     groups: dict[tuple[str, str], list[str]] = {}
-    targets = related_test_targets(root, changed)
+    targets = related_test_targets(root, changed, budget=budget)
     for target in targets:
         picked = _runner_for_target(root, target)
         if picked is None:
@@ -1212,6 +1277,7 @@ def _run_one(
     *, on_output: Callable[[str], None] | None = None,
 ) -> TestOutcome:
     targets = [target] if isinstance(target, str) else list(target or [])
+    root = _outside_project_root(root, targets) or root
     workdir = _workdir_for(spec, root, targets[0] if targets else None)
     if not (_detected(spec, workdir) or _detected(spec, root)):
         return TestOutcome(
@@ -1269,7 +1335,9 @@ def _run_one(
 
     started = time.monotonic()
     try:
-        execute = _run_streaming if on_output is not None else subprocess.run
+        # Runners spawn workers (xdist, vitest threads, npx -> node): the
+        # timeout must kill the whole tree, not only the launcher.
+        execute = _run_streaming if on_output is not None else run_killing_tree
         completed = execute(
             argv,
             cwd=cwd,
@@ -1279,7 +1347,6 @@ def _run_one(
             errors="replace",
             timeout=float(spec.get("timeout_s", 600)),
             **({"on_output": on_output} if on_output is not None else {}),
-            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         wsl_route.note_launch(argv, timed_out=True)
@@ -1352,9 +1419,9 @@ def _run_one(
 def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwargs: Any):
     """Drain runner output without pipes filling up, preserving the time limit."""
     timeout = kwargs.pop("timeout")
-    # creationflags too: the caller spreads no_window_kwargs() and so does the
-    # Popen below. Passing it twice was a TypeError on every Windows test run.
-    for key in ("capture_output", "text", "encoding", "errors", "creationflags"):
+    # creationflags / start_new_session too: the Popen below spreads
+    # detached_no_window_kwargs(). Passing one twice was a TypeError on every Windows run.
+    for key in ("capture_output", "text", "encoding", "errors", "creationflags", "start_new_session"):
         kwargs.pop(key, None)
     deadline = time.monotonic() + timeout
     with tempfile.TemporaryDirectory(prefix="navin-test-output-") as logdir:
@@ -1362,7 +1429,7 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
         with log.open("wb") as output, log.open("rb") as reader, subprocess.Popen(
             argv, stdout=output, stderr=subprocess.STDOUT,
             env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kwargs,
-            **no_window_kwargs(),
+            **detached_no_window_kwargs(),
         ) as process:
             tail = b""
             try:
@@ -1381,8 +1448,13 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
                         raise subprocess.TimeoutExpired(argv, timeout)
             finally:
                 if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                    kill_process_tree(process)
+                    try:
+                        # SIGKILL lands at once; the bound only guards a child
+                        # stuck in an uninterruptible kernel wait (D state).
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("Test runner {} did not exit after kill", process.pid)
             reader.seek(0)
             text = reader.read().decode("utf-8", errors="replace")
             return subprocess.CompletedProcess(argv, process.returncode, stdout=text, stderr="")

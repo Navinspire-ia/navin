@@ -3979,6 +3979,9 @@
     "reload": "Reload"
   },
   "settings": {
+    "dialog": {
+      "description": "Ändringar sparas direkt. Stäng det här fönstret för att gå tillbaka till ditt arbete."
+    },
     "picker": {
       "search": "Search or enter a value",
       "noResults": "No matching options.",
@@ -4022,7 +4025,12 @@
       "version": "Version",
       "viewLicenses": "View licenses",
       "viewNavinLicense": "View license",
-      "website": "Website"
+      "website": "Website",
+      "autoInstall": "Installera automatiskt när Navin är inaktiv",
+      "autoInstallHint": "Uppdateringar laddas ned i bakgrunden och installeras när ingen agent arbetar. Inställningar, sessioner och minnen behålls.",
+      "channelStable": "Stabil",
+      "channelBeta": "Beta",
+      "channelEnterprise": "Enterprise"
     },
     "account": {
       "connectTimeout": "Sign-in did not finish. Complete the browser steps (sign in, then Connect), or try again.",
@@ -4515,7 +4523,10 @@
       "videoProvider": "Choose the provider used by generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).",
       "videoProviderStatus": "Video generation reuses provider credentials from Providers.",
       "webuiDefaultAccess": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this machine. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
-      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode."
+      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
+      "agentTestingEssential": "En eller två tester per ändring: närmaste testet och högst ett integrationstest, körda en gång efter sista ändringen. Rekommenderas.",
+      "agentTestingThorough": "Alla tester kopplade till ändringen, även felfall. Långsammare: en liten uppgift kan ta längre tid att testa än att koda.",
+      "agentTestingError": "Det gick inte att spara valet."
     },
     "image": {
       "configureProvider": "Configure provider",
@@ -4977,7 +4988,8 @@
       "videoSaveDir": "Save directory",
       "voiceLimits": "Limits",
       "webuiDefaultAccess": "Default access",
-      "workspacePath": "Default workspace"
+      "workspacePath": "Default workspace",
+      "agentTestingDepth": "Tester efter en ändring"
     },
     "sections": {
       "about": "About",
@@ -5010,7 +5022,8 @@
       "webBehavior": "Behavior",
       "webSearch": "Web search",
       "webuiSafety": "Web safety",
-      "semanticSearch": "Semantic code search"
+      "semanticSearch": "Semantic code search",
+      "agentTesting": "Agenttester"
     },
     "sidebar": {
       "ariaLabel": "Settings sections",
@@ -5317,7 +5330,9 @@
       "restartPending": "Restart pending",
       "restartingEngine": "Restarting",
       "summary": "Summary",
-      "unixSocket": "Unix socket"
+      "unixSocket": "Unix socket",
+      "testingEssential": "Väsentligt",
+      "testingThorough": "Grundligt"
     },
     "video": {
       "configureProvider": "Configure provider",
@@ -5619,6 +5634,24 @@
       "save": "Save",
       "saveHint": "Applies to new semantic searches; the index rebuilds on the next query.",
       "saving": "Saving..."
+    },
+    "updates": {
+      "historyTitle": "Uppdateringsaktivitet",
+      "historyEmpty": "Ingen uppdateringsaktivitet ännu.",
+      "historyError": "Det gick inte att läsa in uppdateringsaktiviteten.",
+      "refresh": "Uppdatera",
+      "installedBy": "Installeras av: {{engine}}",
+      "engineTauri": "Skrivbordsuppdatering",
+      "engineNavin": "Navin-uppdatering",
+      "engineManual": "Manuell",
+      "events": {
+        "checked": "Kontrollerad",
+        "downloaded": "Nedladdad",
+        "installing": "Installeras",
+        "installed": "Installerad",
+        "rollback": "Återställd",
+        "error": "Misslyckades"
+      }
     }
   },
   "sidebar": {
@@ -9059,6 +9092,8 @@
       "attachImage": "Attach files",
       "connectors": "Anslutning",
       "connectorsHint": "Anslut appar som agenten kan använda",
+      "connectApps": "Anslut appar",
+      "moreTools": "Fler alternativ",
       "budgetFilterNote": "At {{percent}}% usage, Opus 5+, Fable 5+ and GPT 5.6 are paused. Other plan models stay available until renewal.",
       "clearModelSearch": "Clear search",
       "configureModel": "Configure model",
@@ -9171,7 +9206,6 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "Agenten arbetar. Retur köar, Alt+Retur skickar nu",
       "placeholderThread": "Type your message…",
       "queued": {
         "add": "Köa detta meddelande till nästa runda (Alt+Retur). Retur skickar det till agenten nu.",

@@ -104,6 +104,73 @@ def kill_posix_process_group(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
 
 
+def _kill_own_group(pid: int) -> None:
+    """SIGKILL the group a ``start_new_session`` child leads (pgid == pid).
+
+    Unlike :func:`kill_posix_process_group` this does not ask ``getpgid``,
+    which fails once the leader is gone - exactly when a wrapper (the
+    ``pyright`` pip shim) exited and left its ``node`` worker running.
+    Windows has no process groups to signal: its trees go through taskkill.
+    """
+    if is_windows():
+        kill_windows_process_tree(pid)
+        return
+    import os
+    import signal
+
+    with suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(pid, signal.SIGKILL)
+
+
+def kill_process_tree(process: subprocess.Popen[Any]) -> None:
+    """Kill a child started with :func:`detached_no_window_kwargs` and its descendants."""
+    if process.pid <= 0:
+        return
+    if is_windows():
+        if process.poll() is None:
+            kill_windows_process_tree(process.pid)
+    else:
+        _kill_own_group(process.pid)
+    with suppress(OSError):
+        if process.poll() is None:
+            process.kill()
+
+
+def run_killing_tree(
+    argv: list[str],
+    *,
+    timeout: float,
+    capture_output: bool = False,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[Any]:
+    """``subprocess.run`` whose timeout kills the whole process tree.
+
+    ``subprocess.run(timeout=...)`` kills only the direct child. A tool behind
+    a launcher - the ``pyright`` pip wrapper starting ``node``, ``npx``
+    starting ``vitest``, pytest-xdist workers - leaves the real worker alive:
+    each timed-out ``pyright --project`` run kept a node process at 100% CPU
+    and 2.7 GB of RAM forever, until the machine stalled and the web UI froze
+    on a black screen. Here the child leads its own group and the timeout (or
+    any exception, Ctrl-C included) kills the whole group.
+
+    Raises :class:`subprocess.TimeoutExpired` like ``subprocess.run``.
+    """
+    kwargs.pop("creationflags", None)
+    kwargs.pop("start_new_session", None)
+    if capture_output:
+        kwargs.setdefault("stdout", subprocess.PIPE)
+        kwargs.setdefault("stderr", subprocess.PIPE)
+    process = subprocess.Popen(argv, **kwargs, **detached_no_window_kwargs())  # noqa: S603
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException:
+        kill_process_tree(process)
+        with suppress(OSError, ValueError, subprocess.SubprocessError):
+            process.communicate(timeout=5)
+        raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
 def detached_no_window_kwargs() -> dict[str, Any]:
     """As :func:`no_window_kwargs`, for a child that outlives its parent.
 

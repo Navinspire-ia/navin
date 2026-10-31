@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   Check,
@@ -54,15 +54,34 @@ export function DocumentTemplatePicker({
   selected,
   onSelect,
   disabled = false,
+  open: openProp,
+  onOpenChange,
+  anchorRef,
+  hideTrigger = false,
 }: {
   templates: DocumentTemplateInfo[];
   selected: DocumentTemplateInfo | null;
   onSelect: (template: DocumentTemplateInfo | null) => void;
   disabled?: boolean;
   isHero?: boolean;
+  /** Controlled gallery, for a picker opened from another control. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** The gallery sits above this element instead of the picker's own button. */
+  anchorRef?: RefObject<HTMLElement | null>;
+  /** No button of its own: the narrow composer opens the gallery from its More menu. */
+  hideTrigger?: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (openProp === undefined) setOpenState(next);
+      onOpenChange?.(next);
+    },
+    [onOpenChange, openProp],
+  );
   const [previewTemplate, setPreviewTemplate] = useState<DocumentTemplateInfo | null>(null);
   // The gallery is rendered in a portal with a fixed position anchored to the
   // button: side panels (dev/content workbench) clip absolutely-positioned
@@ -109,7 +128,7 @@ export function DocumentTemplatePicker({
     const GAP = 10;
     const MIN_PANEL = 220;
     const update = () => {
-      const rect = containerRef.current?.getBoundingClientRect();
+      const rect = (anchorRef?.current ?? containerRef.current)?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.round(Math.min(464, window.innerWidth - MARGIN * 2));
       const left = Math.round(
@@ -148,7 +167,7 @@ export function DocumentTemplatePicker({
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
     };
-  }, [open]);
+  }, [anchorRef, open]);
 
   const previewOpen = previewTemplate !== null;
   useEffect(() => {
@@ -168,7 +187,7 @@ export function DocumentTemplatePicker({
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, previewOpen]);
+  }, [open, previewOpen, setOpen]);
 
   if (templates.length === 0) return null;
 
@@ -176,27 +195,29 @@ export function DocumentTemplatePicker({
 
   return (
     <div ref={containerRef} className="relative">
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        disabled={disabled}
-        aria-label={t("thread.composer.documentTemplate.button", {
-          defaultValue: "Choose a document template",
-        })}
-        aria-expanded={open}
-        title={t("thread.composer.documentTemplate.button", {
-          defaultValue: "Choose a document template",
-        })}
-        onClick={() => setOpen((value) => !value)}
-        className={cn(
-          "h-7 w-7 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
-          selected && "text-primary hover:text-primary",
-        )}
-        data-testid="document-template-picker-button"
-      >
-        <LayoutTemplate className="h-3.5 w-3.5" />
-      </Button>
+      {hideTrigger ? null : (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          disabled={disabled}
+          aria-label={t("thread.composer.documentTemplate.button", {
+            defaultValue: "Choose a document template",
+          })}
+          aria-expanded={open}
+          title={t("thread.composer.documentTemplate.button", {
+            defaultValue: "Choose a document template",
+          })}
+          onClick={() => setOpen(!open)}
+          className={cn(
+            "h-7 w-7 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
+            selected && "text-primary hover:text-primary",
+          )}
+          data-testid="document-template-picker-button"
+        >
+          <LayoutTemplate className="h-3.5 w-3.5" />
+        </Button>
+      )}
       {open && galleryRect ? createPortal(
         <div
           ref={galleryRef}

@@ -113,7 +113,7 @@ function SocialConnectionCard({ connection, busy, locale, tx, run }: {
             value={draft.redirect_uri ?? callback}
             placeholder={
               provider === "reddit"
-                ? "http://127.0.0.1:8766/api/marketing/oauth/callback"
+                ? "http://localhost:8766/api/marketing/oauth/callback"
                 : "https://ton-domaine/api/marketing/oauth/callback"
             }
             onChange={(_, value) => setDraft((old) => ({ ...old, redirect_uri: value || "" }))}

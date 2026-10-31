@@ -299,13 +299,13 @@ class StreamingTestRunOnWindowsTest(unittest.TestCase):
             return real_popen(*args, **kwargs)
 
         windows = {"creationflags": 0x08000000}
-        with mock.patch.object(testing_mod, "no_window_kwargs", return_value=windows), \
+        with mock.patch.object(testing_mod, "detached_no_window_kwargs", return_value=windows), \
                 mock.patch.object(testing_mod.subprocess, "Popen", popen):
             completed = testing_mod._run_streaming(
                 [sys.executable, "-c", "print('ok')"],
                 on_output=lambda _text: None,
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=30, **testing_mod.no_window_kwargs(),
+                timeout=30, **testing_mod.detached_no_window_kwargs(),
             )
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(seen[0]["creationflags"], 0x08000000)

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from navin.quality import wsl_route
+from navin.quality.check_budget import current_budget
 from navin.quality.linters import (
     Diagnostic,
     LinterResult,
@@ -544,9 +545,12 @@ def verify_changes(
         if test_target:
             test_outcomes = run_tests(root, target=test_target, **output)
         else:
-            # Only the tests of what changed: a slow or broken test elsewhere
-            # must not turn this change red and start an unrequested repair.
-            test_outcomes, test_notes = run_tests_for_changes(root, changed, **output)
+            # Only the tests of what changed, within the testing budget (one or
+            # two files by default): a slow or broken test elsewhere must not
+            # turn this change red and start an unrequested repair.
+            test_outcomes, test_notes = run_tests_for_changes(
+                root, changed, budget=current_budget(), **output,
+            )
             notes.extend(test_notes)
 
     report = VerificationReport(

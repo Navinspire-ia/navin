@@ -1166,6 +1166,10 @@ class SessionManager:
         self.save(session)
         return cleaned
 
+    def cached_sessions(self) -> list[Session]:
+        """Sessions held in memory right now (what a restart could lose unsaved)."""
+        return self._cache.values()
+
     def save(self, session: Session, *, fsync: bool = False) -> None:
         """Save a session to disk atomically.
 

@@ -53,7 +53,9 @@ def skill_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(SkillsLoader, "_plugin_skill_dirs", staticmethod(lambda: []))
     config = SimpleNamespace(
         workspace_path=workspace,
-        agents=SimpleNamespace(defaults=SimpleNamespace(disabled_skills=[])),
+        # Every agents.defaults field the system prompt reads (the tool
+        # contract renders the testing depth of Settings > Advanced).
+        agents=SimpleNamespace(defaults=SimpleNamespace(disabled_skills=[], testing_depth="essential")),
     )
     monkeypatch.setattr(loader, "load_config", lambda: config)
     return workspace, config

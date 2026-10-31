@@ -23,6 +23,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -345,29 +348,89 @@ export function ComposerModeMenu({
         sideOffset={6}
         className="min-w-[8.5rem] p-1"
       >
-        {MODE_ITEMS.slice(0, 2).map((item) => (
-          <ModeItem
-            key={item.mode}
-            icon={<item.icon className="h-3.5 w-3.5" />}
-            label={t(item.labelKey, { defaultValue: item.labelDefault })}
-            selected={mode === item.mode}
-            accent={item.accent}
-            onSelect={() => onChange(item.mode)}
-          />
-        ))}
-        <DropdownMenuSeparator className="my-1" />
-        {MODE_ITEMS.slice(2).map((item) => (
-          <ModeItem
-            key={item.mode}
-            icon={<item.icon className="h-3.5 w-3.5" />}
-            label={t(item.labelKey, { defaultValue: item.labelDefault })}
-            selected={mode === item.mode}
-            accent={item.accent}
-            onSelect={() => onChange(item.mode)}
-          />
-        ))}
+        <ComposerModeItems mode={mode} onChange={onChange} />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function ComposerModeItems({
+  mode,
+  onChange,
+}: {
+  mode: ComposerTurnMode;
+  onChange: (mode: ComposerTurnMode) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {MODE_ITEMS.slice(0, 2).map((item) => (
+        <ModeItem
+          key={item.mode}
+          icon={<item.icon className="h-3.5 w-3.5" />}
+          label={t(item.labelKey, { defaultValue: item.labelDefault })}
+          selected={mode === item.mode}
+          accent={item.accent}
+          onSelect={() => onChange(item.mode)}
+        />
+      ))}
+      <DropdownMenuSeparator className="my-1" />
+      {MODE_ITEMS.slice(2).map((item) => (
+        <ModeItem
+          key={item.mode}
+          icon={<item.icon className="h-3.5 w-3.5" />}
+          label={t(item.labelKey, { defaultValue: item.labelDefault })}
+          selected={mode === item.mode}
+          accent={item.accent}
+          onSelect={() => onChange(item.mode)}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * The turn mode as a submenu row, for the narrow composer's More menu. The
+ * shell keeps the mode's tint, so the choice stays visible once the menu
+ * closes.
+ */
+export function ComposerModeSubmenu({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: ComposerTurnMode;
+  disabled?: boolean;
+  onChange: (mode: ComposerTurnMode) => void;
+}) {
+  const { t } = useTranslation();
+  const current = MODE_ITEMS.find((item) => item.mode === mode) ?? MODE_ITEMS[0];
+  const ModeIcon = current.icon;
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger
+        disabled={disabled}
+        data-testid="composer-tools-mode"
+        className={cn("gap-2 text-[13px]", current.accent && `composer-mode-${current.accent}`)}
+      >
+        <ModeIcon
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            current.accent ? "text-[hsl(var(--composer-mode-fg))]" : "text-muted-foreground",
+          )}
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate">
+          {t("thread.composer.mode.aria", { defaultValue: "Turn mode" })}
+        </span>
+        <span className="max-w-[7rem] truncate text-[12px] text-muted-foreground">
+          {t(current.labelKey, { defaultValue: current.labelDefault })}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="min-w-[8.5rem] p-1">
+        <ComposerModeItems mode={mode} onChange={onChange} />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 

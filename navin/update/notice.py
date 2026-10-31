@@ -113,6 +113,10 @@ def update_notice(*, force: bool = False) -> str | None:
     if not latest:
         return None
     head = f"navin {latest} is available (you have {__version__})."
+    if info.get("rollback"):
+        head = f"navin {__version__} was withdrawn; navin {latest} is the signed version to go back to."
+    elif info.get("mandatory"):
+        head = f"navin {latest} is a required update (you have {__version__})."
     if not info.get("supported"):
         reason = str(info.get("reason") or "").strip()
         return f"{head} {reason}".strip()

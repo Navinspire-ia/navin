@@ -32,12 +32,17 @@ export function ideOauthCallbackUrl(
   const page = options.location === undefined ? currentPageLocation() : options.location;
   if (page && !isViteOrTauriPage(page)) {
     const loopback = isDesktopAppHttpHost(page.hostname);
-    if (page.protocol === "https:" || (provider === "reddit" && loopback)) {
+    if (page.protocol === "https:") {
       return `${page.protocol}//${page.host}${OAUTH_CALLBACK_PATH}`;
+    }
+    if (provider === "reddit" && loopback) {
+      // Providers refuse raw IPs (127.0.0.1) in redirect URIs: name it localhost.
+      const port = page.port ? `:${page.port}` : "";
+      return `${page.protocol}//localhost${port}${OAUTH_CALLBACK_PATH}`;
     }
   }
   if (provider === "reddit") {
-    return `http://127.0.0.1:${IDE_LOOPBACK_PORT}${OAUTH_CALLBACK_PATH}`;
+    return `http://localhost:${IDE_LOOPBACK_PORT}${OAUTH_CALLBACK_PATH}`;
   }
   return "";
 }

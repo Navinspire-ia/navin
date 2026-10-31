@@ -223,7 +223,7 @@ class LintFileTest(unittest.TestCase):
             target = _write(root, "m.py", "x = 1\n")
             with patch.object(linters_mod, "_binary_for", return_value="/bin/sleep"), \
                  patch.object(
-                     linters_mod.subprocess, "run",
+                     linters_mod, "run_killing_tree",
                      side_effect=subprocess.TimeoutExpired("sleep", 0.01),
                  ):
                 result = linters_mod._run_linter("sleeper", spec, root, target)
@@ -259,7 +259,7 @@ class LintFileTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch.object(linters_mod, "_binary_for", return_value="/bin/sh"), \
-                 patch.object(linters_mod.subprocess, "run") as run:
+                 patch.object(linters_mod, "run_killing_tree") as run:
                 run.return_value = subprocess.CompletedProcess(
                     args=[], returncode=1, stdout="",
                     stderr="error TS5058: cannot read tsconfig.json",
@@ -861,6 +861,72 @@ def test_split_front_and_back_projects_are_found_in_their_own_folder(tmp_path):
     assert _target_for_workdir(target, workdir, tmp_path) == "src/App.test.tsx"
 
 
+def _fake_vitest_repo(tmp_path):
+    """``app`` repo: the session is opened on ``app/test``, the edits live in
+    ``app/frontend`` with its own ``node_modules/.bin/vitest``."""
+    app = tmp_path / "app"
+    (app / ".git").mkdir(parents=True)
+    (app / "test").mkdir()
+    front = app / "frontend"
+    (front / "src" / "lib").mkdir(parents=True)
+    (front / "package.json").write_text('{"devDependencies": {"vitest": "^3"}}')
+    vitest = front / "node_modules" / ".bin" / "vitest"
+    vitest.parent.mkdir(parents=True)
+    vitest.write_text("#!/bin/sh\n")
+    vitest.chmod(0o755)
+    test_file = front / "src" / "lib" / "notes.test.ts"
+    test_file.write_text("")
+    return app, front, test_file
+
+
+def test_a_test_outside_the_session_folder_runs_in_its_own_project(tmp_path):
+    # The reported loop: the board kept asking for the tests of
+    # app/frontend/src/lib/notes.test.ts, the runner started from app/test,
+    # found no test file and every run read "runner exited nonzero without
+    # reporting tests", so the step could never be closed.
+    from unittest.mock import patch
+
+    from navin.quality import testing as testing_mod
+
+    app, front, test_file = _fake_vitest_repo(tmp_path)
+    report = (
+        '<testsuites><testsuite name="s" tests="2">'
+        '<testcase name="a"/><testcase name="b"/></testsuite></testsuites>'
+    )
+
+    def fake_run(argv, **kwargs):
+        out = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile="))
+        Path(out).write_text(report)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    with patch.object(testing_mod, "run_killing_tree", side_effect=fake_run) as run:
+        outcome = testing_mod._run_one("vitest", dict(_runner("vitest")), app / "test", str(test_file))
+    argv = run.call_args.args[0]
+    assert run.call_args.kwargs["cwd"] == str(front)
+    assert argv[0] == str(front / "node_modules" / ".bin" / "vitest")
+    assert argv[-1] == "src/lib/notes.test.ts"
+    assert outcome.ok and outcome.passed == 2
+
+
+def test_only_a_target_in_another_repository_moves_the_run(tmp_path):
+    from navin.quality.testing import _outside_project_root
+
+    app, front, test_file = _fake_vitest_repo(tmp_path)
+    other = tmp_path / "other"
+    (other / ".git").mkdir(parents=True)
+    stray = other / "a.test.ts"
+    stray.write_text("")
+    loose = tmp_path / "loose.test.ts"
+    loose.write_text("")
+    assert _outside_project_root(app / "test", [str(test_file)]) == app
+    # Inside the root, relative, or without a repository: nothing moves.
+    assert _outside_project_root(app, [str(test_file)]) is None
+    assert _outside_project_root(app / "test", ["frontend/src/lib/notes.test.ts"]) is None
+    assert _outside_project_root(app / "test", [str(loose)]) is None
+    # Targets spread over two repositories keep the given root.
+    assert _outside_project_root(app / "test", [str(test_file), str(stray)]) is None
+
+
 def test_python_backend_target_runs_from_the_backend(tmp_path):
     from navin.quality.testing import _target_for_workdir, _workdir_for
 
@@ -1002,7 +1068,7 @@ class WslRoutedToolsTest(unittest.TestCase):
         spec = {"binary": {"name": "ruff", "python_env": True}, "args": ["check", "{file}"]}
         linux_file = f"{self.linux_root}/a.py"
         done = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        with patch.object(linters_mod.subprocess, "run", return_value=done) as run:
+        with patch.object(linters_mod, "run_killing_tree", return_value=done) as run:
             result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
         argv = run.call_args.args[0]
         self.assertTrue(result.ran)
@@ -1013,7 +1079,7 @@ class WslRoutedToolsTest(unittest.TestCase):
     def test_missing_linter_in_the_distribution_is_not_run_not_clean(self):
         spec = {"binary": {"name": "ruff"}, "args": ["{file}"]}
         done = subprocess.CompletedProcess([], 127, stdout="", stderr="")
-        with patch.object(linters_mod.subprocess, "run", return_value=done):
+        with patch.object(linters_mod, "run_killing_tree", return_value=done):
             result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
         self.assertFalse(result.ran)
         self.assertIn("WSL distribution", result.skipped_reason)
@@ -1021,7 +1087,7 @@ class WslRoutedToolsTest(unittest.TestCase):
     def test_pytest_runs_in_the_distribution_with_a_linux_report_path(self):
         spec = dict(_runner("pytest"))
         done = subprocess.CompletedProcess([], 0, stdout="1 passed in 0.1s\n", stderr="")
-        with patch.object(testing_mod.subprocess, "run", return_value=done) as run, \
+        with patch.object(testing_mod, "run_killing_tree", return_value=done) as run, \
                 patch.object(testing_mod, "_detected", return_value=True):
             testing_mod._run_one("pytest", spec, self.unc, None)
         argv = run.call_args.args[0]
@@ -1062,12 +1128,12 @@ class WslRoutedToolsTest(unittest.TestCase):
 
         spec = {"binary": {"name": "ruff"}, "args": ["{file}"]}
         hung = subprocess.TimeoutExpired(["wsl.exe"], 30)
-        with patch.object(linters_mod.subprocess, "run", side_effect=hung), \
+        with patch.object(linters_mod, "run_killing_tree", side_effect=hung), \
                 patch.object(wsl_health, "suspect") as suspect:
             result = linters_mod._run_linter("ruff", spec, self.unc, self.unc / "a.py")
         self.assertFalse(result.ran)
         suspect.assert_called_once_with("Ubuntu")
-        with patch.object(testing_mod.subprocess, "run", side_effect=hung), \
+        with patch.object(testing_mod, "run_killing_tree", side_effect=hung), \
                 patch.object(testing_mod, "_detected", return_value=True), \
                 patch.object(wsl_health, "suspect") as suspect:
             outcome = testing_mod._run_one("pytest", dict(_runner("pytest")), self.unc, None)

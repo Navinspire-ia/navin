@@ -64,6 +64,12 @@ def suggested_redirect_uri() -> str:
     return ide_gateway_origin() + CALLBACK_PATH
 
 
+def _saved_redirect(value: Any) -> str:
+    from navin.marketing.oauth import loopback_callback
+
+    return loopback_callback(str(value or ""), CALLBACK_PATH)
+
+
 def valid_redirect(value: Any) -> str:
     text = str(value or "").strip()
     try:
@@ -73,7 +79,7 @@ def valid_redirect(value: Any) -> str:
         raise ConnectorError("The redirect URI is not a valid URL.") from None
     loopback = host in {"127.0.0.1", "localhost", "::1"}
     if not host or parts.scheme not in {"https", "http"} or (parts.scheme == "http" and not loopback):
-        raise ConnectorError("The redirect URI must use https://, or http://127.0.0.1 or localhost on this machine.")
+        raise ConnectorError("The redirect URI must use https://, or http://localhost on this machine.")
     if parts.username or parts.password or parts.query or parts.fragment or parts.path != CALLBACK_PATH:
         raise ConnectorError(f"The redirect URI must end with {CALLBACK_PATH}, without query or fragment.")
     if len(text) > 500:
@@ -95,7 +101,7 @@ def client(store: ConnectorStore, family: str) -> tuple[str, str, str]:
     env_id, env_secret = _env_client(family)
     client_id = str(app.get("client_id") or env_id)
     secret = store.app_secret(family) or env_secret
-    redirect = str(app.get("redirect_uri") or "") or suggested_redirect_uri()
+    redirect = _saved_redirect(app.get("redirect_uri")) or suggested_redirect_uri()
     return client_id, secret, redirect
 
 

@@ -20,11 +20,20 @@ Tool signatures and options come with the function definitions. These notes cove
 
 Writing an edit is not evidence that it works.
 
+{% if testing_depth == "thorough" %}
 - Size the check to the change. A copy, style or one-element edit needs the linter block the edit returned, at most one `verify action=check` on that file, and the build. Logic, data, routing, dependencies and multi-file changes get real tests.
+{% else %}
+- Size the check to the change. A copy, style or one-element edit needs the linter block the edit returned, at most one `verify action=check` on that file, and the build. Logic, data, routing, dependencies and multi-file changes get one or two tests, never more.
+{% endif %}
 - Always build before delivering: when the unit you changed has a build step (`npm run build`, `cargo build`, `tsc`, `make build`, `project action=build`), run it after the last edit, small changes included. A red build blocks delivery. If it cannot run here, say so.
 - Edit tools return file-scope lint findings; fix what they name before moving on.
+{% if testing_depth == "thorough" %}
 - Turn the request into acceptance criteria. Add or adapt tests for changed behavior (happy path, relevant failures, a regression test for a reported bug); reuse tests that already cover it; skip boilerplate tests for text or style edits.
 - After the last edit, run the targeted tests (`test_run`, or `verify action=check test_target=<target>`) and the required lint/type/build checks. A later edit needs fresh evidence. Report only checks that actually completed: a detected suite, zero collected tests or a running command is not a pass.
+{% else %}
+- Turn the request into acceptance criteria. Tests stay essential: one or two test files per change, the one closest to the code plus at most one integration test showing the feature works end to end without errors. Add a test only for new behavior or a reported bug (one test, not a battery of cases); reuse tests that already cover it; none for text or style edits.
+- After the last edit, run them once (`test_run`, or `verify action=check`, which runs the changed files' tests within that budget) and the required lint/type/build checks. Never the whole suite, never a green test again without a new edit. A later edit needs fresh evidence. Report only checks that actually completed: a detected suite, zero collected tests or a running command is not a pass.
+{% endif %}
 - On a failure, fix the cause; never weaken assertions or skip cases. `verify action=fix` applies safe lint fixes. Wide refactors: `project_lint=true`. Risky changes: `verify action=snapshot`, then `rollback` if needed. If an external blocker prevents validation, name it instead of claiming completion.
 
 ## Token efficiency (batch, then search before dump)

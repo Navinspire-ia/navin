@@ -162,7 +162,7 @@ class _Config:
 def test_suggested_callback_uses_ide_gateway_not_vite(tmp_path):
     store = MarketingStore(tmp_path)
     assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
-        "http://127.0.0.1:8766" + oauth.CALLBACK_PATH
+        "http://localhost:8766" + oauth.CALLBACK_PATH
     )
     assert oauth.suggested_redirect_uri(store, "instagram", config=_Config()) == ""
     store.save_settings({"media_base_url": "https://desk.example.com/"})
@@ -172,6 +172,28 @@ def test_suggested_callback_uses_ide_gateway_not_vite(tmp_path):
     assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
         "https://desk.example.com" + oauth.CALLBACK_PATH
     )
+
+
+def test_legacy_ip_callback_becomes_localhost(tmp_path):
+    store = MarketingStore(tmp_path)
+    oauth._update(store, "reddit", {"redirect_uri": "http://127.0.0.1:8766" + oauth.CALLBACK_PATH})
+    assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
+        "http://localhost:8766" + oauth.CALLBACK_PATH
+    )
+    oauth._update(store, "reddit", {"redirect_uri": "http://127.0.0.1:9999" + oauth.CALLBACK_PATH})
+    assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
+        "http://127.0.0.1:9999" + oauth.CALLBACK_PATH
+    )
+
+
+def test_browser_hop_is_single_use():
+    url = oauth.browser_hop("c=v; Path=/x", "https://provider/auth?x=1", "http://localhost:8766" + oauth.CALLBACK_PATH)
+    parts = urlsplit(url)
+    assert parts.netloc == "localhost:8766" and parts.path == oauth.CALLBACK_PATH
+    ticket = parse_qs(parts.query)[oauth.HOP_PARAM][0]
+    assert oauth.redeem_hop(ticket) == ("c=v; Path=/x", "https://provider/auth?x=1")
+    with pytest.raises(MarketingError, match="already used"):
+        oauth.redeem_hop(ticket)
 
 
 def test_reddit_connects_without_typing_account_id_or_secret(tmp_path, monkeypatch):

@@ -321,10 +321,12 @@ def test_oauth_denied_consent_is_translated_and_does_not_store_tokens(store, pub
     started = start(store, "google", locale="fr-FR")
     query = parse_qs(urlsplit(started["url"]).query)
     callback = urlsplit(query["redirect_uri"][0])
+    assert callback.hostname == "localhost"
     connection = http.client.HTTPConnection("127.0.0.1", callback.port, timeout=5)
     try:
         with patch("navin.accounts.oauth.request") as http:
-            connection.request("GET", callback.path + "?" + urlencode({"state": query["state"][0], "error": "access_denied"}))
+            connection.request("GET", callback.path + "?" + urlencode({"state": query["state"][0], "error": "access_denied"}),
+                               headers={"Host": callback.netloc})
             response = connection.getresponse()
             assert "Connexion annulée ou autorisation refusée" in response.read().decode()
             http.assert_not_called()

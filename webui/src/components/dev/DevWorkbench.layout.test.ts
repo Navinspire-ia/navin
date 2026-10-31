@@ -146,7 +146,7 @@ describe("Collapsed rail launchers", () => {
     }
   });
 
-  it("lists Channels right under Browser and opens Settings > Channels", () => {
+  it("lists Channels right under Browser and opens Channels in a window", () => {
     const browser = rail.indexOf('key: "browser"');
     const channels = rail.indexOf('key: "channels"');
     const board = rail.indexOf('key: "board"');
@@ -159,12 +159,11 @@ describe("Collapsed rail launchers", () => {
     expect(entry).toContain('tx("dev.channelsTab", "Channels")');
     // No NEW pill in front of an app button.
     expect(entry).not.toContain("badge:");
-    expect(entry).toContain('go: () => openSettingsSection("channels")');
-    // App routes the event to that section; an unknown key would land on Overview.
+    expect(entry).toContain('go: () => openSettingsDialog("channels")');
+    // App listens for the window event and mounts the settings window.
     const app = readFileSync(resolve(__dirname, "../../App.tsx"), "utf8");
-    const start = app.indexOf("const SETTINGS_SECTION_KEYS");
-    expect(start).toBeGreaterThan(0);
-    expect(app.slice(start, app.indexOf("];", start))).toContain('"channels"');
+    expect(app).toContain("window.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, onOpenDialog)");
+    expect(app).toContain("<SettingsSectionDialog");
   });
 
   it("only restores the workbench for entries that render in it", () => {

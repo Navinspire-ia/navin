@@ -40,7 +40,8 @@ import { UpdateOverlay } from "@/components/UpdateOverlay";
 import { Sidebar } from "@/components/Sidebar";
 import { SessionSearchDialog } from "@/components/SessionSearchDialog";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
-import { OPEN_SETTINGS_SECTION_EVENT } from "@/lib/settings-events";
+import { OPEN_SETTINGS_DIALOG_EVENT, OPEN_SETTINGS_SECTION_EVENT, isSettingsDialogSection, type SettingsDialogSection } from "@/lib/settings-events";
+import { SettingsSectionDialog } from "@/components/settings/SettingsSectionDialog";
 import type { StudioModule } from "@/components/studio/StudioWorkspace";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import { ThreadShell } from "@/components/thread/ThreadShell";
@@ -1690,6 +1691,8 @@ function Shell({
   const [workspaces, setWorkspaces] = useState<WorkspacesPayload | null>(null);
   const { skills, refresh: refreshSkills } = useSkills(token);
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
+  // Channels / Team opened in a window from the chat or the Code rail.
+  const [settingsDialogSection, setSettingsDialogSection] = useState<SettingsDialogSection | null>(null);
   const [showFirstRunWizard, setShowFirstRunWizard] = useState(() => needsFirstRunWizard());
   const { account, reload: reloadAccount } = useAccount();
   useExternalLinkOpener(token);
@@ -3786,6 +3789,21 @@ function Shell({
     return () => window.removeEventListener(OPEN_SETTINGS_SECTION_EVENT, onOpenSection);
   }, [onOpenSettings]);
 
+  // The chat's Connector button and the Code rail's Channels / Team open their
+  // section in a window: the user stays in the conversation.
+  useEffect(() => {
+    const onOpenDialog = (event: Event) => {
+      const section = (event as CustomEvent<{ section?: string }>).detail?.section;
+      if (!isSettingsDialogSection(section)) return;
+      setSessionSearchOpen(false);
+      setMobileSidebarOpen(false);
+      setSettingsDialogSection(section);
+    };
+    window.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, onOpenDialog);
+    return () => window.removeEventListener(OPEN_SETTINGS_DIALOG_EVENT, onOpenDialog);
+  }, []);
+  const closeSettingsDialog = useCallback(() => setSettingsDialogSection(null), []);
+
   const onOpenAccountSettings = useCallback(() => {
     onOpenSettings("account");
   }, [onOpenSettings]);
@@ -4710,6 +4728,21 @@ function Shell({
             loading={loading}
             titleOverrides={sidebarState.title_overrides}
             onSelect={onSelectSearchResult}
+          />
+          <SettingsSectionDialog
+            section={settingsDialogSection}
+            onClose={closeSettingsDialog}
+            theme={theme}
+            initialSettings={settingsSnapshot}
+            onToggleTheme={toggle}
+            onModelNameChange={onModelNameChange}
+            onSettingsChange={setSettingsSnapshot}
+            skills={skills}
+            onSkillsChange={refreshSkills}
+            onWorkspaceSettingsChange={refreshWorkspaces}
+            onRestart={onRestart}
+            onNativeEngineRestart={onNativeEngineRestart}
+            isRestarting={isRestarting}
           />
         <main
           ref={shellMainRef}

@@ -2863,7 +2863,14 @@ export function ThreadShell({
   // Sub-agents and a running robustness proof read in the conversation, at its end.
   const transcriptTail = (
     <>
-      <LiveSubagentsPanel store={subagentStore} onAction={subagentAction} canManage={!isViewer} />
+      <LiveSubagentsPanel
+        store={subagentStore}
+        onAction={subagentAction}
+        canManage={!isViewer}
+        // The bar above the composer (same condition) shows the running,
+        // waiting and failed ones; the journal keeps the finished results.
+        attentionInStatusBar={Boolean(session && chatId)}
+      />
       <ProofRunCard prove={proveChange} href={proveHref} />
     </>
   );

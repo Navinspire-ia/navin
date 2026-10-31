@@ -7,7 +7,13 @@ import { describe, expect, it, vi } from "vitest";
 import ar from "@/i18n/locales/ar/common.json";
 import en from "@/i18n/locales/en/common.json";
 import fr from "@/i18n/locales/fr/common.json";
-import { OPEN_SETTINGS_SECTION_EVENT, openSettingsSection } from "@/lib/settings-events";
+import {
+  OPEN_SETTINGS_DIALOG_EVENT,
+  OPEN_SETTINGS_SECTION_EVENT,
+  isSettingsDialogSection,
+  openSettingsDialog,
+  openSettingsSection,
+} from "@/lib/settings-events";
 import type { UIMessage } from "@/lib/types";
 import {
   REVERSE_INTRO_FALLBACK,
@@ -64,7 +70,7 @@ describe("reverse launch", () => {
     }
   });
 
-  it("puts Team with a NEW badge right above Reverse and opens Settings > Team", () => {
+  it("puts Team with a NEW badge right above Reverse and opens Team in a window", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../components/dev/DevWorkbench.tsx"),
       "utf8",
@@ -75,7 +81,9 @@ describe("reverse launch", () => {
     expect(team).toBeLessThan(reverse);
     const entry = source.slice(team, reverse);
     expect(entry).toContain('tx("dev.reverseNew", "NEW")');
-    expect(entry).toContain('go: () => openSettingsSection("team")');
+    // A window over Code, not a trip to the Settings page.
+    expect(entry).toContain('go: () => openSettingsDialog("team")');
+    expect(source).not.toContain("openSettingsSection(");
   });
 
   it("draws the Team, Cyber, Review and Reverse NEW markers as quiet dots, not yellow text pills", () => {
@@ -95,18 +103,27 @@ describe("reverse launch", () => {
     expect(render).toContain("h-1.5 w-1.5 shrink-0 rounded-full");
   });
 
-  it("routes a Team click to the Settings section listener", () => {
+  it("routes a Team click to the settings window listener", () => {
     const seen: string[] = [];
+    const pages: string[] = [];
     const target = new EventTarget();
     vi.stubGlobal("window", target);
     const listener = (event: Event) => seen.push((event as CustomEvent<{ section: string }>).detail.section);
-    target.addEventListener(OPEN_SETTINGS_SECTION_EVENT, listener);
+    const page = (event: Event) => pages.push((event as CustomEvent<{ section: string }>).detail.section);
+    target.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, listener);
+    target.addEventListener(OPEN_SETTINGS_SECTION_EVENT, page);
     try {
-      openSettingsSection("team");
+      openSettingsDialog("team");
+      openSettingsSection("git");
     } finally {
       vi.unstubAllGlobals();
     }
     expect(seen).toEqual(["team"]);
+    // The Settings page route is still there for the other sections.
+    expect(pages).toEqual(["git"]);
+    expect(isSettingsDialogSection("team")).toBe(true);
+    expect(isSettingsDialogSection("channels")).toBe(true);
+    expect(isSettingsDialogSection("git")).toBe(false);
   });
 
   it("does not stack the question on repeated clicks", () => {

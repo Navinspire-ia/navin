@@ -3979,6 +3979,9 @@
     "reload": "Reload"
   },
   "settings": {
+    "dialog": {
+      "description": "변경 사항은 바로 저장됩니다. 이 창을 닫으면 작업으로 돌아갑니다."
+    },
     "picker": {
       "search": "Search or enter a value",
       "noResults": "No matching options.",
@@ -4022,7 +4025,12 @@
       "version": "Version",
       "viewLicenses": "View licenses",
       "viewNavinLicense": "View license",
-      "website": "Website"
+      "website": "Website",
+      "autoInstall": "Navin이 유휴 상태일 때 자동 설치",
+      "autoInstallHint": "업데이트는 백그라운드에서 다운로드되고 에이전트가 작업하지 않을 때 설치됩니다. 설정, 세션, 메모리는 유지됩니다.",
+      "channelStable": "안정",
+      "channelBeta": "베타",
+      "channelEnterprise": "엔터프라이즈"
     },
     "account": {
       "connectTimeout": "Sign-in did not finish. Complete the browser steps (sign in, then Connect), or try again.",
@@ -4515,7 +4523,10 @@
       "videoProvider": "Choose the provider used by generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).",
       "videoProviderStatus": "Video generation reuses provider credentials from Providers.",
       "webuiDefaultAccess": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this machine. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
-      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode."
+      "webuiDefaultAccessNative": "This is a different setting from Restrict to workspace.\nDefault Permission: the chat stays in the chosen folder, with confirmation for risky actions.\nFull Access: the agent can go anywhere on this Mac. Click Save. This mostly applies to new chats. A chat already open keeps its previous mode.",
+      "agentTestingEssential": "변경마다 테스트 1~2개: 가장 가까운 테스트와 최대 1개의 통합 테스트를 마지막 수정 후 한 번 실행합니다. 권장.",
+      "agentTestingThorough": "변경과 관련된 모든 테스트(실패 사례 포함). 더 느림: 작은 작업도 코딩보다 테스트에 더 오래 걸릴 수 있습니다.",
+      "agentTestingError": "이 선택을 저장하지 못했습니다."
     },
     "image": {
       "configureProvider": "Configure provider",
@@ -4977,7 +4988,8 @@
       "videoSaveDir": "Save directory",
       "voiceLimits": "Limits",
       "webuiDefaultAccess": "Default access",
-      "workspacePath": "Default workspace"
+      "workspacePath": "Default workspace",
+      "agentTestingDepth": "변경 후 테스트"
     },
     "sections": {
       "about": "About",
@@ -5010,7 +5022,8 @@
       "webBehavior": "Behavior",
       "webSearch": "Web search",
       "webuiSafety": "Web safety",
-      "semanticSearch": "Semantic code search"
+      "semanticSearch": "Semantic code search",
+      "agentTesting": "에이전트 테스트"
     },
     "sidebar": {
       "ariaLabel": "Settings sections",
@@ -5317,7 +5330,9 @@
       "restartPending": "Restart pending",
       "restartingEngine": "Restarting",
       "summary": "Summary",
-      "unixSocket": "Unix socket"
+      "unixSocket": "Unix socket",
+      "testingEssential": "필수",
+      "testingThorough": "전체"
     },
     "video": {
       "configureProvider": "Configure provider",
@@ -5619,6 +5634,24 @@
       "save": "Save",
       "saveHint": "Applies to new semantic searches; the index rebuilds on the next query.",
       "saving": "Saving..."
+    },
+    "updates": {
+      "historyTitle": "업데이트 활동",
+      "historyEmpty": "아직 업데이트 활동이 없습니다.",
+      "historyError": "업데이트 활동을 불러오지 못했습니다.",
+      "refresh": "새로 고침",
+      "installedBy": "설치 담당: {{engine}}",
+      "engineTauri": "데스크톱 업데이터",
+      "engineNavin": "Navin 업데이터",
+      "engineManual": "수동",
+      "events": {
+        "checked": "확인됨",
+        "downloaded": "다운로드됨",
+        "installing": "설치 중",
+        "installed": "설치됨",
+        "rollback": "롤백됨",
+        "error": "실패"
+      }
     }
   },
   "sidebar": {
@@ -9059,6 +9092,8 @@
       "attachImage": "Attach files",
       "connectors": "커넥터",
       "connectorsHint": "에이전트가 사용할 수 있는 앱 연결",
+      "connectApps": "앱 연결",
+      "moreTools": "추가 옵션",
       "budgetFilterNote": "At {{percent}}% usage, Opus 5+, Fable 5+ and GPT 5.6 are paused. Other plan models stay available until renewal.",
       "clearModelSearch": "Clear search",
       "configureModel": "Configure model",
@@ -9171,7 +9206,6 @@
       "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new chat…",
-      "placeholderStreaming": "에이전트 작업 중. Enter는 대기열, Alt+Enter는 지금 보내기",
       "placeholderThread": "Type your message…",
       "queued": {
         "add": "이 메시지를 다음 턴용으로 대기열에 추가 (Enter). Alt+Enter는 지금 에이전트에 보냅니다.",

@@ -30,12 +30,15 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from loguru import logger
 from packaging.version import InvalidVersion, Version
 
 from navin import __version__
 from navin.bus.notify import notify
 from navin.config.loader import load_config
 from navin.process_runtime import child_environment
+from navin.update import data_compat
+from navin.update import policy as update_policy
 from navin.utils.proc import detached_no_window_kwargs, no_window_kwargs
 
 _CACHE_TTL_S = 6 * 60 * 60
@@ -494,30 +497,44 @@ def _release_info(
         latest_version = Version(latest)
     except InvalidVersion as exc:
         raise UpdateError("Update manifest contains an invalid version", status=503) from exc
-    if latest_version <= current_version or latest == skipped_version:
+    revoked = update_policy.is_revoked(manifest, __version__)
+    rollback = update_policy.rollback_offer(
+        manifest, __version__, data_compat.local_data_version(),
+    )
+    newer = (
+        latest_version > current_version
+        and latest != skipped_version
+        and not update_policy.is_suspended(manifest)
+        and not update_policy.is_revoked(manifest, latest)
+    )
+    if not newer and rollback is None:
         return None
-    rollout = int(manifest.get("rollout", 100))
-    if rollout < 0 or rollout > 100:
-        raise UpdateError("Update manifest rollout is invalid", status=503)
-    identity_path = Path.home() / ".navin" / "update-id"
-    try:
-        if identity_path.exists():
-            identity = identity_path.read_text(encoding="ascii").strip()
-        else:
-            identity_path.parent.mkdir(parents=True, exist_ok=True)
-            identity = str(uuid.uuid4())
-            identity_path.write_text(identity + "\n", encoding="ascii")
-    except OSError:
-        identity = platform.node() or "navin"
-    bucket = int(hashlib.sha256(identity.encode()).hexdigest()[:8], 16) % 100
-    if bucket >= rollout:
-        return None
+    if newer:
+        rollout = int(manifest.get("rollout", 100))
+        if rollout < 0 or rollout > 100:
+            raise UpdateError("Update manifest rollout is invalid", status=503)
+        # A revoked version gets the fix at once, whatever the rollout.
+        if not revoked and not _in_rollout(rollout):
+            return None
+    if not newer:
+        # Going back to the signed build the publisher named for this case.
+        if rollback is None:
+            return None
+        latest = str(rollback.get("version", "")).strip()
+        data_version = rollback.get("dataVersion", 1)
+        manifest = {**manifest, "artifacts": rollback.get("artifacts") or {},
+                    "notes": str(rollback.get("notes") or manifest.get("notes") or "")}
+    else:
+        data_version = manifest.get("dataVersion", 1)
 
     minimum = str(manifest.get("minimumVersion", "")).strip()
     try:
-        mandatory = bool(minimum and current_version < Version(minimum))
+        mandatory = revoked or bool(minimum and current_version < Version(minimum))
     except InvalidVersion as exc:
         raise UpdateError("Update manifest minimum version is invalid", status=503) from exc
+    extra = {"rollback": not newer, "revokedCurrent": revoked, "dataVersion": data_version}
+    if isinstance(manifest.get("components"), dict):
+        extra["components"] = manifest["components"]
     kind = _install_kind()
     if kind == "unsupported":
         return None
@@ -535,6 +552,7 @@ def _release_info(
             "installKind": kind,
             "notes": str(manifest.get("notes", "")),
             "mandatory": mandatory,
+            **extra,
             "reason": (
                 "This session is a source checkout. Upgrade the packaged CLI with: navin update"
                 if kind == "source"
@@ -568,12 +586,56 @@ def _release_info(
         "installKind": kind,
         "notes": str(manifest.get("notes", "")),
         "mandatory": mandatory,
+        **extra,
         "artifact": {
             "url": _artifact_url(base_url, raw_url),
             "size": size,
             "sha256": digest,
         },
     }
+
+
+def _rollout_identity() -> str:
+    identity_path = Path.home() / ".navin" / "update-id"
+    try:
+        if identity_path.exists():
+            return identity_path.read_text(encoding="ascii").strip()
+        identity_path.parent.mkdir(parents=True, exist_ok=True)
+        identity = str(uuid.uuid4())
+        identity_path.write_text(identity + "\n", encoding="ascii")
+        return identity
+    except OSError:
+        # A machine that cannot write its id still lands in a stable bucket.
+        return platform.node() or "navin"
+
+
+def _in_rollout(rollout: int) -> bool:
+    """This machine's stable 0-99 bucket is inside the published percentage."""
+    bucket = int(hashlib.sha256(_rollout_identity().encode()).hexdigest()[:8], 16) % 100
+    return bucket < rollout
+
+
+def update_policy_for(version: str) -> dict[str, Any]:
+    """Whether the desktop shell may install ``version`` (Tauri engine).
+
+    Same signed manifest, rollout bucket, suspension and revocation as the
+    Navin engine: one policy, whichever engine installs.
+    """
+    base_url, channel, _skipped = _update_config()
+    if not base_url:
+        return {"allowed": False, "reason": "no update server configured", "mandatory": False}
+    manifest = _fetch_manifest(base_url, channel)
+    rollout = int(manifest.get("rollout", 100))
+    decision = update_policy.decide(
+        manifest,
+        current_version=__version__,
+        candidate_version=version,
+        in_rollout=0 <= rollout <= 100 and _in_rollout(rollout),
+    )
+    rollback = update_policy.rollback_offer(manifest, __version__, data_compat.local_data_version())
+    if decision.get("rollback") and rollback is None:
+        decision = {**decision, "allowed": False, "reason": "rollback cannot read local data"}
+    return {**decision, "channel": channel, "version": version}
 
 
 def check_for_update(*, force: bool = False) -> dict[str, Any]:
@@ -613,6 +675,10 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
         if release is None and Version(result["latestVersion"]) > Version(__version__):
             if not force and result["latestVersion"] == skipped_version:
                 reason = "This version was skipped. Check for updates manually to reconsider it."
+            elif update_policy.is_suspended(manifest):
+                reason = "This release is paused by the publisher. Navin keeps the current version."
+            elif update_policy.is_revoked(manifest, result["latestVersion"]):
+                reason = "This release was withdrawn by the publisher."
             elif kind == "unsupported":
                 reason = "Automatic updates are not supported for this installation. Download the latest installer."
             elif not any(key in (manifest.get("artifacts") or {}) for key in _platform_keys(kind)):
@@ -747,14 +813,17 @@ def _download_update() -> dict[str, Any]:
         if info["installKind"] in {"linux", "linux-appimage", "macos"}:
             destination.chmod(destination.stat().st_mode | stat.S_IXUSR)
         _set_state(state="ready", progress=100, downloadedBytes=downloaded, path=str(destination))
+        _history("downloaded", version=str(info["latestVersion"]))
         return {**info, "state": "ready", "path": str(destination)}
     except (httpx.HTTPError, OSError) as exc:
         partial.unlink(missing_ok=True)
         message = str(exc) if isinstance(exc, UpdateError) else "Update download failed"
         _set_state(state="error", error=message)
+        _history("error", version=str(info["latestVersion"]), detail=message, ok=False)
         raise UpdateError(message, status=503) from exc
-    except UpdateError:
+    except UpdateError as exc:
         partial.unlink(missing_ok=True)
+        _history("error", version=str(info["latestVersion"]), detail=str(exc), ok=False)
         raise
 
 
@@ -1474,6 +1543,14 @@ def install_update() -> dict[str, Any]:
     return _run_update_operation(_install_update)
 
 
+def _history(event: str, *, version: str = "", detail: str = "", ok: bool = True) -> None:
+    """One line in Settings > Updates. The history never blocks an update."""
+    try:
+        update_policy.record_event(event, version=version, engine="navin", detail=detail, ok=ok)
+    except OSError as exc:
+        logger.warning("Could not write the update history: {}", exc)
+
+
 def _install_update() -> dict[str, Any]:
     with _STATE_LOCK:
         path = str(_STATE.get("path", ""))
@@ -1493,6 +1570,16 @@ def _install_update() -> dict[str, Any]:
     executable = Path(sys.executable).resolve()
     pid = os.getpid()
     desktop_pid = _desktop_pid()
+    target_version = str(info.get("latestVersion") or "")
+    if info.get("rollback"):
+        if not data_compat.compatible(info.get("dataVersion", 1)):
+            raise UpdateError("This older version cannot read the local data", status=409)
+    # The installer replaces the application only; config, sessions and
+    # memories stay in ~/.navin. The config is still copied aside first.
+    try:
+        data_compat.backup_before_install(__version__, target_version)
+    except OSError as exc:
+        raise UpdateError(f"Could not back up the configuration before updating: {exc}", status=503) from exc
     _set_state(state="installing", phase="preparing", progress=0)
 
     if kind.startswith("windows"):
@@ -1551,6 +1638,7 @@ def _install_update() -> dict[str, Any]:
 
     version = str(info.get("latestVersion") or "").strip()
     _record_pending_install(version)
+    _history("rollback" if info.get("rollback") else "installing", version=version)
     _set_state(state="restarting", error=None)
     # The tab that asked for this gets a reply; every other open window just
     # loses its connection in a second and a half with no idea why.
@@ -1570,4 +1658,7 @@ def update_status() -> dict[str, Any]:
         state = dict(_STATE)
     state["currentVersion"] = __version__
     state["installKind"] = _install_kind()
+    state["strategy"] = update_policy.install_strategy(state["installKind"])
+    state["strategy"]["engine"] = update_policy.engine_for(state["installKind"])
+    state["dataVersion"] = data_compat.local_data_version()
     return state

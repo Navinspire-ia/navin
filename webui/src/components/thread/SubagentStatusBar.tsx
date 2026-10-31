@@ -10,9 +10,12 @@ import { cn } from "@/lib/utils";
 import {
   StatusIcon,
   SubagentActionButtons,
+  formatElapsed,
+  isQueuedCard,
   subagentActionsFor,
   subagentCardState,
   subagentStatusLine,
+  useElapsedClock,
   useSubagentActions,
   type CardState,
   type ParallelSubagentCard,
@@ -79,16 +82,21 @@ export function SubagentStatusBar({
       const expanded = new Set(store.getSnapshot().expanded);
       expanded.add(taskId);
       store.setExpanded(expanded);
+      // A running card enters the journal only once opened: look for it after
+      // that render, or the first click opened it without bringing it in view.
       const target = `subagent-card-${taskId}`;
-      const el = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='subagent-card-']")).find(
-        (node) => node.dataset.testid === target,
-      );
-      if (el && typeof el.scrollIntoView === "function") {
-        el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
-      }
+      window.requestAnimationFrame(() => {
+        const el = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='subagent-card-']")).find(
+          (node) => node.dataset.testid === target,
+        );
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+        }
+      });
     },
     [reduce, store],
   );
+  const now = useElapsedClock(counts.running > 0);
   if (cards.length === 0) return null;
   const finished = counts.failed + counts.done;
   const chips: Array<[string, string, string]> = [];
@@ -141,7 +149,7 @@ export function SubagentStatusBar({
             transition={{ duration: reduce ? 0 : 0.16, ease: [0.2, 0, 0, 1] }}
             className="overflow-hidden"
           >
-            <StatusBarRow card={card} onAction={onAction} canManage={canManage} onFocus={focusCard} />
+            <StatusBarRow card={card} now={now} onAction={onAction} canManage={canManage} onFocus={focusCard} />
           </motion.div>
         ))}
       </AnimatePresence>
@@ -162,11 +170,13 @@ export function SubagentStatusBar({
 
 function StatusBarRow({
   card,
+  now,
   onAction,
   canManage,
   onFocus,
 }: {
   card: ParallelSubagentCard;
+  now: number;
   onAction?: SubagentActionHandler;
   canManage: boolean;
   onFocus: (taskId: string) => void;
@@ -175,6 +185,10 @@ function StatusBarRow({
   const state = subagentCardState(card);
   const actions = onAction ? subagentActionsFor(state, canManage) : [];
   const { busy, error, run } = useSubagentActions(card, onAction);
+  // The journal no longer repeats a running agent: its model and time live here.
+  const meta = card.done || isQueuedCard(card)
+    ? ""
+    : [card.model, formatElapsed(now - card.startedAt)].filter(Boolean).join(" · ");
   return (
     <div data-testid={`subagent-status-row-${card.taskId}`} data-state={state}>
       <div className="flex min-h-6 items-center gap-2">
@@ -184,6 +198,7 @@ function StatusBarRow({
         <button
           type="button"
           onClick={() => onFocus(card.taskId)}
+          title={t("thread.subagents.showDetails", { defaultValue: "Show details" })}
           className="min-w-0 max-w-[40%] shrink truncate rounded text-start font-medium text-foreground/90 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
           {card.label}
@@ -199,6 +214,14 @@ function StatusBarRow({
             ? ` · ${t("thread.subagents.answerInChat", { defaultValue: "Answer the request in the chat" })}`
             : ""}
         </span>
+        {meta ? (
+          <span
+            data-testid={`subagent-status-meta-${card.taskId}`}
+            className="hidden max-w-[35%] shrink-0 truncate text-muted-foreground/80 tabular-nums sm:inline"
+          >
+            {meta}
+          </span>
+        ) : null}
         <SubagentActionButtons card={card} actions={actions} busy={busy} onRun={(a) => void run(a)} />
       </div>
       {error ? (

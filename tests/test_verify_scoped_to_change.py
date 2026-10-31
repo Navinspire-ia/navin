@@ -285,7 +285,7 @@ class ChangedFilesTestsOnlyTest(unittest.TestCase):
         done = subprocess.CompletedProcess([], 0, "", "")
         with mock.patch.object(testing, "_runner_argv", return_value=["pytest"]), \
              mock.patch.object(testing, "_parse_junit_xml", return_value=(2, 0, 0, 2, [])), \
-             mock.patch.object(testing.subprocess, "run", return_value=done) as run:
+             mock.patch.object(testing, "run_killing_tree", return_value=done) as run:
             outcome = testing._run_one("pytest", spec, self.root, ["tests/test_a.py", "tests/test_b.py"])
         self.assertTrue(outcome.ok)
         self.assertEqual(run.call_args.args[0][-2:], ["tests/test_a.py", "tests/test_b.py"])
@@ -299,3 +299,129 @@ class ChangedFilesTestsOnlyTest(unittest.TestCase):
         self.assertEqual(report.test_outcomes, [])
         self.assertIsNone(verify_evidence(report).tests_ok)
         self.assertNotEqual(report.verdict, VERDICT_TEST_FAILURES)
+
+
+class EssentialTestingBudgetTest(unittest.TestCase):
+    """One change, one or two test files: never every test that mentions it.
+
+    Reported: tasks spent more time testing than coding, every edit re-ran up
+    to 24 test files and a conftest edit ran the whole suite.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        from navin.quality.check_budget import budget_for
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.essential = budget_for("essential")
+        self.thorough = budget_for("thorough")
+
+    def _write(self, rel: str, text: str = "") -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_the_edited_test_and_the_module_test_come_first(self) -> None:
+        self._write("pkg/widgets.py")
+        self._write("tests/test_widgets.py")
+        self._write("tests/test_clipboard.py", "from pkg import widgets\n")
+        self._write("tests/test_paste.py", "from pkg import widgets\n")
+        self.assertEqual(
+            testing.related_test_targets(
+                self.root, ["tests/test_paste.py", "pkg/widgets.py"], budget=self.essential,
+            ),
+            ["tests/test_paste.py", "tests/test_widgets.py"],
+        )
+        # Source only: its own test, then one integration test importing it.
+        self.assertEqual(
+            testing.related_test_targets(self.root, ["pkg/widgets.py"], budget=self.essential),
+            ["tests/test_widgets.py", "tests/test_clipboard.py"],
+        )
+
+    def test_each_changed_module_keeps_its_own_test_before_integration_tests(self) -> None:
+        self._write("pkg/alpha.py")
+        self._write("pkg/beta.py")
+        self._write("tests/test_flow.py", "from pkg import alpha\n")
+        self._write("tests/test_alpha.py")
+        self._write("tests/test_beta.py")
+        self.assertEqual(
+            testing.related_test_targets(self.root, ["pkg/alpha.py", "pkg/beta.py"], budget=self.essential),
+            ["tests/test_alpha.py", "tests/test_beta.py"],
+        )
+
+    def test_a_conftest_edit_no_longer_runs_the_whole_folder(self) -> None:
+        self._write("pkg/widgets.py")
+        self._write("tests/conftest.py")
+        self._write("tests/test_widgets.py")
+        self._write("tests/test_clipboard.py", "from pkg import widgets\n")
+        self._write("tests/test_paste.py", "from pkg import widgets\n")
+        self.assertEqual(
+            testing.related_test_targets(self.root, ["tests/conftest.py"], budget=self.essential), [],
+        )
+        # Thorough keeps the old breadth: the folder and every importer.
+        self.assertEqual(
+            testing.related_test_targets(
+                self.root, ["pkg/widgets.py", "tests/conftest.py"], budget=self.thorough,
+            ),
+            ["tests/test_widgets.py", "tests", "tests/test_clipboard.py", "tests/test_paste.py"],
+        )
+
+    def test_the_run_for_a_change_stays_within_the_budget(self) -> None:
+        for name in ("a", "b", "c"):
+            self._write(f"tests/test_{name}.py")
+        outcome = testing.TestOutcome(runner="pytest", ran=True, passed=2, total=2, exit_code=0)
+        changed = ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
+        with mock.patch.object(testing, "_runner_for_target", return_value=("pytest", self.root)), \
+             mock.patch.object(testing, "_primary_runners", return_value=["pytest"]), \
+             mock.patch.object(testing, "_run_one", return_value=outcome) as run_one:
+            testing.run_tests_for_changes(self.root, changed, budget=self.essential)
+            self.assertEqual(run_one.call_args.args[3], ["tests/test_a.py", "tests/test_b.py"])
+            testing.run_tests_for_changes(self.root, changed, budget=self.thorough)
+            self.assertEqual(run_one.call_args.args[3], changed)
+
+    def test_verify_uses_the_configured_budget(self) -> None:
+        from navin.quality import verify
+
+        self._write("pkg/widgets.py", "VALUE = 1\n")
+        with mock.patch.object(verify, "current_budget", return_value=self.essential), \
+             mock.patch.object(verify, "runners_for_changes", return_value=["pytest"]), \
+             mock.patch.object(verify, "lint_file", return_value=[]), \
+             mock.patch.object(verify, "run_tests_for_changes", return_value=([], [])) as run:
+            verify.verify_changes(self.root, ["pkg/widgets.py"])
+        self.assertIs(run.call_args.kwargs["budget"], self.essential)
+
+    def test_the_depth_comes_from_the_settings(self) -> None:
+        from navin.config.schema import Config
+        from navin.quality import check_budget
+
+        config = Config()
+        self.assertEqual(config.agents.defaults.testing_depth, "essential")
+        with mock.patch("navin.config.loader.load_config_cached", return_value=config):
+            self.assertEqual(check_budget.current_budget().max_files, 2)
+            config.agents.defaults.testing_depth = "thorough"
+            self.assertEqual(check_budget.current_budget().max_files, 24)
+        with mock.patch("navin.config.loader.load_config_cached", side_effect=ValueError("bad json")):
+            self.assertEqual(check_budget.current_budget(), check_budget.budget_for("essential"))
+        parsed = Config.model_validate({"agents": {"defaults": {"testingDepth": "thorough"}}})
+        self.assertEqual(parsed.agents.defaults.testing_depth, "thorough")
+
+    def test_the_settings_endpoint_saves_the_depth_and_refuses_an_unknown_one(self) -> None:
+        from navin.config.schema import Config
+        from navin.webui import settings_api
+
+        config = Config()
+        saved: list = []
+        with mock.patch.object(settings_api, "load_config", return_value=config), \
+             mock.patch.object(settings_api, "save_config", side_effect=saved.append), \
+             mock.patch.object(settings_api, "settings_payload", return_value={}):
+            settings_api.update_agent_settings({"testingDepth": ["thorough"]})
+            self.assertEqual(config.agents.defaults.testing_depth, "thorough")
+            self.assertEqual(len(saved), 1)
+            settings_api.update_agent_settings({"testing_depth": ["thorough"]})
+            self.assertEqual(len(saved), 1, "same value, nothing saved")
+            with self.assertRaises(settings_api.WebUISettingsError):
+                settings_api.update_agent_settings({"testing_depth": ["everything"]})
+        self.assertEqual(config.agents.defaults.testing_depth, "thorough")

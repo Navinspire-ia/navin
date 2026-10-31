@@ -1879,6 +1879,8 @@ export interface SettingsPayload {
     bot_name: string;
     bot_icon: string;
     tool_hint_max_length: number;
+    /** How much the agent tests a change: one or two tests (default) or every related test. */
+    testing_depth?: AgentTestingDepth;
   };
   model_presets: Array<{
     name: string;
@@ -2330,7 +2332,9 @@ export interface SettingsPayload {
   updates?: {
     enabled: boolean;
     autoCheck: boolean;
-    channel: "stable" | "beta";
+    /** Download in the background and install while Navin is idle. */
+    autoInstall?: boolean;
+    channel: "stable" | "beta" | "enterprise";
     configured: boolean;
     skippedVersion: string;
     /**
@@ -2643,6 +2647,7 @@ export interface SettingsUpdate {
   botIcon?: string;
   reasoningEffort?: string;
   toolHintMaxLength?: number;
+  testingDepth?: AgentTestingDepth;
   boardAutoBranch?: boolean;
   boardOpenPr?: boolean;
   browserHeadless?: boolean;
@@ -3893,3 +3898,6 @@ export interface MediaProviderRef {
   provider: string;
   label: string;
 }
+
+/** Settings > Advanced > Agent tests. */
+export type AgentTestingDepth = "essential" | "thorough";
