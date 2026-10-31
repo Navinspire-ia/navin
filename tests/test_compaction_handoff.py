@@ -584,6 +584,28 @@ class LazyEstimateTest(_HandoffTest):
         self.assertEqual(sync, threaded)
         self.assertGreater(sync[0], 0)
 
+    def test_async_estimate_builds_the_prompt_off_the_loop(self) -> None:
+        """Building the probe reads every skill's metadata from disk: on the
+        desktop with a WSL project it held the loop of every chat for 50 s
+        (2026-10-31). Only the cheap copy of the session stays on the loop."""
+        import threading
+        from unittest import mock
+
+        session = self._session(turns=4)
+        runtime = self._runtime(window=self._WINDOW)
+        loop_thread = threading.get_ident()
+        built_in: list[int] = []
+        real_build = self.consolidator._build_messages
+
+        def spy(**kwargs):
+            built_in.append(threading.get_ident())
+            return real_build(**kwargs)
+
+        with mock.patch.object(self.consolidator, "_build_messages", side_effect=spy):
+            _run(self.consolidator.estimate_session_prompt_tokens_async(session, runtime=runtime))
+        self.assertEqual(len(built_in), 1)
+        self.assertNotEqual(built_in[0], loop_thread)
+
     def test_async_estimate_prefers_the_provider_peak_like_the_sync_one(self) -> None:
         from navin.session.context_usage_meta import LAST_CONTEXT_USAGE_KEY
 
@@ -815,6 +837,10 @@ class EarlierMessagesStayVisibleTest(_HandoffTest):
         self.sessions.save(session)
         self._compact("cli:gone")
         path = self.sessions.earlier_messages_path("cli:gone")
+        # The display copy is written by a worker thread after the compaction
+        # returns (1 run in 3 checked the file before it, on HEAD too): read
+        # it back first, which waits for that write like every reader does.
+        self.assertTrue(self.sessions.earlier_messages(self.sessions.get_or_create("cli:gone")))
         self.assertTrue(path.is_file())
         self.assertTrue(self.sessions.delete_session("cli:gone"))
         self.assertFalse(path.exists())

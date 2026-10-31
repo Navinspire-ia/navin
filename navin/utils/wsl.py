@@ -43,6 +43,11 @@ _UNC_PREFIXES_SLASH = tuple(p.replace("\\", "/") for p in _UNC_PREFIXES)
 _DISTROS_TTL_S = 300.0
 _distros_cache: list[str] | None = None
 _distros_cached_at = 0.0
+# ``shutil.which`` walks every PATH entry with an access check: 30+ folders
+# on Windows, and every git call of every chat asked again (three threads in
+# it at once in a live dump, 2026-10-31). The answer does not move.
+_EXE_TTL_S = 300.0
+_exe_cache: tuple[float, str | None] | None = None
 
 _HOME_TTL_S = 300.0
 # distro -> (monotonic timestamp, home or None)
@@ -162,7 +167,14 @@ def is_wsl_guest() -> bool:
 
 
 def wsl_executable() -> str | None:
-    return shutil.which("wsl") or shutil.which("wsl.exe")
+    global _exe_cache
+    now = time.monotonic()
+    cached = _exe_cache
+    if cached is not None and now - cached[0] < _EXE_TTL_S:
+        return cached[1]
+    found = shutil.which("wsl") or shutil.which("wsl.exe")
+    _exe_cache = (now, found)
+    return found
 
 
 def distributions(*, refresh: bool = False) -> list[str]:

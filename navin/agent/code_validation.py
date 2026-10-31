@@ -11,6 +11,8 @@ import os
 import re
 import shlex
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -208,7 +210,60 @@ _READ_ONLY_PROGRAMS = frozenset({
     "md5sum", "sha1sum", "sha256sum", "jq", "column", "test", "[",
 })
 _READ_ONLY_GIT = frozenset({"status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe"})
-_UNSAFE_SHELL = re.compile(r"[>`]|\$\(|<\(|;|\|\||(?<!&)&(?!&)|\n")
+# Redirects that write no file: stderr into stdout, or output thrown away.
+_HARMLESS_REDIRECT = re.compile(r"(?<![\w>&])(?:[12]?>&[12]|(?:&|[12])?>>?\s*/dev/null)(?![\w/.-])")
+
+
+def _shell_segments(command: str) -> list[str] | None:
+    """``command`` split on unquoted ``;``, ``|``, ``||`` and ``&&``.
+
+    None when it holds anything that may write or run hidden code outside
+    single quotes: a redirect to a file, ``$(...)``, backticks, ``<(...)``, a
+    background ``&`` or a second line. Quotes are honoured, so the pipes of
+    ``grep -E "a|b"`` are not separators: the old regex split them and
+    took ``cat x; ls`` for an edit, which handed a parallel chat's changes
+    to a turn that only read a password file (desktop log, 2026-10-31).
+    """
+    text = _HARMLESS_REDIRECT.sub(" ", command)
+    segments: list[str] = []
+    current: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote == "'":
+            quote = "" if char == "'" else quote
+            current.append(char)
+            index += 1
+            continue
+        if char == "\\":
+            current.append(text[index:index + 2])
+            index += 2
+            continue
+        if char == "`" or text.startswith("$(", index):
+            return None
+        if quote == '"':
+            quote = "" if char == '"' else quote
+            current.append(char)
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+        elif char in ">\n" or text.startswith("<(", index):
+            return None
+        elif char in ";|" or text.startswith("&&", index):
+            segments.append("".join(current))
+            current = []
+            index += 2 if text.startswith(("||", "&&"), index) else 1
+            continue
+        elif char == "&":
+            return None
+        current.append(char)
+        index += 1
+    if quote:
+        return None
+    segments.append("".join(current))
+    return segments
 
 
 _GIT_TREE_MOVES = frozenset({"switch", "reset", "pull", "merge", "rebase", "stash", "stash_pop", "restore", "clone"})
@@ -234,17 +289,28 @@ def exec_cannot_edit(arguments: Any) -> bool:
     if not isinstance(arguments, dict) or arguments.get("background"):
         return False
     command = arguments.get("command") or arguments.get("cmd")
-    if not isinstance(command, str) or not command.strip() or _UNSAFE_SHELL.search(command):
+    if not isinstance(command, str) or not command.strip():
         return False
-    for segment in re.split(r"&&|\|", command):
+    segments = _shell_segments(command)
+    if segments is None:
+        return False
+    programs = 0
+    for segment in segments:
         try:
             tokens = shlex.split(segment)
         except ValueError:
             return False
         if not tokens:
-            return False
+            # ``cat a; echo;`` leaves an empty tail: nothing runs there.
+            continue
+        programs += 1
         program = tokens[0].rsplit("/", 1)[-1]
         args = tokens[1:]
+        if program == "env" and args:
+            # ``env FOO=1 rm x`` runs the command after it.
+            return False
+        if program == "sort" and any(arg == "-o" or arg.startswith(("-o", "--output")) for arg in args):
+            return False
         if program in _READ_ONLY_PROGRAMS:
             continue
         if program == "git" and args and args[0] in _READ_ONLY_GIT and "--output" not in " ".join(args):
@@ -256,7 +322,57 @@ def exec_cannot_edit(arguments: Any) -> bool:
         if len(args) == 1 and args[0] in {"--version", "-v", "-V", "version", "--help", "-h"}:
             continue
         return False
-    return True
+    return programs > 0
+
+
+# Files written with a file tool, by chat, across every chat of the process.
+# The owner is the chat's FileStates (its subagents share it). A tree change
+# another chat made with its own file tools is that chat's work: counting it
+# here asked a turn that edited nothing to test and build files it never
+# touched (two chats on one project, desktop log of 2026-10-31).
+_CHAT_WRITE_WINDOW_S = 1800.0
+_CHAT_WRITES_MAX = 4096
+_CHAT_WRITES: dict[str, tuple[object, float]] = {}
+_CHAT_WRITES_LOCK = threading.Lock()
+
+
+def _write_key(path: Path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _chat_owner() -> object | None:
+    from navin.agent.tools.file_state import bound_file_states
+
+    return bound_file_states()
+
+
+def note_chat_writes(root: Path, paths: set[str], owner: object | None = None) -> None:
+    """Remember that the running chat wrote ``paths`` (relative to ``root`` or absolute)."""
+    owner = owner if owner is not None else _chat_owner()
+    if owner is None or not paths:
+        return
+    now = time.monotonic()
+    with _CHAT_WRITES_LOCK:
+        for path in paths:
+            candidate = Path(path)
+            _CHAT_WRITES[_write_key(candidate if candidate.is_absolute() else Path(root) / candidate)] = (owner, now)
+        while len(_CHAT_WRITES) > _CHAT_WRITES_MAX:
+            _CHAT_WRITES.pop(next(iter(_CHAT_WRITES)))
+
+
+def written_by_other_chats(root: Path, paths: set[str], owner: object | None = None) -> set[str]:
+    """The ``paths`` (relative to ``root``) another chat last wrote with a file tool, recently."""
+    owner = owner if owner is not None else _chat_owner()
+    if owner is None or not paths:
+        return set()
+    now = time.monotonic()
+    foreign: set[str] = set()
+    with _CHAT_WRITES_LOCK:
+        for path in paths:
+            entry = _CHAT_WRITES.get(_write_key(Path(root) / path))
+            if entry is not None and entry[0] is not owner and now - entry[1] < _CHAT_WRITE_WINDOW_S:
+                foreign.add(path)
+    return foreign
 
 
 def _requires_tests(path: str) -> bool:
@@ -616,6 +732,8 @@ class CodeValidationState:
             self.root = Path(root)
         changed = self.stamp_changes(snapshot)
         self.workspace_snapshot = snapshot
+        if self.root is not None:
+            changed -= written_by_other_chats(self.root, changed)
         changed = {path for path in changed if self._content_changed(path, digests)}
         if changed:
             self.edited(changed, require_tests=any(
@@ -649,8 +767,13 @@ class CodeValidationState:
         self.content_hashes[path] = digest
         return previous != digest
 
-    def sync_known_edits(self, root: Path, paths: set[str]) -> None:
-        """File-tool edits were already observed; do not rediscover them as new."""
+    def sync_known_edits(self, root: Path, paths: set[str], *, owner: object | None = None) -> None:
+        """File-tool edits were already observed; do not rediscover them as new.
+
+        They are also this chat's: another chat on the same project must not
+        take them for its own edits to validate.
+        """
+        note_chat_writes(root, set(paths), owner)
         if self.workspace_snapshot is None:
             return
         for path in paths:

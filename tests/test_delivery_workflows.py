@@ -207,6 +207,10 @@ class DeliveryBriefTest(unittest.TestCase):
         self.assertTrue(focus_is_plain_question("c'est quoi un webhook"))
         self.assertTrue(focus_is_plain_question("What does the sandbox allow"))
         self.assertTrue(focus_is_plain_question("site web pour restaurant ?"))
+        # 2026-10-31: a credentials lookup was pushed into tools and tests.
+        self.assertTrue(focus_is_plain_question("donne le login et pwd de http://127.0.0.1:8460/login"))
+        self.assertTrue(focus_is_plain_question("show me the admin password of the sandbox"))
+        self.assertFalse(focus_is_plain_question("donne-moi un script et ajoute-le au repo"))
         self.assertFalse(focus_is_plain_question("site web pour restaurant"))
         self.assertFalse(focus_is_plain_question("ajoute un mode sombre"))
         self.assertFalse(focus_is_plain_question(""))

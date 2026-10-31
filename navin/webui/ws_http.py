@@ -316,6 +316,10 @@ _FILE_TREE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="file
 # validation was measured dragging the file tree, the board and the workspace
 # diagnostics from milliseconds to twenty seconds and beyond.
 _REMOTE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="webui-remote")
+# Chip probes ("can this file name open?") of a rendered answer arrive by the
+# dozen. In the shared pool each one held a thread for minutes on 2026-10-31
+# while the WSL listing ran; their own small pool caps how many run at once.
+_FILE_PROBE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="file-probe")
 _GIT_CHANGES_CACHE_TTL_S = 4.0
 _REVIEW_CHANGES_CACHE_TTL_S = 2.0
 _SESSIONS_CACHE_TTL_S = 3.0
@@ -399,18 +403,28 @@ def _decode_api_key(raw_key: str) -> str | None:
 
 
 _MAX_EXTRA_FILE_ROOTS = 12
+# A recent project folder resolved once stays good for this long: each file
+# route resolved and stat'ed every sidebar project through the WSL redirector
+# (up to a second each), on the gateway loop for git blame.
+_FILE_ROOT_CACHE_TTL_S = 30.0
+_FILE_ROOT_CACHE: dict[str, tuple[float, Path | None]] = {}
 
 
 def _normalize_file_root(raw: str | Path) -> Path | None:
     text = unquote(str(raw or "")).strip()
     if not text:
         return None
+    now = time.monotonic()
+    hit = _FILE_ROOT_CACHE.get(text)
+    if hit is not None and now - hit[0] < _FILE_ROOT_CACHE_TTL_S:
+        return hit[1]
     try:
-        root = Path(text).expanduser().resolve(strict=False)
+        root: Path | None = Path(text).expanduser().resolve(strict=False)
     except OSError:
-        return None
-    if not root.is_dir():
-        return None
+        root = None
+    if root is not None and not root.is_dir():
+        root = None
+    _FILE_ROOT_CACHE[text] = (now, root)
     return root
 
 
@@ -872,6 +886,11 @@ class GatewayHTTPHandler:
 
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
+            if _query_first(_parse_query(request.path), "probe") == "1":
+                return await asyncio.get_running_loop().run_in_executor(
+                    _FILE_PROBE_EXECUTOR,
+                    partial(self._handle_file_preview, request, m.group(1)),
+                )
             return await asyncio.to_thread(
                 self._handle_file_preview, request, m.group(1),
             )
@@ -4103,17 +4122,16 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         file_arg = _query_first(query, "file") or _query_first(query, "path") or ""
-        try:
+
+        def blame() -> dict[str, Any]:
+            # Scope and roots read the disk (seconds through the WSL
+            # redirector): never on the gateway loop.
             scope = self.workspaces.scope_for_session_key(decoded_key)
             extra = _extra_file_roots(query, scope)
-            extra_root = extra[0] if extra else None
-            payload = await asyncio.to_thread(
-                git_blame_payload,
-                scope,
-                file_arg,
-                extra_root,
-                extra,
-            )
+            return git_blame_payload(scope, file_arg, extra[0] if extra else None, extra)
+
+        try:
+            payload = await asyncio.to_thread(blame)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)

@@ -2459,7 +2459,9 @@ def _run_gateway(
                 logger.debug("Heartbeat: HEARTBEAT.md has no active tasks")
                 return None
 
-            channel, chat_id = _pick_heartbeat_target()
+            # Lists every session file (seconds with many chats): off the loop,
+            # where it held every chat 7.7 s per heartbeat (2026-10-31).
+            channel, chat_id = await asyncio.to_thread(_pick_heartbeat_target)
             if channel == "cli":
                 return None
 

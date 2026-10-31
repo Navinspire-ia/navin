@@ -386,6 +386,53 @@ def test_a_file_written_after_a_miss_is_found_on_the_retry(tmp_path, monkeypatch
     assert file_preview._walk_unique_basename(root.resolve(), "late.py", cached=False) == ((root / "backend" / "late.py").resolve(), True)
 
 
+def test_a_burst_of_missing_chips_lists_the_root_once(tmp_path, monkeypatch):
+    # 2026-10-31, desktop log: every chip of a burst whose name was missing
+    # listed a 128k-file WSL project again (the index was older than the 2 s
+    # miss cache before its own listing even ended), file-preview requests
+    # took 3 min on average and the parsing held the GIL: the second chat
+    # stopped answering. A miss now looks again at most once per five
+    # listing durations, and one new listing serves the whole burst.
+    from navin.webui import file_preview
+
+    root = _basename_root(tmp_path).resolve()
+    file_preview._BASENAME_WALK_CACHE.clear()
+    file_preview._BASENAME_INDEX_CACHE.clear()
+    clock = [1000.0]
+    monkeypatch.setattr(file_preview.time, "monotonic", lambda: clock[0])
+    builds = []
+    real_build = file_preview._build_basename_index
+
+    def four_second_listing(root_resolved):
+        builds.append(clock[0])
+        index = real_build(root_resolved)
+        clock[0] += 4.0
+        index.took = 4.0
+        return index
+
+    monkeypatch.setattr(file_preview, "_build_basename_index", four_second_listing)
+    assert file_preview._walk_unique_basename(root, "absent.py") == (None, True)
+    assert builds == [1000.0]
+    clock[0] += 10.0
+    for n in range(10):
+        assert file_preview._walk_unique_basename(root, f"gone{n}.py") == (None, True)
+    assert builds == [1000.0]
+    # Five listing durations after the last one started, a miss looks again,
+    # once: the probes after it read that new listing.
+    clock[0] = 1021.0
+    (root / "backend" / "late.py").write_text("x\n")
+    assert file_preview._walk_unique_basename(root, "late.py") == (root / "backend" / "late.py", True)
+    for n in range(10):
+        assert file_preview._walk_unique_basename(root, f"still{n}.py") == (None, True)
+    assert builds == [1000.0, 1021.0]
+    # Opening a file (cached=False) still never trusts an older listing.
+    assert file_preview._walk_unique_basename(root, "late.py", cached=False) == (
+        (root / "backend" / "late.py").resolve(),
+        True,
+    )
+    assert len(builds) == 3
+
+
 def test_the_wsl_listing_is_one_find_for_every_name(tmp_path, monkeypatch):
     # find's own output is replayed, so the test needs no find binary and
     # checks the exact parsing of "%T@\t%d\t%p\0" rows.

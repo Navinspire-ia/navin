@@ -265,6 +265,15 @@ def current_file_states(default: FileStates) -> FileStates:
     return _current_file_states.get() or default
 
 
+def bound_file_states() -> FileStates | None:
+    """The FileStates of the chat running this task, None outside a chat.
+
+    A chat's subagents run in tasks copied from the chat's context, so they
+    share it: it tells one chat's work apart from another chat's.
+    """
+    return _current_file_states.get()
+
+
 def bind_file_states(file_states: FileStates) -> Token[FileStates | None]:
     """Bind file read/write state for the current async task."""
     return _current_file_states.set(file_states)

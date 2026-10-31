@@ -378,6 +378,28 @@ class HostOpenTest(unittest.TestCase):
             self.assertFalse(wsl.open_url_on_host("http://x"))
 
 
+class WslExecutableCacheTest(unittest.TestCase):
+    """Every git call of every chat looked wsl.exe up on PATH again: three
+    threads sat in ``shutil.which`` in a live dump (2026-10-31)."""
+
+    def setUp(self) -> None:
+        self.addCleanup(setattr, wsl, "_exe_cache", None)
+        wsl._exe_cache = None
+
+    def test_the_path_lookup_runs_once_per_ttl(self) -> None:
+        clock = [100.0]
+        with mock.patch.object(wsl.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(wsl.shutil, "which", return_value="C:/Windows/System32/wsl.exe") as which:
+            self.assertEqual(wsl.wsl_executable(), "C:/Windows/System32/wsl.exe")
+            for _ in range(50):
+                wsl.wsl_executable()
+            self.assertEqual(which.call_count, 1)
+            clock[0] += wsl._EXE_TTL_S + 1
+            which.return_value = None
+            self.assertIsNone(wsl.wsl_executable())
+        self.assertEqual(which.call_count, 3)
+
+
 class WindowsEnvTest(unittest.TestCase):
     def setUp(self) -> None:
         wsl._WINDOWS_ENV_CACHE.clear()

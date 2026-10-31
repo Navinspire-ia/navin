@@ -2567,6 +2567,13 @@ class AgentLoop:
                 turn_scope_stack.enter_context(validation_probe(
                     lambda: bool(getattr(turn_loop_guard.validation, "pending", False))
                 ))
+            # The tool gate below reads the workspace (a notebook hunt two
+            # levels deep): warm its 30 s cache in a thread, it held the loop
+            # of every chat on a WSL project (2026-10-31).
+            if self.workspace:
+                from navin.agent.tool_demand import project_facts
+
+                await asyncio.to_thread(project_facts, self.workspace)
             hook = build_agent_turn_hook(AgentTurnHookSpec(
                 on_progress=on_progress,
                 on_stream=on_stream,

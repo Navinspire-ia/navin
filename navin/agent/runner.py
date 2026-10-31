@@ -15,6 +15,7 @@ import time
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import partial
 from itertools import count
 from pathlib import Path
 from typing import Any, Callable
@@ -53,6 +54,7 @@ from navin.agent.scope_anchor import (
 )
 from navin.agent.token_budget import room_for_output
 from navin.agent.tools.base import ToolResult
+from navin.agent.tools.file_state import bound_file_states
 from navin.agent.tools.registry import ToolRegistry, is_tool_error_result, tool_error_hint
 from navin.agent.turn_timing import (
     PHASE_CONTEXT,
@@ -3295,7 +3297,10 @@ class AgentRunner:
                     if spec.workspace and event.get("status") == "ok" and call.name in _EDIT_TOOL_NAMES:
                         # Stats and, on a WSL root, a wsl.exe round trip: off the loop.
                         await asyncio.to_thread(
-                            validation.sync_known_edits, spec.workspace, edit_paths(params),
+                            partial(
+                                validation.sync_known_edits, spec.workspace, edit_paths(params),
+                                owner=bound_file_states(),
+                            ),
                         )
 
         results: list[Any] = []

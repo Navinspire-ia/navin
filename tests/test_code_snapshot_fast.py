@@ -43,6 +43,12 @@ def test_development_file_rule_matches_the_path_rule(name):
     "ls -la", "cat src/a.py | head -20", "git status --short", "git diff HEAD~1 -- src",
     "cd webui && ls", "grep -rn foo src | wc -l", "find . -name '*.py'", "sed -n 1,40p a.py",
     "node --version", "rg 'def main' -n",
+    # The three reads of the 2026-10-31 desktop log that were taken for edits
+    # (and handed a parallel chat's changes to a password lookup).
+    'cd navin-manager/packaging/sandbox; ls -a; grep -rn "PASSWORD" . | head -20; env | grep -i NM_SANDBOX',
+    'cd sandbox; sed -n 20,60p sandbox.sh | grep -nE "NM=|PY=|ADMIN=" ; ls /tmp/sb 2>&1 | head',
+    "cat /tmp/sb/admin.password; echo; ls /tmp/sb/admin.totp && cat /tmp/sb/admin.totp",
+    "ls /nowhere 2>/dev/null || echo none", "grep -c x a.log >/dev/null", 'grep "a>b" f',
 ])
 def test_read_only_commands_skip_the_snapshot(command):
     assert cv.exec_cannot_edit({"command": command}) is True
@@ -52,6 +58,8 @@ def test_read_only_commands_skip_the_snapshot(command):
     "echo hi > a.txt", "cat a | tee b", "npm test", "python -m pytest -q", "sed -i s/a/b/ x.py",
     "find . -name '*.pyc' -delete", "ls; rm -rf build", "git checkout main", "ls $(pwd)",
     "npm run dev &", "git diff --output=x.patch", "make", "FOO=1 ls", "ls || touch x",
+    'echo "$(rm -rf x)"', "ls 2>err.log", "cat a >/dev/null/../b", "env FOO=1 rm x", "sort -o out in",
+    "ls 'unclosed", "ls\nrm x", "ls `rm x`", "cat <(rm x)",
 ])
 def test_anything_else_keeps_the_snapshot(command):
     assert cv.exec_cannot_edit({"command": command}) is False
@@ -59,6 +67,35 @@ def test_anything_else_keeps_the_snapshot(command):
 
 def test_background_exec_keeps_the_snapshot():
     assert cv.exec_cannot_edit({"command": "ls", "background": True}) is False
+
+
+def test_another_chats_file_tool_edits_are_not_this_chats_to_validate(tmp_path):
+    # 2026-10-31: two desktop chats on one project. The one that only looked
+    # up a password was told to test and build the screens the other chat was
+    # editing at the same time. A chat and its subagents share one owner.
+    from navin.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
+
+    (tmp_path / "src").mkdir()
+    for name in ("theirs.ts", "mine.ts", "made_by_a_command.ts"):
+        (tmp_path / "src" / name).write_text("export const a = 1\n")
+    other_chat, this_chat = FileStates(), FileStates()
+    state = cv.CodeValidationState()
+    state.observe_workspace(cv.workspace_code_snapshot(tmp_path), root=tmp_path)
+
+    cv.note_chat_writes(tmp_path, {"src/theirs.ts"}, other_chat)
+    cv.note_chat_writes(tmp_path, {str(tmp_path / "src" / "mine.ts")}, this_chat)
+    for name in ("theirs.ts", "mine.ts", "made_by_a_command.ts"):
+        (tmp_path / "src" / name).write_text("export const a = 2 // longer\n")
+    token = bind_file_states(this_chat)
+    try:
+        state.observe_workspace(cv.workspace_code_snapshot(tmp_path), root=tmp_path)
+    finally:
+        reset_file_states(token)
+    assert state.paths == {"src/mine.ts", "src/made_by_a_command.ts"}
+    # Outside any chat (no owner bound) nothing is filtered: the safe side.
+    assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}) == set()
+    assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}, this_chat) == {"src/theirs.ts"}
+    assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}, other_chat) == set()
 
 
 def test_runner_watches_editing_calls_only():

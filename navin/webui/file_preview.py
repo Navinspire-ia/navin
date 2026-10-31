@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
@@ -100,15 +100,20 @@ _BASENAME_WALK_CACHE: dict[tuple[str, str], tuple[float, str | None]] = {}
 class _BasenameIndex:
     """Every file name under one project root, from a single bounded walk.
 
-    ``names`` maps a case-folded file name to its candidates: the path and,
+    ``names`` maps a case-folded file name to its candidates: the path
+    relative to the root (``/`` separated, joined to the root only for a
+    match: 128k ``Path`` objects per listing held the GIL for seconds) and,
     when ``find`` inside WSL listed it, the mtime it reported (a stat through
     the 9P bridge costs tens of milliseconds; the walk's own files carry None
-    and are stat'ed only when two of them share a name).
+    and are stat'ed only when two of them share a name). ``built_at`` is when
+    the walk started (what it saw is at least that fresh), ``took`` how long
+    it ran.
     """
 
     built_at: float
-    names: dict[str, list[tuple[Path, float | None]]]
+    names: dict[str, list[tuple[str, float | None]]]
     complete: bool
+    took: float = 0.0
 
 
 # One index per project root, shared by every chip probe of that root. A
@@ -118,6 +123,10 @@ class _BasenameIndex:
 # bridge, as the desktop log of 2026-10-28 shows). Now the first probe walks
 # once and the others wait for that walk, then read the index.
 _BASENAME_INDEX_TTL_S = 20.0
+# A miss looks again at most once per this many listing durations: on
+# 2026-10-31 a 128k-file WSL project was listed again for every missing chip,
+# each probe of a burst redoing the listing the previous one had just made.
+_BASENAME_RELOOK_COST_FACTOR = 5.0
 _BASENAME_INDEX_MAX_ROOTS = 8
 _BASENAME_INDEX_CACHE: dict[str, _BasenameIndex] = {}
 _BASENAME_INDEX_LOCKS: dict[str, threading.Lock] = {}
@@ -1016,9 +1025,13 @@ def _resolve_preview_path(
     if len(path) > 4096:
         raise WebUIFilePreviewError(400, "path is too long")
 
-    # The open Code project is tried first: the chat session may still be
-    # scoped to another folder while the editor is looking at this one.
+    # The open Code project is tried first for a real path: the chat session
+    # may still be scoped to another folder while the editor shows this one.
     roots: list[Path] = []
+    try:
+        session_root: Path | None = Path(scope.project_path).expanduser().resolve(strict=False)
+    except OSError:
+        session_root = None
     for candidate in list(extra_roots or []) + [scope.project_path]:
         try:
             resolved_root = Path(candidate).expanduser().resolve(strict=False)
@@ -1033,39 +1046,39 @@ def _resolve_preview_path(
     last_boundary: WorkspaceBoundaryError | None = None
     last_missing: Exception | None = None
     for root in roots:
-        scoped = replace(scope, project_path=root)
         try:
             resolved = resolve_allowed_path(
                 path,
                 workspace=root,
-                allowed_root=root if scoped.restrict_to_workspace else None,
+                allowed_root=root if scope.restrict_to_workspace else None,
                 strict=True,
             )
         except FileNotFoundError as e:
             last_missing = e
-            fallback = _resolve_unique_basename(path, scope=scoped, cached=cached)
-            if fallback is not None:
-                _deny_runtime_secret(fallback)
-                return fallback
             continue
         except WorkspaceBoundaryError as e:
             last_boundary = e
-            fallback = _resolve_unique_basename(path, scope=scoped, cached=cached)
-            if fallback is not None:
-                _deny_runtime_secret(fallback)
-                return fallback
             continue
         except OSError as e:
             last_missing = e
             continue
-
         if resolved.is_file():
             _deny_runtime_secret(resolved)
             return resolved
-        fallback = _resolve_unique_basename(path, scope=scoped, cached=cached)
-        if fallback is not None:
-            _deny_runtime_secret(fallback)
-            return fallback
+
+    # A bare name (``auth.py``) is looked up by name only once no root has it
+    # at that path, the chat's own project first: it is where the agent
+    # writes, and every other recent project was listed in full before it
+    # (navin-ai-v2 alone is 128k files) for a chip of the current project.
+    if _is_bare_file_name(path):
+        by_name = sorted(roots, key=lambda root: root != session_root)
+        for root in by_name:
+            fallback = _resolve_unique_basename(
+                path, scope=replace(scope, project_path=root), cached=cached,
+            )
+            if fallback is not None:
+                _deny_runtime_secret(fallback)
+                return fallback
 
     if last_boundary is not None and last_missing is None:
         raise WebUIFilePreviewError(403, "file is outside the current workspace") from last_boundary
@@ -1168,13 +1181,26 @@ def _walk_unique_basename(
         elif now - cached_at < _BASENAME_MISS_TTL_S:
             return None, True
 
-    index = _basename_index(root_resolved, max_age=_BASENAME_INDEX_TTL_S if cached else 0.0)
+    if cached:
+        index = _basename_index(
+            root_resolved,
+            stale_before=now - _BASENAME_INDEX_TTL_S,
+            from_end=True,
+            share_inflight=True,
+        )
+    else:
+        # Opening a file: only a listing started after the click will do.
+        index = _basename_index(root_resolved, stale_before=now, from_end=False, share_inflight=False)
     matches = _index_matches(index, root_resolved, wanted)
-    if not matches and cached and time.monotonic() - index.built_at >= _BASENAME_MISS_TTL_S:
+    relook_after = max(_BASENAME_MISS_TTL_S, _BASENAME_RELOOK_COST_FACTOR * index.took)
+    if not matches and cached and time.monotonic() - index.built_at >= relook_after:
         # The agent usually writes the file a chip names a moment after the
-        # chip is rendered: a miss on an index older than the miss cache looks
-        # again (once per 2 s for the whole root, shared by every probe).
-        index = _basename_index(root_resolved, max_age=_BASENAME_MISS_TTL_S)
+        # chip is rendered: a miss on an older index looks again, once for the
+        # whole burst (a newer listing made while this probe waited serves it)
+        # and never more often than the listing's own cost allows.
+        index = _basename_index(
+            root_resolved, stale_before=index.built_at, from_end=False, share_inflight=True,
+        )
         matches = _index_matches(index, root_resolved, wanted)
     found = _pick_newest(matches)
     complete = index.complete
@@ -1183,19 +1209,30 @@ def _walk_unique_basename(
     return found, complete
 
 
-def _basename_index(root_resolved: Path, *, max_age: float) -> _BasenameIndex:
-    """The root's index, rebuilt when older than ``max_age`` (0 forces a walk).
+def _basename_index(
+    root_resolved: Path, *, stale_before: float, from_end: bool, share_inflight: bool,
+) -> _BasenameIndex:
+    """The root's index, rebuilt unless it is newer than ``stale_before``.
 
+    ``from_end`` dates the index from the end of its listing (the TTL: a
+    listing that took longer than the TTL was otherwise stale on arrival),
+    else from its start (a look that must see files written after a moment).
     Concurrent callers share one build: the lock makes the second probe wait
-    for the walk in flight instead of starting its own.
+    for the walk in flight, and with ``share_inflight`` it reads that walk's
+    result instead of starting another one right after it.
     """
     key = str(root_resolved)
     with _BASENAME_INDEX_GUARD:
         lock = _BASENAME_INDEX_LOCKS.setdefault(key, threading.Lock())
+        seen = _BASENAME_INDEX_CACHE.get(key)
     with lock:
         entry = _BASENAME_INDEX_CACHE.get(key)
-        if entry is not None and time.monotonic() - entry.built_at < max_age:
-            return entry
+        if entry is not None:
+            if share_inflight and entry is not seen:
+                return entry
+            dated = entry.built_at + entry.took if from_end else entry.built_at
+            if dated > stale_before:
+                return entry
         entry = _build_basename_index(root_resolved)
         with _BASENAME_INDEX_GUARD:
             _BASENAME_INDEX_CACHE[key] = entry
@@ -1209,19 +1246,22 @@ def _basename_index(root_resolved: Path, *, max_age: float) -> _BasenameIndex:
 def _build_basename_index(root_resolved: Path) -> _BasenameIndex:
     """One bounded walk of the root: every file name, skipped and hidden folders pruned."""
     started = time.monotonic()
-    names: dict[str, list[tuple[Path, float | None]]] = {}
+    names: dict[str, list[tuple[str, float | None]]] = {}
     # A WSL project seen from Windows: ``find`` inside the distribution reads
     # ext4 directly. The walk below would read the same tree through the 9P
     # bridge, and the desktop log of 2026-10-21 shows file-preview requests
     # waiting 29 s at the median (307 s at worst) inside this very walk.
-    listed = _wsl_list_files(root_resolved)
+    listed = _wsl_list_relative(root_resolved)
     if listed is not None:
         rows, complete = listed
-        for path, mtime, _depth in rows:
-            names.setdefault(path.name.casefold(), []).append((path, mtime))
-        return _BasenameIndex(built_at=started, names=names, complete=complete)
+        for rel, mtime, _depth in rows:
+            names.setdefault(rel.rpartition("/")[2].casefold(), []).append((rel, mtime))
+        return _BasenameIndex(
+            built_at=started, names=names, complete=complete, took=time.monotonic() - started,
+        )
     dirs_seen = 0
     complete = True
+    root_text = str(root_resolved)
     for dirpath, dirnames, filenames in os.walk(root_resolved, followlinks=False):
         dirs_seen += 1
         # Bounded in time as well as in size: on a network or 9P mount the
@@ -1234,16 +1274,20 @@ def _build_basename_index(root_resolved: Path) -> _BasenameIndex:
             for name in dirnames
             if name not in _SKIP_BASENAME_DIRS and not name.startswith(".")
         ]
-        base = Path(dirpath)
+        rel_dir = os.path.relpath(dirpath, root_text).replace(os.sep, "/")
+        prefix = "" if rel_dir == "." else rel_dir + "/"
         for filename in filenames:
-            names.setdefault(filename.casefold(), []).append((base / filename, None))
-    return _BasenameIndex(built_at=started, names=names, complete=complete)
+            names.setdefault(filename.casefold(), []).append((prefix + filename, None))
+    return _BasenameIndex(
+        built_at=started, names=names, complete=complete, took=time.monotonic() - started,
+    )
 
 
 def _index_matches(index: _BasenameIndex, root_resolved: Path, wanted: str) -> list[tuple[Path, float | None]]:
     """The index's candidates for ``wanted`` that are real files inside the root."""
     matches: list[tuple[Path, float | None]] = []
-    for candidate, mtime in index.names.get(wanted, ()):
+    for rel, mtime in index.names.get(wanted, ()):
+        candidate = root_resolved / rel
         if mtime is not None:
             # Listed by find a moment ago: trusted as is, no stat through 9P.
             matches.append((candidate, mtime))
@@ -1281,16 +1325,17 @@ def _find_name_pattern(name: str) -> str:
     return "".join("\\" + ch if ch in "\\*?[" else ch for ch in name)
 
 
-def _wsl_list_files(
+def _wsl_list_relative(
     root_resolved: Path, *, platform: str | None = None,
-) -> tuple[list[tuple[Path, float, int]], bool] | None:
+) -> tuple[list[tuple[str, float, int]], bool] | None:
     """Every file under a WSL root listed by ``find`` inside the distribution.
 
     None when the root is not a WSL path seen from Windows, or when ``find``
     gave no usable answer, so the caller walks instead. Same rules as the
-    walk: skipped and hidden directories are pruned. Rows carry the mtime and
-    depth find printed, so the newest of two same-named files is known without
-    a stat through the bridge. One listing serves every name: the previous
+    walk: skipped and hidden directories are pruned. Rows carry the path
+    relative to the root (``/`` separated), and the mtime and depth find
+    printed, so the newest of two same-named files is known without a stat
+    through the bridge. One listing serves every name: the previous
     one-``find``-per-name spawned wsl.exe once per chip of an answer.
     """
     if (platform or sys.platform) != "win32":
@@ -1320,15 +1365,18 @@ def _wsl_list_files(
         return None
     except (OSError, subprocess.SubprocessError):
         return None
-    rows: list[tuple[Path, float, int]] = []
+    # find prints every path under the start path exactly as it was given, so
+    # a string prefix replaces a PurePosixPath per row (seconds of GIL on a
+    # 128k-file tree, which stalled the gateway loop and every chat with it).
+    prefix = str(location.path).rstrip("/") + "/"
+    rows: list[tuple[str, float, int]] = []
     for chunk in proc.stdout.split("\0"):
         mtime, _, rest = chunk.partition("\t")
         depth, _, linux_path = rest.partition("\t")
-        if not linux_path:
+        if len(linux_path) <= len(prefix) or not linux_path.startswith(prefix):
             continue
         try:
-            relative = PurePosixPath(linux_path).relative_to(location.path)
-            rows.append((root_resolved / relative, float(mtime), int(depth)))
+            rows.append((linux_path[len(prefix):], float(mtime), int(depth)))
         except ValueError:
             continue
     # Exit 1 is also what wsl.exe returns when it cannot run find at all, so
@@ -1346,11 +1394,18 @@ def _wsl_find_basename(
 
     None when the listing is unavailable (not a WSL root, or find failed).
     """
-    listed = _wsl_list_files(root_resolved, platform=platform)
+    listed = _wsl_list_relative(root_resolved, platform=platform)
     if listed is None:
         return None
     rows, complete = listed
-    matches = [row for row in rows if row[0].name.casefold() == wanted.casefold()]
+    wanted_key = wanted.casefold()
+    # Paths are built for the matches only: one per row of a 128k-file tree
+    # held the GIL for seconds, which a live dump showed stalling every chat.
+    matches = [
+        (root_resolved / rel, mtime, depth)
+        for rel, mtime, depth in rows
+        if rel.rpartition("/")[2].casefold() == wanted_key
+    ]
     if not matches:
         return None, complete
     _path, _mtime, _depth = max(matches, key=lambda row: (row[1], -row[2], row[0].as_posix()))

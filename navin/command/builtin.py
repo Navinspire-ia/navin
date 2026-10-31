@@ -3416,8 +3416,11 @@ _PLAIN_QUESTION_RE = re.compile(
     r"quel(?:le|s|les)?|comment|pourquoi|o[uù]|quand|combien|qui|"
     r"est[- ]ce|c'?est quoi|qu'?est[- ]ce|peux[- ]tu m'?expliquer|explique|"
     r"d[eé]cris|r[eé]sume|compare|"
+    # "donne le login et pwd de ..." asks for an answer: the forced tool
+    # retry sent it hunting the repo and running tests (2026-10-31).
+    r"donne|montre[- ]moi|indique[- ]moi|"
     r"what|how|why|where|when|which|who|whose|does|do|did|is|are|can|could|"
-    r"should|would|explain|describe|summarize|summarise|tell me"
+    r"should|would|explain|describe|summarize|summarise|tell me|give me|show me"
     r")\b"
 )
 

@@ -146,6 +146,38 @@ class FileDownloadTest(unittest.TestCase):
         self.assertIn(b"ok = True", body)
         self.assertTrue(str(meta["path"]).endswith("ppt_qa.py"))
 
+    def test_a_bare_chip_name_is_looked_up_in_the_chat_project_first(self) -> None:
+        """2026-10-31: a chip of the current project listed every recent
+        project before it (navin-ai-v2 alone is 128k files) and could open a
+        same-named file of another project."""
+        from unittest import mock
+
+        from navin.webui import file_preview
+
+        other = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(other, ignore_errors=True))
+        (other / "pkg").mkdir()
+        (other / "pkg" / "support.py").write_text("other = True\n", encoding="utf-8")
+        (self.root / "src").mkdir()
+        (self.root / "src" / "support.py").write_text("mine = True\n", encoding="utf-8")
+        file_preview._BASENAME_WALK_CACHE.clear()
+        file_preview._BASENAME_INDEX_CACHE.clear()
+        real_build = file_preview._build_basename_index
+        with mock.patch.object(
+            file_preview, "_build_basename_index", side_effect=real_build,
+        ) as build:
+            preview = file_preview_payload(
+                "support.py", scope=self.scope, allow_any=True, extra_roots=[other],
+            )
+        self.assertIn("mine = True", preview["content"])
+        self.assertEqual([call.args[0] for call in build.call_args_list], [self.root])
+        # A name only the other project has still opens from there.
+        (other / "pkg" / "only_there.py").write_text("there = True\n", encoding="utf-8")
+        preview = file_preview_payload(
+            "only_there.py", scope=self.scope, allow_any=True, extra_roots=[other],
+        )
+        self.assertIn("there = True", preview["content"])
+
     def test_unrestricted_scope_finds_install_document_basename(self) -> None:
         """A full-access session still opens Navin document helpers by name."""
         from navin.webui.ws_http import _extra_file_roots

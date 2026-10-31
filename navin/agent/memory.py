@@ -1302,23 +1302,27 @@ class Consolidator:
     ) -> tuple[int, str]:
         """Same result as ``estimate_session_prompt_tokens``, counted off the loop.
 
-        The probe prompt is built on the loop (it reads live session state);
-        tokenizing it, the expensive part on a long tail, runs in a worker
-        thread so one big session does not stall every other one. The probe
-        holds fresh history dicts, so the thread never reads live messages.
+        The probe inputs are copied on the loop (they read live session
+        state); building the prompt from them and tokenizing it run in a
+        worker thread. Building it reads every skill's file metadata: on the
+        desktop with a WSL project that held the loop 50 s (2026-10-31), and
+        every chat waited with it.
         """
-        probe_messages = self._session_prompt_probe(session)
+        inputs = self._session_prompt_probe_inputs(session)
         tools = self._get_tool_definitions()
         # Read the provider peak now, as the synchronous path does, so a turn
         # finishing during the count cannot change this call's answer.
         peak = self._last_peak_tokens(session)
-        estimated, source = await asyncio.to_thread(
-            estimate_prompt_tokens_chain,
-            runtime.provider,
-            runtime.model,
-            probe_messages,
-            tools,
-        )
+
+        def count() -> tuple[int, str]:
+            return estimate_prompt_tokens_chain(
+                runtime.provider,
+                runtime.model,
+                self._build_messages(**inputs),
+                tools,
+            )
+
+        estimated, source = await asyncio.to_thread(count)
         return self._prefer_last_peak(peak, estimated, source)
 
     @staticmethod
@@ -1343,27 +1347,34 @@ class Consolidator:
 
     def _session_prompt_probe(self, session: Session) -> list[dict[str, Any]]:
         """Build the probe prompt used to size the unconsolidated tail."""
+        return self._build_messages(**self._session_prompt_probe_inputs(session))
+
+    def _session_prompt_probe_inputs(self, session: Session) -> dict[str, Any]:
+        """The probe's arguments, copied from the live session (cheap, no disk).
+
+        History dicts are fresh and the metadata is a shallow copy, so a
+        worker thread building the prompt never reads state the loop mutates.
+        """
         from navin.session.context_usage_meta import last_preload_skills
 
         history = self._full_unconsolidated_history(session)
         channel, chat_id = (session.key.split(":", 1) if ":" in session.key else (None, None))
+        metadata = dict(session.metadata)
         # Include archived summary in estimation so the budget accounts for it.
-        meta = session.metadata.get("_last_summary")
+        meta = metadata.get("_last_summary")
         summary = meta.get("text") if isinstance(meta, dict) else (meta if isinstance(meta, str) else None)
-        skill_names = last_preload_skills(session.metadata)
-        probe_messages = self._build_messages(
-            history=history,
-            current_message="[token-probe]",
-            channel=channel,
-            chat_id=chat_id,
-            sender_id=None,
-            session_summary=summary,
-            session_metadata=session.metadata,
-            session_key=session.key,
-            unified_session=self.unified_session,
-            skill_names=skill_names,
-        )
-        return probe_messages
+        return {
+            "history": history,
+            "current_message": "[token-probe]",
+            "channel": channel,
+            "chat_id": chat_id,
+            "sender_id": None,
+            "session_summary": summary,
+            "session_metadata": metadata,
+            "session_key": session.key,
+            "unified_session": self.unified_session,
+            "skill_names": last_preload_skills(metadata),
+        }
 
     def _input_token_budget(self, runtime: LLMRuntime) -> int:
         """Available input token budget for consolidation LLM."""
