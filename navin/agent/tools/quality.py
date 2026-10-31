@@ -287,8 +287,8 @@ class LintTool(_QualityTool):
                 return path_error
             if not cleaned:
                 return ToolResult.error(f"Error: action={action} requires 'path'")
-            if not (root / cleaned).is_file():
-                return self._missing_project_file(cleaned, root)
+            if not await asyncio.to_thread((root / cleaned).is_file):
+                return await asyncio.to_thread(self._missing_project_file, cleaned, root)
             if action == "fix":
                 results = await asyncio.to_thread(fix_file, root, cleaned)
                 applied = [r.linter for r in results if r.ran]
@@ -739,7 +739,9 @@ class VerifyTool(_QualityTool):
                 await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
             from navin.quality.evidence import verify_evidence
 
-            return ToolResult(report.render(), verification=verify_evidence(report))
+            # Rendering reads the linter table (a JSON file) for the fix hint.
+            rendered = await asyncio.to_thread(report.render)
+            return ToolResult(rendered, verification=verify_evidence(report))
 
         return self.unknown_action(action)
 

@@ -404,6 +404,12 @@ IDLE_HEAP_PASS_MIN_INTERVAL_S = 60.0
 # puts away whatever the engine built up before its first idle minute) and by
 # every deep pass.
 IDLE_HEAP_DEEP_GROWTH = 500_000
+# Generation the ordinary pass collects. A full collection walked every object
+# built since the last pass: 1.5 to 2.4 s with the loop stopped, 8 times in the
+# gateway log of 2026-10-30/31, while the desktop UI kept asking. Python's own
+# automatic collections still run in the engine; garbage frozen by a young pass
+# is given back by the deep pass once the frozen set grew.
+IDLE_HEAP_ORDINARY_GENERATION = 1
 # A pass at least this long is logged with its kind, for the next audit.
 SLOW_HEAP_PASS_S = 0.5
 
@@ -439,6 +445,10 @@ class IdleHeapPass:
         # live heap, which is size, not growth (a deep pass over it right
         # after would only repeat the walk the first pass just did).
         self.frozen_after_deep: int | None = None
+        # Frozen count read once, after the last pass froze. ``gc.get_freeze_count``
+        # walks the whole permanent generation: read before every pass as well,
+        # it stopped the loop 1.0 s on 2026-10-31 07:48 (4.9 M frozen objects).
+        self.frozen: int | None = None
         self.passes = 0
         self.deep_passes = 0
         self.last_pass_s = 0.0
@@ -452,23 +462,29 @@ class IdleHeapPass:
             return False
         self._last_pass_at = now
         base = self.frozen_after_deep
-        deep = base is not None and gc.get_freeze_count() - base >= self._deep_growth
+        deep = (
+            base is not None and self.frozen is not None
+            and self.frozen - base >= self._deep_growth
+        )
         started = time.perf_counter()
         if deep:
             gc.unfreeze()
-        gc.collect()
+        # The first pass puts away everything built before the first idle
+        # minute: a full collection, once, so no startup garbage is pinned.
+        gc.collect(2 if deep or base is None else IDLE_HEAP_ORDINARY_GENERATION)
         gc.freeze()
         self.last_pass_s = time.perf_counter() - started
+        self.frozen = gc.get_freeze_count()  # the one permanent-generation walk of a pass
         self.passes += 1
         if deep:
             self.deep_passes += 1
         if deep or base is None:
-            self.frozen_after_deep = gc.get_freeze_count()
+            self.frozen_after_deep = self.frozen
         if self.last_pass_s >= SLOW_HEAP_PASS_S:
             from loguru import logger
 
             logger.info(
                 "engine {} heap pass took {:.1f}s while idle ({} objects frozen)",
-                "deep" if deep else "ordinary", self.last_pass_s, gc.get_freeze_count(),
+                "deep" if deep else "ordinary", self.last_pass_s, self.frozen,
             )
         return True

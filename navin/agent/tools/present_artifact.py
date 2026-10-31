@@ -285,12 +285,20 @@ class PresentArtifactTool(Tool):
                     if not path_raw:
                         return ToolResult.error("Error: type=file requires path.")
                     root = Path(self._working_dir or os.getcwd())
-                    target = Path(path_raw).expanduser()
-                    if not target.is_absolute():
-                        target = root / target
-                    target = target.resolve()
-                    if not target.exists() or not target.is_file():
-                        recovered = closest_existing_match(target, root)
+
+                    def locate(raw: str = path_raw) -> tuple[Path, bool, Path | None]:
+                        """(resolved path, is a file, stand-in when it is not)."""
+                        wanted = Path(raw).expanduser()
+                        if not wanted.is_absolute():
+                            wanted = root / wanted
+                        wanted = wanted.resolve()
+                        if wanted.is_file():
+                            return wanted, True, None
+                        return wanted, False, closest_existing_match(wanted, root)
+
+                    # Resolving, the stat and the near-match listing: in a worker.
+                    target, is_file, recovered = await asyncio.to_thread(locate)
+                    if not is_file:
                         if recovered is None:
                             return ToolResult.error(f"Error: file not found: {path_raw}")
                         substitution_note = (

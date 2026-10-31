@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import navin.agent.tools.exec_session as session_mod
 from navin.agent.tools.exec_session import _ExecSession
@@ -210,7 +212,66 @@ class BackgroundSessionsLiveTest(unittest.TestCase):
         asyncio.run(run())
 
 
-class ForegroundKeepsRunningTest(unittest.TestCase):
+class QuietPollBackoffTest(unittest.TestCase):
+    """Polling a quiet background command does not burn a model turn a second.
+
+    Sessions of 2026-10-25/31: one command polled 23 times in a row with
+    chars='' and a 1 s wait, each poll a full model round trip to learn that
+    nothing changed.
+    """
+
+    def test_quiet_polls_wait_longer_and_output_or_exit_resets(self) -> None:
+        from navin.agent.tools.exec_session import WriteStdinTool, quiet_poll_floor_ms
+
+        waits: list[int] = []
+        outputs = ["", "", "", "", "line\n", "", ""]
+
+        class _Manager:
+            def __init__(self) -> None:
+                self._lock = asyncio.Lock()
+                self._sessions: dict[str, Any] = {}
+
+            async def write(self, **kwargs: Any) -> session_mod._SessionPoll:
+                waits.append(kwargs["yield_time_ms"])
+                text = outputs[len(waits) - 1]
+                return session_mod._SessionPoll(output=text, done=False, exit_code=None, elapsed_s=1.0)
+
+        tool = WriteStdinTool(manager=_Manager())
+
+        async def run() -> list[str]:
+            return [str(await tool.execute(session_id="s1", chars="", yield_time_ms=1000)) for _ in outputs]
+
+        results = asyncio.run(run())
+        assert waits == [1000, 1000, 5000, 15000, 30000, 1000, 1000], waits
+        assert "No new output for 3 polls" in results[2]
+        assert "No new output" not in results[0] and "No new output" not in results[4]
+        # A longer wait asked for is kept; the floor never shortens it.
+        assert max(120_000, quiet_poll_floor_ms(9)) == 120_000
+        assert quiet_poll_floor_ms(9) == 60_000
+
+    def test_a_real_quiet_session_returns_as_soon_as_it_exits(self) -> None:
+        from navin.agent.tools.exec_session import WriteStdinTool
+
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
+        manager = session_mod.ExecSessionManager()
+        tool = ExecTool(working_dir=str(root), session_manager=manager)
+        stdin = WriteStdinTool(manager=manager)
+
+        async def run() -> tuple[float, str]:
+            started = str(await tool.execute(command=_sleep_command(3), background=True))
+            session_id = started.split("session_id:")[1].strip().split()[0]
+            for _ in range(2):
+                await stdin.execute(session_id=session_id, chars="", yield_time_ms=200)
+            began = time.monotonic()
+            # Third quiet poll: the floor is 5 s, but the process exits first.
+            last = str(await stdin.execute(session_id=session_id, chars="", yield_time_ms=200))
+            return time.monotonic() - began, last
+
+        took, last = asyncio.run(run())
+        assert "Exit code: 0" in last, last
+        assert took < 4.5, f"waited {took:.1f}s past the exit"
     """A foreground command that outlives its window is handed over, not killed.
 
     This is what keeps the terminal from ever blocking a turn: a test suite

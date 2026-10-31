@@ -935,11 +935,19 @@ class WebSocketChannel(BaseChannel):
         try:
             from navin.artifacts.store import ArtifactStore
 
-            store = ArtifactStore(chat_id)
-            for meta in store.list():
-                artifact = store.get(str(meta["id"]), include_content=True)
-                if artifact is None:
-                    continue
+            def load() -> list[Any]:
+                # The store creates its folder and reads every artifact file:
+                # in a worker (1.1 s with the loop stopped when a chat was
+                # reopened, desktop log of 2026-10-31).
+                store = ArtifactStore(chat_id)
+                found = []
+                for meta in store.list():
+                    artifact = store.get(str(meta["id"]), include_content=True)
+                    if artifact is not None:
+                        found.append(artifact)
+                return found
+
+            for artifact in await asyncio.to_thread(load):
                 await self.send_artifact_upsert(
                     chat_id, ArtifactUpsertEvent(artifact=artifact), restored=True
                 )
@@ -1457,7 +1465,9 @@ class WebSocketChannel(BaseChannel):
                 # Reopening a chat is the "open workspace" moment: start the
                 # index build now so the first code tool of the next turn is warm.
                 schedule_index_warm(
-                    self._workspaces.scope_for_session_key(f"websocket:{cid}").project_path
+                    (await asyncio.to_thread(
+                        self._workspaces.scope_for_session_key, f"websocket:{cid}",
+                    )).project_path
                 )
             await self._send_event(connection, "attached", chat_id=cid)
             self._hydrate_in_background(cid)
@@ -2005,9 +2015,9 @@ class WebSocketChannel(BaseChannel):
         project_root = None
         if chat_id:
             try:
-                project_root = self._workspaces.scope_for_session_key(
-                    f"websocket:{chat_id}"
-                ).project_path
+                project_root = (await asyncio.to_thread(
+                    self._workspaces.scope_for_session_key, f"websocket:{chat_id}",
+                )).project_path
             except Exception:
                 project_root = None
 
@@ -2159,7 +2169,9 @@ class WebSocketChannel(BaseChannel):
                 return
             cid = envelope.get("chat_id")
             if isinstance(cid, str) and _is_valid_chat_id(cid):
-                scope = self._workspaces.scope_for_session_key(f"websocket:{cid}")
+                scope = await asyncio.to_thread(
+                    self._workspaces.scope_for_session_key, f"websocket:{cid}",
+                )
             else:
                 scope = self._workspaces.default_scope()
             cwd = _terminal_cwd(envelope.get("cwd"), scope)
@@ -3037,9 +3049,9 @@ class WebSocketChannel(BaseChannel):
             "edits": edits,
         }
         try:
-            root = self._workspaces.scope_for_session_key(
-                f"websocket:{chat_id}"
-            ).project_path
+            root = (await asyncio.to_thread(
+                self._workspaces.scope_for_session_key, f"websocket:{chat_id}",
+            )).project_path
         except Exception:
             root = None
         self._invalidate_file_tree_cache(root)

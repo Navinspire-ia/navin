@@ -243,8 +243,8 @@ class LspTool(_QualityTool):
                 return path_error
             if not rel:
                 return ToolResult.error(f"Error: action={action} requires 'path'")
-            if not (root / rel).is_file():
-                return self._missing_project_file(rel, root)
+            if not await asyncio.to_thread((root / rel).is_file):
+                return await asyncio.to_thread(self._missing_project_file, rel, root)
 
         needs_position = action in {"hover", "definition", "references", "rename"}
         if needs_position and (line is None or col is None):

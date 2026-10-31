@@ -227,7 +227,7 @@ class SandboxFilesTool(Tool):
         total = 0
         for raw in paths:
             local = self._local(raw)
-            if not local.is_file():
+            if not await asyncio.to_thread(local.is_file):
                 return f"Error: {raw} is not a file"
             data = await asyncio.to_thread(local.read_bytes)
             total += len(data)

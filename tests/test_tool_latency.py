@@ -274,6 +274,145 @@ def test_no_blocking_call_in_any_async_body() -> None:
     assert not rows, "blocking call on the event loop:\n" + "\n".join(rows)
 
 
+class _LoopDiskCalls:
+    """Counts the disk calls made on the event-loop thread, by kind and caller.
+
+    On a WSL project opened from the Windows desktop each stat, open or listing
+    is a 9P round trip; on the loop thread it also stops every other chat, the
+    streaming and the UI routes (the desktop log of 2026-10-31: 114 stalls,
+    605 s). Work handed to ``asyncio.to_thread`` is not counted.
+    """
+
+    _TARGETS = (
+        ("os", "stat"), ("os", "lstat"), ("os", "scandir"), ("os", "listdir"),
+        ("os", "mkdir"), ("os", "replace"), ("os", "rename"), ("os", "unlink"),
+        ("io", "open"), ("builtins", "open"),
+    )
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+        import io
+        import os
+        import threading
+
+        self.loop_thread: int | None = None
+        self.armed = False
+        self.calls: list[str] = []
+        modules = {"os": os, "io": io, "builtins": builtins}
+        for module_name, attr in self._TARGETS:
+            module = modules[module_name]
+            monkeypatch.setattr(module, attr, self._wrap(getattr(module, attr), f"{module_name}.{attr}", threading))
+
+    def _wrap(self, original: Callable[..., Any], label: str, threading: Any) -> Callable[..., Any]:
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            if self.armed and threading.get_ident() == self.loop_thread:
+                frame = sys._getframe(1)
+                while frame is not None and "/navin/" not in frame.f_code.co_filename.replace("\\", "/"):
+                    frame = frame.f_back
+                where = (
+                    f"{frame.f_code.co_filename.rsplit('/navin/', 1)[-1]}:{frame.f_code.co_name}:{frame.f_lineno}"
+                    if frame is not None else "?"
+                )
+                self.calls.append(f"{label} {args[0] if args else ''} at {where}")
+            return original(*args, **kwargs)
+
+        return counted
+
+
+def _agent_scenarios(ws: Path) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+    """Every way the agent explores and edits, as it calls the tools."""
+    from navin.agent import user_hooks
+    from navin.agent.tools.file_manage import ManageFilesTool
+
+    grep = GrepTool(workspace=ws)
+    find = FindFilesTool(workspace=ws)
+    ls = ListDirTool(workspace=ws)
+    read = ReadFileTool(workspace=ws)
+    edit = EditFileTool(workspace=ws, lint_after_edit=False)
+    patch = ApplyPatchTool(workspace=ws, lint_after_edit=False)
+    manage = ManageFilesTool(workspace=ws)
+    index = CodeIndexTool(workspace=ws)
+    graph = MetagraphTool(workspace=ws)
+    return [
+        ("grep identifier", lambda: grep.execute(pattern="ProbeService")),
+        ("grep content", lambda: grep.execute(pattern="def handle_probe", output_mode="content")),
+        ("grep content with context", lambda: grep.execute(pattern="def handle_probe", output_mode="content", context_before=2, context_after=2)),
+        ("grep count", lambda: grep.execute(pattern="return", output_mode="count")),
+        ("grep no match in a file", lambda: grep.execute(pattern="zz_absent", path="pkg/service.py")),
+        ("grep invented file", lambda: grep.execute(pattern="ProbeService", path="pkg/servise.py")),
+        ("grep several patterns", lambda: grep.execute(patterns=["ProbeService", "handle_probe", "zz_absent"])),
+        ("find_files query", lambda: find.execute(query="service")),
+        ("find_files missing dir", lambda: find.execute(path="pkg/nope")),
+        ("list_dir", lambda: ls.execute(path="pkg")),
+        ("list_dir missing", lambda: ls.execute(path="pkx")),
+        ("read_file", lambda: read.execute(path="pkg/service.py")),
+        ("read_file batch", lambda: read.execute(files=[{"path": "pkg/service.py", "limit": 5}, {"path": "README.md"}])),
+        ("read_file missing", lambda: read.execute(path="pkg/servis.py")),
+        ("edit_file", lambda: edit.execute(path="pkg/service.py", old_text="return 1", new_text="return 2")),
+        ("apply_patch", lambda: patch.execute(edits=[{"path": "pkg/service.py", "action": "replace", "old_text": "return 2", "new_text": "return 3"}])),
+        ("manage_files mkdir", lambda: manage.execute(action="mkdir", path="pkg/new_dir")),
+        ("manage_files copy", lambda: manage.execute(action="copy", path="README.md", destination="pkg/new_dir/README.md")),
+        ("manage_files delete", lambda: manage.execute(action="delete", paths=["pkg/new_dir"], recursive=True)),
+        ("code_index definition", lambda: index.execute(action="definition", name="ProbeService")),
+        ("metagraph find", lambda: graph.execute(action="find", query="service")),
+        ("hooks before a tool", lambda: user_hooks.pre_tool_use_block(ws, "cli:probe", "grep", {"pattern": "x"})),
+        ("hooks after a tool", lambda: user_hooks.post_tool_use_feedback(ws, "cli:probe", "grep", {"pattern": "x"}, "ok")),
+        ("hooks on a prompt", lambda: user_hooks.prompt_hooks(ws, "cli:probe", "fix pkg/service.py", new_session=False)),
+    ]
+
+
+def test_agent_tools_never_touch_the_disk_on_the_loop_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = tmp_path / "ws"
+    (ws / "pkg").mkdir(parents=True)
+    (ws / "README.md").write_text("# probe\n", encoding="utf-8")
+    (ws / "pkg" / "service.py").write_text(
+        "class ProbeService:\n    def handle_probe(self):\n        return 1\n", encoding="utf-8",
+    )
+    _git(ws, "init", "-q")
+    _git(ws, "add", "-A")
+    _git(ws, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init")
+    monkeypatch.setenv("NAVIN_HOME", str(tmp_path / "home"))
+    counter = _LoopDiskCalls(monkeypatch)
+    import threading
+
+    async def scenario() -> dict[str, list[str]]:
+        counter.loop_thread = threading.get_ident()
+        # A first pass loads the modules each path imports (imports read .py
+        # files) and warms the per-process caches; the second pass is what
+        # every later call of the day costs.
+        for _label, call in _agent_scenarios(ws):
+            await call()
+        (ws / "pkg" / "service.py").write_text(
+            "class ProbeService:\n    def handle_probe(self):\n        return 1\n", encoding="utf-8",
+        )
+        found: dict[str, list[str]] = {}
+        # The counter itself sees a stat made on the loop thread.
+        counter.armed = True
+        (ws / "README.md").exists()
+        counter.armed = False
+        assert any("os.stat" in call for call in counter.calls), counter.calls
+        for label, call in _agent_scenarios(ws):
+            counter.calls.clear()
+            counter.armed = True
+            try:
+                out = await call()
+            finally:
+                counter.armed = False
+            assert not getattr(out, "is_error", False) or "missing" in label or "invented" in label, (
+                f"{label} failed: {str(out)[:300]}"
+            )
+            if counter.calls:
+                found[label] = list(counter.calls)
+        return found
+
+    found = _run(scenario())
+    assert not found, "disk calls on the event-loop thread:\n" + "\n".join(
+        f"{label}:\n  " + "\n  ".join(calls[:6]) for label, calls in found.items()
+    )
+
+
 def test_print_table(capsys: pytest.CaptureFixture[str]) -> None:
     """Last in file order: shows the measurements when run with -s."""
     with capsys.disabled():

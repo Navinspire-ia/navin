@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from collections.abc import Mapping
@@ -104,7 +105,8 @@ async def handle_webui_fork_chat(channel: Any, connection: Any, envelope: Mappin
         await channel._send_event(connection, "error", detail="fork_chat_failed")
         return
 
-    scope = channel._workspaces.scope_for_session_key(fork_key)
+    # The scope reads the forked session file: off the loop.
+    scope = await asyncio.to_thread(channel._workspaces.scope_for_session_key, fork_key)
     channel._attach(connection, fork_id)
     await channel._send_event(connection, "attached", chat_id=fork_id)
     await channel._send_event(

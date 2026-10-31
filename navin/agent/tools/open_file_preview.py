@@ -10,6 +10,7 @@ report so the user sees it immediately with Download HTML / Export PDF.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -111,14 +112,19 @@ class OpenFilePreviewTool(Tool):
         # Prefer the per-turn workspace (the session's project folder) over the
         # gateway default workspace captured at startup: a relative path from a
         # chat working on another project must resolve inside that project.
-        root = Path(
-            getattr(ctx, "workspace", None) or self._working_dir or os.getcwd()
-        ).resolve()
-        target = Path(raw).expanduser()
-        if not target.is_absolute():
-            target = root / target
-        target = target.resolve()
-        if not target.exists() or not target.is_file():
+        base = Path(getattr(ctx, "workspace", None) or self._working_dir or os.getcwd())
+
+        def locate() -> tuple[Path, Path, bool]:
+            root = base.resolve()
+            target = Path(raw).expanduser()
+            if not target.is_absolute():
+                target = root / target
+            target = target.resolve()
+            return root, target, target.is_file()
+
+        # Resolving and checking the file are stats: in a worker.
+        root, target, found = await asyncio.to_thread(locate)
+        if not found:
             return ToolResult.error(
                 f"Error: file not found: {raw} (resolved to {target}). "
                 f"Relative paths resolve against the project root, {root}."

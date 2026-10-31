@@ -12,6 +12,7 @@ the file tree, exactly as if the user had clicked it themselves.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -99,13 +100,19 @@ class OpenInEditorTool(Tool):
         # at startup. Resolving against the latter would send a relative path
         # to the wrong project whenever the chat works elsewhere.
         root = Path(getattr(ctx, "workspace", None) or self._working_dir or os.getcwd())
-        target = Path(raw).expanduser()
-        if not target.is_absolute():
-            target = root / target
-        target = target.resolve()
-        if not target.exists():
+
+        def locate() -> tuple[Path, bool, bool]:
+            target = Path(raw).expanduser()
+            if not target.is_absolute():
+                target = root / target
+            target = target.resolve()
+            return target, target.exists(), target.is_dir()
+
+        # Resolving and checking the path are stats: in a worker.
+        target, exists, is_dir = await asyncio.to_thread(locate)
+        if not exists:
             return ToolResult.error(f"Error: path not found: {raw}")
-        kind = "folder" if target.is_dir() else "file"
+        kind = "folder" if is_dir else "file"
 
         try:
             self._bus.outbound.put_nowait(

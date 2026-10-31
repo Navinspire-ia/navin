@@ -703,7 +703,9 @@ class GitTool(_FsTool):
             except (PermissionError, ValueError, OSError) as exc:
                 return [], f"Error: {exc}"
             try:
-                rel = Path(full).resolve().relative_to(Path(root).resolve())
+                rel = (await asyncio.to_thread(
+                    lambda: Path(full).resolve().relative_to(Path(root).resolve())
+                ))
             except (ValueError, OSError):
                 return [], f"Error: {candidate} is outside the repository at {root}"
             resolved.append(rel.as_posix() or ".")

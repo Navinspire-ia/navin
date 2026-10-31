@@ -26,6 +26,9 @@ _gc_applied: tuple[int, int, int] | None = None
 # per call on a long session. Read it only after this module freezes or thaws,
 # and keep the value here for the 8 Hz idle tick.
 _frozen_count: int | None = None
+# Set by ``thaw_heap``: until the next freeze the young generations hold the
+# whole heap, so that freeze counts in C instead of listing every object.
+_thawed = False
 
 
 def _note_frozen() -> int:
@@ -59,9 +62,13 @@ def _freeze_counted(*, thawed: bool = False) -> int:
     count is read after the freeze from the permanent generation, a C walk of
     tens of milliseconds, never a Python list of the whole heap.
     """
-    global _frozen_count
-    if thawed:
+    global _frozen_count, _thawed
+    if thawed or _thawed:
+        # After ``thaw_heap`` (session switch, reload) the history paint froze
+        # through the young-generation list: 1.0 to 4.0 s in the CLI freeze
+        # log of 2026-10-30, a Python list of millions of objects.
         gc.freeze()
+        _thawed = False
         _frozen_count = gc.get_freeze_count()
         return _frozen_count
     moved = _unfrozen_objects()
@@ -104,12 +111,17 @@ FULL_GC_QUIET_EVENTS_S = 0.5
 # is now frozen with the rest and given back by the deep pass.
 ORDINARY_GC_GENERATION = 1
 # The deep pass (unfreeze, collect everything, freeze) is the one walk of the
-# whole heap: 2 to 6 s on a long session. It runs only when the frozen set grew
-# enough to be worth it AND nobody is looking: no key, paste, click or wheel for
-# a minute, or the terminal window left in the background. A timer alone no
-# longer starts it: an idle CLI paid 3 s every 20 minutes to reclaim nothing
-# (27 deep passes, 88 s of frozen screen in one day of the freeze log).
-DEEP_GC_QUIET_INPUT_S = 60.0
+# whole heap and it cannot be split: 3 to 52 s in the CLI freeze log of
+# 2026-10-30/31 (31 passes, 214 s of frozen screen), the long ones on a heap
+# the system had partly paged out while the CLI waited. It runs only when the
+# frozen set grew enough to be worth it AND the user is really away: no key,
+# paste, click or wheel for ten minutes, or three with the terminal window in
+# the background. One minute was a reading pause, and an unfocused terminal on
+# its own was a look at the desktop app: the user came back to a screen frozen
+# for the rest of the pass. A timer alone never starts it: an idle CLI paid 3 s
+# every 20 minutes to reclaim nothing (27 deep passes in one day of the log).
+DEEP_GC_QUIET_INPUT_S = 600.0
+DEEP_GC_UNFOCUSED_INPUT_S = 180.0
 DEEP_GC_QUIET_EVENTS_S = 10.0
 # Freezing also keeps widgets that later leave the chat window (a frozen cycle
 # is never collected: +240 MB after 30 turns when this was tried once without
@@ -120,8 +132,8 @@ DEEP_GC_GROWTH = 500_000
 # started "at one quiet moment" once the growth passed 4x froze the screen for
 # 16 s on 2026-10-28 00:08 (a 2 GB CLI, 10 s of collection and 6 s of
 # counting) in the middle of a working session. Memory is bounded instead by
-# the ordinary pass releasing off-screen lines, and the deep pass waits for a
-# minute without input or an unfocused terminal, however large the growth.
+# the ordinary pass releasing off-screen lines, and the deep pass waits for the
+# user to be away (see DEEP_GC_QUIET_INPUT_S), however large the growth.
 # A pass at least this long is written to the freeze log with its kind, so the
 # next audit knows which pass froze the screen.
 SLOW_GC_PASS_S = 0.5
@@ -208,9 +220,9 @@ class IdleCollector:
         frozen = frozen_count()
         growth = frozen - self.frozen_after_deep
         if frozen and growth >= DEEP_GC_GROWTH and quiet:
-            away = (
-                (idle_input >= DEEP_GC_QUIET_INPUT_S and idle_events >= DEEP_GC_QUIET_EVENTS_S)
-                or (not self._is_focused() and idle_events >= DEEP_GC_QUIET_EVENTS_S)
+            away = idle_events >= DEEP_GC_QUIET_EVENTS_S and (
+                idle_input >= DEEP_GC_QUIET_INPUT_S
+                or (idle_input >= DEEP_GC_UNFOCUSED_INPUT_S and not self._is_focused())
             )
             if away:
                 # The one long pass: it gives back what left the chat since.
@@ -313,10 +325,11 @@ def freeze_heap() -> None:
 
 def thaw_heap() -> None:
     """Return frozen objects to the collector (session switch, clear, reload)."""
-    global _frozen_count
+    global _frozen_count, _thawed
     with _gc_lock:
         gc.unfreeze()  # a no-op when nothing is frozen; no count walk needed
         _frozen_count = 0
+        _thawed = True
 
 
 _APP_FOCUS_PSEUDO = frozenset({"focus", "blur"})

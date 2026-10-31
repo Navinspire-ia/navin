@@ -3625,7 +3625,9 @@ class AgentRunner:
                     and not plan_artifact_call(tool_call.name, params, spec.workspace)
                     and not _call_read_only(candidate, params)
                 ):
-                    archify = (BUILTIN_SKILLS_DIR / "archify" / "bin" / "archify.mjs").resolve()
+                    archify = await asyncio.to_thread(
+                        (BUILTIN_SKILLS_DIR / "archify" / "bin" / "archify.mjs").resolve
+                    )
                     blocked = (
                         f"Error: tool '{tool_call.name}' is not allowed in Plan "
                         "mode. Plan designs without mutating: explore with "

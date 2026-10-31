@@ -1416,9 +1416,10 @@ class FindFilesTool(_SearchTool):
     ) -> str:
         try:
             target = await self._bound_path(path or ".", write=False)
-            if not target.exists():
-                return self._missing_path_msg("Path", path or ".", target)
-            if not (target.is_dir() or target.is_file()):
+            exists, is_dir, is_file = await self._path_kind(target)
+            if not exists:
+                return await self._missing_path("Path", path or ".", target)
+            if not (is_dir or is_file):
                 return ToolResult.error(f"Error: Unsupported path: {path}")
 
             if sort not in {"path", "modified"}:
@@ -1429,7 +1430,7 @@ class FindFilesTool(_SearchTool):
                 if head_limit is None
                 else None if head_limit == 0 else head_limit
             )
-            root = target if target.is_dir() else target.parent
+            root = target if is_dir else target.parent
 
             # Listing a tree is disk work; it must never stall the event loop
             # that every other session and the WebUI share.
@@ -1909,6 +1910,45 @@ class GrepTool(_SearchTool):
             hits.append(hit)
         return hits, skipped_binary, skipped_large, stopped
 
+    def _content_blocks(
+        self, hits: list[_FileHit], offset: int, limit: int | None,
+        context_before: int, context_after: int,
+    ) -> tuple[list[str], bool, bool]:
+        """(blocks, truncated, size_truncated) of a content-mode answer.
+
+        Reads each matching file again when context lines are asked for, so a
+        caller with context runs it in a worker thread.
+        """
+        blocks: list[str] = []
+        truncated = size_truncated = False
+        result_chars = 0
+        seen_content_matches = 0
+        wants_context = context_before > 0 or context_after > 0
+        for hit in hits:
+            file_lines: list[str] | None = None
+            if wants_context:
+                content, _ = _read_text_file(hit.path, self._MAX_FILE_BYTES)
+                file_lines = None if content is None else content.splitlines()
+            for line_no, text in hit.matches:
+                seen_content_matches += 1
+                if seen_content_matches <= offset:
+                    continue
+                if limit is not None and len(blocks) >= limit:
+                    truncated = True
+                    break
+                block = self._format_block(
+                    hit.display_path, file_lines, line_no, text, context_before, context_after,
+                )
+                extra_sep = 2 if blocks else 0
+                if result_chars + extra_sep + len(block) > self._MAX_RESULT_CHARS:
+                    size_truncated = True
+                    break
+                blocks.append(block)
+                result_chars += extra_sep + len(block)
+            if truncated or size_truncated:
+                break
+        return blocks, truncated, size_truncated
+
     _MAX_PATTERNS = 8
     # The whole reply stays under the tool result limit (16 000 characters by
     # default), or it is written to disk and has to be read back.
@@ -1996,25 +2036,29 @@ class GrepTool(_SearchTool):
             target = await self._bound_path(path or ".", write=False)
             missing_path = None
             recovery_note = ""
-            if not target.exists():
-                missing_path = self._missing_path_msg("Path", path or ".", target)
+            # Every stat of this call runs in a worker: on a WSL project seen
+            # from Windows each one is a 9P round trip, and the loop thread also
+            # streams the other chats.
+            exists, is_dir, is_file = await self._path_kind(target)
+            if not exists:
+                missing_path = await self._missing_path("Path", path or ".", target)
                 workspace = self._display_workspace()
                 # An invented filename should not start a chain of guesses.
                 # Search its existing project directory for the same symbols,
                 # and state the wider scope explicitly when matches are found.
-                if (
-                    not target.suffix
-                    or workspace is None
-                    or not target.is_relative_to(workspace)
-                    or not target.parent.is_dir()
-                ):
+                if not target.suffix or workspace is None or not target.is_relative_to(workspace):
+                    return missing_path
+                _, parent_is_dir, _ = await self._path_kind(target.parent)
+                if not parent_is_dir:
                     return missing_path
                 target = target.parent
+                is_dir, is_file = True, False
+                shown = await asyncio.to_thread(self._display, target)
                 recovery_note = (
-                    f"[Note: {path} does not exist. Searched {self._display(target)} "
+                    f"[Note: {path} does not exist. Searched {shown} "
                     "for the same pattern instead.]\n\n"
                 )
-            if not (target.is_dir() or target.is_file()):
+            if not (is_dir or is_file):
                 return ToolResult.error(f"Error: Unsupported path: {path}")
             if sort not in {"relevance", "path", "modified"}:
                 return ToolResult.error(
@@ -2040,7 +2084,7 @@ class GrepTool(_SearchTool):
                 limit = _DEFAULT_HEAD_LIMIT
             truncated = False
             size_truncated = False
-            root = target if target.is_dir() else target.parent
+            root = target if is_dir else target.parent
 
             hits, skipped_binary, skipped_large, stopped_early = await asyncio.to_thread(
                 self._collect_hits,
@@ -2065,11 +2109,16 @@ class GrepTool(_SearchTool):
             total_matches = sum(len(hit.matches) for hit in hits)
 
             blocks: list[str] = []
+
+            async def no_match() -> str:
+                # Reads the target file for the case check: off the loop.
+                return await asyncio.to_thread(
+                    _no_match_message, pattern, path, target, case_insensitive, fixed_strings, glob, type,
+                )
+
             if output_mode == "files_with_matches":
                 if not hits:
-                    result = _no_match_message(
-                        pattern, path, target, case_insensitive, fixed_strings, glob, type
-                    )
+                    result = await no_match()
                 else:
                     paged, truncated = _paginate(
                         [hit.display_path for hit in hits], limit, offset
@@ -2080,9 +2129,7 @@ class GrepTool(_SearchTool):
                     )
             elif output_mode == "count":
                 if not hits:
-                    result = _no_match_message(
-                        pattern, path, target, case_insensitive, fixed_strings, glob, type
-                    )
+                    result = await no_match()
                 else:
                     paged_hits, truncated = _paginate(hits, limit, offset)
                     result = "\n".join(
@@ -2092,37 +2139,17 @@ class GrepTool(_SearchTool):
                         "lower the offset to see them"
                     )
             else:
-                result_chars = 0
-                seen_content_matches = 0
                 wants_context = context_before > 0 or context_after > 0
-                for hit in hits:
-                    file_lines: list[str] | None = None
-                    if wants_context:
-                        content, _ = _read_text_file(hit.path, self._MAX_FILE_BYTES)
-                        file_lines = None if content is None else content.splitlines()
-                    for line_no, text in hit.matches:
-                        seen_content_matches += 1
-                        if seen_content_matches <= offset:
-                            continue
-                        if limit is not None and len(blocks) >= limit:
-                            truncated = True
-                            break
-                        block = self._format_block(
-                            hit.display_path,
-                            file_lines,
-                            line_no,
-                            text,
-                            context_before,
-                            context_after,
-                        )
-                        extra_sep = 2 if blocks else 0
-                        if result_chars + extra_sep + len(block) > self._MAX_RESULT_CHARS:
-                            size_truncated = True
-                            break
-                        blocks.append(block)
-                        result_chars += extra_sep + len(block)
-                    if truncated or size_truncated:
-                        break
+                if wants_context:
+                    # Context lines come from the files themselves: one read
+                    # per matching file, in a worker.
+                    blocks, truncated, size_truncated = await asyncio.to_thread(
+                        self._content_blocks, hits, offset, limit, context_before, context_after,
+                    )
+                else:
+                    blocks, truncated, size_truncated = self._content_blocks(
+                        hits, offset, limit, context_before, context_after,
+                    )
                 if not blocks and total_matches and offset >= total_matches:
                     result = (
                         f"No entries at offset {offset} for pattern '{pattern}' "
@@ -2130,9 +2157,7 @@ class GrepTool(_SearchTool):
                         "lower the offset to see them"
                     )
                 elif not blocks:
-                    result = _no_match_message(
-                        pattern, path, target, case_insensitive, fixed_strings, glob, type
-                    )
+                    result = await no_match()
                 else:
                     result = "\n\n".join(blocks)
 
@@ -2176,7 +2201,10 @@ class GrepTool(_SearchTool):
             if hits and output_mode in {"files_with_matches", "content"}:
                 # Parsed definitions first when the index is warm: exact line
                 # and kind in a millisecond, the text matches below as always.
-                index_lines = index_first_lines(root, pattern)
+                # A worker: a miss revalidates the index with a stat walk, and
+                # the lookup waits for an index refresh another chat started
+                # (1.0 to 1.2 s with the loop stopped in the logs of 2026-10-30/31).
+                index_lines = await asyncio.to_thread(index_first_lines, root, pattern)
                 if index_lines:
                     result = "\n".join(index_lines) + result
                     # The header already says where the symbol lives; the

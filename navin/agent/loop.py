@@ -2601,6 +2601,12 @@ class AgentLoop:
             goal_on = bool(
                 session is not None and sustained_goal_active(session.metadata)
             )
+            # The words of the request that name places are checked against the
+            # project tree (a shallow walk, cached a minute): 11.4 s with the
+            # loop stopped on a WSL project seen from Windows (2026-10-31).
+            scope_targets = tuple(await asyncio.to_thread(
+                named_targets, original_user_text, effective_scope.project_path,
+            ))
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=initial_messages,
                 tools=effective_tools,
@@ -2634,7 +2640,7 @@ class AgentLoop:
                 background_idle=_background_idle,
                 goal_continue_message=_goal_continue,
                 requires_tool_delivery=self._requires_tool_delivery(None, metadata),
-                scope_targets=tuple(named_targets(original_user_text, effective_scope.project_path)),
+                scope_targets=scope_targets,
                 ui_terms=ui_terms(original_user_text),
                 explicit_asks=explicit_asks(original_user_text),
                 go_ahead=is_go_ahead(original_user_text),
@@ -2879,7 +2885,7 @@ class AgentLoop:
                     key for key, tasks in self._active_tasks.items()
                     if any(not task.done() for task in tasks)
                 } | set(self._pending_queues)
-                for recovered_msg in self.turn_recovery.take_due(active_keys=active_keys):
+                for recovered_msg in await self.turn_recovery.take_due_async(active_keys=active_keys):
                     self._republish_inbound(recovered_msg)
                 try:
                     msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
@@ -3692,7 +3698,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         if not ephemeral and should_inject_into_active_turn(self.commands, msg.content.strip()):
-            self.turn_recovery.begin(self.sessions.get_or_create(key), msg, persisted=False)
+            await self.turn_recovery.begin_async(self.sessions.get_or_create(key), msg, persisted=False)
         t0 = time.time()
         ctx = TurnContext(
             msg=msg,
@@ -4125,7 +4131,7 @@ class AgentLoop:
             runtime_context_blocks=ctx.runtime_context_blocks,
         )
         if not ctx.ephemeral:
-            self.turn_recovery.begin(ctx.session, ctx.msg)
+            await self.turn_recovery.begin_async(ctx.session, ctx.msg)
 
         if ctx.on_progress is None:
             ctx.on_progress = await self._build_bus_progress_callback(ctx.msg)
@@ -4783,7 +4789,7 @@ class AgentLoop:
                                 )
                             await asyncio.sleep(min(remaining, 30.0))
                             continue
-                        resumed = self.turn_recovery.take_due(active_keys=set(), only_key=session_key)
+                        resumed = await self.turn_recovery.take_due_async(active_keys=set(), only_key=session_key)
                         if resumed:
                             msg = resumed[0]
                             break

@@ -206,6 +206,31 @@ class ConfigCacheTest(unittest.TestCase):
         self.assertIsNot(second, first)
         self.assertEqual(second.agents.defaults.model, "b/two")
 
+    def test_a_same_size_rewrite_within_one_timestamp_tick_is_picked_up(self) -> None:
+        """Failed 1 run in many in the full suite: "a/one" and "b/two" have
+        the same length and both writes landed in one kernel timestamp tick,
+        so mtime, size, inode and ctime were all equal (git's racy-clean case)."""
+        self._write({"agents": {"defaults": {"model": "a/one"}}})
+        stamp = os.stat(self.path)
+        # The tick case made certain: both versions report the same mtime,
+        # size, inode and ctime, as when the writes share one timestamp tick.
+        tick = (time.time_ns(), stamp.st_size, stamp.st_ino, time.time_ns())
+        with patch.object(loader, "_file_signature", return_value=tick):
+            first = load_config_cached(self.path)
+            self._write({"agents": {"defaults": {"model": "b/two"}}})
+            self.assertEqual(os.stat(self.path).st_size, stamp.st_size)
+            self.assertEqual(load_config_cached(self.path).agents.defaults.model, "b/two")
+        self.assertEqual(first.agents.defaults.model, "a/one")
+
+    def test_an_old_file_is_trusted_on_its_signature_again(self) -> None:
+        """Past the racy window the cache stops reading the bytes back."""
+        self._write({"agents": {"defaults": {"model": "a/one"}}})
+        old = time.time_ns() - 10 * loader._RACY_NS
+        os.utime(self.path, ns=(old, old))
+        first = load_config_cached(self.path)
+        with patch.object(loader, "_read_bytes", side_effect=AssertionError("read back")):
+            self.assertIs(load_config_cached(self.path), first)
+
     def test_a_same_size_rewrite_is_picked_up(self) -> None:
         self._write({"agents": {"defaults": {"model": "a/one"}}})
         load_config_cached(self.path)

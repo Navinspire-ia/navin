@@ -910,7 +910,9 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     runtime = ctx.runtime or loop.llm_runtime()
     ctx_est = 0
     with suppress(Exception):
-        ctx_est, _ = loop.consolidator.estimate_session_prompt_tokens(
+        # The estimate builds the whole system prompt (skill files, commands,
+        # rules): off the loop, like every other estimate.
+        ctx_est, _ = await loop.consolidator.estimate_session_prompt_tokens_async(
             session,
             runtime=runtime,
         )

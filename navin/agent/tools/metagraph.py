@@ -369,8 +369,11 @@ class MetagraphTool(_FsTool):
         )
 
         try:
-            root = self._project_root()
-            if not root.is_dir():
+            # Resolving and checking the root are stats: in a worker, like the
+            # query itself (see _FsTool._path_kind).
+            root = await asyncio.to_thread(self._project_root)
+            _, root_is_dir, _ = await self._path_kind(root)
+            if not root_is_dir:
                 return ToolResult.error(f"Error: project root not found: {root}")
         except Exception as e:
             return ToolResult.error(f"Error resolving project root: {e}")
@@ -547,7 +550,7 @@ class MetagraphTool(_FsTool):
                     parts = [f"Error: file not in metagraph: {cleaned}"]
                     if close:
                         parts.append("Did you mean: " + ", ".join(close) + "?")
-                    elif (root / cleaned).is_file():
+                    elif await asyncio.to_thread((root / cleaned).is_file):
                         parts.append(
                             "The file exists but carries no dependency edges "
                             "(it may be ignored by git or of an unindexed type); "

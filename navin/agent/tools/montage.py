@@ -887,7 +887,7 @@ class MontageTool(_QualityTool):
                     / f"{Path(resolved_video).stem}-lipsynced.mp4"
                 )
             try:
-                destination.resolve().relative_to(root.resolve())
+                await asyncio.to_thread(lambda: destination.resolve().relative_to(root.resolve()))
             except ValueError:
                 return "lipsync error: output must stay inside the workspace"
             job = create_lipsync_job(

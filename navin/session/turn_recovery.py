@@ -82,6 +82,20 @@ class TurnRecovery:
         self._restarted: set[str] = set()
 
     def begin(self, session: Session, msg: InboundMessage, *, persisted: bool = True) -> None:
+        if self._begin_record(session, msg, persisted):
+            self.sessions.save(session, fsync=True)
+
+    async def begin_async(self, session: Session, msg: InboundMessage, *, persisted: bool = True) -> None:
+        """``begin`` with its durable write in a worker thread, awaited.
+
+        The record is updated on the loop; the fsync of a long transcript
+        held the loop 1.2 s before each turn (CLI freeze log of 2026-10-31).
+        """
+        if self._begin_record(session, msg, persisted):
+            await self.sessions.save_async(session, fsync=True)
+
+    def _begin_record(self, session: Session, msg: InboundMessage, persisted: bool) -> bool:
+        """Update the recovery record for a starting turn; True when it must be written."""
         if msg.channel not in _CHANNELS or msg.metadata.get("heartbeat"):
             previous = session.metadata.get(RECOVERY_KEY)
             if (
@@ -93,15 +107,15 @@ class TurnRecovery:
                 # A new message supersedes a restart replay adopted for this
                 # channel; the queued replay must not run after it.
                 self.finish(session)
-                self.sessions.save(session, fsync=True)
-            return
+                return True
+            return False
         previous = session.metadata.get(RECOVERY_KEY)
         same_request = isinstance(previous, dict) and msg.metadata.get(TRACKED_REQUEST_META) == previous.get("id")
         if same_request and previous.get("status") == "running" and (not persisted or previous.get("request_persisted")):
-            return
+            return False
         if continuation.internal_continuation_inbound(msg.metadata) or same_request:
             if not isinstance(previous, dict):
-                return
+                return False
             record = dict(previous)
         else:
             record = {
@@ -117,7 +131,7 @@ class TurnRecovery:
         session.metadata[RECOVERY_KEY] = record
         self.due.pop(session.key, None)
         self.queued.pop(session.key, None)
-        self.sessions.save(session, fsync=True)
+        return True
 
     @staticmethod
     def user_persisted(session: Session, msg: InboundMessage) -> None:
@@ -268,9 +282,19 @@ class TurnRecovery:
 
     def take_due(
         self, *, active_keys: set[str], now: float | None = None, only_key: str | None = None,
+        pending_saves: list[tuple[Session, bool]] | None = None,
     ) -> list[InboundMessage]:
+        """Replays due now. With ``pending_saves`` the writes are listed there
+        (session, fsync) for the caller to make before the replays run."""
         now = time.time() if now is None else now
         messages = []
+
+        def save(session: Session, fsync: bool) -> None:
+            if pending_saves is None:
+                self.sessions.save(session, fsync=fsync)
+            else:
+                pending_saves.append((session, fsync))
+
         for key, due in list(self.due.items()):
             if only_key is not None and key != only_key:
                 continue
@@ -288,7 +312,7 @@ class TurnRecovery:
                 or not request.get("chat_id")
             ):
                 self.finish(session)
-                self.sessions.save(session)
+                save(session, False)
                 continue
             metadata = dict(request.get("metadata") or {})
             if not record.get("request_persisted", True):
@@ -299,13 +323,13 @@ class TurnRecovery:
                     media=list(request.get("media") or []),
                 )
                 record["request_persisted"] = True
-                self.sessions.save(session, fsync=True)
+                save(session, True)
             if key in self._restarted:
                 # Durable before the replay runs: if it takes the process down,
                 # the next start sees it and does not replay it a second time.
                 self._restarted.discard(key)
                 record[REPLAYED_AFTER_RESTART] = True
-                self.sessions.save(session, fsync=True)
+                save(session, True)
             metadata.update({
                 RECOVERY_ID_META: record["id"],
                 continuation.INTERNAL_CONTINUATION_META: True,
@@ -330,4 +354,19 @@ class TurnRecovery:
                 session_key_override=key,
             ))
             self.queued[key] = record["id"]
+        return messages
+
+    async def take_due_async(
+        self, *, active_keys: set[str], now: float | None = None, only_key: str | None = None,
+    ) -> list[InboundMessage]:
+        """``take_due`` with its durable writes made in a worker thread.
+
+        They are awaited before the replays are handed back, so a replay still
+        never runs before its record is on disk. The main loop asks every
+        second; a write there held the loop 1.0 s (CLI freeze log of 2026-10-31).
+        """
+        saves: list[tuple[Session, bool]] = []
+        messages = self.take_due(active_keys=active_keys, now=now, only_key=only_key, pending_saves=saves)
+        for session, fsync in saves:
+            await self.sessions.save_async(session, fsync=fsync)
         return messages

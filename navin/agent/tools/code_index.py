@@ -451,8 +451,9 @@ class CodeIndexTool(_FsTool):
         **kwargs: Any,
     ) -> str:
         try:
-            root = self._project_root()
-            if not root.is_dir():
+            root = await asyncio.to_thread(self._project_root)
+            _, root_is_dir, _ = await self._path_kind(root)
+            if not root_is_dir:
                 return ToolResult.error(f"Error: project root not found: {root}")
             index = await asyncio.to_thread(self._prepare_index, root, action == "refresh")
         except Exception as exc:

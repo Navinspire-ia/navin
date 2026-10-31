@@ -504,6 +504,62 @@ class TestFulltextWriterNeverBlocksAQuery:
         assert index.refresh(files) == 0, "already current after the warm"
         assert _SlowCore.calls == 1
 
+    def test_the_warm_stops_between_batches_when_the_process_exits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A daemon thread inside one long native update when the interpreter
+        finalized aborted the process ("FATAL: exception not rethrown", a core
+        dump when the CLI quits). The update now runs in short batches and the
+        exit lets no new batch start."""
+        from navin.index import fulltext
+        from navin.utils import native
+
+        batches: list[int] = []
+
+        class _Core:
+            def fulltext_update(self, index_dir: str, root: str, changed: list, removed: list) -> int:
+                batches.append(len(changed))
+                if len(batches) == 2:
+                    native._closing = True  # the exit starts during the second batch
+                return len(changed)
+
+        monkeypatch.setattr(fulltext, "_native", lambda: _Core())
+        monkeypatch.setattr(fulltext, "_UPDATE_BATCH", 3)
+        monkeypatch.setattr(native, "_closing", False)
+        index = fulltext.FulltextIndex(tmp_path)
+        files = {f"f{i}.py": i for i in range(8)}
+        assert index.refresh(files) == 6
+        assert batches == [3, 3], "no batch starts once the exit began"
+        # What was indexed is recorded; the rest is indexed by the next run.
+        monkeypatch.setattr(native, "_closing", False)
+        batches.clear()
+        assert index.refresh(files) == 2 and batches == [2]
+        assert index.refresh(files) == 0
+
+    def test_exit_waits_for_the_native_call_in_flight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import threading
+
+        from navin.utils import native
+
+        monkeypatch.setattr(native, "_closing", False)
+        inside = threading.Event()
+        release = threading.Event()
+
+        def work() -> None:
+            with native.native_section():
+                inside.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+        assert inside.wait(5)
+        assert native.wait_for_native_sections(timeout=0.05) is False, "still inside: the wait is bounded"
+        with pytest.raises(native.NativeShutdownError):
+            with native.native_section():
+                pass
+        release.set()
+        assert native.wait_for_native_sections(timeout=5) is True
+        worker.join(5)
+        monkeypatch.setattr(native, "_closing", False)
+
 
 class TestSearchAtScale:
     def test_grep_and_find_on_three_thousand_files(self, big_workspace: Path) -> None:

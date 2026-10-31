@@ -1607,7 +1607,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         path = _query_first(query, "path")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             # Own pool so expand never waits behind git status / CI / settings
             # to_thread work. Do not go through route_cache: coalescing with an
             # in-flight listing started before the agent wrote the file would
@@ -1638,7 +1638,7 @@ class GatewayHTTPHandler:
             except (TypeError, ValueError):
                 aspect = 16 / 9
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(metagraph_payload, scope, view=view, aspect=aspect)
         except MetagraphError as e:
             return _http_error(e.status, e.message)
@@ -1653,7 +1653,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(board_payload, scope, decoded_key)
         except BoardError as e:
             return _http_error(e.status, e.message)
@@ -1668,7 +1668,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(project_brain_payload, scope)
         except ProjectBrainError as e:
             return _http_error(e.status, e.message)
@@ -1683,7 +1683,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(resume_seed_payload, scope)
         except ContinuityApiError as e:
             return _http_error(e.status, e.message)
@@ -1706,7 +1706,7 @@ class GatewayHTTPHandler:
                 body = file_body_from_headers(request.headers) or body
             except WebUIFilePreviewError:
                 pass
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 leave_handoff_payload,
                 scope,
@@ -1726,7 +1726,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(project_rules_payload, scope)
         except ProjectRulesError as e:
             return _http_error(e.status, e.message)
@@ -1746,7 +1746,7 @@ class GatewayHTTPHandler:
             from navin.webui.file_preview import WebUIFilePreviewError, file_body_from_headers
 
             content = file_body_from_headers(request.headers)
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 save_project_rule_payload,
                 scope,
@@ -1778,7 +1778,7 @@ class GatewayHTTPHandler:
         if not isinstance(op, dict):
             return _http_error(400, "op must be an object")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(board_update_payload, scope, op, decoded_key)
         except BoardError as e:
             return _http_error(e.status, e.message)
@@ -1798,7 +1798,7 @@ class GatewayHTTPHandler:
 
         query = _parse_query(request.path)
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 infra_payload, Path(scope.project_path).expanduser(), section, query
             )
@@ -1818,7 +1818,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         raw_fields = _query_first(query, "fields")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             if raw_fields is None:
                 from navin.board.autonomy import autonomy_state
 
@@ -1854,7 +1854,7 @@ class GatewayHTTPHandler:
 
         query = _parse_query(request.path)
         raw_fields = _query_first(query, "fields")
-        scope = self.workspaces.scope_for_session_key(decoded_key)
+        scope = await self._session_scope(decoded_key)
         project = Path(scope.project_path).expanduser()
         registry = self._registry()
 
@@ -1880,6 +1880,17 @@ class GatewayHTTPHandler:
         self._sync_recall_tool(project)
         return _http_json_response(await asyncio.to_thread(_state))
 
+    async def _session_scope(self, session_key: str) -> Any:
+        """The chat's workspace scope, read off the event loop.
+
+        It reads the session file's metadata (one stat when cached), validates
+        the project folder when the cache expired and may start a refresh: on a
+        WSL project seen from Windows each of those crosses the 9P bridge, and
+        every desktop route did it on the loop (1.0 to 1.6 s for the review and
+        git panels in the desktop log of 2026-10-31).
+        """
+        return await asyncio.to_thread(self.workspaces.scope_for_session_key, session_key)
+
     def _agi_project(self, request: WsRequest, key: str) -> tuple[Path | None, Response | None]:
         if not self.check_api_token(request):
             return None, _http_error(401, "Unauthorized")
@@ -1897,7 +1908,7 @@ class GatewayHTTPHandler:
         The AGI panel reads the whole state (flag, drafts, scores, journal)
         and writes one switch at a time through ``?fields={...}``.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.skills_evolve.state import AgiActionError, agi_state, agi_update
@@ -1926,7 +1937,7 @@ class GatewayHTTPHandler:
         ``publish`` and ``force`` need ``actor=human``; the panel sends it, the
         engine has no route here.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.skills_evolve.state import AgiActionError, agi_action
@@ -1959,7 +1970,7 @@ class GatewayHTTPHandler:
 
     async def _handle_agi_draft(self, request: WsRequest, key: str) -> Response:
         """The SKILL.md text of one draft, for the panel's preview."""
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.skills_evolve.state import draft_text
@@ -1990,7 +2001,7 @@ class GatewayHTTPHandler:
         through ``?fields={...}``. ``advise: true`` answers 409 while the gate
         is closed.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.world_model.state import WorldActionError, world_state, world_update
@@ -2025,7 +2036,7 @@ class GatewayHTTPHandler:
         The human-only ones (train, freeze, rollback, discard_belief) need
         ``actor=human``; the panel sends it, the engine has no route here.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.world_model.state import WorldActionError, world_action
@@ -2065,7 +2076,7 @@ class GatewayHTTPHandler:
         ``enabled: true`` answers 409 while the world model radar is not up;
         ``steer: true`` answers 409 while the gate is closed.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.policy.state import PolicyActionError, policy_state, policy_update
@@ -2097,7 +2108,7 @@ class GatewayHTTPHandler:
         The human-only ones need ``actor=human``; the panel sends it, the
         engine has no route here. ``train`` runs in a child process.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.policy.state import PolicyActionError, policy_action
@@ -2135,7 +2146,7 @@ class GatewayHTTPHandler:
         ``enabled: true`` answers 409 while S2, S3.3 or S4.3 are not up.
         Nothing here registers a tool or touches a turn.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.transfer.state import TransferActionError, transfer_state, transfer_update
@@ -2165,7 +2176,7 @@ class GatewayHTTPHandler:
         engine has no route here. ``campaign`` runs in a child process.
         ``freeze`` needs names and lives in the CLI.
         """
-        project, failure = self._agi_project(request, key)
+        project, failure = await asyncio.to_thread(self._agi_project, request, key)
         if failure is not None or project is None:
             return failure or _http_error(500, "no project")
         from navin.transfer.state import TransferActionError, transfer_action
@@ -2199,7 +2210,7 @@ class GatewayHTTPHandler:
         state = _query_first(query, "state") or "open"
         project_override = (_query_first(query, "project") or "").strip() or None
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 github_issues_payload,
                 scope,
@@ -2225,7 +2236,7 @@ class GatewayHTTPHandler:
         repo = _query_first(query, "repo") or ""
         project_override = (_query_first(query, "project") or "").strip() or None
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 github_issues_repo_payload,
                 scope,
@@ -2248,7 +2259,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(github_pr_sync_payload, scope)
         except BoardError as e:
             return _http_error(e.status, e.message)
@@ -2269,7 +2280,7 @@ class GatewayHTTPHandler:
         except ValueError:
             limit = 50
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             # F12 / Ctrl-click: ?symbol=Name resolves definitions.
             # Outline panel: ?outline=1&path=file.py lists document symbols.
             symbol = _query_first(query, "symbol")
@@ -2322,7 +2333,7 @@ class GatewayHTTPHandler:
         except ValueError:
             return _http_error(400, "invalid line/col")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             try:
                 content = file_body_from_headers(request.headers)
             except WebUIFilePreviewError as exc:
@@ -2456,7 +2467,7 @@ class GatewayHTTPHandler:
         except ValueError:
             limit = 12
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 file_search_payload,
                 scope,
@@ -2485,7 +2496,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         mode = (_query_first(query, "mode") or "collect").strip()
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             if mode == "collect":
                 # Collection imports test modules; minutes on a monorepo, so
                 # keep it off the event loop like a full run.
@@ -2552,7 +2563,7 @@ class GatewayHTTPHandler:
         record_id = (_query_first(query, "id") or "").strip()
         actor = (_query_first(query, "actor") or "").strip()
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             body: dict[str, Any] = {}
             if action in {
                 "create",
@@ -2690,7 +2701,7 @@ class GatewayHTTPHandler:
             return _http_error(400, "invalid assist payload")
 
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             project_root = scope.project_path
             related_raw = body.get("related_files")
             related_files = related_raw if isinstance(related_raw, list) else None
@@ -2791,7 +2802,7 @@ class GatewayHTTPHandler:
         from navin.webui.tenders_api import handle_tenders_action
 
         try:
-            context = self._studio_request_context("tenders", action, query, body)
+            context = await asyncio.to_thread(self._studio_request_context, "tenders", action, query, body)
         except ValueError as exc:
             return _http_error(400, str(exc))
         try:
@@ -2907,7 +2918,7 @@ class GatewayHTTPHandler:
         session_key = flat.get("session_key") or ""
         if session_key and action.startswith("crm."):
             try:
-                scope = self.workspaces.scope_for_session_key(_decode_api_key(session_key))
+                scope = await self._session_scope(_decode_api_key(session_key))
                 project = getattr(scope, "project_path", None)
                 crm_project = Path(project).resolve() if project and Path(project).is_dir() else None
             except Exception:  # noqa: BLE001 - no project: the action says so
@@ -3088,7 +3099,7 @@ class GatewayHTTPHandler:
         from navin.webui.career_api import handle_career_action
 
         try:
-            context = self._studio_request_context("career", action, query, body)
+            context = await asyncio.to_thread(self._studio_request_context, "career", action, query, body)
         except ValueError as exc:
             return _http_error(400, str(exc))
         try:
@@ -3172,7 +3183,7 @@ class GatewayHTTPHandler:
         from navin.webui.marketing_desk_api import handle_marketing_action
 
         try:
-            context = self._studio_request_context("marketing", action, query, body)
+            context = await asyncio.to_thread(self._studio_request_context, "marketing", action, query, body)
         except ValueError as exc:
             return _http_error(400, str(exc))
         hop_target = ""
@@ -3315,7 +3326,7 @@ class GatewayHTTPHandler:
         speakers_raw = body.get("speakers")
         speakers = [str(x) for x in speakers_raw] if isinstance(speakers_raw, list) else []
         try:
-            context = self._studio_request_context("meeting", mode, query, body, session_key=key)
+            context = await asyncio.to_thread(self._studio_request_context, "meeting", mode, query, body, session_key=key)
         except ValueError as exc:
             return _http_error(400, str(exc))
         context_token = bind_request_context(context)
@@ -3439,7 +3450,7 @@ class GatewayHTTPHandler:
         case_sensitive = _query_first(query, "case") == "1"
         semantic = _query_first(query, "semantic") == "1"
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             if semantic:
                 from navin.webui.semantic_search_api import semantic_search_payload
 
@@ -3469,7 +3480,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         paths = [p for p in query.get("path", []) if p]
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 replace_payload,
                 scope,
@@ -3520,7 +3531,7 @@ class GatewayHTTPHandler:
         try:
             from navin.webui.git_commit_message import generate_commit_message_payload
 
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await generate_commit_message_payload(
                 scope, paths or None, lang=lang
             )
@@ -3544,7 +3555,7 @@ class GatewayHTTPHandler:
         # staged_only=1 => commit index as-is (empty paths list).
         staged_only = _query_first(query, "staged_only") == "1"
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_commit_payload,
                 scope,
@@ -3571,7 +3582,7 @@ class GatewayHTTPHandler:
         stage = _query_first(query, "stage") != "0"
         all_files = _query_first(query, "all") == "1"
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_stage_payload,
                 scope,
@@ -3593,7 +3604,7 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_pull_payload,
                 scope,
@@ -3612,7 +3623,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(git_undo_last_commit_payload, scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
@@ -3627,7 +3638,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(git_sync_payload, scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
@@ -3644,7 +3655,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         paths = [p for p in query.get("path", []) if p]
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_discard_payload,
                 scope,
@@ -3671,7 +3682,7 @@ class GatewayHTTPHandler:
             except (TypeError, ValueError):
                 return _http_error(400, "stash index must be an integer")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_stash_payload,
                 scope,
@@ -3691,7 +3702,7 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(git_fetch_payload, scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
@@ -3707,7 +3718,7 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_branch_payload,
                 scope,
@@ -3728,7 +3739,7 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_conflict_action_payload,
                 scope,
@@ -3763,7 +3774,7 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 github_pr_create_payload,
                 scope,
@@ -3810,7 +3821,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         mode = (_query_first(query, "mode") or "fix").strip() or "fix"
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(github_fix_ci_prompt_payload, scope, mode)
         except (ProjectSearchError, GithubPrError) as e:
             return _http_error(e.status, e.message)
@@ -3828,7 +3839,7 @@ class GatewayHTTPHandler:
         from navin.webui.code_review_api import review_prompt_payload
 
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(review_prompt_payload, scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
@@ -3890,7 +3901,7 @@ class GatewayHTTPHandler:
         from navin.webui import checkpoints_api
 
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         root = scope.project_path
@@ -4004,7 +4015,7 @@ class GatewayHTTPHandler:
                     int(x) for x in params["lines"].split(",") if x.strip().isdigit()
                 ]
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(debug_dispatch, scope, op=op, params=params)
         except DebugSessionError as e:
             return _http_error(e.status, e.message)
@@ -4026,7 +4037,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         commit = _query_first(query, "commit")
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             if commit:
                 payload = await asyncio.to_thread(
                     git_commit_detail_payload,
@@ -4062,7 +4073,7 @@ class GatewayHTTPHandler:
             )
             project_path: str | None = None
             try:
-                scope = self.workspaces.scope_for_session_key(decoded_key)
+                scope = await self._session_scope(decoded_key)
                 project_path = str(scope.project_path or "") or None
             except Exception:
                 project_path = None
@@ -4100,7 +4111,7 @@ class GatewayHTTPHandler:
         against_arg = _query_first(query, "against")
         ignore_ws = _query_first(query, "ignore_whitespace") == "1"
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_diff_payload,
                 scope,
@@ -4155,7 +4166,7 @@ class GatewayHTTPHandler:
         if isinstance(decoded_key, Response):
             return decoded_key
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = await self._session_scope(decoded_key)
             payload = await self.route_cache.get(
                 f"review:changes:{decoded_key}:{scope.project_path}",
                 lambda: asyncio.to_thread(
@@ -5078,7 +5089,7 @@ class GatewayHTTPHandler:
         raw_key = (_query_first(query, "session") or "").strip()
         try:
             if raw_key:
-                scope = self.workspaces.scope_for_session_key(raw_key)
+                scope = await self._session_scope(raw_key)
             else:
                 scope = self.workspaces.default_scope()
             project_root = scope.project_path
@@ -5258,7 +5269,7 @@ class GatewayHTTPHandler:
                 if not chat_id or not all(ch.isalnum() or ch in "-_" for ch in chat_id):
                     return _http_error(400, "invalid chat id")
                 key = f"websocket:{chat_id}"
-                project_root = Path(self.workspaces.scope_for_session_key(key).project_path)
+                project_root = Path((await self._session_scope(key)).project_path)
                 folder = Path(_query_first(query, "dir") or (Path.home() / "Downloads")).expanduser()
                 if not folder.is_absolute():
                     return _http_error(400, "dir must be an absolute folder")
@@ -5378,7 +5389,7 @@ class GatewayHTTPHandler:
         raw_key = (_query_first(query, "session") or "").strip()
         try:
             if raw_key:
-                scope = self.workspaces.scope_for_session_key(raw_key)
+                scope = await self._session_scope(raw_key)
             else:
                 scope = self.workspaces.default_scope()
             project_root = scope.project_path
@@ -5855,7 +5866,7 @@ class GatewayHTTPHandler:
         from navin.webui import git_accounts, git_setup
 
         query = _parse_query(request.path)
-        root = self._git_setup_root(query)
+        root = await asyncio.to_thread(self._git_setup_root, query)
         host = _query_first(query, "host") or ""
         if action == "machine":
             call = partial(git_setup.machine_report, root)
@@ -6147,7 +6158,7 @@ class GatewayHTTPHandler:
             return _http_error(401, "Unauthorized")
         from navin.webui.lsp_servers_api import lsp_servers_payload
 
-        root = self._lsp_servers_root(_parse_query(request.path))
+        root = await asyncio.to_thread(self._lsp_servers_root, _parse_query(request.path))
         # Reads the servers table and probes each launcher on disk.
         payload = await asyncio.to_thread(lsp_servers_payload, root)
         return _http_json_response(payload)
@@ -6540,7 +6551,7 @@ class GatewayHTTPHandler:
             if requirements is not None and not isinstance(requirements, dict):
                 raise ValueError
             report = await run_marketing_qa(
-                self._montage_workspace_root(request),
+                (await asyncio.to_thread(self._montage_workspace_root, request)),
                 candidate=str(payload.get("candidate") or ""),
                 references=[str(item) for item in references or []],
                 claims=[str(item) for item in claims or []],
@@ -6587,7 +6598,7 @@ class GatewayHTTPHandler:
         from navin.config.loader import load_config
         from navin.webui.montage_api import montage_status_payload
 
-        workspace_root = self._montage_workspace_root(request)
+        workspace_root = await asyncio.to_thread(self._montage_workspace_root, request)
 
         def _status() -> dict[str, Any]:
             # The toolchain doctor probes PATH (shutil.which over /mnt/c on
@@ -6654,7 +6665,7 @@ class GatewayHTTPHandler:
 
         query = _parse_query(request.path)
         wait = (_query_first(query, "wait") or "1").strip().lower() not in {"0", "false", "no"}
-        root = self._montage_workspace_root(request)
+        root = await asyncio.to_thread(self._montage_workspace_root, request)
         try:
             return _http_json_response(
                 await resume_montage_job(
@@ -6691,7 +6702,7 @@ class GatewayHTTPHandler:
         try:
             return _http_json_response(
                 await probe_montage_media(
-                    self._montage_workspace_root(request), _query_first(query, "file")
+                    (await asyncio.to_thread(self._montage_workspace_root, request)), _query_first(query, "file")
                 )
             )
         except MontageApiError as exc:
@@ -6769,7 +6780,7 @@ class GatewayHTTPHandler:
         try:
             return _http_json_response(
                 await preview_montage_timeline(
-                    self._montage_workspace_root(request), name
+                    (await asyncio.to_thread(self._montage_workspace_root, request)), name
                 )
             )
         except MontageApiError as exc:
@@ -6791,7 +6802,7 @@ class GatewayHTTPHandler:
         # Default is a background job the UI follows (progress, cancel);
         # ``wait=1`` keeps the request open until ffmpeg finishes (scripts, tests).
         wait = (_query_first(query, "wait") or "").strip().lower() in {"1", "true", "yes"}
-        root = self._montage_workspace_root(request)
+        root = await asyncio.to_thread(self._montage_workspace_root, request)
         notify = self._montage_job_notifier(root)
         try:
             if wait:
@@ -6872,7 +6883,7 @@ class GatewayHTTPHandler:
         stream.finish(exit_code)
         status = montage_status_payload(
             config,
-            workspace_root=self._montage_workspace_root(request),
+            workspace_root=(await asyncio.to_thread(self._montage_workspace_root, request)),
         )
         if want_stream:
             # Append a final status event for clients that only read the body.

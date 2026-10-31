@@ -691,6 +691,41 @@ def test_idle_heap_pass_thaws_everything_once_the_frozen_set_grew(thawed_heap) -
     assert len(kept) == 1000
 
 
+def test_idle_heap_pass_walks_the_frozen_heap_once_per_pass(monkeypatch) -> None:
+    """The ordinary pass collected every generation (1.5 to 2.4 s with the loop
+    stopped) and read ``gc.get_freeze_count`` before and after (1.0 s once
+    for 4.9 M frozen objects). Now: young generations only, one count."""
+    import navin.webui.stall_watch as stall_watch
+
+    collected: list[int] = []
+    walks: list[int] = []
+    frozen = {"count": 1_000}
+    monkeypatch.setattr(stall_watch.gc, "collect", lambda generation=2: collected.append(generation) or 0)
+    monkeypatch.setattr(stall_watch.gc, "freeze", lambda: None)
+    monkeypatch.setattr(stall_watch.gc, "unfreeze", lambda: None)
+    monkeypatch.setattr(stall_watch.gc, "get_freeze_count", lambda: walks.append(1) or frozen["count"])
+    clock = _Clock()
+    keeper = IdleHeapPass(clock, min_interval_s=60.0, deep_growth=500)
+    assert keeper.tick(idle=True) is True  # first pass: full, once, sets the baseline
+    assert collected == [2] and walks == [1]
+    assert keeper.tick(idle=True) is False and keeper.tick(idle=False) is False
+    assert walks == [1], "a tick that runs no pass never walks the frozen heap"
+    clock.now += 60.0
+    frozen["count"] = 1_400
+    assert keeper.tick(idle=True) is True
+    assert collected == [2, 1] and walks == [1, 1] and keeper.deep_passes == 0
+    clock.now += 60.0
+    assert keeper.tick(idle=True) is True  # 400 grown: still ordinary
+    frozen["count"] = 1_600
+    clock.now += 60.0
+    assert keeper.tick(idle=True) is True  # read after the last pass: 400 < 500
+    assert keeper.deep_passes == 0
+    clock.now += 60.0
+    assert keeper.tick(idle=True) is True  # 600 grown since the baseline: deep
+    assert keeper.deep_passes == 1 and collected[-1] == 2
+    assert walks == [1] * 5 and keeper.frozen_after_deep == 1_600
+
+
 def test_the_gateway_loop_ticks_the_heap_pass_only_when_no_session_is_busy() -> None:
     from navin.agent.loop import AgentLoop
 

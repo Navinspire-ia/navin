@@ -322,7 +322,11 @@ async def _run_one(hook: HookCommand, payload: dict[str, Any], workspace: Path |
             timeout=hook.timeout, model=hook.model or None,
         )
     env = dict(os.environ)
-    cwd = str(workspace) if workspace is not None and Path(workspace).is_dir() else None
+    cwd = (
+        str(workspace)
+        if workspace is not None and await asyncio.to_thread(Path(workspace).is_dir)
+        else None
+    )
     env["NAVIN_PROJECT_DIR"] = cwd or os.getcwd()
     if hook.plugin_root:
         env["NAVIN_PLUGIN_ROOT"] = hook.plugin_root
@@ -559,7 +563,10 @@ async def run_hooks(
         **payload,
     }
     try:
-        hooks = load_hooks(event, workspace)
+        # Hook sources are plugin manifests, settings files and managed policy:
+        # about fifty stats and reads on every tool call, on the loop thread
+        # until now (1.0 s for hookify alone in the desktop log of 2026-10-31).
+        hooks = await asyncio.to_thread(load_hooks, event, workspace)
     except Exception:  # noqa: BLE001
         logger.exception("Loading {} hooks failed", event)
         hooks = []
@@ -587,7 +594,8 @@ async def run_hooks(
                 continue
             _apply(outcome, event, *result, hook.source)
     try:
-        _apply_hookify(outcome, event, body, workspace, transcript)
+        # Rule files are listed and read from the project: in a worker.
+        await asyncio.to_thread(_apply_hookify, outcome, event, body, workspace, transcript)
     except Exception:  # noqa: BLE001 - a broken rule never breaks a turn
         logger.exception("Hookify rules failed on {}", event)
     try:
@@ -608,7 +616,9 @@ async def run_hooks(
         logger.exception("Nested instructions failed on {}", event)
     try:
         # Last: a red check or a review finding is fixed before the next round.
-        _apply_ralph_loop(outcome, event, body, workspace)
+        # The loop state is a file of the project: read in a worker.
+        if event == "Stop":
+            await asyncio.to_thread(_apply_ralph_loop, outcome, event, body, workspace)
     except Exception:  # noqa: BLE001 - the loop never breaks a turn
         logger.exception("Ralph loop failed on {}", event)
     return outcome
@@ -623,7 +633,8 @@ async def pre_tool_use_block(
     """Reason to refuse this tool call, or None to let it run."""
     from navin.agent.managed_policy import tool_denied
 
-    denied = tool_denied(tool_name)
+    # The managed policy is looked up on disk (one stat per candidate file).
+    denied = await asyncio.to_thread(tool_denied, tool_name)
     if denied:
         return denied
     outcome = await run_hooks(

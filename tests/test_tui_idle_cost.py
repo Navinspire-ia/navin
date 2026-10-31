@@ -153,7 +153,11 @@ def test_a_terminal_in_the_background_counts_as_away(monkeypatch):
         monkeypatch.setattr(frames, "_frozen_count", 1_000 + frames.DEEP_GC_GROWTH)
         collector.note_input()
         clock.now += frames.DEEP_GC_QUIET_EVENTS_S
-        assert not collector.tick(), "the user typed 10 s ago and is still looking"
+        focused["on"] = False
+        assert not collector.tick(), "typed 10 s ago, then a look at another window"
+        focused["on"] = True
+        clock.now += frames.DEEP_GC_UNFOCUSED_INPUT_S
+        assert not collector.tick(), "the terminal has the focus: the user may be reading"
         focused["on"] = False
         assert collector.tick() and collector.deep_collections == 1
     assert calls == [2]
@@ -174,7 +178,7 @@ def test_a_broken_focus_hook_surfaces_instead_of_guessing(monkeypatch):
         _with_pending(monkeypatch, 0)
         monkeypatch.setattr(frames, "_frozen_count", 1_000 + frames.DEEP_GC_GROWTH)
         collector.note_input()
-        clock.now += frames.DEEP_GC_QUIET_EVENTS_S
+        clock.now += frames.DEEP_GC_UNFOCUSED_INPUT_S
         with pytest.raises(AttributeError, match="app_focus"):
             collector.tick()
     assert calls == []
@@ -351,6 +355,7 @@ def test_the_deep_pass_counts_the_frozen_set_in_c_not_with_a_python_list(monkeyp
     monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: counted.append(1) or 123_456)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames, "_frozen_count", 10)
+    monkeypatch.setattr(frames, "_thawed", False)
     assert frames._freeze_counted(thawed=True) == 123_456
     assert listed == [], "a thawed heap is never listed object by object"
     assert counted == [1]
@@ -359,11 +364,36 @@ def test_the_deep_pass_counts_the_frozen_set_in_c_not_with_a_python_list(monkeyp
     assert listed == [0, 1, 2] and counted == [1]
 
 
+def test_the_freeze_after_a_session_switch_counts_in_c(monkeypatch):
+    """A session switch thaws the heap, then the history paint freezes it: that
+    freeze listed the young generations, the whole heap again (1.0 to 4.0 s in
+    the CLI freeze log of 2026-10-30)."""
+    listed: list[int] = []
+    counted: list[int] = []
+    monkeypatch.setattr(frames.gc, "get_objects", lambda generation=None: listed.append(generation) or [1])
+    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: counted.append(1) or 3_000_000)
+    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
+    monkeypatch.setattr(frames.gc, "collect", lambda generation=2: 0)
+    monkeypatch.setattr(frames, "_frozen_count", 2_900_000)
+    monkeypatch.setattr(frames, "_thawed", False)
+    frames.thaw_heap()
+    assert frames.frozen_count() == 0
+    frames.freeze_heap()
+    assert listed == [] and counted == [1]
+    assert frames.frozen_count() == 3_000_000
+    # The next freeze is ordinary again: only the few young survivors are listed.
+    frames.freeze_heap()
+    assert listed == [0, 1, 2] and counted == [1]
+    assert frames.frozen_count() == 3_000_003
+
+
 def test_collections_never_walk_the_frozen_heap_to_count_it(monkeypatch):
     """``gc.get_freeze_count()`` after each pass took 2 to 4.5 s in the CLI log."""
     clock = _Clock()
     walks: list[int] = []
     monkeypatch.setattr(frames, "_frozen_count", 7)
+    monkeypatch.setattr(frames, "_thawed", False)
     monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: walks.append(1) or 7)
     collector = IdleCollector(clock)
     _collections(monkeypatch)

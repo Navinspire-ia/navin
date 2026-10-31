@@ -172,8 +172,8 @@ class NotebookEditTool(_FsTool):
             if action not in _ACTIONS:
                 return ToolResult.error(f"Error: action must be one of {', '.join(_ACTIONS)}")
             fp = await self._bound_path(path, write=True)
-            if not fp.exists():
-                return self._missing_path_msg("Notebook", path, fp)
+            if not (await self._path_kind(fp))[0]:
+                return await self._missing_path("Notebook", path, fp)
             try:
                 nb = json.loads(await asyncio.to_thread(fp.read_text, encoding="utf-8"))
             except ValueError as e:

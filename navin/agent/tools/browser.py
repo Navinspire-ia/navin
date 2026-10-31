@@ -831,7 +831,7 @@ class _BrowserSession:
                 "fix": "Call browser(action=record_stop) before starting another demo.",
             }
         resume = self._page_url()
-        self._video_dir = directory.expanduser().resolve()
+        self._video_dir = await asyncio.to_thread(directory.expanduser().resolve)
         self._video_dir.mkdir(parents=True, exist_ok=True)
         engine = str(self.config.record_engine or "screencast").strip().lower()
         self._record_engine = "playwright" if engine == "playwright" else "screencast"
@@ -927,7 +927,10 @@ class _BrowserSession:
         if engine == "screencast":
             return await self._finish_screencast(recorder, video_dir, output, duration, action_log, resume)
 
-        if raw_path is None or not raw_path.is_file():
+        def is_file(path: Path | None) -> bool:
+            return path is not None and path.is_file()
+
+        if not await asyncio.to_thread(is_file, raw_path):
             # Fallback: newest webm in the recording dir
             def newest_webm() -> Path | None:
                 found = sorted(
@@ -938,7 +941,7 @@ class _BrowserSession:
                 return found[0] if found else None
 
             raw_path = await asyncio.to_thread(newest_webm)
-        if raw_path is None or not raw_path.is_file():
+        if raw_path is None or not await asyncio.to_thread(is_file, raw_path):
             return {
                 "ok": False,
                 "error": "no_video",
@@ -949,9 +952,9 @@ class _BrowserSession:
         if dest is None:
             stamp = int(time.time())
             dest = (video_dir or Path(".")) / f"demo_{stamp}.webm"
-        dest = dest.expanduser().resolve()
+        dest = await asyncio.to_thread(dest.expanduser().resolve)
         await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
-        if raw_path.resolve() != dest:
+        if await asyncio.to_thread(raw_path.resolve) != dest:
             try:
                 await asyncio.to_thread(_copy_recording, raw_path, dest)
             except OSError as exc:
@@ -966,11 +969,12 @@ class _BrowserSession:
             mp4 = None
 
         actions = await asyncio.to_thread(self._write_action_log, dest, action_log)
+        mp4_found = await asyncio.to_thread(is_file, mp4)
         return {
             "ok": True,
             "recording": False,
             "webm": str(dest),
-            "mp4": str(mp4) if mp4 and mp4.is_file() else "",
+            "mp4": str(mp4) if mp4_found else "",
             "actions": str(actions) if actions else "",
             "url": resume or "",
         }
@@ -993,7 +997,7 @@ class _BrowserSession:
                 "fix": "Recording ended but no frame was captured.",
             }
         dest = output or (video_dir or Path(".")) / f"demo_{int(time.time())}.mp4"
-        dest = dest.expanduser().with_suffix(".mp4").resolve()
+        dest = await asyncio.to_thread(dest.expanduser().with_suffix(".mp4").resolve)
         from navin.montage.demo import encode_frames_to_mp4
 
         mp4 = await asyncio.to_thread(
@@ -2845,8 +2849,8 @@ class BrowserTool(Tool):
             path = Path(raw).expanduser()
             if not path.is_absolute() and workspace is not None:
                 path = workspace / path
-            path = path.resolve(strict=False)
-            if must_exist and not path.is_file():
+            path = await asyncio.to_thread(path.resolve, strict=False)
+            if must_exist and not await asyncio.to_thread(path.is_file):
                 return ToolResult.error(f"Error: upload file not found: {raw}")
             return path
 
@@ -2866,7 +2870,7 @@ class BrowserTool(Tool):
             )
 
         try:
-            resolved = _try()
+            resolved = await asyncio.to_thread(_try)
         except WorkspaceBoundaryError as exc:
             allowed = await self._ask_browser_lift(
                 action=(
@@ -2884,15 +2888,15 @@ class BrowserTool(Tool):
             if not remembered.is_absolute():
                 remembered = workspace / remembered
             try:
-                remembered = remembered.resolve(strict=False)
+                remembered = await asyncio.to_thread(remembered.resolve, strict=False)
             except (OSError, RuntimeError, ValueError):
                 pass
             remember_approved_path(remembered)
             try:
-                resolved = _try()
+                resolved = await asyncio.to_thread(_try)
             except WorkspaceBoundaryError as retry_exc:
                 return ToolResult.error(str(retry_exc))
-        if must_exist and not resolved.is_file():
+        if must_exist and not await asyncio.to_thread(resolved.is_file):
             return ToolResult.error(f"Error: upload file not found: {resolved}")
         return resolved
 

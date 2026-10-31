@@ -385,12 +385,15 @@ class ApplyPatchTool(_FsTool):
                 if not isinstance(action, str):
                     raise _PatchError(f"action required for edit: {path}")
                 source = await self._bound_path(path, write=True)
+                # One stat for the whole edit, in a worker (9P round trips on a
+                # WSL project seen from Windows).
+                source_exists, _, source_is_file = await self._path_kind(source)
 
                 # Read-before-write, matching edit_file. Only existing files are
                 # checked, and only once per file: an append via "add" has no
                 # old_text to anchor it, so nothing else would catch the case
                 # where the file moved on since the agent last looked at it.
-                if source not in writes and source.exists() and path not in stale:
+                if source not in writes and source_exists and path not in stale:
                     warning = await asyncio.to_thread(self._file_states.check_read, source)
                     if warning:
                         root = self._display_workspace()
@@ -407,7 +410,7 @@ class ApplyPatchTool(_FsTool):
                     if pending is not None:
                         content = pending
                         exists = True
-                    elif source.exists():
+                    elif source_exists:
                         content = await asyncio.to_thread(_read_source, source, path, encodings)
                         exists = True
                     else:
@@ -454,12 +457,12 @@ class ApplyPatchTool(_FsTool):
                     pending = writes.get(source)
                     if pending is not None:
                         content = pending
-                    elif source.exists():
+                    elif source_exists:
                         content = await asyncio.to_thread(_read_source, source, path, encodings)
                     else:
                         raise _PatchError(f"file to update does not exist: {path}")
 
-                    if pending is None and not source.is_file():
+                    if pending is None and not source_is_file:
                         raise _PatchError(f"path to update is not a file: {path}")
 
                     new_norm, added, deleted = await asyncio.to_thread(

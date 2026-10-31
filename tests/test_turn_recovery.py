@@ -374,6 +374,44 @@ def test_restart_before_the_replay_ran_still_resumes(tmp_path):
     assert reborn.cut_twice == set()
 
 
+def test_async_begin_and_replay_write_off_the_loop_before_returning(tmp_path):
+    """The engine loop starts turns and polls replays every second: the durable
+    writes (an fsync of the whole transcript) held it 1.0 to 1.2 s in the CLI
+    freeze log of 2026-10-31. They run in a worker now, and are on disk before
+    the call returns, so a replay still never runs before its record."""
+    import threading
+
+    sessions = SessionManager(tmp_path)
+    recovery = TurnRecovery(sessions)
+    session = sessions.get_or_create("websocket:recovery-test")
+    msg = request()
+    writers: list[bool] = []
+    real_write = sessions._write_snapshot
+
+    def write(snapshot, *, fsync=False):
+        writers.append(threading.current_thread() is threading.main_thread())
+        return real_write(snapshot, fsync=fsync)
+
+    async def scenario():
+        with patch.object(sessions, "_write_snapshot", side_effect=write):
+            await recovery.begin_async(session, msg)
+            assert RECOVERY_KEY in SessionManager(tmp_path).get_or_create(session.key).metadata
+            reborn_sessions = SessionManager(tmp_path)
+            reborn = TurnRecovery(reborn_sessions)
+            assert reborn.discover(channel="websocket") == [session.key]
+            with patch.object(reborn_sessions, "_write_snapshot", side_effect=write):
+                resumed = await reborn.take_due_async(active_keys=set())
+            return resumed
+
+    resumed = asyncio.run(scenario())
+    assert len(resumed) == 1
+    assert writers and not any(writers), "a recovery write ran on the event-loop thread"
+    from navin.session.turn_recovery import REPLAYED_AFTER_RESTART
+
+    record = SessionManager(tmp_path).get_or_create(session.key).metadata[RECOVERY_KEY]
+    assert record[REPLAYED_AFTER_RESTART] is True, "durable before the replay is handed back"
+
+
 def test_provider_retries_in_one_process_are_not_restarts(tmp_path):
     _, session, recovery = setup_record(tmp_path)
     recovery.schedule(session)

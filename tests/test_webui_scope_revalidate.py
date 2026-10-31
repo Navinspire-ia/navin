@@ -123,3 +123,50 @@ def test_a_changed_scope_is_validated_on_the_spot(tmp_path):
         WORKSPACE_SCOPE_METADATA_KEY: {"project_path": str(other), "access_mode": "full"},
     }
     assert controller.scope_for_session_key("websocket:c1").project_path == other.resolve()
+
+
+def test_desktop_routes_read_the_scope_off_the_event_loop(tmp_path):
+    """The review and git panels poll every few seconds; each poll read the
+    session file and validated the project on the loop (1.0 to 1.6 s per call
+    in the desktop log of 2026-10-31, every chat frozen meanwhile)."""
+    import asyncio
+
+    from navin.webui.ws_http import GatewayHTTPHandler
+
+    controller, _sessions, project = _setup(tmp_path)
+    seen: list[bool] = []
+    real = controller.scope_for_session_key
+
+    def scope_for_session_key(key: str):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return real(key)
+
+    handler = GatewayHTTPHandler.__new__(GatewayHTTPHandler)
+    handler.workspaces = controller
+
+    async def scenario():
+        return await handler._session_scope("websocket:c1")
+
+    with mock.patch.object(controller, "scope_for_session_key", side_effect=scope_for_session_key):
+        scope = asyncio.run(scenario())
+    assert scope.project_path == project.resolve()
+    assert seen == [False], "the scope was read on the event-loop thread"
+
+
+def test_no_async_route_reads_the_scope_on_the_loop():
+    """Static side of the same rule, for every async body of the engine."""
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "scripts"))
+    try:
+        import scan_blocking_async
+    finally:
+        sys.path.pop(0)
+    rows = [
+        row
+        for file in sorted((root / "navin").rglob("*.py"))
+        for row in scan_blocking_async.scan_file(file)
+        if "scope_for_session_key" in row
+    ]
+    assert not rows, "\n".join(rows)

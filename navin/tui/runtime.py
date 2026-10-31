@@ -58,6 +58,7 @@ from navin.bus.outbound_events import (
     WorktreeMergeEvent,
     outbound_event_from_message,
 )
+from navin.utils.resolve_cache import resolve_root
 
 UiCallback = Callable[["UiEvent"], Awaitable[None] | None]
 
@@ -460,7 +461,9 @@ class _ParkedEngine:
 
 
 def _workspace_id(path: str | Path) -> str:
-    return str(Path(path).expanduser().resolve(strict=False))
+    # A root resolved again for every streamed event: 1.4 s of the CLI loop
+    # once (freeze log of 2026-10-31). Roots are cached a few seconds.
+    return str(resolve_root(path))
 
 
 def active_turn_keys(loop: Any) -> set[str]:

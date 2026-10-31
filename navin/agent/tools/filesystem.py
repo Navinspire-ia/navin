@@ -7,6 +7,7 @@ import asyncio
 import difflib
 import mimetypes
 import os
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ from navin.security.workspace_policy import WorkspaceBoundaryError
 from navin.utils import longpath, text_decode
 from navin.utils.git_state import uncommitted_note
 from navin.utils.helpers import build_image_content_blocks, detect_image_mime
+from navin.utils.resolve_cache import resolve_root
 
 
 def _split_approved_paths() -> tuple[list[Path], list[Path]]:
@@ -299,13 +301,19 @@ class _FsTool(Tool):
         from navin.agent.tools.quality import VerifyTool
 
         verifier = VerifyTool(workspace=self._workspace, allowed_dir=self._allowed_dir)
-        root = Path(self._workspace).expanduser().resolve(strict=False) if self._workspace else None
-        rel: list[str] = []
-        for path in paths:
-            try:
-                rel.append(str(path.resolve(strict=False).relative_to(root)) if root else str(path))
-            except ValueError:
-                rel.append(str(path))
+
+        def relative() -> list[str]:
+            root = Path(self._workspace).expanduser().resolve(strict=False) if self._workspace else None
+            rows: list[str] = []
+            for path in paths:
+                try:
+                    rows.append(str(path.resolve(strict=False).relative_to(root)) if root else str(path))
+                except ValueError:
+                    rows.append(str(path))
+            return rows
+
+        # Resolving stats every path part: in a worker, like the check itself.
+        rel = await asyncio.to_thread(relative)
         try:
             verdict = await verifier.execute(action="check", paths=rel)
         except Exception as exc:  # the write succeeded; a failed check is reported, not raised
@@ -420,11 +428,12 @@ class _FsTool(Tool):
             if not remembered.is_absolute() and self._workspace is not None:
                 remembered = Path(self._workspace) / remembered
             try:
-                remembered = remembered.resolve(strict=False)
+                remembered = await asyncio.to_thread(remembered.resolve, strict=False)
             except (OSError, RuntimeError, ValueError):
                 pass
             remember_approved_path(remembered)
-            return self._resolve_write(path) if write else self._resolve_read(path)
+            resolve = self._resolve_write if write else self._resolve_read
+            return await asyncio.to_thread(resolve, path)
 
     async def _ask_outside_workspace(self, path: str, *, write: bool) -> bool:
         from navin.agent.approval import ApprovalRequest, request_approval
@@ -452,6 +461,27 @@ class _FsTool(Tool):
 
     def _display_workspace(self) -> Path | None:
         return current_tool_workspace(self._workspace).project_path
+
+    @staticmethod
+    def _path_kind_sync(target: Path) -> tuple[bool, bool, bool]:
+        try:
+            mode = target.stat().st_mode
+        except (OSError, ValueError):
+            return False, False, False
+        return True, stat.S_ISDIR(mode), stat.S_ISREG(mode)
+
+    async def _path_kind(self, target: Path) -> tuple[bool, bool, bool]:
+        """(exists, is_dir, is_file) of ``target`` with one stat, in a worker.
+
+        Every tool call starts with these checks. On a WSL project opened from
+        Windows each one crosses the 9P bridge, and on the loop thread it also
+        stopped the other chats, the streaming and the UI routes.
+        """
+        return await asyncio.to_thread(self._path_kind_sync, target)
+
+    async def _missing_path(self, kind: str, path: str, resolved: Path) -> str:
+        """``_missing_path_msg`` (a directory listing and stats) in a worker."""
+        return await asyncio.to_thread(self._missing_path_msg, kind, path, resolved)
 
     def _missing_path_msg(self, kind: str, path: str, resolved: Path) -> str:
         """Report a missing path with the nearest names that do exist.
@@ -497,7 +527,10 @@ class _FsTool(Tool):
         workspace = self._display_workspace()
         if workspace is not None:
             try:
-                rel = path.relative_to(Path(workspace).expanduser().resolve(strict=False))
+                # A root: cached for a few seconds (see resolve_root). Resolving
+                # it for every name of a "did you mean" list cost a stat per
+                # path part each time.
+                rel = path.relative_to(resolve_root(workspace))
             except ValueError:
                 return str(path)
             return "the project root" if str(rel) == "." else str(rel)
@@ -738,16 +771,18 @@ class ReadFileTool(_FsTool):
                 return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
 
             fp = await self._bound_path(path, write=False)
-            if not fp.exists():
-                fp = _builtin_skill_read_path(path) or fp
+            # One worker call for every stat the read needs (exists, skill
+            # fallback, kind, mtime): seconds on the loop over a busy 9P bridge.
+            fp, exists, is_file, read_mtime = await asyncio.to_thread(self._probe_read_target, path, fp)
             if self._block_device_reads and await asyncio.to_thread(_is_blocked_device, fp):
                 return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
-            if not fp.exists():
+            if not exists:
                 recovered = await asyncio.to_thread(self._closest_readable_match, fp)
                 if recovered is not None:
+                    shown = await asyncio.to_thread(self._display, recovered)
                     note = (
                         f"[Note: {path} not found; reading closest match "
-                        f"{self._display(recovered)} instead.]\n"
+                        f"{shown} instead.]\n"
                     )
                     result = await self.execute(
                         path=str(recovered), offset=offset, limit=limit,
@@ -756,8 +791,8 @@ class ReadFileTool(_FsTool):
                     if isinstance(result, ToolResult) and result.is_error:
                         return ToolResult.error(note + result)
                     return note + result if isinstance(result, str) else result
-                return self._missing_path_msg("File", path, fp)
-            if not fp.is_file():
+                return await self._missing_path("File", path, fp)
+            if not is_file:
                 return ToolResult.error(f"Error: Not a file: {path}")
 
             # PDF support
@@ -773,12 +808,17 @@ class ReadFileTool(_FsTool):
             if is_video_path(fp):
                 return await asyncio.to_thread(self._read_video, fp)
 
-            read_mtime = fp.stat().st_mtime
             raw = await asyncio.to_thread(fp.read_bytes)
             if not raw:
-                self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
+                await asyncio.to_thread(
+                    self._file_states.record_read, fp, offset=offset, limit=limit, content=raw, mtime=read_mtime,
+                )
                 return f"(Empty file: {path})" + await self._scoped_instructions(fp)
 
+            if not mimetypes.inited:
+                # The first guess loads the system MIME tables (the registry on
+                # Windows, /etc/mime.types and friends here): once, in a worker.
+                await asyncio.to_thread(mimetypes.init)
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
                 return await asyncio.to_thread(
@@ -788,7 +828,8 @@ class ReadFileTool(_FsTool):
             # Reuse the bytes already read for MIME detection, deduplication
             # and edit freshness. Reopening and hashing the same file four
             # times made network-mounted and large workspaces feel stalled.
-            entry = self._file_states.get(fp)
+            # The lookup resolves the path (a stat per part): worker.
+            entry = await asyncio.to_thread(self._file_states.get, fp)
             if (
                 not force
                 and entry
@@ -911,6 +952,28 @@ class ReadFileTool(_FsTool):
         opened from Windows.
         """
         return await asyncio.to_thread(scoped_project_instructions, self._display_workspace(), fp)
+
+    @staticmethod
+    def _probe_read_target(path: str, fp: Path) -> tuple[Path, bool, bool, float]:
+        """(path to read, exists, is_file, mtime): the stats of a read, together.
+
+        A missing path may name a built-in skill file (read by its skill path).
+        The mtime is taken before the bytes are read, as the edit freshness
+        check expects.
+        """
+        exists, _, is_file = _FsTool._path_kind_sync(fp)
+        if not exists:
+            fallback = _builtin_skill_read_path(path)
+            if fallback is not None:
+                fp = fallback
+                exists, _, is_file = _FsTool._path_kind_sync(fp)
+        mtime = 0.0
+        if is_file:
+            try:
+                mtime = fp.stat().st_mtime
+            except OSError:
+                exists = is_file = False
+        return fp, exists, is_file, mtime
 
     def _closest_readable_match(self, fp: Path) -> Path | None:
         """Unambiguous stand-in for a missing read path, or None.
@@ -1675,7 +1738,8 @@ class EditFileTool(_FsTool):
                         "text (create a file with old_text/new_text instead)."
                     )
             fp = await self._bound_path(path, write=True)
-            if not fp.exists():
+            exists, _, _ = await self._path_kind(fp)
+            if not exists:
                 return self._file_not_found_msg(path, fp)
             original = (await asyncio.to_thread(fp.read_bytes))
             before = text_decode.decode(original)
@@ -1739,7 +1803,7 @@ class EditFileTool(_FsTool):
                 return ToolResult.error("Error: expected_replacements must be >= 1.")
 
             fp = await self._bound_path(path, write=True)
-            if fp.suffix.lower() == ".ipynb" and fp.exists():
+            if fp.suffix.lower() == ".ipynb" and (await self._path_kind(fp))[0]:
                 # read_file shows cells, not the JSON the anchor would have to
                 # match; the cell tool is the only edit that lines up with it.
                 return ToolResult.error(
@@ -1748,7 +1812,8 @@ class EditFileTool(_FsTool):
             await asyncio.to_thread(record_file_before, fp)
 
             # Create-file semantics: old_text='' + file doesn't exist → create
-            if not fp.exists():
+            exists, _, _ = await self._path_kind(fp)
+            if not exists:
                 if old_text == "":
                     await asyncio.to_thread(fp.parent.mkdir, parents=True, exist_ok=True)
                     await asyncio.to_thread(fp.write_text, new_text, encoding="utf-8")
@@ -1758,7 +1823,7 @@ class EditFileTool(_FsTool):
 
             # File size protection
             try:
-                fsize = fp.stat().st_size
+                fsize = (await asyncio.to_thread(fp.stat)).st_size
             except OSError:
                 fsize = 0
             if fsize > self._MAX_EDIT_FILE_SIZE:
@@ -1986,8 +2051,9 @@ class ListDirTool(_FsTool):
             if path is None:
                 raise ValueError("Unknown path")
             dp = await self._bound_path(path, write=False)
-            if not dp.exists():
-                return self._missing_path_msg("Directory", path, dp)
+            exists, _, _ = await self._path_kind(dp)
+            if not exists:
+                return await self._missing_path("Directory", path, dp)
             # Walking a tree is disk work; over \\wsl$ or /mnt/c it can take
             # seconds, so it must never run on the event loop every chat shares.
             return await asyncio.to_thread(self._list_sync, dp, path, recursive, max_entries)

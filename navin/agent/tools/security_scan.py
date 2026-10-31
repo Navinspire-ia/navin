@@ -197,7 +197,7 @@ class SecurityScanTool(_QualityTool):
                 # PDF only: the HTML was a rendering step, do not leave it behind.
                 # A failed removal is reported next to the PDF path, not hidden.
                 try:
-                    Path(html_file).unlink()
+                    await asyncio.to_thread(Path(html_file).unlink)
                 except OSError as exc:
                     pdf_error = (
                         f"{pdf_error}; " if pdf_error else ""

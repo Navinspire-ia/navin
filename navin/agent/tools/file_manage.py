@@ -231,12 +231,19 @@ class ManageFilesTool(_FsTool):
                 raise _ManageError("every path must be a non-empty string")
             targets.append((raw, await self._bound_path(raw, write=True)))
 
+        def classify() -> list[tuple[str, Path, bool]]:
+            # Stats and resolves for every path: in a worker (see _FsTool._path_kind).
+            rows: list[tuple[str, Path, bool]] = []
+            for raw, target in targets:
+                self._refuse_protected(raw, target)
+                if not target.exists() and not target.is_symlink():
+                    raise _ManageError(f"path does not exist: {raw}")
+                rows.append((raw, target, target.is_dir() and not target.is_symlink()))
+            return rows
+
         doomed: list[Path] = []
-        for raw, target in targets:
-            self._refuse_protected(raw, target)
-            if not target.exists() and not target.is_symlink():
-                raise _ManageError(f"path does not exist: {raw}")
-            if target.is_dir() and not target.is_symlink():
+        for raw, target, is_tree in await asyncio.to_thread(classify):
+            if is_tree:
                 if not recursive:
                     raise _ManageError(
                         f"{raw} is a directory. Pass recursive=true to remove it "
@@ -253,11 +260,10 @@ class ManageFilesTool(_FsTool):
             warnings,
             detail=", ".join(self._display(target) for _raw, target in targets[:10]),
         )
-        _record_baselines(doomed)
+        await asyncio.to_thread(_record_baselines, doomed)
 
         removed_dirs = await asyncio.to_thread(_remove_targets, [t for _r, t in targets])
-        for file in doomed:
-            self._file_states.record_write(file)
+        await asyncio.to_thread(self._record_writes, doomed)
 
         parts = []
         if doomed:
@@ -276,9 +282,10 @@ class ManageFilesTool(_FsTool):
         if not raw or not raw.strip():
             raise _ManageError("mkdir needs a path")
         target = await self._bound_path(raw, write=True)
-        if target.is_dir():
+        exists, is_dir, _ = await self._path_kind(target)
+        if is_dir:
             return f"Directory already exists: {self._display(target)}"
-        if target.exists():
+        if exists:
             raise _ManageError(f"{raw} already exists and is not a directory")
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
         return f"Created directory {self._display(target)}"
@@ -300,28 +307,30 @@ class ManageFilesTool(_FsTool):
 
         source = await self._bound_path(raw_source, write=True)
         destination = await self._bound_path(raw_destination, write=True)
-        self._refuse_protected(raw_source, source)
-        self._refuse_protected(raw_destination, destination)
 
-        if not source.exists() and not source.is_symlink():
-            raise _ManageError(f"path does not exist: {raw_source}")
-        if source == destination:
-            raise _ManageError("path and destination are the same")
+        def plan() -> tuple[Path, bool, bool]:
+            """(landing path, collides, source is a file): every stat of the guard."""
+            self._refuse_protected(raw_source, source)
+            self._refuse_protected(raw_destination, destination)
+            if not source.exists() and not source.is_symlink():
+                raise _ManageError(f"path does not exist: {raw_source}")
+            if source == destination:
+                raise _ManageError("path and destination are the same")
+            landing = destination
+            # An existing directory as the destination means "into it", the way
+            # mv and cp behave, rather than replacing the directory itself.
+            if landing.is_dir():
+                landing = longpath.io_path(landing / source.name)
+            if source.is_dir() and _relative_to(landing, source):
+                raise _ManageError(f"cannot {action} {raw_source} into itself")
+            # Collision is about the path existing at all, not about it holding
+            # files: an empty directory at the destination contributes nothing
+            # to ``replaced``, and skipping the guard on that basis would let
+            # shutil.move nest the source inside it (dest/name/name) instead of
+            # replacing it.
+            return landing, landing.exists() or landing.is_symlink(), source.is_file()
 
-        # An existing directory as the destination means "into it", the way mv
-        # and cp behave, rather than replacing the directory itself.
-        if destination.is_dir():
-            destination = longpath.io_path(destination / source.name)
-
-        if source.is_dir() and _relative_to(destination, source):
-            raise _ManageError(f"cannot {action} {raw_source} into itself")
-
-        # Collision is about the path existing at all, not about it holding
-        # files: an empty directory at the destination contributes nothing to
-        # ``replaced``, and skipping the guard on that basis would let
-        # shutil.move nest the source inside it (dest/name/name) instead of
-        # replacing it.
-        collides = destination.exists() or destination.is_symlink()
+        destination, collides, source_is_file = await asyncio.to_thread(plan)
         replaced = await asyncio.to_thread(_files_under, destination) if collides else []
         if collides and not overwrite:
             raise _ManageError(
@@ -342,18 +351,20 @@ class ManageFilesTool(_FsTool):
         # The destination's own baseline: its bytes if it is being replaced,
         # nothing if it is new. Either way the review panel needs the entry, or
         # the arriving file looks like it was always there.
-        _record_baselines(replaced)
-        for file in arriving:
-            landing = destination if source.is_file() else destination / file.relative_to(source)
-            record_file_before(longpath.io_path(landing))
-        if action == "move":
-            _record_baselines(arriving)
+        def baselines() -> None:
+            _record_baselines(replaced)
+            for file in arriving:
+                landing = destination if source_is_file else destination / file.relative_to(source)
+                record_file_before(longpath.io_path(landing))
+            if action == "move":
+                _record_baselines(arriving)
+
+        await asyncio.to_thread(baselines)
 
         landed = await asyncio.to_thread(
             _do_transfer, action, source, destination, collides
         )
-        for file in [*arriving, *landed]:
-            self._file_states.record_write(file)
+        await asyncio.to_thread(self._record_writes, [*arriving, *landed])
 
         verb = "Moved" if action == "move" else "Copied"
         note = f" ({len(arriving)} files)" if len(arriving) > 1 else ""
@@ -369,6 +380,11 @@ class ManageFilesTool(_FsTool):
         return await self._with_diagnostics(summary, landed)
 
     # -- guards -------------------------------------------------------------
+
+    def _record_writes(self, files: list[Path]) -> None:
+        """Mark files as written (each one resolved: run in a worker)."""
+        for file in files:
+            self._file_states.record_write(file)
 
     def _refuse_protected(self, raw: str, target: Path) -> None:
         workspace = self._display_workspace()

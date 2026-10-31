@@ -24,6 +24,16 @@ OS_CALLS = {"walk", "listdir", "scandir", "system", "popen"}
 HTTP_SYNC = {"get", "post", "put", "delete", "patch", "head", "request"}
 HTTP_MODULES = {"requests", "httpx", "urllib3"}
 OFF_LOOP_WRAPPERS = {"to_thread", "run_in_executor", "run_sync", "run_off_loop", "run_blocking"}
+# Metadata calls: one stat each, nothing on a local disk, but a 9P round trip on
+# a WSL project opened from Windows (seconds when a search keeps the bridge
+# busy). The agent tools run them on every call, so there they count too.
+PATH_STAT = {"exists", "is_dir", "is_file", "is_symlink", "stat", "lstat", "resolve", "mkdir", "unlink", "touch"}
+OS_PATH_STAT = {"exists", "isdir", "isfile", "getmtime", "getsize", "realpath"}
+HOT_PATHS = ("navin/agent/tools/", "navin/agent/user_hooks.py", "navin/agent/runner.py")
+# Project methods that read the disk however they are reached: the chat scope
+# reads the session file and validates the project folder (1.0 to 1.6 s on the
+# loop for the desktop review and git panels, log of 2026-10-31).
+BLOCKING_METHODS = {"scope_for_session_key"}
 
 
 def _name_of(node: ast.AST) -> str:
@@ -39,7 +49,7 @@ def _is_wrapper(call: ast.Call) -> bool:
     return isinstance(func, ast.Attribute) and func.attr in OFF_LOOP_WRAPPERS
 
 
-def classify(call: ast.Call) -> str | None:
+def classify(call: ast.Call, *, hot: bool = False) -> str | None:
     func = call.func
     name = _name_of(func)
     if not isinstance(func, ast.Attribute):
@@ -48,6 +58,14 @@ def classify(call: ast.Call) -> str | None:
         return None
     base, attr = _name_of(func.value), func.attr
     root = base.split(".")[0]
+    if attr in BLOCKING_METHODS:
+        return f"{attr} (reads the session file)"
+    if hot and base == "os.path" and attr in OS_PATH_STAT:
+        return f"os.path.{attr}"
+    if hot and root == "os" and attr in {"stat", "lstat"}:
+        return f"os.{attr}"
+    if hot and attr in PATH_STAT and root not in {"self", "cls", "asyncio", "os"}:
+        return f"path.{attr}"
     if root == "subprocess" and attr in SUBPROCESS:
         return "sync subprocess"
     if root == "time" and attr == "sleep":
@@ -66,7 +84,7 @@ def classify(call: ast.Call) -> str | None:
     return None
 
 
-def scan_async_body(fn: ast.AsyncFunctionDef) -> list[tuple[int, str]]:
+def scan_async_body(fn: ast.AsyncFunctionDef, *, hot: bool = False) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
 
     def visit(node: ast.AST) -> None:
@@ -75,7 +93,7 @@ def scan_async_body(fn: ast.AsyncFunctionDef) -> list[tuple[int, str]]:
         if isinstance(node, ast.Call):
             if _is_wrapper(node):
                 return  # whatever is inside runs off the loop
-            kind = classify(node)
+            kind = classify(node, hot=hot)
             if kind:
                 found.append((node.lineno, kind))
         for child in ast.iter_child_nodes(node):
@@ -96,10 +114,11 @@ def scan_file(path: Path) -> list[str]:
     except (SyntaxError, UnicodeDecodeError) as exc:
         return [f"{path}: cannot parse: {exc}"]
     lines = source.splitlines()
+    hot = any(part in path.as_posix() for part in HOT_PATHS)
     rows: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFunctionDef):
-            for line, kind in scan_async_body(node):
+            for line, kind in scan_async_body(node, hot=hot):
                 # A documented exception carries its reason on the line above
                 # or on the line itself: "# blocking-ok: <why>".
                 above = lines[line - 2] if line >= 2 else ""

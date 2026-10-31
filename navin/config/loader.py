@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -147,8 +148,26 @@ def _validate_readable(data: Any, path: Path) -> Config:
 
 
 _cache_lock = threading.RLock()
-#: str(path) -> (file signature, loader used, shared Config). See load_config_cached.
-_config_cache: dict[str, tuple[tuple[int, int, int, int] | None, Any, Config]] = {}
+#: str(path) -> (file signature, loader used, shared Config, bytes or None).
+#: See load_config_cached.
+_config_cache: dict[str, tuple[tuple[int, int, int, int] | None, Any, Config, bytes | None]] = {}
+# A file modified less than this before it was read has a "racy" signature
+# (git's racy-clean problem): a same-size rewrite within the same filesystem
+# timestamp tick (a few ms on ext4, 2 s on FAT and some network shares) keeps
+# mtime, size, inode and ctime identical. Such an entry keeps the bytes it was
+# read from and compares them until the window has passed.
+_RACY_NS = 2_000_000_000
+
+
+def _racy(signature: tuple[int, int, int, int] | None, now_ns: int) -> bool:
+    return signature is not None and abs(now_ns - signature[0]) < _RACY_NS
+
+
+def _read_bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
 
 
 def _file_signature(path: Path) -> tuple[int, int, int, int] | None:
@@ -182,22 +201,31 @@ def load_config_cached(config_path: Path | None = None) -> Config:
     # Signed before reading: a write racing the parse leaves a signature that
     # no longer matches, so the next call re-reads instead of keeping stale data.
     signature = _file_signature(path)
+    now_ns = time.time_ns()
     with _cache_lock:
         hit = _config_cache.get(key)
     # The loader identity is part of the key so a patched ``load_config``
     # (tests, embedding hosts) is never bypassed by an entry it did not make.
     loader = load_config
     if hit is not None and hit[0] == signature and hit[1] is loader:
-        config = hit[2]
-        # load_config re-applies the SSRF policy on every load; keep that.
-        _apply_ssrf_whitelist(config)
-        return config
+        cached_bytes = hit[3]
+        if cached_bytes is None or _read_bytes(path) == cached_bytes:
+            config = hit[2]
+            if cached_bytes is not None and not _racy(signature, now_ns):
+                # Same bytes after the tick: any later edit gets a new mtime.
+                with _cache_lock:
+                    if _config_cache.get(key) is hit:
+                        _config_cache[key] = (signature, loader, config, None)
+            # load_config re-applies the SSRF policy on every load; keep that.
+            _apply_ssrf_whitelist(config)
+            return config
+    raw = _read_bytes(path) if _racy(signature, now_ns) else None
     # Parsed outside the lock: load_config may save (plaintext secrets
     # migration), and save_config takes the file lock then invalidates.
     # Same call shape as the callers used to make (patched loaders may take none).
     config = loader(config_path) if config_path is not None else loader()
     with _cache_lock:
-        _config_cache[key] = (signature, loader, config)
+        _config_cache[key] = (signature, loader, config, raw)
     return config
 
 

@@ -41,6 +41,9 @@ def _native() -> Any | None:
 
 
 _WRITER_WAIT_S = 3.0
+# Files per native update call: a fraction of a second each, so the exit never
+# waits long for the one in flight (navin.utils.native.native_section).
+_UPDATE_BATCH = 400
 _writer_locks: dict[str, threading.Lock] = {}
 _writer_locks_guard = threading.Lock()
 
@@ -118,16 +121,29 @@ class FulltextIndex:
             removed = [rel for rel in manifest if rel not in files]
             if not changed and not removed:
                 return 0
+            from navin.utils.native import NativeShutdownError, native_section
+
+            # What is already current stays recorded; each batch adds its files.
+            current = {rel: mtime for rel, mtime in files.items() if manifest.get(rel) == mtime}
+            indexed = 0
+            # Batches keep each native call short: one long call caught by the
+            # interpreter exit aborted the process (see native_section).
+            batches = [changed[at:at + _UPDATE_BATCH] for at in range(0, len(changed), _UPDATE_BATCH)] or [[]]
             try:
-                indexed = int(
-                    core.fulltext_update(
-                        str(self.index_dir), str(self.root), changed, removed
-                    )
-                )
+                for number, batch in enumerate(batches):
+                    gone = removed if number == 0 else []
+                    with native_section():
+                        indexed += int(core.fulltext_update(
+                            str(self.index_dir), str(self.root), batch, gone,
+                        ))
+                    current.update(batch)
+            except NativeShutdownError:
+                logger.debug("Fulltext update of {} stopped by the exit", self.root)
             except Exception as exc:
                 logger.debug("Fulltext update failed for {}: {}", self.root, exc)
-                return 0
-            self._save_manifest(dict(files))
+                if not indexed:
+                    return 0
+            self._save_manifest(current)
             return indexed
         finally:
             lock.release()

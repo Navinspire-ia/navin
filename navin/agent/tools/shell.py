@@ -2181,8 +2181,13 @@ class ExecTool(Tool):
         # on cwd.
         if access.restrict_to_workspace and workspace_root:
             try:
-                requested = Path(cwd).expanduser().resolve()
-                resolved_root = Path(workspace_root).expanduser().resolve()
+                # Both resolves stat every path part: in a worker.
+                requested, resolved_root = await asyncio.to_thread(
+                    lambda: (
+                        Path(cwd).expanduser().resolve(),
+                        Path(workspace_root).expanduser().resolve(),
+                    )
+                )
             except Exception:
                 return ToolResult.error(
                     "Error: working_dir could not be resolved"
@@ -2280,7 +2285,7 @@ class ExecTool(Tool):
                 # landlock/seatbelt honour --chdir and must keep the caller's
                 # working_dir, otherwise ``npm test`` in webui runs at root.
                 if self.sandbox == "bwrap" and command.lstrip().startswith("bwrap "):
-                    cwd = str(Path(workspace).resolve())
+                    cwd = str(await asyncio.to_thread(Path(workspace).resolve))
 
         effective_timeout = self._resolve_timeout(timeout)
         if (

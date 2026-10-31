@@ -628,6 +628,21 @@ def _truncate_output(output: str, max_output_chars: int) -> tuple[str, int]:
     )
 
 
+def quiet_poll_floor_ms(quiet_polls: int) -> int:
+    """Shortest wait for an empty poll after ``quiet_polls`` polls with no output.
+
+    Sessions of 2026-10-25/31 polled one background command 23 times in a row
+    with chars='' and a 1 s wait: each poll is a whole model round trip
+    (15 to 60 s with a high reasoning effort) to learn that nothing changed.
+    The first two polls keep the wait asked for; then the floor grows, and the
+    poll still returns the moment the process exits.
+    """
+    floors = (0, 0, 5_000, 15_000, 30_000)
+    if quiet_polls < len(floors):
+        return floors[quiet_polls]
+    return 60_000
+
+
 def format_session_poll(session_id: str, poll: _SessionPoll) -> str:
     parts = [poll.output] if poll.output else []
     if poll.truncated_chars:
@@ -737,6 +752,8 @@ class WriteStdinTool(Tool):
         # Same policy as exec: without it, stdin into a live shell was a clean
         # bypass of the deny rules and of ask-every-command.
         self._stdin_guard = stdin_guard
+        # Empty polls in a row that brought no output, per session id.
+        self._quiet_polls: dict[str, int] = {}
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
@@ -817,18 +834,33 @@ class WriteStdinTool(Tool):
                     max_output_chars=output_limit,
                     command=command,
                 )
+            just_polling = not chars and not close_stdin and not terminate
+            requested_ms = clamp_session_int(yield_time_ms, DEFAULT_YIELD_MS, 0, MAX_YIELD_MS)
+            quiet = self._quiet_polls.get(session_id, 0) if just_polling else 0
+            wait_ms = max(requested_ms, quiet_poll_floor_ms(quiet))
             poll = await self._manager.write(
                 session_id=session_id,
                 chars=chars,
                 close_stdin=close_stdin,
                 terminate=terminate,
-                yield_time_ms=clamp_session_int(yield_time_ms, DEFAULT_YIELD_MS, 0, MAX_YIELD_MS),
+                yield_time_ms=wait_ms,
                 max_output_chars=output_limit,
                 owner_session_key=current_request_session_key(),
             )
             if poll.done and poll.output and command:
                 poll.output = compact_session_body(command, poll.output, poll.exit_code)
             result = format_session_poll(session_id, poll)
+            if poll.done or poll.output or not just_polling:
+                self._quiet_polls.pop(session_id, None)
+            else:
+                self._quiet_polls[session_id] = quiet + 1
+                if wait_ms > requested_ms:
+                    result += (
+                        f"\n(No new output for {quiet + 1} polls in a row: this one waited "
+                        f"{wait_ms / 1000:.0f}s instead of {requested_ms / 1000:.0f}s. The end of "
+                        "the process is announced on its own; work on something else, or "
+                        "use wait_for with the text you expect.)"
+                    )
             return ToolResult.error(result) if poll.timed_out else result
         except KeyError:
             return ToolResult.error(await self._not_found_message(session_id))
