@@ -78,9 +78,22 @@ class UiEditsNeedChecksNotTestsTest(unittest.TestCase):
     def test_a_component_restyle_does_not_demand_tests(self) -> None:
         self.assertFalse(self._state_after_edit("frontend/src/components/admin/AdminShell.tsx").needs_tests)
 
-    def test_logic_still_demands_tests(self) -> None:
-        self.assertTrue(self._state_after_edit("frontend/src/lib/billing.ts").needs_tests)
-        self.assertTrue(self._state_after_edit("backend/api.py").needs_tests)
+    def test_one_logic_file_needs_a_check_not_tests(self) -> None:
+        # The user's rule: tests are for real development work; a one-file
+        # fix is proven by the check (lint, build) of the file it changed.
+        for path in ("frontend/src/lib/billing.ts", "backend/api.py"):
+            state = self._state_after_edit(path)
+            self.assertFalse(state.needs_tests)
+            self.assertTrue(state.pending)
+
+    def test_a_multi_file_logic_change_demands_tests(self) -> None:
+        state = self._state_after_edit("backend/api.py")
+        for path in ("backend/models.py", "frontend/src/lib/billing.ts"):
+            state.observe(
+                "edit_file", {"path": path}, "ok", status="ok",
+                require_verify=False, validate_code=True, is_test_command=lambda _c: False,
+            )
+        self.assertTrue(state.needs_tests)
 
     def test_an_edited_component_test_must_run(self) -> None:
         self.assertTrue(self._state_after_edit("frontend/src/AdminShell.test.tsx").needs_tests)
@@ -133,9 +146,16 @@ class NoSuiteForTheChangeTest(unittest.TestCase):
         self.assertFalse(state.pending)
 
     def test_code_with_no_suite_does_not_demand_new_tests(self) -> None:
+        from navin.agent.code_validation import CodeValidationState
         from navin.quality.evidence import VerificationEvidence
 
-        state = self._state_after_edit("scripts/tool.py")
+        state = CodeValidationState()
+        state.observe(
+            "write_file", {"files": [
+                {"path": f"scripts/{name}.py", "content": "x"} for name in ("tool", "sync", "report")
+            ]}, "ok", status="ok",
+            require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+        )
         self.assertTrue(state.needs_tests)
         self._verify(state, VerificationEvidence(checks_ok=True, summary="Lint clean", no_test_suite=True))
         self.assertFalse(state.pending)

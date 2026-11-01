@@ -375,6 +375,40 @@ def written_by_other_chats(root: Path, paths: set[str], owner: object | None = N
     return foreign
 
 
+# Logic files a run must change before a test run is the proof. Below that (a
+# one or two file fix, a copy or config edit) a passing check of the changed
+# files - lint, type check, build - is enough: the user asked that tests stay
+# for real development work and that small changes only build what they touch.
+_COMPLEX_CHANGE_FILES = 3
+_SMALL_CHANGE_NOTE = (
+    "Small change: a passing check of the changed files (verify or lint) is enough. "
+    "Tests are required for multi-file logic changes or when a test file is edited."
+)
+_TEST_DIRS = frozenset({"tests", "test", "__tests__", "spec"})
+
+
+def _is_test_file(path: str) -> bool:
+    candidate = PurePosixPath(path.lower())
+    name = candidate.name
+    return (
+        name.startswith("test_") or name.endswith(("_test.py", "_test.go", "_spec.rb"))
+        or ".test." in name or ".spec." in name
+        or bool(_TEST_DIRS & set(candidate.parts[:-1]))
+    )
+
+
+def _complex_change(logic_paths: set[str]) -> bool:
+    """Whether the logic changed so far needs a test run, not only a check.
+
+    An edited test has to be run; several logic files changed together are
+    real development work with a final test. One or two files are a fix whose
+    proof is the check of those files.
+    """
+    if len(logic_paths) >= _COMPLEX_CHANGE_FILES:
+        return True
+    return any(_is_test_file(path) for path in logic_paths)
+
+
 def _requires_tests(path: str) -> bool:
     """Logic code needs a test run; UI markup only needs checks, unless the
     edited file is itself a test (then it has to be run)."""
@@ -687,6 +721,9 @@ class CodeValidationState:
     # Every path the run wrote, docs and command-made files included, whether
     # or not it arms the gates: the file list a subagent hands to its parent.
     touched: set[str] = field(default_factory=set)
+    # Changed files that are logic code (see ``_requires_tests``): their count
+    # decides between a check and a test run (``_complex_change``).
+    logic_paths: set[str] = field(default_factory=set)
     revision: int = 0
     needs_tests: bool = False
     checks_revision: int = -1
@@ -833,9 +870,30 @@ class CodeValidationState:
             # it could stop. A green verify is the proof here, as on the board.
             require_tests = False
             self.test_result_note = "No test suite in this project: a passing verify is enough."
+        elif require_tests:
+            self.logic_paths.update(path for path in paths if _requires_tests(path))
+            require_tests = _complex_change(self.logic_paths)
+            if not self.needs_tests:
+                self.test_result_note = "" if require_tests else _SMALL_CHANGE_NOTE
         else:
             self.test_result_note = ""
         self.needs_tests |= require_tests
+
+    def _in_project(self, path: str) -> bool:
+        """Scratch files outside the project (a /tmp probe script) are not the delivery.
+
+        Pure path arithmetic, no disk access: a relative path is in the project.
+        """
+        if self.root is None:
+            return True
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            return True
+        try:
+            candidate.relative_to(self.root)
+        except ValueError:
+            return False
+        return True
 
     def _project_has_tests(self) -> bool:
         if self.root is None:
@@ -887,12 +945,20 @@ class CodeValidationState:
         mutation = _is_mutation(name, params)
         if status == "ok" and mutation:
             paths = edit_paths(params)
+            outside = {path for path in paths if not self._in_project(path)}
+            # Scratch files outside the project (a /tmp probe script) are not
+            # the delivery: they never arm the gate on their own.
+            self.touched.update(outside)
+            scratch_only = bool(paths) and outside == paths
+            paths -= outside
             relevant = {path for path in paths if development_path(path)}
             # Docs, notes and other non-development files never arm the gate:
             # no checker covers them, so it could never be satisfied. An edit
             # whose paths are unknown still arms it (the safe side).
-            if ((relevant or not paths) and (require_verify or validate_code)) \
-                    or (self.revision and name in {"verify", "lint"}):
+            if not scratch_only and (
+                ((relevant or not paths) and (require_verify or validate_code))
+                or (self.revision and name in {"verify", "lint"})
+            ):
                 self.edited(paths, require_tests=validate_code and any(
                     _requires_tests(path) for path in relevant
                 ))

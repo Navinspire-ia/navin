@@ -122,5 +122,62 @@ def test_a_project_with_tests_still_needs_them(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
     state = cv.CodeValidationState(root=tmp_path)
-    state.edited({"app.py"}, require_tests=True)
+    state.edited({"app.py", "models.py", "views.py"}, require_tests=True)
     assert state.needs_tests is True
+
+
+def _project_with_tests(root):
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (root / "tests").mkdir()
+    (root / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
+
+
+def test_a_small_fix_in_a_project_with_tests_closes_on_a_check(tmp_path):
+    _project_with_tests(tmp_path)
+    state = cv.CodeValidationState(root=tmp_path)
+    state.edited({"app.py"}, require_tests=True)
+    state.edited({"app.py", "models.py"}, require_tests=True)
+    assert state.needs_tests is False
+    assert state.pending is True
+    assert "Small change" in state.missing()
+    assert "Run the tests" not in state.missing()
+    state.record(cv.VerificationEvidence(checks_ok=True, summary="lint clean"))
+    assert state.pending is False
+
+
+def test_a_third_logic_file_or_an_edited_test_needs_the_tests(tmp_path):
+    _project_with_tests(tmp_path)
+    growing = cv.CodeValidationState(root=tmp_path)
+    growing.edited({"app.py", "models.py"}, require_tests=True)
+    growing.record(cv.VerificationEvidence(checks_ok=True, summary="lint clean"))
+    growing.edited({"views.py"}, require_tests=True)
+    assert growing.needs_tests is True
+    assert growing.pending is True
+    assert "Small change" not in growing.missing()
+
+    test_edit = cv.CodeValidationState(root=tmp_path)
+    test_edit.edited({"tests/test_app.py"}, require_tests=True)
+    assert test_edit.needs_tests is True
+
+
+def test_a_scratch_file_outside_the_project_never_arms_the_gate(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    _project_with_tests(project)
+    state = cv.CodeValidationState(root=project)
+    scratch = str(tmp_path / "scratch" / "probe.py")
+    state.observe(
+        "write_file", {"path": scratch, "content": "print(1)\n"}, "ok", status="ok",
+        require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+    )
+    assert state.pending is False
+    assert scratch in state.touched
+    state.observe(
+        "write_file", {"files": [
+            {"path": scratch, "content": "print(2)\n"},
+            {"path": str(project / "app.py"), "content": "VALUE = 1\n"},
+        ]}, "ok", status="ok",
+        require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+    )
+    assert state.pending is True
+    assert state.paths == {str(project / "app.py")}

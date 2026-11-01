@@ -138,8 +138,12 @@ def observe(state, name, params, result, status="ok"):
 
 
 def edited_state():
+    # A real development change (three logic files): the one kind of change
+    # that needs a test run, not only a check of the changed files.
     state = CodeValidationState()
-    observe(state, "apply_patch", {"edits": [{"path": "src/service.py"}]}, "Patched")
+    observe(state, "apply_patch", {"edits": [
+        {"path": "src/service.py"}, {"path": "src/store.py"}, {"path": "src/api.py"},
+    ]}, "Patched")
     return state
 
 
@@ -532,7 +536,11 @@ def test_shell_edits_cannot_bypass_validation(tmp_path):
     _with_test_suite(tmp_path)
 
     async def run():
-        script = "from pathlib import Path; Path('pricing.py').write_text('def total(): return 42\\n')"
+        script = (
+            "from pathlib import Path\n"
+            "for name in ('pricing', 'discounts', 'taxes'):\n"
+            "    Path(name + '.py').write_text('def total(): return 42\\n')\n"
+        )
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
         provider = ScriptedProvider([
             tool_call("exec", command=command),
@@ -702,7 +710,11 @@ def test_repeated_board_closures_without_validation_stop_without_closing_the_tas
         store = ProjectBoardStore(tmp_path)
         task = store.create_task(title="Fix discounts", status="in_progress", actor="agent", actor_type="agent")
         provider = ScriptedProvider([
-            tool_call("write_file", path="pricing.py", content=_PRICING),
+            tool_call("write_file", files=[
+                {"path": "pricing.py", "content": _PRICING},
+                {"path": "discounts.py", "content": _PRICING},
+                {"path": "taxes.py", "content": _PRICING},
+            ]),
             *(tool_call("board", action="move", task_id=task["id"], status="done") for _ in range(20)),
         ])
         tools = registry(tmp_path)
@@ -854,7 +866,8 @@ def test_related_tests_are_looked_up_off_the_event_loop(tmp_path, monkeypatch):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_app.py").write_text("def test_a():\n    pass\n")
     state = CodeValidationState(root=tmp_path)
-    state.edited({"app.py"}, require_tests=True)
+    # Three logic files: a change that needs its tests, so the hint lists them.
+    state.edited({"app.py", "models.py", "views.py"}, require_tests=True)
 
     async def scenario() -> str:
         await state.warm_related_tests()
@@ -886,6 +899,8 @@ def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monk
 
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "widgets.py").write_text("VALUE = 1\n")
+    (tmp_path / "pkg" / "layout.py").write_text("ROWS = 1\n")
+    (tmp_path / "pkg" / "theme.py").write_text("DARK = 1\n")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_widgets.py").write_text("def test_a():\n    pass\n")
     for name in ("clipboard", "paste", "menu"):
@@ -893,7 +908,7 @@ def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monk
 
     monkeypatch.setattr(cv, "current_budget", lambda: budget_for("essential"))
     state = CodeValidationState(root=tmp_path)
-    state.edited({"pkg/widgets.py"}, require_tests=True)
+    state.edited({"pkg/widgets.py", "pkg/layout.py", "pkg/theme.py"}, require_tests=True)
     missing = state.missing()
     assert "one or two, listed below" in missing
     assert "never the whole suite" in missing
@@ -902,7 +917,7 @@ def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monk
 
     monkeypatch.setattr(cv, "current_budget", lambda: budget_for("thorough"))
     state = CodeValidationState(root=tmp_path)
-    state.edited({"pkg/widgets.py"}, require_tests=True)
+    state.edited({"pkg/widgets.py", "pkg/layout.py", "pkg/theme.py"}, require_tests=True)
     missing = state.missing()
     assert "final delivery check" in missing
     assert "test_paste.py" in missing and "test_menu.py" in missing

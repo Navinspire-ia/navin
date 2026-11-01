@@ -391,3 +391,36 @@ class SpooledOutputTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlindSleepTest(unittest.TestCase):
+    """A plain long sleep before the next step holds the turn: refused with the way out."""
+
+    def test_the_waits_seen_in_sessions_are_counted(self) -> None:
+        from navin.agent.tools.shell import blind_sleep_seconds
+
+        self.assertEqual(blind_sleep_seconds("sleep 240; tail -c 2500 run.log"), 240)
+        self.assertEqual(blind_sleep_seconds("make up && sleep 2m && curl -s localhost"), 120)
+        self.assertEqual(blind_sleep_seconds("sleep 1m 30s"), 90)
+        self.assertEqual(blind_sleep_seconds("sleep 15; gh run list"), 15)
+        self.assertEqual(blind_sleep_seconds("timeout 300 bash -c 'until test -f x; do sleep 5; done'"), 0)
+        self.assertEqual(blind_sleep_seconds("echo sleep 300"), 0)
+        self.assertEqual(blind_sleep_seconds("sleep infinity"), 0)
+
+    def test_exec_refuses_a_long_blind_sleep_and_runs_short_ones(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tool = ExecTool(working_dir=tmp)
+
+            async def run() -> tuple[Any, Any, float]:
+                started = time.monotonic()
+                refused = await tool.execute(command="sleep 240; echo late")
+                elapsed = time.monotonic() - started
+                short = await tool.execute(command="sleep 1; echo ready")
+                return refused, short, elapsed
+
+            refused, short, elapsed = asyncio.run(run())
+        self.assertTrue(getattr(refused, "is_error", False))
+        self.assertIn("wait_for", str(refused))
+        self.assertNotIn("late", str(refused))
+        self.assertLess(elapsed, 5)
+        self.assertIn("ready", str(short))

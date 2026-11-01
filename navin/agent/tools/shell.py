@@ -1573,6 +1573,13 @@ class ExecTool(Tool):
             max_output_chars = max_output_tokens
         if yield_time_ms is None and background:
             yield_time_ms = DEFAULT_YIELD_MS
+        if yield_time_ms is None:
+            # Foreground only: a background session does not hold the turn,
+            # and a short explicit timeout bounds what the sleep can hold.
+            slept = blind_sleep_seconds(command)
+            held = min(slept, self._resolve_timeout(timeout) or slept)
+            if held >= _BLIND_SLEEP_S:
+                return ToolResult.error(_blind_sleep_message(slept))
 
         prepared = await self._prepare_command(
             command, working_dir, timeout, shell, login, unsandboxed=bool(unsandboxed)
@@ -3456,6 +3463,49 @@ def _missing_pytest_paths(command: str, cwd: str) -> list[tuple[str, Path]]:
             if not exists:
                 missing.append((head, current))
     return missing
+
+
+# A foreground step that only sleeps this long before the next one is a blind
+# wait: sessions of 2026-11-01 ran `sleep 240; tail log` and `sleep 150; sed`,
+# holding the turn the whole time even when the result was ready sooner.
+_BLIND_SLEEP_S = 30.0
+_SLEEP_UNITS = {"": 1.0, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+_SLEEP_ARG = re.compile(r"(\d+(?:\.\d+)?)([smhd]?)")
+_LOOP_WORDS = re.compile(r"\b(?:do|done|until|while|for)\b")
+_SHELL_STEPS = re.compile(r"&&|\|\||[;\n]")
+
+
+def blind_sleep_seconds(command: str) -> float:
+    """Seconds a command spends in plain ``sleep`` steps; 0 inside a poll loop.
+
+    A loop (``until <check>; do sleep 5; done``) stops as soon as its check
+    holds, so its sleeps are not blind. ``sleep infinity`` or a variable is
+    not a number of seconds and is not counted.
+    """
+    if _LOOP_WORDS.search(command):
+        return 0.0
+    total = 0.0
+    for step in _SHELL_STEPS.split(command):
+        words = step.split()
+        if len(words) < 2 or words[0] != "sleep":
+            continue
+        for arg in words[1:]:
+            match = _SLEEP_ARG.fullmatch(arg)
+            if match is None:
+                break
+            total += float(match[1]) * _SLEEP_UNITS[match[2]]
+    return total
+
+
+def _blind_sleep_message(seconds: float) -> str:
+    return (
+        f"Error: blind wait refused: this command sleeps {seconds:.0f}s before going on, and the "
+        "turn stays blocked that long even when the result is ready sooner. Wait on the event "
+        "instead: run the long command with background=true and poll it with write_stdin "
+        "wait_for=\"<text you expect>\", or bound a check that stops as soon as it holds: "
+        "timeout 300 bash -c 'until <check>; do sleep 5; done'. A watch command (gh run watch, "
+        "kubectl wait, docker compose up --wait) also returns at the end."
+    )
 
 
 def _missing_pytest_message(missing: list[tuple[str, Path]]) -> str:

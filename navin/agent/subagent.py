@@ -2314,6 +2314,7 @@ class SubagentManager:
             restored = dict(saved_validation)
             restored["paths"] = set(restored.get("paths") or [])
             restored["touched"] = set(restored.get("touched") or [])
+            restored["logic_paths"] = set(restored.get("logic_paths") or [])
             restored["root"] = Path(restored["root"]) if restored.get("root") else None
             if restored.get("workspace_snapshot") is not None:
                 restored["workspace_snapshot"] = {
@@ -2342,6 +2343,7 @@ class SubagentManager:
             validation = asdict(loop_guard.validation)
             validation["paths"] = sorted(loop_guard.validation.paths)
             validation["touched"] = sorted(loop_guard.validation.touched)
+            validation["logic_paths"] = sorted(loop_guard.validation.logic_paths)
             validation["root"] = str(loop_guard.validation.root) if loop_guard.validation.root else None
             payload = {**payload, "validation_state": validation}
             if checkout is not None:
