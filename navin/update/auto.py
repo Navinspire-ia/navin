@@ -157,6 +157,42 @@ def current_save_sessions() -> Callable[[], int] | None:
         return _SAVE_SESSIONS
 
 
+def installs_when_idle(info: dict[str, Any], settings: Any | None = None) -> bool:
+    """Whether this offer goes in with no click once Navin is idle.
+
+    Same rule as ``AutoUpdater.tick``. The update card asks "Later /
+    Install" only when nobody else will install it: automatic install off, a
+    format updated by hand, the CLI (never swapped under the terminal), no
+    background updater in this process, or an automatic attempt that failed.
+    """
+    if settings is None:
+        from navin.config.loader import load_config
+
+        settings = load_config().updates
+    if not (settings.enabled and settings.auto_check and settings.auto_install):
+        return False
+    if not info.get("available") or not info.get("supported"):
+        return False
+    kind = str(info.get("installKind") or "")
+    if kind == "cli":
+        return False
+    engine = update_policy.engine_for(kind)
+    if engine == "tauri":
+        # The shell reported in recently; it asks update_policy_for, which
+        # honours the same autoInstall switch.
+        return True
+    if engine != "navin":
+        return False
+    with _INSTANCE_LOCK:
+        running = _INSTANCE is not None
+    return running and service.update_status().get("state") != "error"
+
+
+def describe_offer(info: dict[str, Any]) -> dict[str, Any]:
+    """The version-check answer plus ``installsWhenIdle`` for the update card."""
+    return {**info, "installsWhenIdle": installs_when_idle(info)}
+
+
 def start_auto_updater(save_sessions: Callable[[], int] | None = None) -> AutoUpdater | None:
     """Start the background updater once per process, packaged builds only.
 

@@ -24,8 +24,8 @@ import { fetchRuntimeHealth, type RuntimeHealth } from "@/lib/api";
 import { UpdateProgress } from "@/components/UpdateProgress";
 import {
   isReleaseAnnouncement,
-  isUpdateToastDismissed,
   readDismissedUpdateToast,
+  updateCardFor,
 } from "@/lib/product-toasts";
 import { cn } from "@/lib/utils";
 import { runtimePressureTitle, runtimeResourceSummary } from "@/lib/runtime-health";
@@ -263,20 +263,19 @@ export function ProductToastStack({
     setAnnouncementToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const updateToast =
-    availableUpdate
-    && !isUpdateToastDismissed(
-      availableUpdate.latestVersion,
-      readDismissedUpdateToast(),
-    )
-      ? availableUpdate
-      : null;
+  const updateToast = updateCardFor(availableUpdate, readDismissedUpdateToast(), {
+    busy: updateBusy,
+    error: updateError,
+  });
 
   const visibleAnnouncements = announcementToasts.filter((item) => {
     // The update card already says the same thing with Install Now. A second
     // NEWS / Open toast for the same version is what people click, and it used
-    // to do nothing in the desktop WebView.
-    if (updateToast && isReleaseAnnouncement(item)) return false;
+    // to do nothing in the desktop WebView. An update that installs by itself
+    // needs no Install button either.
+    if ((updateToast || availableUpdate?.installsWhenIdle) && isReleaseAnnouncement(item)) {
+      return false;
+    }
     return true;
   });
 

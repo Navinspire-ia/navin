@@ -27,6 +27,7 @@ export type UpdateToastInfo = {
   available: boolean;
   latestVersion?: string;
   currentVersion?: string;
+  installsWhenIdle?: boolean;
 };
 
 let memoryDismissed: DismissedUpdateToast | null = null;
@@ -102,6 +103,31 @@ export function dismissUpdateToast(
   return next;
 }
 
+/**
+ * Whether this update waits for the user. False when Navin installs it by
+ * itself once idle: then neither the corner card nor the bell asks for a click.
+ */
+export function updateNeedsTheUser<T extends UpdateToastInfo>(info: T | null | undefined): info is T {
+  return Boolean(info?.available && !info.installsWhenIdle);
+}
+
+/**
+ * The "Later / Install" card, or null. An update Navin installs by itself
+ * when idle asks for nothing, unless an install the user started is running
+ * or failed: then the card shows its progress or its error and Retry.
+ */
+export function updateCardFor<T extends UpdateToastInfo>(
+  info: T | null,
+  dismissed: DismissedUpdateToast | null,
+  { busy, error }: { busy: boolean; error?: string | null },
+  now: number = Date.now(),
+): T | null {
+  if (!info) return null;
+  if (busy || error) return info;
+  if (!updateNeedsTheUser(info)) return null;
+  return isUpdateToastDismissed(info.latestVersion, dismissed, now) ? null : info;
+}
+
 /** Decide whether the corner card should stay, hide, or keep its object. */
 export function nextAvailableUpdate<T extends UpdateToastInfo>(
   current: T | null,
@@ -119,6 +145,7 @@ export function nextAvailableUpdate<T extends UpdateToastInfo>(
     current
     && current.latestVersion === info.latestVersion
     && current.currentVersion === info.currentVersion
+    && current.installsWhenIdle === info.installsWhenIdle
   ) {
     return current;
   }

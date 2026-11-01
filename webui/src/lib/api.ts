@@ -2771,6 +2771,8 @@ export interface UpdateInfo {
   mandatory?: boolean;
   /** Why this install cannot replace itself, when `supported` is false. */
   reason?: string;
+  /** Navin installs it by itself once idle: no card asks for a click. */
+  installsWhenIdle?: boolean;
 }
 
 export interface UpdateStatus extends Partial<UpdateInfo> {

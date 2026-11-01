@@ -12,6 +12,8 @@ import {
   parseDismissedUpdateToast,
   readDismissedUpdateToast,
   resetDismissedUpdateToast,
+  updateCardFor,
+  updateNeedsTheUser,
 } from "./product-toasts";
 
 describe("isReleaseAnnouncement", () => {
@@ -83,6 +85,45 @@ describe("nextAvailableUpdate", () => {
 
   it("clears the card once the install is gone", () => {
     expect(nextAvailableUpdate(available, gone, null, 10)).toBeNull();
+  });
+
+  it("takes the new answer when automatic install changes", () => {
+    const automatic = { ...available, installsWhenIdle: true };
+    expect(nextAvailableUpdate(available, automatic, null, 10)).toBe(automatic);
+  });
+});
+
+describe("updateCardFor", () => {
+  const automatic = { ...available, installsWhenIdle: true };
+  const idle = { busy: false, error: null };
+
+  it("asks nothing when Navin installs the update by itself", () => {
+    expect(updateCardFor(automatic, null, idle, 10)).toBeNull();
+  });
+
+  it("asks Later / Install when nobody installs it", () => {
+    expect(updateCardFor(available, null, idle, 10)).toBe(available);
+    expect(updateCardFor({ ...available, installsWhenIdle: false }, null, idle, 10)).not.toBeNull();
+  });
+
+  it("keeps an install the user started on screen, with its error", () => {
+    expect(updateCardFor(automatic, null, { busy: true }, 10)).toBe(automatic);
+    expect(updateCardFor(automatic, null, { busy: false, error: "signature" }, 10)).toBe(automatic);
+  });
+
+  it("still honours Later", () => {
+    expect(updateCardFor(available, { version: "2.0.3", until: 50 }, idle, 10)).toBeNull();
+    expect(updateCardFor(null, null, idle, 10)).toBeNull();
+  });
+});
+
+describe("updateNeedsTheUser", () => {
+  it("is false for an update Navin installs by itself, true otherwise", () => {
+    expect(updateNeedsTheUser({ ...available, installsWhenIdle: true })).toBe(false);
+    expect(updateNeedsTheUser({ ...available, installsWhenIdle: false })).toBe(true);
+    expect(updateNeedsTheUser(available)).toBe(true);
+    expect(updateNeedsTheUser(gone)).toBe(false);
+    expect(updateNeedsTheUser(null)).toBe(false);
   });
 });
 

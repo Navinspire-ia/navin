@@ -43,7 +43,7 @@ from navin.update import (
     update_status,
 )
 from navin.update import policy as update_policy
-from navin.update.auto import current_save_sessions, prepare_for_install
+from navin.update.auto import current_save_sessions, describe_offer, prepare_for_install
 from navin.update.service import update_policy_for
 from navin.webui.channel_login import (
     ChannelLoginError,
@@ -1385,7 +1385,9 @@ class WebUISettingsRouter:
                 ttl=_VERSION_CHECK_CACHE_TTL_S,
                 force=force,
             )
-            return self._json_response(payload)
+            # Outside the cache: the autoInstall switch or a failed automatic
+            # attempt changes it between two checks.
+            return self._json_response(await asyncio.to_thread(describe_offer, payload))
         except UpdateError as exc:
             return self._error_response(exc.status, str(exc))
 

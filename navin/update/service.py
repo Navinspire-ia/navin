@@ -624,6 +624,15 @@ def update_policy_for(version: str) -> dict[str, Any]:
     base_url, channel, _skipped = _update_config()
     if not base_url:
         return {"allowed": False, "reason": "no update server configured", "mandatory": False}
+    if not load_config().updates.auto_install:
+        # Same switch as the Navin engine: off, the user installs from the card.
+        return {
+            "allowed": False,
+            "reason": "automatic install is off",
+            "mandatory": False,
+            "channel": channel,
+            "version": version,
+        }
     manifest = _fetch_manifest(base_url, channel)
     rollout = int(manifest.get("rollout", 100))
     decision = update_policy.decide(

@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useAccount } from "@/hooks/useAccount";
+import { updateNeedsTheUser } from "@/lib/product-toasts";
 import { useNotifications } from "@/providers/NotificationProvider";
 import type { UpdateInfo } from "@/lib/api";
 
@@ -89,7 +90,10 @@ export function useProductNews(
 
   useEffect(() => {
     const version = availableUpdate?.latestVersion?.trim();
-    if (!version || !availableUpdate?.available) return;
+    // Installed by itself once Navin is idle: nothing to click, so no "Update"
+    // notification. Not marked as notified either: if the automatic install
+    // fails, the answer flips and the notification comes then.
+    if (!version || !updateNeedsTheUser(availableUpdate)) return;
     try {
       if (window.localStorage.getItem(NOTIFIED_UPDATE_KEY) === version) return;
       window.localStorage.setItem(NOTIFIED_UPDATE_KEY, version);

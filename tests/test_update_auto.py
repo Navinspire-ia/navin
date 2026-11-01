@@ -157,6 +157,48 @@ def test_update_policy_for_reads_the_signed_manifest(home):
     assert answer["allowed"] is True and answer["channel"] == "enterprise"
 
 
+def test_the_shell_installs_nothing_when_automatic_install_is_off(home, monkeypatch):
+    from navin.config.schema import Config
+
+    config = Config()
+    config.updates.auto_install = False
+    monkeypatch.setattr(service, "load_config", lambda: config)
+    fetch = mock.Mock(return_value=manifest())
+    with (
+        mock.patch.object(service, "__version__", "2.4.3"),
+        mock.patch.object(service, "_update_config", return_value=("https://updates.example", "stable", "")),
+        mock.patch.object(service, "_fetch_manifest", fetch),
+    ):
+        answer = service.update_policy_for("2.4.4")
+    assert answer["allowed"] is False and answer["reason"] == "automatic install is off"
+    fetch.assert_not_called()
+
+
+def test_the_card_asks_only_when_nobody_installs_the_update(home, monkeypatch):
+    offer = {**OFFER, "installKind": "linux-appimage"}
+    monkeypatch.setattr(auto, "_INSTANCE", None)
+    # No background updater in this process (source run): the user clicks.
+    assert auto.installs_when_idle(offer, settings()) is False
+    monkeypatch.setattr(auto, "_INSTANCE", object())
+    monkeypatch.setattr(service, "update_status", lambda: {"state": "downloading"})
+    assert auto.installs_when_idle(offer, settings()) is True
+    assert auto.describe_offer({**offer, "notes": "x"}) == {**offer, "notes": "x", "installsWhenIdle": True}
+    # An automatic attempt that failed hands the decision back to the user.
+    monkeypatch.setattr(service, "update_status", lambda: {"state": "error"})
+    assert auto.installs_when_idle(offer, settings()) is False
+    monkeypatch.setattr(service, "update_status", lambda: {"state": "ready"})
+    for values in ({"auto_install": False}, {"auto_check": False}, {"enabled": False}):
+        assert auto.installs_when_idle(offer, settings(**values)) is False, values
+    assert auto.installs_when_idle({**offer, "installKind": "cli"}, settings()) is False
+    assert auto.installs_when_idle({**offer, "supported": False}, settings()) is False
+    assert auto.installs_when_idle({**offer, "available": False}, settings()) is False
+    assert auto.installs_when_idle({**offer, "installKind": "linux-package"}, settings()) is False
+    # The shell owns its formats while it reports, process updater or not.
+    monkeypatch.setattr(auto, "_INSTANCE", None)
+    update_policy.note_engine("tauri", "2.4.4")
+    assert auto.installs_when_idle({**offer, "installKind": "windows-setup"}, settings()) is True
+
+
 # --- engines and strategy -------------------------------------------------
 
 
@@ -467,6 +509,31 @@ async def test_routes_for_the_shell(home, monkeypatch):
     activity.register_busy_probe("agents", lambda: 2)
     assert (await call("/api/settings/update-prepare"))[1]["ready"] is False
     assert (await call("/api/settings/update-prepare", local=False))[:2] == ("error", 403)
+
+
+@pytest.mark.asyncio
+async def test_version_check_says_whether_the_update_installs_by_itself(home, monkeypatch):
+    from navin.config import loader
+    from navin.config.schema import Config
+    from navin.webui import settings_routes
+
+    config = Config()
+    monkeypatch.setattr(loader, "load_config", lambda: config)
+    monkeypatch.setattr(auto, "_INSTANCE", object())
+    monkeypatch.setattr(service, "update_status", lambda: {"state": "available"})
+    offer = {**OFFER, "installKind": "linux-appimage"}
+    checks = mock.Mock(side_effect=lambda force=False: dict(offer))
+    monkeypatch.setattr(settings_routes, "check_for_update", checks)
+    routes = router()
+
+    async def check(path: str):
+        return await routes.dispatch(None, SimpleNamespace(path=path, headers={}), path.split("?", 1)[0])
+
+    assert (await check("/api/settings/version-check?force=1"))[1]["installsWhenIdle"] is True
+    # The switch is read on every answer, not frozen in the check cache.
+    config.updates.auto_install = False
+    assert (await check("/api/settings/version-check"))[1]["installsWhenIdle"] is False
+    assert checks.call_count == 1
 
 
 @pytest.mark.asyncio
