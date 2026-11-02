@@ -11,6 +11,67 @@ import { paintTerminalViewport, terminalSurfaceStyle, terminalTheme, TERMINAL_FO
 import "./terminal.css";
 
 /**
+ * One xterm renderer shared by every agent terminal tab. Creating a Terminal
+ * (char measuring, WebGL context) costs hundreds of ms on WebKitGTK, and the
+ * workbench switches to the newest tab on every agent command, so the active
+ * tab borrows this instance instead of building its own.
+ */
+interface PooledTerminal {
+  term: Terminal;
+  fit: FitAddon;
+  /** Tab currently displaying the terminal, and how to detach its feed. */
+  owner: symbol | null;
+  release: (() => void) | null;
+}
+
+let pool: PooledTerminal | null = null;
+let mountedTabs = 0;
+
+function createPooledTerminal(container: HTMLElement, isDark: boolean): PooledTerminal {
+  const term = new Terminal({
+    fontSize: 12.5,
+    fontFamily: TERMINAL_FONT,
+    cursorBlink: false,
+    cursorStyle: "bar",
+    cursorInactiveStyle: "none",
+    disableStdin: true,
+    // Exec output is pipe-captured text with bare \n line endings.
+    convertEol: true,
+    scrollback: 8000,
+    theme: terminalTheme(isDark, true),
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  // Opened into the first visible container so xterm measures real cells.
+  term.open(container);
+  try {
+    const webgl = new WebglAddon();
+    // Context loss falls back to the DOM renderer for the pool's lifetime.
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
+  } catch {
+    // DOM renderer stays in place.
+  }
+  return { term, fit, owner: null, release: null };
+}
+
+function disposePool(): void {
+  if (!pool) return;
+  const current = pool;
+  pool = null;
+  current.release?.();
+  current.term.dispose();
+}
+
+function safeFit(fit: FitAddon): void {
+  try {
+    fit.fit();
+  } catch {
+    // ignore fit races while hidden or mid-dispose
+  }
+}
+
+/**
  * Read-only terminal tab for a command the agent runs through its exec tool
  * (Cursor's "agent terminals"). There is no PTY behind it: the workbench
  * pushes decoded output chunks streamed over the main websocket, so the tab
@@ -32,72 +93,64 @@ export default function AgentExecTerminal({
   active: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  const isDarkRef = useRef(isDark);
+  isDarkRef.current = isDark;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !active) return;
 
-    const term = new Terminal({
-      fontSize: 12.5,
-      fontFamily: TERMINAL_FONT,
-      cursorBlink: false,
-      cursorStyle: "bar",
-      cursorInactiveStyle: "none",
-      disableStdin: true,
-      // Exec output is pipe-captured text with bare \n line endings.
-      convertEol: true,
-      scrollback: 8000,
-      theme: terminalTheme(isDark, true),
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(container);
-    paintTerminalViewport(container, isDark);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // DOM renderer stays in place.
+    const owner = Symbol(termId);
+    if (!pool) {
+      pool = createPooledTerminal(container, isDarkRef.current);
+    } else {
+      // Another tab still holding the renderer gives it up first.
+      pool.release?.();
+      const element = pool.term.element;
+      if (element && element.parentElement !== container) container.appendChild(element);
+      pool.term.options.theme = terminalTheme(isDarkRef.current, true);
     }
-    try {
-      fit.fit();
-    } catch {
-      // container may be hidden on first mount
-    }
-    termRef.current = term;
-    fitRef.current = fit;
+    const { term, fit } = pool;
+    paintTerminalViewport(container, isDarkRef.current);
 
+    term.reset();
     const existing = backlog(termId);
     if (existing) term.write(existing);
     const unsubscribe = subscribe(termId, (chunk) => term.write(chunk));
 
     const resizeObserver = new ResizeObserver(() => {
       if (!container.offsetParent) return;
-      try {
-        fit.fit();
-      } catch {
-        // ignore fit races while hidden
-      }
+      safeFit(fit);
     });
     resizeObserver.observe(container);
+    safeFit(fit);
+    const raf = requestAnimationFrame(() => safeFit(fit));
 
-    return () => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       unsubscribe();
-      term.dispose();
-      termRef.current = null;
-      fitRef.current = null;
+      // Detach, never dispose: the next active tab reuses this renderer.
+      const element = term.element;
+      if (element && element.parentElement === container) container.removeChild(element);
+      if (pool && pool.owner === owner) {
+        pool.owner = null;
+        pool.release = null;
+      }
     };
+    pool.owner = owner;
+    pool.release = release;
+    return release;
     // Only the visible command needs a renderer. Backlog replays on selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [termId, subscribe, active]);
 
   useEffect(() => {
-    const term = termRef.current;
-    if (term) {
+    if (active && pool?.owner) {
+      const { term } = pool;
       term.options.theme = terminalTheme(isDark, true);
       try {
         term.refresh(0, Math.max(0, term.rows - 1));
@@ -106,21 +159,17 @@ export default function AgentExecTerminal({
       }
     }
     paintTerminalViewport(containerRef.current, isDark);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDark]);
 
+  // Declared after the feed effect so its cleanup runs last on unmount.
   useEffect(() => {
-    if (!active) return;
-    const fit = fitRef.current;
-    if (!fit) return;
-    const raf = requestAnimationFrame(() => {
-      try {
-        fit.fit();
-      } catch {
-        // ignore
-      }
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [active]);
+    mountedTabs += 1;
+    return () => {
+      mountedTabs -= 1;
+      if (mountedTabs === 0) disposePool();
+    };
+  }, []);
 
   return (
     <div
