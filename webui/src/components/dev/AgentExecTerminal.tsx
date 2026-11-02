@@ -26,6 +26,23 @@ interface PooledTerminal {
 
 let pool: PooledTerminal | null = null;
 let mountedTabs = 0;
+let disposeQueued = false;
+/** Active tabs that want the renderer, most recent last. */
+const claimants: { owner: symbol; acquire: () => void }[] = [];
+
+/**
+ * Dispose once the last tab is gone, after the current React commit: a host
+ * that remounts its tab per command (key = term id) and StrictMode's double
+ * mount unmount and mount again in the same flush, and must keep the renderer.
+ */
+function queueDisposeIfUnused(): void {
+  if (disposeQueued) return;
+  disposeQueued = true;
+  queueMicrotask(() => {
+    disposeQueued = false;
+    if (mountedTabs === 0) disposePool();
+  });
+}
 
 function createPooledTerminal(container: HTMLElement, isDark: boolean): PooledTerminal {
   const term = new Terminal({
@@ -101,49 +118,61 @@ export default function AgentExecTerminal({
     if (!container || !active) return;
 
     const owner = Symbol(termId);
-    if (!pool) {
-      pool = createPooledTerminal(container, isDarkRef.current);
-    } else {
-      // Another tab still holding the renderer gives it up first.
-      pool.release?.();
-      const element = pool.term.element;
-      if (element && element.parentElement !== container) container.appendChild(element);
-      pool.term.options.theme = terminalTheme(isDarkRef.current, true);
-    }
-    const { term, fit } = pool;
-    paintTerminalViewport(container, isDarkRef.current);
-
-    term.reset();
-    const existing = backlog(termId);
-    if (existing) term.write(existing);
-    const unsubscribe = subscribe(termId, (chunk) => term.write(chunk));
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (!container.offsetParent) return;
-      safeFit(fit);
-    });
-    resizeObserver.observe(container);
-    safeFit(fit);
-    const raf = requestAnimationFrame(() => safeFit(fit));
-
-    let released = false;
-    const release = () => {
-      if (released) return;
-      released = true;
-      cancelAnimationFrame(raf);
-      resizeObserver.disconnect();
-      unsubscribe();
-      // Detach, never dispose: the next active tab reuses this renderer.
-      const element = term.element;
-      if (element && element.parentElement === container) container.removeChild(element);
-      if (pool && pool.owner === owner) {
-        pool.owner = null;
-        pool.release = null;
+    const acquire = () => {
+      if (!pool) {
+        pool = createPooledTerminal(container, isDarkRef.current);
+      } else {
+        // Another tab still holding the renderer gives it up first.
+        pool.release?.();
+        const element = pool.term.element;
+        if (element && element.parentElement !== container) container.appendChild(element);
+        pool.term.options.theme = terminalTheme(isDarkRef.current, true);
       }
+      const current = pool;
+      const { term, fit } = current;
+      paintTerminalViewport(container, isDarkRef.current);
+
+      term.reset();
+      const existing = backlog(termId);
+      if (existing) term.write(existing);
+      const unsubscribe = subscribe(termId, (chunk) => term.write(chunk));
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (!container.offsetParent) return;
+        safeFit(fit);
+      });
+      resizeObserver.observe(container);
+      safeFit(fit);
+      const raf = requestAnimationFrame(() => safeFit(fit));
+
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        cancelAnimationFrame(raf);
+        resizeObserver.disconnect();
+        unsubscribe();
+        // Detach, never dispose: the next active tab reuses this renderer.
+        const element = term.element;
+        if (element && element.parentElement === container) container.removeChild(element);
+        if (current.owner === owner) {
+          current.owner = null;
+          current.release = null;
+        }
+      };
+      current.owner = owner;
+      current.release = release;
     };
-    pool.owner = owner;
-    pool.release = release;
-    return release;
+    claimants.push({ owner, acquire });
+    acquire();
+    return () => {
+      const index = claimants.findIndex((c) => c.owner === owner);
+      if (index >= 0) claimants.splice(index, 1);
+      if (pool?.owner !== owner) return;
+      pool.release?.();
+      // Another host still shows an agent terminal: hand the renderer back.
+      claimants[claimants.length - 1]?.acquire();
+    };
     // Only the visible command needs a renderer. Backlog replays on selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [termId, subscribe, active]);
@@ -167,7 +196,7 @@ export default function AgentExecTerminal({
     mountedTabs += 1;
     return () => {
       mountedTabs -= 1;
-      if (mountedTabs === 0) disposePool();
+      if (mountedTabs === 0) queueDisposeIfUnused();
     };
   }, []);
 
