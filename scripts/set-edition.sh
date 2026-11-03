@@ -21,14 +21,15 @@ file="$root/navin/edition.py"
 [ -f "$file" ] || { echo "set-edition: $file not found" >&2; exit 1; }
 
 # grep -c prints 0 and exits 1 when nothing matches: the count is checked next.
-count="$(grep -c '^EDITION = "[a-z]*"$' "$file" || true)"
+# No $ anchor: a Windows checkout (core.autocrlf) ends the line with \r, kept as is.
+count="$(grep -c '^EDITION = "[a-z]*"' "$file" || true)"
 if [ "$count" != 1 ]; then
     echo "set-edition: expected one EDITION line in $file, found $count" >&2
     exit 1
 fi
 
 tmp="$file.tmp.$$"
-sed "s/^EDITION = \"[a-z]*\"\$/EDITION = \"$edition\"/" "$file" > "$tmp"
+sed "s/^EDITION = \"[a-z]*\"/EDITION = \"$edition\"/" "$file" > "$tmp"
 mv "$tmp" "$file"
 
 # The desktop shell's copy (read by desktop/src-tauri/build.rs). The public

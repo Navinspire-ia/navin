@@ -70,6 +70,16 @@ def test_set_edition_without_a_desktop_shell(tmp_path: Path) -> None:
     assert _stamped(tree) == "sm" and not (tree / "desktop").exists()
 
 
+def test_set_edition_works_on_a_windows_checkout(tmp_path: Path) -> None:
+    # actions/checkout on Windows ends lines with CRLF (core.autocrlf): the stamp must still apply.
+    tree = _script_tree(tmp_path, desktop=False)
+    source = tree / "navin" / "edition.py"
+    source.write_bytes(source.read_bytes().replace(b"\n", b"\r\n"))
+    stamped = _set(tree, "sm")
+    assert stamped.returncode == 0, stamped.stderr
+    assert b'\nEDITION = "sm"\r\n' in source.read_bytes()
+
+
 def test_navin_sm_never_offers_an_update(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NAVIN_UPDATE_BASE_URL", "https://updates.example")
     assert service._update_config()[0] == "https://updates.example"
