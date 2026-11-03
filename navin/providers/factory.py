@@ -78,6 +78,11 @@ def _resolve_backend(
             "Settings > Models, or set agents.defaults.model in config.json."
         )
     provider_name = config.get_provider_name(model, preset=resolved)
+    # An organization that allows its own gateway only refuses every other
+    # provider here, the one place every chat model call goes through.
+    from navin.organization import ensure_provider_allowed
+
+    ensure_provider_allowed(config, provider_name)
     p = config.get_provider(model, preset=resolved)
     spec = find_by_name(provider_name) if provider_name else None
     if provider_name and not spec and p:
@@ -121,6 +126,9 @@ def _resolve_backend(
     api_key = unlocked_secret(p.api_key if p else None) or config.get_api_key(
         model, preset=resolved
     )
+    from navin.organization import ensure_gateway_key
+
+    ensure_gateway_key(config, provider_name, api_key)
 
     if backend == "openai_compat" and not model.startswith("bedrock/"):
         needs_key = not api_key
@@ -239,6 +247,7 @@ def _make_provider_core(
             api_type=p.api_type if p and provider_name == "openai" else "auto",
             extra_query=p.extra_query if p else None,
             proxy=p.proxy if p else None,
+            ca_bundle=p.ca_bundle if p else None,
         )
 
     provider.generation = resolved.to_generation_settings()
@@ -590,6 +599,7 @@ def provider_signature(
         resolved.reasoning_effort,
         resolved.context_window_tokens,
         getattr(p, "proxy", None) if p else None,
+        getattr(p, "ca_bundle", None) if p else None,
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
     )
 

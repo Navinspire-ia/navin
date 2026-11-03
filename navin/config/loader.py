@@ -60,6 +60,9 @@ def load_config(config_path: Path | None = None) -> Config:
         _schema_refs_ready = True
 
     path = config_path or get_config_path()
+    from navin import organization
+
+    org = organization.load(path.parent)
 
     config = Config()
     if path.exists():
@@ -69,6 +72,7 @@ def load_config(config_path: Path | None = None) -> Config:
             rewrite_secrets = has_plaintext_secrets(data)
             data = decrypt_config_data(data, path)
             data = _migrate_config(data)
+            organization.prepare_config_data(data, org)
             config = _validate_readable(data, path)
         except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             raise ValueError(f"Failed to load config from {path}: {e}") from e
@@ -78,7 +82,12 @@ def load_config(config_path: Path | None = None) -> Config:
                 save_config(config, path)
             except OSError as exc:
                 logger.warning("could not encrypt secrets in {}: {}", path, exc)
+    elif org is not None and org.usable:
+        data = {}
+        organization.prepare_config_data(data, org)
+        config = Config.model_validate(data)
 
+    organization.apply_choices(config, org)
     _remember_config_source(config, path)
     _apply_ssrf_whitelist(config)
     return config
@@ -148,9 +157,11 @@ def _validate_readable(data: Any, path: Path) -> Config:
 
 
 _cache_lock = threading.RLock()
-#: str(path) -> (file signature, loader used, shared Config, bytes or None).
-#: See load_config_cached.
-_config_cache: dict[str, tuple[tuple[int, int, int, int] | None, Any, Config, bytes | None]] = {}
+#: str(path) -> (file signature, organization signature, loader used, shared
+#: Config, bytes or None). See load_config_cached.
+_config_cache: dict[
+    str, tuple[tuple[int, int, int, int] | None, tuple[object, ...], Any, Config, bytes | None]
+] = {}
 # A file modified less than this before it was read has a "racy" signature
 # (git's racy-clean problem): a same-size rewrite within the same filesystem
 # timestamp tick (a few ms on ext4, 2 s on FAT and some network shares) keeps
@@ -201,21 +212,26 @@ def load_config_cached(config_path: Path | None = None) -> Config:
     # Signed before reading: a write racing the parse leaves a signature that
     # no longer matches, so the next call re-reads instead of keeping stale data.
     signature = _file_signature(path)
+    # The organization file (deployed by IT or imported) layers models and a
+    # gateway on these settings: a change there is a change of the settings.
+    from navin import organization
+
+    org_signature = organization.signature(path.parent)
     now_ns = time.time_ns()
     with _cache_lock:
         hit = _config_cache.get(key)
     # The loader identity is part of the key so a patched ``load_config``
     # (tests, embedding hosts) is never bypassed by an entry it did not make.
     loader = load_config
-    if hit is not None and hit[0] == signature and hit[1] is loader:
-        cached_bytes = hit[3]
+    if hit is not None and hit[0] == signature and hit[1] == org_signature and hit[2] is loader:
+        cached_bytes = hit[4]
         if cached_bytes is None or _read_bytes(path) == cached_bytes:
-            config = hit[2]
+            config = hit[3]
             if cached_bytes is not None and not _racy(signature, now_ns):
                 # Same bytes after the tick: any later edit gets a new mtime.
                 with _cache_lock:
                     if _config_cache.get(key) is hit:
-                        _config_cache[key] = (signature, loader, config, None)
+                        _config_cache[key] = (signature, org_signature, loader, config, None)
             # load_config re-applies the SSRF policy on every load; keep that.
             _apply_ssrf_whitelist(config)
             return config
@@ -225,7 +241,7 @@ def load_config_cached(config_path: Path | None = None) -> Config:
     # Same call shape as the callers used to make (patched loaders may take none).
     config = loader(config_path) if config_path is not None else loader()
     with _cache_lock:
-        _config_cache[key] = (signature, loader, config, raw)
+        _config_cache[key] = (signature, org_signature, loader, config, raw)
     return config
 
 
@@ -371,6 +387,9 @@ def save_config(
     """
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    from navin import organization
+
+    org = organization.load(path.parent)
 
     with FileLock(str(path) + ".lock", timeout=15, mode=0o600):
         current = config
@@ -378,7 +397,9 @@ def save_config(
             # Read directly: load_config may migrate plaintext secrets by saving,
             # which would try to acquire this same interprocess lock again.
             raw = json.loads(path.read_text(encoding="utf-8"))
-            latest = Config.model_validate(_migrate_config(decrypt_config_data(raw, path)))
+            latest_data = _migrate_config(decrypt_config_data(raw, path))
+            organization.prepare_config_data(latest_data, org)
+            latest = Config.model_validate(latest_data)
             edited_values = config.model_dump(mode="json")
             latest_values = latest.model_dump(mode="json")
             if preserve_concurrent:
@@ -387,6 +408,8 @@ def save_config(
                 merged = _merge_config_edits(config._loaded_values, edited_values, latest_values)
             current = Config.model_validate(merged)
         data = _configured_values(current)
+        # What the organization provides never lands in the user's file.
+        organization.strip_config_dump(data, current, org, overrides=config._organization_overrides)
         if current.providers.openai_codex.proxy is not None:
             data.setdefault("providers", {})["openaiCodex"] = {
                 "proxy": current.providers.openai_codex.proxy,
@@ -412,6 +435,9 @@ def save_config(
             pass
         if current is not config:
             config.__dict__.update(current.__dict__)
+        # The merge took the file's values for untouched fields: the
+        # organization's choices go back on the settings in memory.
+        organization.apply_choices(config, org)
         _remember_config_source(config, path)
 
 

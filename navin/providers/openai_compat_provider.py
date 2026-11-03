@@ -56,6 +56,7 @@ from navin.providers.reasoning_control import (
     suggested_floor,
 )
 from navin.providers.session_affinity import current_session_id
+from navin.utils.tls import trust_with_extra_ca
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI as AsyncOpenAIType
@@ -632,6 +633,7 @@ class OpenAICompatProvider(LLMProvider):
         api_type: str = "auto",
         extra_query: dict[str, str] | None = None,
         proxy: str | None = None,
+        ca_bundle: str | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
@@ -641,6 +643,7 @@ class OpenAICompatProvider(LLMProvider):
         self._api_type = api_type if spec and spec.name == "openai" else "auto"
         self._extra_query = extra_query or {}
         self._proxy = proxy or None
+        self._ca_bundle = ca_bundle or None
 
         if api_key and spec and spec.env_key:
             self._setup_env(api_key, api_base)
@@ -712,6 +715,8 @@ class OpenAICompatProvider(LLMProvider):
             pool=30.0,
         )
         http_client: httpx.AsyncClient | None = None
+        # A gateway behind an internal PKI: its CA on top of the public roots.
+        verify = trust_with_extra_ca(self._ca_bundle)
         # A 200-worker wave shares this client with its parent and background
         # requests. Bound every transport consistently, including proxy pools.
         pool_limits = dict(max_connections=256, max_keepalive_connections=32)
@@ -722,6 +727,7 @@ class OpenAICompatProvider(LLMProvider):
                 proxy=self._proxy,
                 trust_env=False,
                 follow_redirects=True,
+                verify=verify,
             )
         elif self._is_local:
             # Local model servers (Ollama, llama.cpp, vLLM) often close idle
@@ -742,7 +748,7 @@ class OpenAICompatProvider(LLMProvider):
             http_client = httpx.AsyncClient(
                 limits=_local_limits,
                 timeout=request_timeout,
-                transport=httpx.AsyncHTTPTransport(proxy=None, limits=_local_limits),
+                transport=httpx.AsyncHTTPTransport(proxy=None, limits=_local_limits, verify=verify),
             )
         else:
             # Cloud providers: reuse a socket only within one turn. A stale
@@ -755,6 +761,7 @@ class OpenAICompatProvider(LLMProvider):
                 limits=_cloud_limits,
                 timeout=request_timeout,
                 follow_redirects=True,
+                verify=verify,
             )
         self._client = AsyncOpenAI(
             api_key=self._api_key_for_client,

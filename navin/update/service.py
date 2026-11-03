@@ -33,7 +33,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from loguru import logger
 from packaging.version import InvalidVersion, Version
 
-from navin import __version__
+from navin import __version__, edition
 from navin.bus.notify import notify
 from navin.config.loader import load_config
 from navin.process_runtime import child_environment
@@ -42,6 +42,10 @@ from navin.update import policy as update_policy
 from navin.utils.proc import detached_no_window_kwargs, no_window_kwargs
 
 _CACHE_TTL_S = 6 * 60 * 60
+# Navin SM (navin.edition): the organization distributes the versions.
+ORGANIZATION_UPDATES_REASON = (
+    "Updates of Navin SM are distributed by your organization. Ask your IT team for a newer version."
+)
 _MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 _STATE_LOCK = threading.Lock()
 _OPERATION_LOCK = threading.Lock()
@@ -417,6 +421,9 @@ def _public_key() -> Ed25519PublicKey:
 
 def _update_config() -> tuple[str, str, str]:
     config = load_config().updates
+    if not edition.self_updates():
+        # No update server at all, whatever the settings or the environment say.
+        return "", config.channel, config.skipped_version.strip()
     bundled_url_path = Path(__file__).with_name("default_base_url.txt")
     bundled_url = (
         bundled_url_path.read_text(encoding="utf-8").strip()
@@ -623,7 +630,8 @@ def update_policy_for(version: str) -> dict[str, Any]:
     """
     base_url, channel, _skipped = _update_config()
     if not base_url:
-        return {"allowed": False, "reason": "no update server configured", "mandatory": False}
+        reason = "no update server configured" if edition.self_updates() else ORGANIZATION_UPDATES_REASON
+        return {"allowed": False, "reason": reason, "mandatory": False}
     if not load_config().updates.auto_install:
         # Same switch as the Navin engine: off, the user installs from the card.
         return {
@@ -657,7 +665,11 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
             "currentVersion": __version__,
             "available": False,
             "configured": False,
-            "reason": "This build has no update server configured. Download the latest installer.",
+            "reason": (
+                "This build has no update server configured. Download the latest installer."
+                if edition.self_updates()
+                else ORGANIZATION_UPDATES_REASON
+            ),
             "installKind": kind,
             "channel": channel,
         }

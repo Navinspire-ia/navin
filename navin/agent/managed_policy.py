@@ -192,6 +192,11 @@ def load() -> ManagedPolicy:
 
 def tool_denied(tool_name: str) -> str | None:
     """Refusal reason when the organization forbids *tool_name*, else None."""
+    from navin.organization import tool_refusal
+
+    gateway_only = tool_refusal(tool_name)
+    if gateway_only:
+        return gateway_only
     policy = load()
     if not policy.active or policy.tools.is_allowed(tool_name):
         return None

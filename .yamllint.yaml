@@ -1,0 +1,12 @@
+# YAML style of this repository (yamllint).
+#
+# yamllint's defaults, except the line length: GitHub workflows pin every
+# action by its full commit SHA plus a version comment and carry their shell
+# steps verbatim, which does not fit in 80 columns (the os-build pipeline that
+# builds Navin is written the same way).
+---
+extends: default
+
+rules:
+  line-length:
+    max: 180

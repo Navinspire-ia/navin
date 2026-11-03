@@ -554,6 +554,8 @@ class ProviderConfig(Base):
     extra_body: dict[str, Any] | None = None  # Extra provider request fields; shape depends on provider/API surface
     extra_query: dict[str, str] | None = None  # Extra query params (e.g. api-version for Azure-style gateways)
     proxy: str | None = None  # OpenAI-compatible/Codex HTTP proxy URL
+    # PEM file trusted on top of the public roots (a gateway behind an internal PKI).
+    ca_bundle: str | None = None
     thinking_style: str | None = None  # Thinking/reasoning style for custom providers
     # Native connection profile (Chinese vendors and dual-host APIs).
     # Distinct from BedrockProviderConfig.region, which is an AWS region.
@@ -1452,6 +1454,10 @@ class Config(BaseSettings):
     # Used only to merge edits when a background request holds an older config.
     _loaded_path: str | None = PrivateAttr(default=None)
     _loaded_values: dict[str, Any] | None = PrivateAttr(default=None)
+    # The organization layered on these settings at load (navin.organization)
+    # and the choices it made, so saving puts the user's own values back.
+    _organization: Any = PrivateAttr(default=None)
+    _organization_overrides: list[tuple[str, str, Any, Any]] | None = PrivateAttr(default=None)
 
     # One-shot settings migrations already applied to this file (see
     # loader._migrate_config), so a value chosen afterwards is never reset again.

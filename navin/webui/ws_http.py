@@ -2981,6 +2981,32 @@ class GatewayHTTPHandler:
         except (ValueError, WebUIFilePreviewError):
             return _http_error(400, "invalid account payload")
 
+    async def _handle_organization(self, request: WsRequest) -> Response:
+        """Settings > Organization. A key goes in; only statuses and hints come back."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui.organization_api import OrganizationApiError, handle_organization_action
+
+        query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
+        action = (query.get("action") or "status").strip()
+        try:
+            try:
+                raw = file_body_from_headers(request.headers) or "{}"
+            except WebUIFilePreviewError as exc:
+                if exc.message != "missing file content":
+                    raise
+                raw = "{}"
+            body = json.loads(raw)
+        except (ValueError, WebUIFilePreviewError):
+            return _http_error(400, "invalid organization payload")
+        if not isinstance(body, dict):
+            return _http_error(400, "invalid organization payload")
+        try:
+            payload = await asyncio.to_thread(handle_organization_action, action, body)
+        except OrganizationApiError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
+
     async def _handle_connectors(self, request: WsRequest) -> Response:
         """Settings > Channels > Connectors. Values go in; only statuses come back."""
         if not self.check_api_token(request):
@@ -4563,6 +4589,8 @@ class GatewayHTTPHandler:
             return await self._handle_sessions_list(request)
         if got == "/api/connectors":
             return await self._handle_connectors(request)
+        if got == "/api/organization":
+            return await self._handle_organization(request)
         if got == "/api/commands":
             return await self._handle_commands(request)
         if got == "/api/workspaces":

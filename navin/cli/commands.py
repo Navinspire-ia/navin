@@ -3681,6 +3681,14 @@ app.add_typer(plugins_app, name="plugins")
 app.add_typer(create_sessions_app(console=console), name="sessions")
 # Infrastructure orchestrator (same engine as the agent tool and the Ops panel).
 app.add_typer(create_infra_app(console=console), name="infra")
+# The organization's model gateway (Navin SM), same actions as Settings > Organization.
+def _organization_app() -> typer.Typer:
+    from navin.cli.organization import create_org_app
+
+    return create_org_app(console=console)
+
+
+app.add_typer(_organization_app(), name="org")
 
 
 @plugins_app.command("list")

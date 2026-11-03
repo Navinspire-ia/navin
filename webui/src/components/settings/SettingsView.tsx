@@ -20,6 +20,7 @@ import {
   ArrowUpDown,
   Bot,
   Brain,
+  Building2,
   Check,
   CircleAlert,
   CircleUserRound,
@@ -122,6 +123,7 @@ import {
 import { ChannelSetupPanel } from "@/components/settings/channels/ChannelSetupPanel";
 import { Button } from "@/components/ui/button";
 import { TeamSettings } from "@/components/settings/TeamSettings";
+import { OrganizationSettings } from "@/components/settings/OrganizationSettings";
 import { SitesSettings } from "@/components/settings/SitesSettings";
 import {
   DropdownMenu,
@@ -276,6 +278,7 @@ export type SettingsSectionKey =
   | "appearance"
   | "studio"
   | "providers"
+  | "organization"
   | "models"
   | "team"
   | "image"
@@ -470,7 +473,8 @@ const RETIRED_LLM_PROVIDERS = new Set([
 ]);
 
 function hiddenSettingsProvider(name: string): boolean {
-  return RETIRED_LLM_PROVIDERS.has(name);
+  // The organization gateway is set up in Settings > Organization, from its file.
+  return RETIRED_LLM_PROVIDERS.has(name) || name === "organization";
 }
 
 const PROVIDER_DISPLAY_ORDER = new Map(
@@ -2850,6 +2854,8 @@ export function SettingsView({
             }}
           />
         );
+      case "organization":
+        return <OrganizationSettings token={token} />;
       case "sites":
         return <SitesSettings token={token} />;
       case "git":
@@ -3089,6 +3095,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { key: "overview", icon: Activity, fallback: "Overview" },
   { key: "account", icon: CircleUserRound, fallback: "Account" },
   { key: "providers", icon: KeyRound, fallback: "Providers" },
+  { key: "organization", icon: Building2, fallback: "Organization" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "team", icon: Users, fallback: "Team" },
   { key: "image", icon: ImageIcon, fallback: "Image" },

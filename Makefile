@@ -1,6 +1,6 @@
 .PHONY: help check doctor install uninstall start stop restart status start-fg start-prod build
 .PHONY: linux appimage appimage-release pacman electron-linux electron-appimage electron-appimage-release electron-dev macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
-.PHONY: publish-forgejo publish-github publish-github-dry publish-remotes
+.PHONY: publish-forgejo publish-github publish-github-dry publish-remotes publish-sm publish-sm-dry
 .PHONY: start-bg stop-bg restart-bg logs logs-clear _ensure_navin set-version
 .PHONY: lint clean clean-logs clean-all clean_python_cache native desktop-parity
 .PHONY: front backend
@@ -123,6 +123,8 @@ help:
 	@echo "    publish-forgejo     Pousser la branche prod vers Forgejo (arbre complet)"
 	@echo "    publish-github-dry  Aperçu de l'arbre public CLI (sans site / desktop / AWS / navin.live)"
 	@echo "    publish-github      Pousser l'arbre filtré vers GitHub main (demande le nom du commit)"
+	@echo "    publish-sm-dry      Aperçu de l'arbre Navin SM (desktop + installeurs, sans site / AWS / navin.live)"
+	@echo "    publish-sm          Pousser l'arbre Navin SM vers Navinspire-ia/navin-sm main (demande le nom du commit)"
 	@echo "    publish-remotes     Afficher / créer les remotes origin + github"
 	@echo ""
 	@echo "  Nettoyage:"
@@ -248,6 +250,12 @@ publish-github-dry:
 
 publish-github:
 	@bash scripts/publish-git.sh github
+
+publish-sm-dry:
+	@bash scripts/publish-git.sh sm --dry-run
+
+publish-sm:
+	@bash scripts/publish-git.sh sm
 
 # Publie les artefacts de os/ vers S3 sous v<VERSION>/ :
 # - même version + même nom : le fichier est écrasé sur S3 ;

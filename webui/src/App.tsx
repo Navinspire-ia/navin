@@ -445,6 +445,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "appearance",
   "studio",
   "providers",
+  "organization",
   "models",
   "team",
   "image",

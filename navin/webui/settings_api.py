@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from navin import __version__
+from navin import __version__, organization
 from navin.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 from navin.audio.transcription import resolve_transcription_config
@@ -2280,6 +2280,8 @@ def settings_payload(
         pass
     defaults = config.agents.defaults
     active_preset_name = defaults.model_preset or "default"
+    org_in_force = organization.for_config(config)
+    org_exclusive = bool(org_in_force and org_in_force.exclusive)
     try:
         effective_preset = config.resolve_preset()
     except Exception:
@@ -2305,13 +2307,17 @@ def settings_payload(
         if not is_retired_llm_provider(str(row.get("name") or ""))
     ]
     for provider_key, provider_config in _dynamic_provider_items(config):
-        providers.append(
-            _provider_settings_row(
-                provider_key,
-                create_dynamic_spec(provider_key, thinking_style=(provider_config.thinking_style or "")),
-                provider_config,
-            )
+        row = _provider_settings_row(
+            provider_key,
+            create_dynamic_spec(provider_key, thinking_style=(provider_config.thinking_style or "")),
+            provider_config,
         )
+        if provider_key == organization.PROVIDER_NAME:
+            # Set up in Settings > Organization, not in the providers list.
+            org = organization.for_config(config)
+            row["label"] = org.display_name if org else row["label"]
+            row["organization_managed"] = True
+        providers.append(row)
 
     search_config = config.tools.web.search
     image_config = config.tools.image_generation
@@ -2428,7 +2434,8 @@ def settings_payload(
             ),
             "locked": False,
             "source": "managed" if defaults.provider == "navin" else "byok",
-            "enabled": True,
+            "enabled": not org_exclusive,
+            "organization_blocked": org_exclusive,
             "budget_allowed": _budget_allowed(
                 defaults.provider, defaults.model, "text"
             ),
@@ -2444,9 +2451,13 @@ def settings_payload(
         if is_navin and not live_account:
             continue
         routing_only = name in TIERS
-        # Only the router aliases (main / expert / …) stay identity-locked.
-        # Imported and catalog chat rows can change model (e.g. Sonnet 5 → 4.5).
-        locked = routing_only
+        from_org = name.startswith(organization.PRESET_PREFIX)
+        # Only the router aliases (main / expert / …) and the organization's
+        # models stay identity-locked. Imported and catalog chat rows can
+        # change model (e.g. Sonnet 5 → 4.5).
+        locked = routing_only or from_org
+        # An organization that allows its gateway only: other models leave the picker.
+        org_blocked = org_exclusive and (preset.provider or "").strip().lower() != organization.PROVIDER_NAME
         modality = getattr(preset, "modality", None) or "text"
         model_presets.append(
             {
@@ -2469,8 +2480,9 @@ def settings_payload(
                 ),
                 "locked": locked,
                 "routing_only": routing_only,
-                "source": "managed" if is_navin or routing_only else "byok",
-                "enabled": bool(preset.enabled),
+                "source": "organization" if from_org else "managed" if is_navin or routing_only else "byok",
+                "enabled": bool(preset.enabled) and not org_blocked,
+                "organization_blocked": org_blocked,
                 "budget_allowed": _budget_allowed(
                     preset.provider, preset.model, modality
                 ),
@@ -3583,6 +3595,12 @@ def update_provider_settings(query: QueryParams) -> dict[str, Any]:
         raise WebUISettingsError("provider is required")
 
     config = load_config()
+    if provider_name.replace("-", "_") == organization.PROVIDER_NAME and organization.for_config(config):
+        raise WebUISettingsError(
+            "the organization gateway comes from your organization file: "
+            "enter your personal key in Settings > Organization",
+            status=409,
+        )
     if provider_name.replace("-", "_") == "navin" and getattr(
         config.license, "managed_api_key", None
     ):

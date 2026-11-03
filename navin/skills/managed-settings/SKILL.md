@@ -252,3 +252,6 @@ floor, teams and individuals build on top of it.
 - `references/presets.md`: strict, lax, bash-sandbox and regulated-data files.
 - `references/deployment.md`: per-OS paths, permissions, macOS profiles,
   Windows policy and MDM notes.
+- `references/organization-gateway.md`: the `organization` and `gateway`
+  keys (Navin SM): the organization's LiteLLM proxy and models, exclusive
+  mode, personal or shared key. Navin Manager exports this file.
