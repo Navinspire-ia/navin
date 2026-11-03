@@ -215,13 +215,24 @@ class CliLiveShare:
         self,
         *,
         chat_id: str,
-        session_key: str,
+        session_key: str | Callable[[], str],
         sessions_workspace: Path,
         project_root: Path | None,
         on_guest_message: Callable[[str, dict[str, Any]], Awaitable[None] | None],
         store_path: Path | None = None,
         manager_factory: Any = None,
+        model: Callable[[], str] | None = None,
+        history: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
+        """``session_key`` and ``model`` may be read live from the CLI runtime:
+        a chat switched to (``/new``, the Sessions picker) keeps the link, and
+        the guests' history, prompts, model and meter follow it, like its events.
+
+        ``history`` returns the CLI chat's messages (the runtime's
+        ``history_snapshot``). The CLI writes no display transcript, so the
+        guests' pages are built from them; without it a guest of a CLI chat
+        opened on an empty conversation.
+        """
         from navin.share.host import ShareManager
 
         if store_path is None:
@@ -232,12 +243,22 @@ class CliLiveShare:
         self.channel = CliShareChannel(chat_id=chat_id, on_guest_message=on_guest_message)
         factory = manager_factory or ShareManager
         root = Path(project_root) if project_root else None
+        current_key = session_key if callable(session_key) else (lambda: session_key)
+        thread_for = None
+        if history is not None:
+            def thread_for(_chat_id: str, limit: int, before: str | None) -> Any:
+                from navin.webui.transcript import session_messages_thread_page
+
+                messages = [m for m in history() if isinstance(m, dict)]
+                return session_messages_thread_page(current_key(), messages, limit=limit, before=before)
         self.manager = factory(
             self.channel,
             store_path=Path(store_path),
             sessions_workspace=Path(sessions_workspace),
             project_root_for=lambda _chat_id: root,
-            session_key_for=lambda _chat_id: session_key,
+            session_key_for=lambda _chat_id: current_key(),
+            model_for=(lambda _chat_id: model()) if model is not None else None,
+            thread_for=thread_for,
         )
         self.share: dict[str, Any] | None = None
 

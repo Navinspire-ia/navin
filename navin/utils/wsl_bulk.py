@@ -21,6 +21,8 @@ import zlib
 from collections.abc import Iterable
 from pathlib import Path
 
+from loguru import logger
+
 from navin.utils import wsl, wsl_health
 from navin.utils.proc import no_window_kwargs
 
@@ -45,6 +47,13 @@ def location_for(root: Path | str, *, platform: str | None = None) -> wsl.WslLoc
 
 def _run(location: wsl.WslLocation, script: str, payload: bytes) -> bytes | None:
     distro = wsl.resolve_distro(location.distro) or location.distro
+    refused = wsl_health.background_refuse_reason(distro)
+    if refused is not None:
+        # Background work only (index, change watcher, runbook layout): while
+        # WSL is down or just hung a liveness check, the launch would sit out
+        # its whole 120 s timeout. Callers take their per-file path instead.
+        logger.debug("WSL bulk call skipped: {}", refused)
+        return None
     try:
         out = subprocess.run(  # noqa: S603
             [*wsl.command_prefix(distro, location.path), "sh", "-c", script],

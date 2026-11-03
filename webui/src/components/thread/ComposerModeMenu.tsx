@@ -294,6 +294,7 @@ export function ComposerModeMenu({
   disabled,
   isHero,
   compact = false,
+  modes,
   onChange,
 }: {
   mode: ComposerTurnMode;
@@ -301,6 +302,8 @@ export function ComposerModeMenu({
   isHero: boolean;
   /** Narrow side-panel chat: denser control sizing. */
   compact?: boolean;
+  /** Only these modes are offered (a live-share guest has no Montage). */
+  modes?: readonly ComposerTurnMode[];
   onChange: (mode: ComposerTurnMode) => void;
 }) {
   const { t } = useTranslation();
@@ -348,7 +351,7 @@ export function ComposerModeMenu({
         sideOffset={6}
         className="min-w-[8.5rem] p-1"
       >
-        <ComposerModeItems mode={mode} onChange={onChange} />
+        <ComposerModeItems mode={mode} modes={modes} onChange={onChange} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -356,15 +359,21 @@ export function ComposerModeMenu({
 
 function ComposerModeItems({
   mode,
+  modes,
   onChange,
 }: {
   mode: ComposerTurnMode;
+  modes?: readonly ComposerTurnMode[];
   onChange: (mode: ComposerTurnMode) => void;
 }) {
   const { t } = useTranslation();
+  const items = modes ? MODE_ITEMS.filter((item) => modes.includes(item.mode)) : MODE_ITEMS;
+  // Ask and Agent first, then the workflows, as on the host.
+  const primary = items.filter((item) => item.mode === "ask" || item.mode === "agent");
+  const workflows = items.filter((item) => item.mode !== "ask" && item.mode !== "agent");
   return (
     <>
-      {MODE_ITEMS.slice(0, 2).map((item) => (
+      {primary.map((item) => (
         <ModeItem
           key={item.mode}
           icon={<item.icon className="h-3.5 w-3.5" />}
@@ -374,8 +383,8 @@ function ComposerModeItems({
           onSelect={() => onChange(item.mode)}
         />
       ))}
-      <DropdownMenuSeparator className="my-1" />
-      {MODE_ITEMS.slice(2).map((item) => (
+      {primary.length && workflows.length ? <DropdownMenuSeparator className="my-1" /> : null}
+      {workflows.map((item) => (
         <ModeItem
           key={item.mode}
           icon={<item.icon className="h-3.5 w-3.5" />}

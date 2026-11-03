@@ -49,5 +49,49 @@ class ShareUsageContextTest(unittest.TestCase):
         self.assertEqual(usage["model"], "")
 
 
+class ShareSelectedModelTest(unittest.TestCase):
+    """The guest sees the model the host picked, not the one of the last turn."""
+
+    _session = ShareUsageContextTest._session
+
+    def setUp(self) -> None:
+        from navin.config.loader import get_config_path, save_config, set_config_path
+        from navin.config.schema import Config, ModelPresetConfig
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        previous = get_config_path()
+        self.addCleanup(set_config_path, previous)
+        set_config_path(Path(tmp.name) / "config.json")
+        save_config(Config(model_presets={
+            "claude-opus-5-5": ModelPresetConfig(model="anthropic/claude-opus-5.5"),
+        }))
+
+    def _switched(self, pin: str) -> Path:
+        # The last turn ran on Sonnet, then the host picked another model.
+        return self._session({
+            "_last_model_preset": pin,
+            LAST_CONTEXT_USAGE_KEY: {
+                "prompt_tokens": 264_000, "context_window": 1_000_000, "model": "anthropic/claude-sonnet-5.5",
+            },
+        })
+
+    def test_the_pick_wins_over_the_last_turn(self) -> None:
+        context = session_context(self._switched("claude-opus-5-5"), None)
+        self.assertEqual(context["usage"]["model"], "anthropic/claude-opus-5.5")
+        self.assertEqual(context["conversation"]["model"], "anthropic/claude-opus-5.5")
+
+    def test_a_deleted_or_auto_pick_keeps_the_last_turn(self) -> None:
+        for pin in ("gone-preset", "auto"):
+            with self.subTest(pin=pin):
+                usage = session_context(self._switched(pin), None)["usage"]
+                self.assertEqual(usage["model"], "anthropic/claude-sonnet-5.5")
+
+    def test_the_model_the_host_runs_now_wins(self) -> None:
+        context = session_context(self._switched("auto"), None, "openai/gpt-6-luna")
+        self.assertEqual(context["usage"]["model"], "openai/gpt-6-luna")
+        self.assertEqual(context["conversation"]["model"], "openai/gpt-6-luna")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -289,6 +289,9 @@ class TeamMessageEvent(OutboundEvent):
     task_id: str | None = None
     status: str | None = None
     ts: float = 0.0
+    # The whole text when ``content`` (the journal's copy) had to be clipped:
+    # a teammate's report shown in the chat is never cut.
+    full_text: str = ""
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import copy
 import json
 import time
 from types import SimpleNamespace
@@ -120,7 +121,7 @@ def test_a_saved_team_gets_the_new_tools_on_load():
         ],
     }
     collab = CollabConfig(**saved)
-    assert collab.tools_version == COLLAB_TOOLS_VERSION == 4
+    assert collab.tools_version == COLLAB_TOOLS_VERSION == 5
     by_name = {member.name: list(member.tools) for member in collab.members}
     assert {"read_file", "my_plugin_tool", "mobile", "appfactory"} <= set(by_name["Mark"])
     assert "infra" not in by_name["Mark"]
@@ -318,6 +319,129 @@ def test_settings_save_validates_and_resets_the_team(tmp_path, monkeypatch):
         assert reset["collab"]["members"][1]["name"] == "Mark" and reset["collab"]["enabled"]
     finally:
         set_config_path(None)
+
+
+def _webp(size: int = 64) -> bytes:
+    return b"RIFF" + (size + 4).to_bytes(4, "little") + b"WEBPVP8 " + b"\0" * size
+
+
+def test_a_teammate_photo_gender_and_voice_are_saved_and_shown(tmp_path, monkeypatch):
+    """Settings > Team: a photo is kept beside the config (the team only holds
+    a marker), sent once with the team, and dropped when it is removed."""
+    from navin.collab.photos import photos_dir
+    from navin.collab.team import member_identity
+    from navin.config.loader import load_config, set_config_path
+    from navin.webui import collab_api
+    from navin.webui.settings_api import WebUISettingsError
+
+    path = tmp_path / "config.json"
+    path.write_text("{}", encoding="utf-8")
+    set_config_path(path)
+    monkeypatch.setattr(collab_api, "_skills_catalog", lambda workspace: [])
+    try:
+        payload = collab_api.collab_payload()
+        assert payload["photos"] == {} and payload["catalog"]["genders"] == ["female", "male"]
+        members = payload["collab"]["members"]
+        assert [(m["name"], m["gender"]) for m in members[:3]] == [
+            ("Michel", "male"), ("Mark", "male"), ("Salma", "female"),
+        ]
+        picture = "data:image/webp;base64," + base64.b64encode(_webp()).decode()
+        members[1].update(photo=picture, voice="Remi")
+        saved = collab_api.update_collab({"members": members})
+        mark = saved["collab"]["members"][1]
+        assert mark["photo"].startswith("custom:") and mark["voice"] == "Remi"
+        assert saved["photos"] == {"mark": picture}
+        assert "base64" not in path.read_text(encoding="utf-8")  # the config keeps the marker only
+        identity = member_identity(load_config().collab.members[1])
+        assert (identity["photo"], identity["gender"], identity["voice"]) == (mark["photo"], "male", "Remi")
+
+        # Saved back as it came (marker, no picture): the photo stays.
+        again = collab_api.update_collab({"members": saved["collab"]["members"]})
+        assert again["photos"] == {"mark": picture}
+
+        # Not a picture, too big, a bad voice: refused, nothing changes.
+        for bad, match in (
+            ("data:image/png;base64," + base64.b64encode(b"<svg onload=x>").decode(), "PNG, JPEG or WebP"),
+            ("data:image/webp;base64," + base64.b64encode(_webp(300 * 1024)).decode(), "256 KB"),
+        ):
+            members = copy.deepcopy(again["collab"]["members"])
+            members[2]["photo"] = bad
+            with pytest.raises(WebUISettingsError, match=match):
+                collab_api.update_collab({"members": members})
+        members = copy.deepcopy(again["collab"]["members"])
+        members[2]["voice"] = "<script>"
+        with pytest.raises(WebUISettingsError, match="invalid voice"):
+            collab_api.update_collab({"members": members})
+        assert sorted(p.name for p in photos_dir().iterdir()) == ["mark.img"]
+        assert collab_api.collab_payload()["photos"] == {"mark": picture}
+
+        # Back to the face: the file goes with the save.
+        members = copy.deepcopy(again["collab"]["members"])
+        members[1]["photo"] = ""
+        cleared = collab_api.update_collab({"members": members})
+        assert cleared["photos"] == {} and cleared["collab"]["members"][1]["photo"] == ""
+        assert list(photos_dir().glob("*.img")) == []
+    finally:
+        set_config_path(None)
+
+
+def test_a_team_saved_before_genders_keeps_the_default_ones():
+    from navin.collab.team import member_gender
+
+    assert member_gender({"id": "salma", "name": "Salma"}) == "female"
+    assert member_gender({"id": "mark", "name": "Mark", "gender": "female"}) == "female"
+    # Renamed: the default teammate's gender no longer applies.
+    assert member_gender({"id": "mark", "name": "Sofia"}) == ""
+
+
+def test_a_saved_default_team_gets_its_faces_and_genders_once():
+    from navin.config.schema import CollabConfig
+
+    saved = CollabConfig.model_validate({
+        "toolsVersion": 4,
+        "members": [
+            {"id": "mark", "name": "Mark", "role": "developer", "avatar": "visor", "tools": ["read_file"]},
+            {"id": "salma", "name": "Salma", "role": "tester"},  # saved without an avatar: "round"
+            {"id": "ethan", "name": "Ethan", "role": "security", "avatar": "dome"},  # picked by the user
+            {"id": "sofia", "name": "Sofia", "role": "designer", "avatar": "dome"},  # not a default teammate
+        ],
+    })
+    by_id = {member.id: member for member in saved.members}
+    assert (by_id["mark"].avatar, by_id["mark"].gender) == ("person", "male")
+    assert (by_id["salma"].avatar, by_id["salma"].gender) == ("person", "female")
+    assert (by_id["ethan"].avatar, by_id["ethan"].gender) == ("dome", "male")
+    assert (by_id["sofia"].avatar, by_id["sofia"].gender) == ("dome", "")
+    assert by_id["mark"].tools == ["read_file"]  # a v4 team keeps the tools it chose
+    assert saved.tools_version == 5
+    # Saved back and read again: the upgrade does not run twice (a face the
+    # user picks afterwards stays).
+    again = CollabConfig.model_validate(saved.model_dump(by_alias=True))
+    assert again.tools_version == 5
+    picked = saved.model_dump(by_alias=True)
+    picked["members"][0]["avatar"] = "visor"
+    assert CollabConfig.model_validate(picked).members[0].avatar == "visor"
+    # A fresh team starts with the drawn faces.
+    assert {member.avatar for member in CollabConfig().members} == {"person"}
+
+
+def test_the_lead_does_not_repeat_a_report_the_teammate_already_posted():
+    from navin.utils.prompt_templates import render_template
+    from navin.webui.transcript import _is_legacy_raw_subagent_result
+
+    teammate = render_template(
+        "agent/subagent_announce.md", label="Mark (Senior Developer)", status_text="completed successfully",
+        task="Fix the login", result="Fixed.", teammate="Mark",
+    )
+    assert "Mark already posted this report in the chat" in teammate
+    assert "Do not repeat" in teammate and "Summarize this naturally" not in teammate
+    helper = render_template(
+        "agent/subagent_announce.md", label="audit", status_text="completed successfully",
+        task="Audit", result="Done.", teammate="",
+    )
+    assert "Summarize this naturally" in helper and "already posted" not in helper
+    # Both stay hidden when a session is turned back into a chat.
+    for body in (teammate, helper):
+        assert _is_legacy_raw_subagent_result({"content": body})
 
 
 def test_settings_route_reads_the_chunked_body():
@@ -528,6 +652,62 @@ def test_helper_subagents_journal_persists_and_rounds_reset(tmp_path, monkeypatc
         assert fresh.member_history("cli:h", "mark").startswith("# Continuity")
 
     asyncio.run(run())
+
+
+def _seat(manager, session, task_id, member):
+    from collections import deque
+
+    from navin.agent.subagent import SubagentStatus
+
+    manager._agent_sessions[task_id] = session
+    manager._agent_mailboxes[task_id] = deque()
+    manager._task_statuses[task_id] = SubagentStatus(
+        task_id=task_id, label=task_id, task_description="", started_at=0.0, phase="running")
+    if member is not None:
+        manager._task_members[task_id] = dict(member)
+
+
+def test_teammate_report_and_question_are_signed_in_the_remote_chat(tmp_path, monkeypatch):
+    """On WhatsApp/Teams the user reads the teammate like a colleague; the rest stays in the journal."""
+    from navin.bus.events import OutboundMessage
+    from navin.bus.outbound_events import NotificationEvent, TeamMessageEvent
+
+    team = default_team()
+    manager = _manager(tmp_path, monkeypatch)
+    chat = "33612345678@s.whatsapp.net"
+    session = f"whatsapp:{chat}"
+    _seat(manager, session, "m1", find_member(team, "Mark"))
+    _seat(manager, session, "s1", find_member(team, "Salma"))
+    _seat(manager, session, "h1", None)  # Mark's helper, a plain subagent
+
+    manager.post_team_feed(session, "assign", "parent", "Build the login", target="m1", task_id="m1",
+                           status="started")
+    manager.post_team_feed(session, "message", "m1", "Login ready for tests", target="s1", status="handoff")
+    manager.post_team_feed(session, "result", "h1", "Migration 0042 added", target="m1", task_id="h1",
+                           status="ok")
+    assert manager.bus.outbound.items == []  # assignment, peer chatter, helper report: journal only
+
+    manager.post_team_feed(session, "message", "s1", "Which database?\nPostgres or SQLite?", target="user",
+                           status="question")
+    report = "Auth done, 12 tests green.\n" + "x" * 9000
+    manager.post_team_feed(session, "result", "m1", report, target="parent", task_id="m1", status="ok")
+    sent = manager.bus.outbound.items
+    assert all(isinstance(item, OutboundMessage) and item.channel == "whatsapp" and item.chat_id == chat
+               for item in sent)
+    assert [item.content.split("\n\n", 1)[0] for item in sent] == [
+        "**Salma** (QA Engineer)", "**Mark** (Senior Developer)"]
+    assert sent[0].content == "**Salma** (QA Engineer)\n\nWhich database?\nPostgres or SQLite?"
+    assert sent[1].content.startswith("**Mark** (Senior Developer)\n\nAuth done, 12 tests green.\nxxx")
+    assert len(sent[1].content) == 3900 and sent[1].content.endswith("\u2026")
+    assert not any(isinstance(getattr(item, "event", None), NotificationEvent) for item in sent)
+
+    # The desktop chat keeps its journal frames, not chat text.
+    desk = _manager(tmp_path / "desk", monkeypatch)
+    _seat(desk, "websocket:d", "m1", find_member(team, "Mark"))
+    desk.post_team_feed("websocket:d", "result", "m1", "Done", target="parent", task_id="m1", status="ok")
+    events = [item.event for item in desk.bus.outbound.items]
+    assert isinstance(events[0], TeamMessageEvent) and isinstance(events[1], NotificationEvent)
+    assert events[1].title == "Mark finished"
 
 
 def test_rounds_follow_the_user_request_without_a_mission_name(tmp_path, monkeypatch):

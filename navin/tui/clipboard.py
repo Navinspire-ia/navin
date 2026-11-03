@@ -9,6 +9,11 @@ copy-on-select and right-click copy behave like a normal terminal.
 
 WSL ``clip.exe`` treats UTF-8 stdin as the OEM code page (accents become
 ``Probl├┐mes``). Writes use UTF-16 LE; reads force PowerShell UTF-8.
+
+Under WSL every Windows program goes through ``windows_program_argv``: when
+systemd-binfmt has wiped WSL's interop entry, ``clip.exe`` and PowerShell
+still start through WSL's ``/init`` instead of failing with "Exec format
+error", which left the Windows clipboard on an older copy.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from navin.utils.proc import no_window_kwargs
+from navin.utils.wsl import windows_program_argv
 
 # Windows Terminal warns (and often drops OSC 52) above 5 KiB.
 OSC52_MAX_BYTES = 4000
@@ -117,7 +123,7 @@ def _win_temp_dir() -> str:
         return ""
     try:
         result = subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", "Write-Output $env:TEMP"],
+            windows_program_argv([powershell, "-NoProfile", "-NonInteractive", "-Command", "Write-Output $env:TEMP"]),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
@@ -176,7 +182,7 @@ def _write_windows_clipboard_file(text: str) -> bool:
     )
     try:
         result = subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            windows_program_argv([powershell, "-NoProfile", "-NonInteractive", "-Command", command]),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=20,
@@ -199,7 +205,7 @@ def _write_windows_clipboard(text: str) -> bool:
     if clip:
         try:
             result = subprocess.run(
-                [clip],
+                windows_program_argv([clip]),
                 input=text.encode("utf-16-le"),
                 capture_output=True,
                 timeout=8 if len(text) > 8000 else 3,
@@ -224,13 +230,13 @@ def _write_windows_clipboard(text: str) -> bool:
         return _write_windows_clipboard_file(text)
     try:
         result = subprocess.run(
-            [
+            windows_program_argv([
                 powershell,
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
                 command,
-            ],
+            ]),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
@@ -248,17 +254,19 @@ def _read_windows_clipboard() -> str:
     command = (
         "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
         "$OutputEncoding = [Console]::OutputEncoding; "
-        "Get-Clipboard -Raw"
+        # Written as is: PowerShell's own output added a line break to every
+        # multi-line paste (a copy pasted back and copied again grew a line).
+        "$t = Get-Clipboard -Raw; if ($null -ne $t) { [Console]::Out.Write($t) }"
     )
     try:
         result = subprocess.run(
-            [
+            windows_program_argv([
                 powershell,
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
                 command,
-            ],
+            ]),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=20,

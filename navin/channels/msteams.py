@@ -4,7 +4,9 @@
 """Microsoft Teams channel MVP using a tiny built-in HTTP webhook server.
 
 Scope:
-- DM-focused MVP
+- personal chats, plus group chats and team channels per ``group_policy``
+  ("mention": only when the bot is @mentioned, "open": every message,
+  "off": personal chats only)
 - text inbound/outbound
 - conversation reference persistence
 - sender allowlist support
@@ -26,7 +28,7 @@ import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 try:  # pragma: no cover - Windows fallback path
@@ -79,6 +81,9 @@ class MSTeamsConfig(Base):
     port: int = 3978
     path: str = "/api/messages"
     allow_from: list[str] = Field(default_factory=list)
+    # Group chats and team channels: "mention" answers only when the bot is
+    # @mentioned, "open" answers every message, "off" ignores them (DM only).
+    group_policy: Literal["mention", "open", "off"] = "mention"
     reply_in_thread: bool = True
     mention_only_response: str = "Hi - what can I help with?"
     validate_inbound_auth: bool = True
@@ -105,7 +110,7 @@ class ConversationRef:
 
 
 class MSTeamsChannel(BaseChannel):
-    """Microsoft Teams channel (DM-first MVP)."""
+    """Microsoft Teams channel: personal chats, group chats and channel threads."""
 
     name = "msteams"
     display_name = "Microsoft Teams"
@@ -292,7 +297,9 @@ class MSTeamsChannel(BaseChannel):
             )
 
         token = await self._get_access_token()
-        base_url = f"{ref.service_url.rstrip('/')}/v3/conversations/{ref.conversation_id}/activities"
+        base_url = (
+            f"{ref.service_url.rstrip('/')}/v3/conversations/{self._reply_conversation_id(ref)}/activities"
+        )
         use_thread_reply = self.config.reply_in_thread and bool(ref.activity_id)
         headers = {
             "Authorization": f"Bearer {token}",
@@ -343,12 +350,17 @@ class MSTeamsChannel(BaseChannel):
         if recipient.get("id") and from_user.get("id") == recipient.get("id"):
             return
 
-        # DM-only MVP: ignore group/channel traffic for now
-        if conversation_type and conversation_type not in ("personal", ""):
-            self.logger.debug("Ignoring non-DM conversation {}", conversation_type)
-            return
+        is_group = bool(conversation_type) and conversation_type != "personal"
+        if is_group:
+            policy = self.config.group_policy
+            if policy == "off":
+                self.logger.debug("Ignoring {} conversation (group_policy=off)", conversation_type)
+                return
+            if policy == "mention" and not self._mentions_bot(activity):
+                self.logger.debug("Ignoring {} message without a bot mention", conversation_type)
+                return
 
-        text = self._sanitize_inbound_text(activity)
+        text = self._sanitize_inbound_text(activity, is_group=is_group)
         if not text:
             text = self.config.mention_only_response.strip()
             if not text:
@@ -380,18 +392,64 @@ class MSTeamsChannel(BaseChannel):
             chat_id=conversation_id,
             content=text,
             metadata={
+                "is_group": is_group,
+                "sender_name": from_user.get("name"),
                 "msteams": {
                     "activity_id": activity_id,
                     "conversation_id": conversation_id,
                     "conversation_type": conversation_type or "personal",
                     "from_name": from_user.get("name"),
-                }
+                },
             },
         )
 
-    def _sanitize_inbound_text(self, activity: dict[str, Any]) -> str:
-        """Extract the user-authored text from a Teams activity."""
+    @staticmethod
+    def _bot_mention_texts(activity: dict[str, Any]) -> list[str]:
+        """Markup of the mentions that address this bot (Bot Framework ``entities``)."""
+        bot_id = str((activity.get("recipient") or {}).get("id") or "").strip()
+        if not bot_id:
+            return []
+        texts: list[str] = []
+        for entity in activity.get("entities") or []:
+            if not isinstance(entity, dict) or entity.get("type") != "mention":
+                continue
+            mentioned = entity.get("mentioned") or {}
+            if isinstance(mentioned, dict) and str(mentioned.get("id") or "").strip() == bot_id:
+                texts.append(str(entity.get("text") or ""))
+        return texts
+
+    def _mentions_bot(self, activity: dict[str, Any]) -> bool:
+        return bool(self._bot_mention_texts(activity))
+
+    @staticmethod
+    def _reply_conversation_id(ref: ConversationRef) -> str:
+        """Conversation id to post into: a team channel reply stays in its thread.
+
+        Teams gives a channel message the id ``<channel>;messageid=<root>``,
+        which already targets the thread. A root post whose id came without
+        it gets the thread suffix from the activity being answered.
+        """
+        conversation_id = ref.conversation_id
+        if (
+            str(ref.conversation_type or "").lower() == "channel"
+            and ref.activity_id
+            and ";messageid=" not in conversation_id
+        ):
+            return f"{conversation_id};messageid={ref.activity_id}"
+        return conversation_id
+
+    def _sanitize_inbound_text(self, activity: dict[str, Any], *, is_group: bool = False) -> str:
+        """Extract the user-authored text from a Teams activity.
+
+        In a group chat or a channel only the bot's own mention is removed:
+        the other people mentioned keep their name in the text.
+        """
         text = str(activity.get("text") or "")
+        if is_group:
+            for markup in self._bot_mention_texts(activity):
+                if markup:
+                    text = text.replace(markup, " ")
+            text = re.sub(r"<at\b[^>]*>(.*?)</at>", r"\1", text, flags=re.IGNORECASE | re.DOTALL)
         text = self._strip_possible_bot_mention(text)
         text = self._normalize_html_whitespace(text)
 
@@ -725,7 +783,14 @@ class MSTeamsChannel(BaseChannel):
                 continue
 
             conv_type = str(ref.conversation_type or "").strip().lower()
-            if self.config.prune_non_personal_refs and conv_type and conv_type != "personal":
+            # Group chat and channel refs are what replies go out through
+            # when group_policy lets those conversations in: kept then.
+            if (
+                self.config.prune_non_personal_refs
+                and self.config.group_policy == "off"
+                and conv_type
+                and conv_type != "personal"
+            ):
                 keys_to_drop.append(key)
                 continue
 

@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Self
 
@@ -24,6 +25,7 @@ from pydantic import Field, field_validator, model_validator
 from websockets.asyncio.server import ServerConnection, serve, unix_serve
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request as WsRequest
+from websockets.protocol import CONNECTING as _WS_CONNECTING
 
 from navin.agent.choice import CUSTOM_TEXT_MAX
 from navin.bus.events import (
@@ -128,7 +130,7 @@ from navin.webui.terminal_ws import (
     decode_input,
     encode_output,
 )
-from navin.webui.transcript import compact_tool_events_for_ui
+from navin.webui.transcript import compact_tool_events_for_ui, team_reply_event
 from navin.webui.transcription_ws import webui_transcription_event
 from navin.webui.voice_session_ws import close_voice_sessions, webui_voice_session_events
 from navin.webui.websocket_logging import websockets_server_logger
@@ -197,6 +199,71 @@ def _install_http_method_compat() -> None:
 # explicit WEBSOCKETS_MAX_NUM_HEADERS override) lifts the cap for every
 # listener this channel starts.
 _ws_http11.MAX_NUM_HEADERS = max(_ws_http11.MAX_NUM_HEADERS, 640)
+
+class _WebuiServerConnection(ServerConnection):
+    """A server connection that does not answer a client already gone.
+
+    websockets 15 enters ``send_context`` (state CONNECTING) *before* awaiting
+    ``process_request``. A plain HTTP route that outlives its caller (the UI
+    gives up on /github/pr after 20 s and closes the socket) lets
+    ``connection_lost`` fail the protocol meanwhile, which already sends EOF;
+    the late ``send_response`` then calls ``send_eof`` a second time and trips
+    ``assert not self.eof_sent`` (524 "unexpected internal error" in the
+    desktop log). Same sequence as upstream's later handshake: run the hooks
+    first, then write the response only while the handshake is still open.
+    """
+
+    async def handshake(
+        self,
+        process_request: Any = None,
+        process_response: Any = None,
+        server_header: str | None = _ws_http11.SERVER,
+    ) -> None:
+        await asyncio.wait(
+            [self.request_rcvd, self.connection_lost_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if self.request is not None:
+            response = await self._run_hook(process_request, self.request)
+            if response is None:
+                if self.server.is_serving():
+                    response = self.protocol.accept(self.request)
+                else:
+                    response = self.protocol.reject(
+                        HTTPStatus.SERVICE_UNAVAILABLE, "Server is shutting down.\n",
+                    )
+            self.response = response
+            if server_header:
+                self.response.headers["Server"] = server_header
+            replaced = await self._run_hook(process_response, self.request, self.response)
+            if replaced is not None:
+                self.response = replaced
+            # The client may have closed the socket while the route ran: the
+            # protocol is then failed and its EOF already sent.
+            if self.protocol.state is _WS_CONNECTING:
+                async with self.send_context(expected_state=_WS_CONNECTING):
+                    self.protocol.send_response(self.response)
+        if self.protocol.handshake_exc is not None:
+            raise self.protocol.handshake_exc
+
+    async def _run_hook(self, hook: Any, *args: Any) -> Any:
+        """websockets' own contract for both hooks: an error becomes a 500 reply
+        and is re-raised by ``handshake`` through ``handshake_exc``, so the
+        server logs "opening handshake failed" exactly as the library does."""
+        if hook is None:
+            return None
+        try:
+            result = hook(self, *args)
+            if isinstance(result, Awaitable):
+                result = await result
+        except Exception as exc:
+            self.protocol.handshake_exc = exc
+            return self.protocol.reject(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "Failed to open a WebSocket connection.\nSee server log for more information.\n",
+            )
+        return result
+
 
 # Plain HTTP WebUI routes also run through websockets.process_request.
 _WEBUI_HTTP_OPEN_TIMEOUT_S = 360.0
@@ -1251,6 +1318,7 @@ class WebSocketChannel(BaseChannel):
                     handler,
                     socket_path,
                     process_request=process_request,
+                    create_connection=_WebuiServerConnection,
                     open_timeout=_WEBUI_HTTP_OPEN_TIMEOUT_S,
                     max_size=self.config.max_message_bytes,
                     ping_interval=self.config.ping_interval_s,
@@ -1266,6 +1334,7 @@ class WebSocketChannel(BaseChannel):
                     self.config.host,
                     self.config.port,
                     process_request=process_request,
+                    create_connection=_WebuiServerConnection,
                     open_timeout=_WEBUI_HTTP_OPEN_TIMEOUT_S,
                     max_size=self.config.max_message_bytes,
                     ping_interval=self.config.ping_interval_s,
@@ -3537,7 +3606,20 @@ class WebSocketChannel(BaseChannel):
         await _send_to_all(self._safe_send_to, conns, raw, label=" subagent_progress ")
 
     async def send_team_message(self, chat_id: str, event: TeamMessageEvent, *, replay: bool = False) -> None:
-        """Push one Collaboration Mode team exchange to *chat_id* clients."""
+        """Push one Collaboration Mode team exchange to *chat_id* clients.
+
+        A teammate's report to the lead and its question to the user are also
+        the teammate's own message in the chat (name, job, photo): kept with
+        the chat's history even when no window is open, and sent live.
+        """
+        reply = None if replay else team_reply_event(chat_id, event)
+        if reply is not None:
+            self._transcripts.prepare_and_append(chat_id, reply)
+            listeners = list(self._subs.get(chat_id, ()))
+            if listeners:
+                await _send_to_all(
+                    self._safe_send_to, listeners, json.dumps(reply, ensure_ascii=False), label=" team_reply ",
+                )
         conns = list(self._subs.get(chat_id, ()))
         if not conns:
             return

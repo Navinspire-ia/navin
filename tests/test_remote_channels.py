@@ -122,3 +122,118 @@ def test_remote_answer_check_only_tolerates_a_disk_error(monkeypatch):
     monkeypatch.setattr(rc, "can_answer", bug)
     with pytest.raises(KeyError):
         approval._remote_can_answer("telegram")
+
+
+# -- "When it finishes, send me a Teams": what reaches a notify channel --------
+
+
+def _alerts_ready(monkeypatch):
+    """A configured Teams transport and a gateway forwarder, as the gateway installs them."""
+    import navin.bus.alerts as alerts
+    import navin.bus.notify as notify_mod
+
+    monkeypatch.setattr(alerts, "_cfg", lambda name: {"enabled": True, "app_id": "app", "app_password": "pw"})
+    monkeypatch.setattr(notify_mod, "_remote_forwarder", rc.forward_notification)
+    return alerts
+
+
+async def _teams_messages(bus, count, timeout=5.0):
+    """Drain the outbound queue until ``count`` Teams alerts arrived (the copy runs in a thread)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    teams, other = [], []
+    while len(teams) < count:
+        assert loop.time() < deadline, f"only {len(teams)} Teams alerts arrived"
+        while not bus.outbound.empty():
+            item = bus.outbound.get_nowait()
+            (teams if item.channel == "msteams" else other).append(item)
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.1)
+    while not bus.outbound.empty():
+        item = bus.outbound.get_nowait()
+        (teams if item.channel == "msteams" else other).append(item)
+    return teams, other
+
+
+def test_teammate_finished_stopped_and_question_reach_the_teams_notify_chat(tmp_path, monkeypatch):
+    from collections import deque
+
+    from navin.agent.subagent import SubagentManager, SubagentStatus
+    from navin.bus.queue import MessageBus
+    from navin.collab.team import default_team, find_member
+
+    alerts = _alerts_ready(monkeypatch)
+    monkeypatch.setattr("navin.agent.subagent._outcomes_dir", lambda: tmp_path / "outcomes")
+    rc.save_prefs("msteams", notify=True, to="conv-1")
+
+    async def run():
+        bus = MessageBus()
+        alerts.bind_alert_runtime(bus, asyncio.get_running_loop(), {})
+        manager = SubagentManager(workspace=tmp_path, bus=bus, max_tool_result_chars=4000)
+        session = "websocket:desk"
+        team = default_team()
+        for task_id, member in (("m1", find_member(team, "Mark")), ("s1", find_member(team, "Salma")),
+                                ("h1", None)):
+            manager._agent_sessions[task_id] = session
+            manager._agent_mailboxes[task_id] = deque()
+            manager._task_statuses[task_id] = SubagentStatus(
+                task_id=task_id, label=task_id, task_description="", started_at=0.0, phase="running")
+            if member:
+                manager._task_members[task_id] = dict(member)
+        try:
+            manager.post_team_feed(session, "result", "h1", "Migration added", target="m1", task_id="h1",
+                                   status="ok")
+            manager.post_team_feed(session, "message", "m1", "Ready for tests", target="s1")
+            manager.post_team_feed(session, "result", "m1", "Auth done, 12 tests green", target="parent",
+                                   task_id="m1", status="ok")
+            manager.post_team_feed(session, "result", "s1", "2 tests red", target="parent",
+                                   task_id="s1", status="error")
+            manager.post_team_feed(session, "message", "s1", "Postgres or SQLite?", target="user")
+            teams, desktop = await _teams_messages(bus, 3)
+        finally:
+            alerts.clear_alert_runtime(bus)
+        assert {m.chat_id for m in teams} == {"conv-1"}
+        heads = sorted(m.content.split("\n\n", 1)[0] for m in teams)
+        assert heads == ["Navin [BLOQUE] Salma stopped", "Navin [INFO] Salma has a question for you",
+                         "Navin [OK] Mark finished"]
+        assert any("Auth done, 12 tests green" in m.content for m in teams)
+        assert all(m.channel == "websocket" and m.chat_id == "desk" for m in desktop)  # the desktop still has them
+
+    asyncio.run(run())
+
+
+def test_teammate_notification_stays_home_when_notify_is_off(tmp_path, monkeypatch):
+    import navin.bus.notify as notify_mod
+
+    _alerts_ready(monkeypatch)
+    rc.save_prefs("msteams", notify=False, to="conv-1")
+    assert rc.forward_notification("Mark finished", "", "success", "team:1") == 0
+    monkeypatch.setattr(notify_mod, "_remote_forwarder", None)
+    assert notify_mod.forward_remote("Mark finished", "", "success", "team:1") is False  # no gateway, no copy
+
+
+def test_end_of_a_desktop_job_reaches_teams_through_the_notify_tool_only(tmp_path, monkeypatch):
+    """A finished long job reaches the phone when the agent calls notify; a plain info stays home."""
+    from navin.agent.tools.notify import NotifyTool
+    from navin.bus.notify import publish_notification
+    from navin.bus.queue import MessageBus
+
+    alerts = _alerts_ready(monkeypatch)
+    rc.save_prefs("msteams", notify=True, to="conv-1")
+
+    async def run():
+        bus = MessageBus()
+        alerts.bind_alert_runtime(bus, asyncio.get_running_loop(), {})
+        try:
+            result = await NotifyTool(bus=bus).execute(title="Site deployed", detail="v2.4 live", level="success")
+            assert not result.is_error
+            publish_notification(bus, title="Indexing progress", level="info", source="session")
+            publish_notification(bus, title="Nightly job failed", level="error", source="cron", key="cron:1")
+            teams, desktop = await _teams_messages(bus, 2)
+        finally:
+            alerts.clear_alert_runtime(bus)
+        assert sorted(m.content for m in teams) == ["Navin [ERREUR] Nightly job failed",
+                                                     "Navin [OK] Site deployed\n\nv2.4 live"]
+        assert len(desktop) == 3  # every one is in the desktop notification centre
+
+    asyncio.run(run())

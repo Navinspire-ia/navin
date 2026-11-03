@@ -39,6 +39,10 @@ STACK_MARKERS = {
     "src-tauri": "Tauri", "terraform": "Terraform", "*.csproj": ".NET",
 }
 _CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
+# The chat's own model pick (navin.agent.loop.SESSION_MODEL_PIN_KEY, AUTO_MODEL_PIN),
+# spelled out here so the share does not import the whole agent loop.
+MODEL_PIN_KEY = "_last_model_preset"
+AUTO_MODEL_PIN = "auto"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -222,9 +226,45 @@ def project_essentials(root: Path) -> dict[str, Any]:
     }
 
 
-def usage_context(session_file: Path, project_root: Path | None) -> dict[str, Any] | None:
-    """Model and context fill of the last turn, as the host's context meter shows it."""
+def _preset_model(name: str) -> str:
+    """The model a configured preset runs on, "" when the preset is gone."""
+    from navin.config.loader import load_config_cached
+
+    try:
+        preset = load_config_cached().resolve_preset(name)
+    except KeyError:
+        # Pinned, then deleted in Settings: the chat no longer runs on it.
+        return ""
+    return str(preset.model or "")
+
+
+def selected_model(metadata: dict[str, Any]) -> str:
+    """The model the host has picked for this chat, "" when nothing says.
+
+    The chat's pin (the model picker, ``/model``) is what its next turn runs
+    on, so it wins over the model recorded by the last turn: after a switch
+    the guest sees the host's choice at once instead of the previous model.
+    Without a pin, the last turn's model (task routing may have chosen it).
+    """
     from navin.session.context_usage_meta import last_context_usage_row
+
+    pin = metadata.get(MODEL_PIN_KEY)
+    if isinstance(pin, str) and pin.strip() and pin.strip().lower() != AUTO_MODEL_PIN:
+        model = _preset_model(pin.strip())
+        if model:
+            return model
+    last = last_context_usage_row(metadata) or {}
+    return str(last.get("model") or metadata.get("model") or "")
+
+
+def usage_context(
+    session_file: Path, project_root: Path | None, current_model: str | None = None,
+) -> dict[str, Any] | None:
+    """Model and context fill, as the host's own footer shows them.
+
+    ``current_model`` is the model the host runs right now when it knows it
+    (the CLI's runtime); otherwise the chat's saved choice applies.
+    """
     from navin.webui.context_usage import context_usage_payload
 
     metadata: dict[str, Any] = {}
@@ -249,24 +289,26 @@ def usage_context(session_file: Path, project_root: Path | None) -> dict[str, An
         project_path=str(project_root) if project_root else None,
         prefer_persisted_window=True,
     )
-    last = last_context_usage_row(metadata) or {}
     return {
-        "model": str(last.get("model") or metadata.get("model") or ""),
+        "model": (current_model or "").strip() or selected_model(metadata),
         "tokens": int(usage.get("tokens") or 0),
         "context_window": int(usage.get("context_window") or 0),
         "percent": float(usage.get("percent") or 0),
     }
 
 
-def session_context(session_file: Path | None, project_root: Path | None) -> dict[str, Any]:
+def session_context(
+    session_file: Path | None, project_root: Path | None, current_model: str | None = None,
+) -> dict[str, Any]:
     """Everything a guest or a bundle reader needs for a complete picture."""
     context: dict[str, Any] = {"generated_at": int(time.time())}
     context["conversation"] = conversation_context(session_file) if session_file else None
     try:
-        context["usage"] = usage_context(session_file, project_root) if session_file else None
+        context["usage"] = usage_context(session_file, project_root, current_model) if session_file else None
     except Exception:  # noqa: BLE001 - the picture is complete without the meter
         context["usage"] = None
-    if context["conversation"] and context["usage"] and not context["conversation"].get("model"):
+    # One model everywhere on the guest page: the one the host runs on.
+    if context["conversation"] and context["usage"] and context["usage"]["model"]:
         context["conversation"]["model"] = context["usage"]["model"]
     if project_root is not None:
         project_root = project_root.expanduser().resolve()

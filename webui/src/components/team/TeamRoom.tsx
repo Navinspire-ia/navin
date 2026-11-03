@@ -86,6 +86,9 @@ export function TeamRoom({
               key={member.id}
               avatar={member.avatar}
               color={member.color}
+              photo={member.photo}
+              seed={member.id}
+              gender={member.gender}
               size={22}
               active={running.includes(member.name)}
               className="ring-2 ring-background"
@@ -131,7 +134,7 @@ export function TeamRoom({
           </span>
           {idle.map(({ member }) => (
             <span key={member.id} className="inline-flex items-center gap-1 text-[11.5px] text-foreground/80">
-              <TeamBotAvatar avatar={member.avatar} color={member.color} size={16} />
+              <TeamBotAvatar avatar={member.avatar} color={member.color} photo={member.photo} seed={member.id} gender={member.gender} size={16} />
               {member.name}
             </span>
           ))}
@@ -161,7 +164,7 @@ function TeamLane({ member, card }: { member: TeamIdentity; card: ParallelSubage
       data-testid="team-lane"
     >
       <div className="flex items-center gap-2">
-        <TeamBotAvatar avatar={member.avatar} color={member.color} size={24} active={!card.done} />
+        <TeamBotAvatar avatar={member.avatar} color={member.color} photo={member.photo} seed={member.id} gender={member.gender} size={24} active={!card.done} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[12.5px] font-semibold text-foreground">{member.name}</span>
@@ -232,7 +235,15 @@ function TeamConversation({ feed }: { feed: TeamFeedEntry[] }) {
             transition={{ duration: 0.18 }}
             className="flex gap-2"
           >
-            <TeamBotAvatar avatar={entry.sender.avatar} color={entry.sender.color} size={26} className="mt-0.5" />
+            <TeamBotAvatar
+              avatar={entry.sender.avatar}
+              color={entry.sender.color}
+              photo={entry.sender.photo}
+              seed={entry.sender.id}
+              gender={entry.sender.gender}
+              size={26}
+              className="mt-0.5"
+            />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-1.5 text-[11.5px]">
                 <span className="font-semibold text-foreground">{entry.sender.name}</span>

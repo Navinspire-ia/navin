@@ -4,6 +4,8 @@
 """Clipboard backends and error output must leave the live prompt usable."""
 
 import asyncio
+import subprocess
+import sys
 import threading
 from unittest.mock import patch
 
@@ -132,6 +134,29 @@ def test_failed_edit_shows_a_cross_without_the_error_dump_and_keeps_its_details(
             assert "widget-39" in row.copy_text()
             assert app.composer.text == "unsent draft"
     asyncio.run(run())
+
+
+def test_copy_and_paste_keep_the_code_the_cli_started_with(tmp_path):
+    """A CLI left open while Navin's files change on disk (an update, a dev
+    checkout) crashed on its first copy: copy-on-select loaded the newer
+    clipboard.py against the older navin.utils.wsl it had started with
+    (ImportError: windows_program_argv). The copy and paste helpers now load
+    with the app, so a running CLI keeps one consistent version."""
+    newer = tmp_path / "newer"
+    newer.mkdir()
+    for name in ("clipboard", "images"):
+        # What the files on disk now need from a module the CLI loaded earlier.
+        (newer / f"{name}.py").write_text("from navin.utils.wsl import a_helper_added_later\n")
+    script = (
+        "import navin.tui, navin.tui.app\n"
+        f"navin.tui.__path__.insert(0, {str(newer)!r})\n"
+        "from navin.tui.clipboard import osc52_allowed, pick_paste_text, pointer_copy_text, read_clipboard, write_os_clipboard\n"
+        "from navin.tui.images import image_token, save_clipboard_image\n"
+        "print('same code as at start')\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "same code as at start"
 
 
 def test_missing_windows_clipboard_codec_is_recoverable():
@@ -295,4 +320,52 @@ def test_an_open_tool_row_copies_its_command_and_full_output_with_one_click(tmp_
             row.toggle()
             await pilot.pause()
             assert not chip.display and not row.query_one(".tool-actions").display
+    asyncio.run(run())
+
+
+def test_a_link_opens_off_the_loop_and_a_failed_one_is_copied(tmp_path):
+    """Textual ran webbrowser on the loop: under WSL, wslview printed over the chat."""
+    async def run():
+        app = make_app(tmp_path)
+        started, release = threading.Event(), threading.Event()
+        outcome = {"opened": False}
+
+        def slow_open(url):
+            started.set()
+            release.wait(5)
+            return outcome["opened"]
+
+        copied: list[str] = []
+        toasts: list[str] = []
+        async with app.run_test(size=(80, 24)) as pilot:
+            with (
+                patch("navin.utils.open_browser.open_external_url", side_effect=slow_open),
+                patch("navin.utils.open_browser.unavailable_reason", return_value="Interop is off."),
+                patch("webbrowser.open") as browser,
+                patch.object(app, "copy_to_clipboard", side_effect=lambda text, **_: copied.append(text)),
+                patch.object(app, "notify", side_effect=lambda message, **_: toasts.append(message)),
+            ):
+                app.composer.focus()
+                app.open_url("https://navin.live/connect")
+                assert await asyncio.to_thread(started.wait, 1)
+                # The prompt stays live while the opener is still busy.
+                await pilot.press("x")
+                assert app.composer.text == "x"
+                release.set()
+                for _ in range(100):
+                    if toasts:
+                        break
+                    await pilot.pause(0.02)
+                assert copied == ["https://navin.live/connect"]
+                assert toasts == ["Interop is off. Link copied: https://navin.live/connect"]
+
+                # A link that opened leaves no toast and no copy behind.
+                started.clear()
+                outcome["opened"] = True
+                app.open_url("https://navin.live/pricing")
+                assert await asyncio.to_thread(started.wait, 1)
+                await app.workers.wait_for_complete([w for w in app.workers if w.group == "open-url"])
+                assert copied == ["https://navin.live/connect"]
+                assert len(toasts) == 1
+                browser.assert_not_called()
     asyncio.run(run())

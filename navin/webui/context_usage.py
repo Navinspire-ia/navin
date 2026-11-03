@@ -134,13 +134,17 @@ def _configured_context_window(preset_name: str | None = None) -> int:
 
     Live on purpose: changing the context size in Settings must show at once,
     not after the next turn rewrites the persisted row. ``preset_name`` is the
-    chat's pinned model; without it the account default applies.
+    chat's pinned model; without it the account default applies. The parse is
+    shared per config file version (``load_config_cached``): a full
+    read, decrypt and validate on every poll cost ~20 ms here and more on
+    Windows, and a save gives the file a new signature, so it still shows on
+    the next poll.
     """
-    from navin.config.loader import load_config
+    from navin.config.loader import load_config_cached
     from navin.providers.factory import snapshot_context_window
 
     try:
-        config = load_config()
+        config = load_config_cached()
     except Exception:
         return 0
     names: list[str | None] = []
@@ -174,6 +178,24 @@ def context_usage_payload(
     prefer_persisted_window: bool = False,
 ) -> dict[str, Any]:
     """Attributed prompt fill against the configured window."""
+    return apply_context_window(
+        context_usage_base(session_data, project_path=project_path),
+        prefer_persisted_window=prefer_persisted_window,
+    )
+
+
+def context_usage_base(
+    session_data: dict[str, Any] | None,
+    *,
+    project_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Everything in the payload but the window: the costly part.
+
+    Reading the session and rebuilding the prompt do not depend on the
+    config, so the route caches this per chat and applies the window (cheap,
+    current) on every poll with :func:`apply_context_window`. Keys starting
+    with ``_`` are inputs for that step, never sent to the client.
+    """
     rows = _message_rows(session_data)
     counted = rows[-_MESSAGE_TOKEN_CAP:] if len(rows) > _MESSAGE_TOKEN_CAP else rows
     message_tokens = 0
@@ -194,12 +216,6 @@ def context_usage_payload(
             persisted_window = int(last["context_window"])
         except (TypeError, ValueError):
             persisted_window = 0
-    if prefer_persisted_window and persisted_window:
-        window = persisted_window
-    else:
-        window = _configured_context_window(pin if isinstance(pin, str) else None)
-    if not window:
-        window = persisted_window
 
     from navin.session.context_usage_meta import last_preload_skills
 
@@ -229,10 +245,6 @@ def context_usage_payload(
             tokens = message_tokens
             source = "messages"
 
-    percent: float | None = None
-    if window > 0:
-        percent = round(min(100.0, 100.0 * tokens / window), 1)
-
     included_map: dict[str, str] = {}
     for path, reason in _latest_included_from_session(session_data):
         included_map.setdefault(path, reason)
@@ -247,12 +259,45 @@ def context_usage_payload(
     return {
         "tokens": tokens,
         "message_tokens": message_tokens,
-        "context_window": window or None,
-        "percent": percent,
         "messages": len(rows),
         "buckets": buckets,
         "included": included,
         "source": source,
         "peak_prompt_tokens": peak,
         "billed_tokens_session": billed_session,
+        "_model_preset": pin if isinstance(pin, str) else None,
+        "_persisted_window": persisted_window,
+    }
+
+
+def apply_context_window(
+    base: dict[str, Any],
+    *,
+    prefer_persisted_window: bool = False,
+) -> dict[str, Any]:
+    """The client payload: *base* measured against the window in force now."""
+    persisted_window = int(base.get("_persisted_window") or 0)
+    if prefer_persisted_window and persisted_window:
+        window = persisted_window
+    else:
+        window = _configured_context_window(base.get("_model_preset"))
+    if not window:
+        window = persisted_window
+
+    tokens = int(base.get("tokens") or 0)
+    percent: float | None = None
+    if window > 0:
+        percent = round(min(100.0, 100.0 * tokens / window), 1)
+
+    return {
+        "tokens": tokens,
+        "message_tokens": base.get("message_tokens", 0),
+        "context_window": window or None,
+        "percent": percent,
+        "messages": base.get("messages", 0),
+        "buckets": base.get("buckets", []),
+        "included": base.get("included", []),
+        "source": base.get("source"),
+        "peak_prompt_tokens": base.get("peak_prompt_tokens"),
+        "billed_tokens_session": base.get("billed_tokens_session"),
     }

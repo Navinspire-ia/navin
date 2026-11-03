@@ -46,9 +46,18 @@ ROLE_KEYS: tuple[str, ...] = (
     "seo", "marketing", "sales", "ads", "campaigns", "designer", "devops", "infra", "custom",
 )
 SANDBOX_KEYS: tuple[str, ...] = ("workspace", "worktree", "readonly")
+GENDER_KEYS: tuple[str, ...] = ("female", "male")
+# "person" is a drawn human face (the default team's); the others are robots.
 AVATAR_KEYS: tuple[str, ...] = (
-    "visor", "round", "antenna", "square", "cyclops", "ears", "dome", "crest",
+    "person", "visor", "round", "antenna", "square", "cyclops", "ears", "dome", "crest",
 )
+# The robot each default teammate had before the drawn faces: a saved team
+# still showing it gets the face (see CollabConfig._upgrade_tools).
+LEGACY_DEFAULT_AVATARS: dict[str, str] = {
+    "michel": "crest", "mark": "visor", "salma": "round", "ethan": "cyclops", "grace": "ears",
+    "karim": "antenna", "olivia": "dome", "lea": "ears", "jack": "square", "ava": "crest",
+    "nora": "visor", "ryan": "antenna", "daniel": "square", "lucas": "dome",
+}
 PATTERN_KEYS: tuple[str, ...] = (
     "dev_tester", "dual_planning", "adversarial_review",
     "parallel_solutions", "pipeline", "debate",
@@ -250,73 +259,73 @@ _DEFAULT_TEAM: tuple[dict[str, Any], ...] = (
     {
         "id": "michel", "name": "Michel", "role": "architect",
         "title": "Software Architect", "specialty": "Plans, architecture, trade-offs",
-        "email": "michel@team.navin.local", "avatar": "crest", "color": "#6d5bd0",
+        "email": "michel@team.navin.local", "avatar": "crest", "color": "#6d5bd0", "gender": "male",
     },
     {
         "id": "mark", "name": "Mark", "role": "developer",
         "title": "Senior Developer", "specialty": "Full-stack implementation and bug fixing",
-        "email": "mark@team.navin.local", "avatar": "visor", "color": "#2f7de1",
+        "email": "mark@team.navin.local", "avatar": "visor", "color": "#2f7de1", "gender": "male",
     },
     {
         "id": "salma", "name": "Salma", "role": "tester",
         "title": "QA Engineer", "specialty": "Tests, regressions, acceptance criteria",
-        "email": "salma@team.navin.local", "avatar": "round", "color": "#1f9d74",
+        "email": "salma@team.navin.local", "avatar": "round", "color": "#1f9d74", "gender": "female",
     },
     {
         "id": "ethan", "name": "Ethan", "role": "security",
         "title": "Security Auditor", "specialty": "AppSec audit, secrets, dependencies",
-        "email": "ethan@team.navin.local", "avatar": "cyclops", "color": "#d1495b",
+        "email": "ethan@team.navin.local", "avatar": "cyclops", "color": "#d1495b", "gender": "male",
     },
     {
         "id": "grace", "name": "Grace", "role": "reviewer",
         "title": "Code Reviewer", "specialty": "Adversarial review, edge cases, performance",
-        "email": "grace@team.navin.local", "avatar": "ears", "color": "#d4892a",
+        "email": "grace@team.navin.local", "avatar": "ears", "color": "#d4892a", "gender": "female",
     },
     {
         "id": "karim", "name": "Karim", "role": "reverse",
         "title": "Reverse Engineer", "specialty": "Observe, document and rebuild existing systems",
-        "email": "karim@team.navin.local", "avatar": "antenna", "color": "#3a9fb5",
+        "email": "karim@team.navin.local", "avatar": "antenna", "color": "#3a9fb5", "gender": "male",
         "enabled": False,
     },
     {
         "id": "olivia", "name": "Olivia", "role": "seo",
         "title": "SEO Specialist", "specialty": "Technical SEO, keywords, content briefs",
-        "email": "olivia@team.navin.local", "avatar": "dome", "color": "#4c9a2a",
+        "email": "olivia@team.navin.local", "avatar": "dome", "color": "#4c9a2a", "gender": "female",
     },
     {
         "id": "lea", "name": "Lea", "role": "marketing",
         "title": "Marketing Lead", "specialty": "Positioning, copy, campaigns",
-        "email": "lea@team.navin.local", "avatar": "ears", "color": "#c2410c",
+        "email": "lea@team.navin.local", "avatar": "ears", "color": "#c2410c", "gender": "female",
     },
     {
         "id": "jack", "name": "Jack", "role": "sales",
         "title": "Sales Developer", "specialty": "Leads, scraping, enrichment, outreach",
-        "email": "jack@team.navin.local", "avatar": "square", "color": "#0e7490",
+        "email": "jack@team.navin.local", "avatar": "square", "color": "#0e7490", "gender": "male",
     },
     {
         "id": "ava", "name": "Ava", "role": "designer",
         "title": "UX/UI Designer", "specialty": "Flows, design systems, accessibility",
-        "email": "ava@team.navin.local", "avatar": "crest", "color": "#be185d",
+        "email": "ava@team.navin.local", "avatar": "crest", "color": "#be185d", "gender": "female",
     },
     {
         "id": "nora", "name": "Nora", "role": "campaigns",
         "title": "Campaign Manager", "specialty": "Email and WhatsApp campaigns, replies, hand-offs",
-        "email": "nora@team.navin.local", "avatar": "visor", "color": "#db2777",
+        "email": "nora@team.navin.local", "avatar": "visor", "color": "#db2777", "gender": "female",
     },
     {
         "id": "ryan", "name": "Ryan", "role": "ads",
         "title": "Ads Manager", "specialty": "Paid campaigns, audiences, creatives, ROAS",
-        "email": "ryan@team.navin.local", "avatar": "antenna", "color": "#7c3aed",
+        "email": "ryan@team.navin.local", "avatar": "antenna", "color": "#7c3aed", "gender": "male",
     },
     {
         "id": "daniel", "name": "Daniel", "role": "devops",
         "title": "DevOps Engineer", "specialty": "CI/CD, Docker, Kubernetes, observability",
-        "email": "daniel@team.navin.local", "avatar": "square", "color": "#2563eb",
+        "email": "daniel@team.navin.local", "avatar": "square", "color": "#2563eb", "gender": "male",
     },
     {
         "id": "lucas", "name": "Lucas", "role": "infra",
         "title": "Cloud Infrastructure Engineer", "specialty": "Terraform, AWS/Azure/GCP, IAM, networks",
-        "email": "lucas@team.navin.local", "avatar": "dome", "color": "#0f766e",
+        "email": "lucas@team.navin.local", "avatar": "dome", "color": "#0f766e", "gender": "male",
     },
 )
 
@@ -348,6 +357,9 @@ def default_member(role: str = "custom", **overrides: Any) -> dict[str, Any]:
         "email": "",
         "avatar": "round",
         "color": "#6b7280",
+        "gender": "",
+        "voice": "",
+        "photo": "",
         "model_preset": "default",
         "reasoning_effort": ROLE_DEFAULT_EFFORT[role],
         "sandbox": ROLE_DEFAULT_SANDBOX[role],
@@ -362,8 +374,19 @@ def default_member(role: str = "custom", **overrides: Any) -> dict[str, Any]:
 
 
 def default_team() -> list[dict[str, Any]]:
-    """The team a fresh install starts with (editable in Settings > Team)."""
-    return [default_member(**spec) for spec in _DEFAULT_TEAM]
+    """The team a fresh install starts with (editable in Settings > Team).
+
+    Each default teammate has a drawn human face ("person").
+    """
+    return [default_member(**{**spec, "avatar": "person"}) for spec in _DEFAULT_TEAM]
+
+
+def default_spec(member: Any) -> dict[str, Any] | None:
+    """The default teammate *member* still is (same id and name), else None."""
+    for spec in _DEFAULT_TEAM:
+        if spec["id"] == _get(member, "id") and _norm(spec["name"]) == _norm(_get(member, "name")):
+            return spec
+    return None
 
 
 def slugify(name: str) -> str:
@@ -396,8 +419,26 @@ def _get(member: Any, field: str, default: Any = "") -> Any:
     return getattr(member, field, default)
 
 
+def member_gender(member: Any) -> str:
+    """"female", "male" or "": who the teammate sounds like in Live.
+
+    A team saved before genders existed keeps working: a default teammate
+    still under its own name (Mark, Salma...) gets the default team's.
+    """
+    gender = str(_get(member, "gender") or "")
+    if gender in GENDER_KEYS:
+        return gender
+    spec = default_spec(member)
+    return str(spec.get("gender") or "") if spec else ""
+
+
 def member_identity(member: Any) -> dict[str, str]:
-    """What the chat shows for a teammate (no prompt, no tool list)."""
+    """What the chat shows for a teammate (no prompt, no tool list).
+
+    ``photo`` is only a marker ("custom:<hash>", see navin.collab.photos):
+    the picture itself is read from Settings > Team, never carried by every
+    exchange.
+    """
     return {
         "id": str(_get(member, "id")),
         "name": str(_get(member, "name")),
@@ -406,6 +447,9 @@ def member_identity(member: Any) -> dict[str, str]:
         "avatar": str(_get(member, "avatar") or "round"),
         "color": str(_get(member, "color") or "#6b7280"),
         "email": str(_get(member, "email")),
+        "gender": member_gender(member),
+        "voice": str(_get(member, "voice") or ""),
+        "photo": str(_get(member, "photo") or ""),
     }
 
 

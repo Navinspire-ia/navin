@@ -106,6 +106,7 @@ import {
   listSlashCommands,
   setModelRoutingEnabled,
   setCollabEnabled,
+  fetchCollabSettings,
   updateImageGenerationSettings,
   updateLiveVoiceSettings,
   updateMusicGenerationSettings,
@@ -181,6 +182,7 @@ import { useNotifications } from "@/providers/NotificationProvider";
 import { useAccount } from "@/hooks/useAccount";
 import { TeamRoom } from "@/components/team/TeamRoom";
 import { mergeTeamFeed, parseTeamEntry, parseTeamIdentity, type TeamFeedEntry, type TeamIdentity } from "@/lib/team";
+import { setTeamPhotos } from "@/lib/team-photos";
 import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
 function projectWebuiThreadMessages(messages: UIMessage[]): UIMessage[] {
@@ -2261,6 +2263,18 @@ export function ThreadShell({
     [applyCollabEnabled, refreshModelSettings, reloadTeam],
   );
   const teamModeSwitch = useTeamModeToggle(saveTeamMode, onTeamModeSaved);
+  // The teammates' uploaded photos, for their faces in the chat and the team
+  // view (a teammate only carries a marker of its photo).
+  const teamPhotosWanted = Boolean(teamInfo?.enabled)
+    || messages.some((message) => Boolean(message.author?.photo?.startsWith("custom:")));
+  useEffect(() => {
+    if (!teamPhotosWanted || !token) return;
+    let live = true;
+    fetchCollabSettings(token)
+      .then((payload) => { if (live) setTeamPhotos(payload.photos); })
+      .catch((err) => console.error("Could not load the teammates' photos", err));
+    return () => { live = false; };
+  }, [teamPhotosWanted, token]);
   const collabEnabled = teamModeSwitch.pending ?? teamInfo?.enabled ?? settings?.collab_enabled === true;
   const toggleTeamMode = teamModeSwitch.toggle;
   const selectChatTeam = useCallback(

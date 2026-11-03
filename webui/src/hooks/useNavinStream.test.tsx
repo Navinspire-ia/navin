@@ -78,6 +78,37 @@ describe("stream delivery", () => {
   });
 });
 
+describe("a teammate's reply", () => {
+  const mark = { id: "mark", name: "Mark", title: "Senior Developer", avatar: "person", color: "#2f7de1", gender: "male" };
+
+  it("is its own message under its name, apart from the lead's answer, and never twice", () => {
+    const app = setup();
+    app.event({ event: "delta", chat_id: "test", text: "Je lance Mark." });
+    app.event({ event: "stream_end", chat_id: "test" });
+    const reply = { event: "team_reply", chat_id: "test", entry_id: "e1", kind: "result", author: mark, text: "Login fixed." } as const;
+    app.event(reply);
+    app.event(reply);
+    app.event({ event: "message", chat_id: "test", text: "Salma teste ensuite." });
+    app.event({ event: "turn_end", chat_id: "test" });
+    frame();
+    const shown = app.result.current.messages.filter((message) => message.role === "assistant");
+    expect(shown.map((message) => [message.author?.name ?? "Navin", message.content])).toEqual([
+      ["Navin", "Je lance Mark."],
+      ["Mark", "Login fixed."],
+      ["Navin", "Salma teste ensuite."],
+    ]);
+    expect(shown[1].author).toMatchObject({ title: "Senior Developer", avatar: "person", gender: "male" });
+    expect(app.result.current.isStreaming).toBe(false);
+  });
+
+  it("without a name or a text is dropped", () => {
+    const app = setup();
+    app.event({ event: "team_reply", chat_id: "test", author: {}, text: "Who?" });
+    app.event({ event: "team_reply", chat_id: "test", author: mark, text: "  " });
+    expect(app.result.current.messages).toEqual([]);
+  });
+});
+
 describe("stop then send", () => {
   const inbound = (event: Record<string, unknown>) => event as unknown as InboundEvent;
 

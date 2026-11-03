@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -121,6 +123,7 @@ class InterruptTests(unittest.IsolatedAsyncioTestCase):
                 app._set_status()
                 for _ in range(20):
                     app._tick_spinner()
+                await app.workers.wait_for_complete()
                 self.assertEqual(resolve.call_count, 1)
 
     async def test_typing_continues_while_file_read_waits_for_disk(self):
@@ -527,6 +530,105 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(transcript.max_scroll_y, 0)
             self.assertEqual(transcript.scroll_y, transcript.max_scroll_y)
             self.assertEqual(app._batch_count, 0)
+
+    async def test_opening_an_idle_long_chat_forces_no_layout_after_its_paint(self):
+        # cli-freeze.log 2026-11-01: _replay_off_screen > screen._refresh_layout
+        # took 1.7 s on a long chat. A session that is not working replays
+        # nothing, its history paint already laid it out.
+        app = self.app
+        heavy = []
+        for index in range(40):
+            heavy.extend(_history_turn(index))
+            heavy[-1]["content"] = "\n\n".join(f"answer {index} line {line}" for line in range(30))
+        app.runtime.history_snapshot = lambda: heavy
+        replays: list[str] = []
+
+        async def release_held():
+            replays.append(app.runtime.session_key)
+            return False
+
+        app.runtime.release_held = release_held
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app._render_history()
+            await pilot.pause()
+            transcript = app.transcript
+            screen_type = type(app.screen)
+            real_layout = screen_type._refresh_layout
+            forced: list[int] = []
+
+            def counted(screen, *args, **kwargs):
+                # Textual lays out on its own refreshes; count the passes navin forces.
+                if sys._getframe(1).f_code.co_filename.endswith("navin/tui/app.py"):
+                    forced.append(1)
+                return real_layout(screen, *args, **kwargs)
+
+            def next_layout_s() -> float:
+                started = time.perf_counter()
+                real_layout(app.screen)
+                return time.perf_counter() - started
+
+            with patch.object(screen_type, "_refresh_layout", counted):
+                await app._replay_off_screen(release_held)
+                self.assertEqual(forced, [])
+                started = time.perf_counter()
+                await app._switch_session("cli:other")
+                elapsed = time.perf_counter() - started
+                layout_s = next_layout_s()
+            await pilot.pause()
+            # One paint: the two forced passes of _paint_history (first rows, then the rest).
+            self.assertEqual(len(forced), 2)
+            self.assertEqual(replays, ["cli:direct", "cli:other"])
+            self.assertEqual(transcript.scroll_y, transcript.max_scroll_y)
+            print(
+                f"\nswitch to a {len(heavy)}-row chat: {elapsed:.3f}s, forced layouts {len(forced)}, "
+                f"mounted blocks {transcript.mounted_block_count()}, next layout {layout_s * 1000:.1f} ms"
+            )
+
+    async def test_a_status_refresh_reads_the_reasoning_level_from_memory(self):
+        # cli-freeze.log 2026-11-01 20:46: _set_status > reasoning_details >
+        # _read_json_catalog > os.path.getmtime, 2.8 s of the UI loop.
+        app = self.app
+        ui_thread = threading.get_ident()
+        read_on: list[int] = []
+
+        def options(provider, model):
+            read_on.append(threading.get_ident())
+            return (("high", "High"), ("low", "Low"))
+
+        app.runtime.config.resolve_preset = lambda preset: SimpleNamespace(
+            provider="openai", model=app.runtime.status.model, reasoning_effort="high",
+        )
+        async with app.run_test(size=(100, 32)) as pilot:
+            with patch("navin.tui.models.reasoning_options", options):
+                await self._status_refreshes_from_memory(app, pilot, read_on, ui_thread)
+
+    async def _status_refreshes_from_memory(self, app, pilot, read_on, ui_thread):
+        app._set_status()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        self.assertEqual(len(read_on), 1)
+        self.assertNotEqual(read_on[0], ui_thread)
+        self.assertEqual(app._reasoning_label, "high")
+        with patch("os.path.getmtime", side_effect=AssertionError("disk read on a status refresh")):
+            for _ in range(50):
+                app._set_status()
+        await app.workers.wait_for_complete()
+        self.assertEqual(len(read_on), 1)
+        # Another model: read again, once, in a thread.
+        app.runtime.status.model = "other/model"
+        app._set_status()
+        await app.workers.wait_for_complete()
+        self.assertEqual(len(read_on), 2)
+        self.assertNotEqual(read_on[1], ui_thread)
+
+    def test_the_code_lexers_warm_in_a_thread_at_start(self):
+        from navin.tui import app as tui_app
+
+        tui_app.warm_code_lexers()
+        from pygments.lexers import get_lexer_by_name
+
+        self.assertEqual(get_lexer_by_name("python").name, "Python")
+        self.assertIn("python", tui_app.WARM_LEXERS)
 
     async def test_switch_reveals_latest_rows_first_then_keeps_order(self):
         app = self.app

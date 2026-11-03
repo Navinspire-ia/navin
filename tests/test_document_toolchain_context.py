@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -112,6 +113,82 @@ class RuntimeLinesTests(unittest.TestCase):
             dt.document_toolchain_runtime_lines("make a pdf", None, workspace=workspace)
             after = {p.name: p.stat().st_mtime_ns for p in tools.glob("*.py")}
         self.assertEqual(before, after, "unchanged converters must not be rewritten on every turn")
+
+
+class ProvidersStayOffTheLoopTests(unittest.TestCase):
+    """2026-11-01 20:49: ``_ensure_engine`` > ``_materialize_engine`` >
+    ``shutil.rmtree`` held the desktop loop 1.4 s while the prompt was built."""
+
+    def _request(self, text: str, metadata: dict | None, workspace: Path | None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(original_user_text=text, metadata=metadata, workspace=workspace)
+
+    def test_folder_work_never_runs_on_the_event_loop(self) -> None:
+        import asyncio
+        import shutil
+        import threading
+        from unittest import mock
+
+        real_rmtree, real_copytree = shutil.rmtree, shutil.copytree
+        on_loop: list[str] = []
+        loop_thread: list[int] = []
+
+        calls: list[str] = []
+
+        def watch(name, real):
+            def wrapper(*args, **kwargs):
+                calls.append(name)
+                if threading.get_ident() in loop_thread:
+                    on_loop.append(name)
+                return real(*args, **kwargs)
+            return wrapper
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            # An outdated engine copy: the turn removes and rewrites it.
+            dt.document_toolchain_runtime_lines("make a pptx", None, workspace=workspace)
+            engine = workspace / ".navin" / "resources" / "document-templates" / "ppt" / "_engine"
+            self.assertTrue(engine.is_dir())
+            for path in engine.rglob("*"):
+                if path.is_file():
+                    os.utime(path, (1, 1))
+
+            async def scenario():
+                loop_thread.append(threading.get_ident())
+                toolchain = await dt.document_toolchain_context_provider(
+                    self._request("make a pptx", None, workspace)
+                )
+                template = await dt.document_template_context_provider(
+                    self._request("", {dt.DOCUMENT_TEMPLATE_METADATA_KEY: "ppt/none"}, workspace)
+                )
+                return toolchain, template
+
+            with mock.patch.object(dt.shutil, "rmtree", watch("rmtree", real_rmtree)), \
+                    mock.patch.object(dt.shutil, "copytree", watch("copytree", real_copytree)):
+                toolchain, template = asyncio.run(scenario())
+            refreshed = min(p.stat().st_mtime for p in engine.rglob("*") if p.is_file())
+        self.assertIsNotNone(toolchain)
+        self.assertIsNone(template)
+        self.assertIn("rmtree", calls)
+        self.assertIn("copytree", calls)
+        self.assertGreater(refreshed, 1, "the outdated engine was refreshed, on a thread")
+        self.assertEqual(on_loop, [], "rmtree / copytree ran on the event loop")
+
+    def test_a_turn_with_no_document_never_leaves_the_loop(self) -> None:
+        import asyncio
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(dt.asyncio, "to_thread", side_effect=AssertionError("thread hop")):
+            block = asyncio.run(dt.document_toolchain_context_provider(
+                self._request("fix the bug", None, Path(tmp))
+            ))
+            template = asyncio.run(dt.document_template_context_provider(
+                self._request("fix the bug", {}, Path(tmp))
+            ))
+        self.assertIsNone(block)
+        self.assertIsNone(template)
 
 
 class TemplateGuidanceTests(unittest.TestCase):

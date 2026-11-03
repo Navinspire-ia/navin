@@ -7848,6 +7848,23 @@ export async function previewVoice(
   return request(`${base}/api/settings/voice/preview?${query}`, token, undefined, 75_000);
 }
 
+export interface TeammateSpeechClip {
+  audio_base64: string;
+  mime: string;
+  /** The voice that spoke (the teammate's own, or one of its gender). */
+  voice: string;
+}
+
+/** Live: a teammate's words in its own voice, with the saved speech settings. */
+export async function fetchTeammateSpeech(
+  token: string,
+  value: { text: string; key: string; gender: string; voice: string; lang: string; name: string },
+  base = "",
+): Promise<TeammateSpeechClip> {
+  const query = new URLSearchParams(value);
+  return request(`${base}/api/settings/voice/teammate?${query}`, token, undefined, 75_000);
+}
+
 export async function updateLiveVoiceSettings(
   token: string,
   transcription: TranscriptionSettingsUpdate,

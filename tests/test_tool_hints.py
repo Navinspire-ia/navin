@@ -503,16 +503,26 @@ def test_heredoc_command_labels_never_recurse_forever():
 
 def test_leading_zero_width_text_does_not_freeze_width_helpers():
     """Regression: rich 14 split_graphemes looped forever on a leading
-    zero-width character and froze the whole CLI (10000s+ event loop stall)."""
-    import os
+    zero-width character and froze the whole CLI (10000s+ event loop stall).
+    Every width path rich and Textual paint with must finish on such text."""
+    import io
     import threading
 
     from rich.cells import cell_len, chop_cells, set_cell_size
     from rich.console import Console
+    from rich.segment import Segment
     from rich.text import Text
+    from textual.content import Content
+    from textual.strip import Strip
 
     from navin.utils.tool_hints import format_preview_markup_line
 
+    samples = [
+        "\u200babcdefgh", "\ufe0fabc", "\u0301", "\u200d\u200dx", "a\u200d",
+        "e\u0301\u0301x", "\u2764\ufe0f ok", "\U0001f469\u200d\U0001f4bb dev",
+        # Past rich's 512-character cache, cell_len takes its uncached path.
+        "\u200b" * 600 + "x\u200d",
+    ]
     # A daemon thread with a join timeout works on every OS and runner
     # (signal.alarm is POSIX only, sys.executable may be a frozen binary):
     # a hung rich call leaves the thread alive and fails the test.
@@ -520,11 +530,18 @@ def test_leading_zero_width_text_does_not_freeze_width_helpers():
 
     def exercise() -> None:
         try:
-            console = Console(width=30, file=open(os.devnull, "w", encoding="utf-8"))
-            for text in ["\u200babcdefgh", "\ufe0fabc", "\u0301", "\u200d\u200dx"]:
+            console = Console(width=30, file=io.StringIO())
+            for text in samples:
                 set_cell_size(text, 3)
                 chop_cells(text, 2)
-                cell_len(text)
+                width_of_text = cell_len(text)
+                Segment(text).split_cells(1)
+                list(Segment.split_and_crop_lines([Segment(text)], 2))
+                strip = Strip([Segment(text)])
+                strip.crop(0, 2)
+                strip.divide([1, 2])
+                assert strip.cell_length == width_of_text, text
+                Content(text).wrap(2)
                 for width in (1, 2, 5):
                     Text(text).wrap(console, width)
                     console.print(Text(text), width=width)
@@ -535,9 +552,39 @@ def test_leading_zero_width_text_does_not_freeze_width_helpers():
     worker = threading.Thread(target=exercise, daemon=True)
     worker.start()
     worker.join(timeout=15)
-    assert not worker.is_alive(), "rich width helpers hung on zero-width text"
+    assert not worker.is_alive(), "rich or Textual width helpers hung on zero-width text"
     assert "error" not in outcome, outcome.get("error")
     assert "hello" in str(outcome["line"])
+
+
+def test_rich_itself_carries_the_grapheme_fix():
+    """rich fixed the split_graphemes infinite loop in 14.3.3, so the dependency
+    floor protects every rich and Textual path whatever the import order. No
+    copy of rich internals is installed over it: a stale copy would also hide
+    the next upstream fix."""
+    import importlib.metadata
+    import tomllib
+    from pathlib import Path
+
+    import rich.cells
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    from navin.utils import tool_hints
+
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    floors = [
+        requirement.specifier
+        for requirement in map(Requirement, project["project"]["dependencies"])
+        if requirement.name == "rich"
+    ]
+    assert len(floors) == 1
+    assert "14.3.3" in floors[0] and "14.3.2" not in floors[0]
+    assert Version(importlib.metadata.version("rich")) >= Version("14.3.3")
+    assert rich.cells.split_graphemes.__module__ == "rich.cells"
+    assert tool_hints.chop_cells("\u200bab", 1) == ["a", "b"]
 
 
 def test_pathological_tool_output_paints_in_bounded_time():

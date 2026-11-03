@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from navin.utils.proc import no_window_kwargs
+from navin.utils.wsl import windows_program_argv
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 MAX_IMAGES = 8
@@ -154,7 +155,10 @@ _ONCE_SCRIPT = (
 
 def _powershell_argv(powershell: str) -> list[str]:
     encoded = base64.b64encode(_HELPER_SCRIPT.encode("utf-16-le")).decode("ascii")
-    return [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", encoded]
+    # Through WSL's /init when the interop entry is gone (navin.utils.wsl).
+    return windows_program_argv(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", encoded]
+    )
 
 
 def _pump_lines(proc: subprocess.Popen[bytes], lines: queue.Queue[bytes | None]) -> None:
@@ -272,7 +276,10 @@ def _save_windows_clipboard_image(target: Path) -> bool:
 
 
 def _save_windows_clipboard_image_once(target: Path, powershell: str) -> bool:
-    result = _run([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", _ONCE_SCRIPT], timeout=15)
+    result = _run(
+        windows_program_argv([powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", _ONCE_SCRIPT]),
+        timeout=15,
+    )
     if result is None or result.returncode != 0:
         return False
     try:

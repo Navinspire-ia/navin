@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
+import sys
 import threading
 import time
 
@@ -192,6 +194,72 @@ class TestLoopLagMonitor:
         assert side, "the helper thread never noticed the block"
         assert "time.sleep" in side[0] or "test_stall_watch" in side[0]
         assert after, "the resumed loop did not report how long it was gone"
+        assert all(w.startswith(f"[pid {os.getpid()}] ") for w in side + after), "entries name their process"
+        # The final report carries the last sampled stack, even with no side
+        # report written for this block (the 8.7 s block of 2026-11-01).
+        assert "main thread was last seen in" in after[0]
+        assert "time.sleep" in after[0] or "test_stall_watch" in after[0]
+
+    @pytest.mark.asyncio
+    async def test_a_block_inside_the_report_interval_still_gets_its_stack(self) -> None:
+        log = _Log()
+        monitor = LoopLagMonitor(log, warn_after_s=0.1, poll_s=0.02, min_interval_s=600)
+        monitor.start()
+        try:
+            await asyncio.sleep(0.05)
+            time.sleep(0.3)  # first block: one side report, then the interval holds
+            await asyncio.sleep(0.05)
+            time.sleep(0.3)  # second block: no side report allowed
+            await asyncio.sleep(0.05)
+        finally:
+            await monitor.stop()
+        side = [w for w in log.warnings if "so far; main thread is in" in w]
+        after = [w for w in log.warnings if "event loop was blocked for" in w]
+        assert len(side) == 1 and len(after) == 2
+        assert all("main thread was last seen in" in w and "_still_gets_its_stack" in w for w in after)
+
+    @pytest.mark.asyncio
+    async def test_the_main_thread_stack_keeps_twenty_frames(self) -> None:
+        log = _Log()
+        monitor = LoopLagMonitor(log, warn_after_s=0.1, poll_s=0.02, min_interval_s=0)
+
+        # Two alternating functions: traceback folds a frame repeated more
+        # than three times in a row into one "[Previous line repeated]" line.
+        def hop_a(depth: int) -> None:
+            if depth:
+                hop_b(depth - 1)
+            else:
+                time.sleep(0.3)
+
+        def hop_b(depth: int) -> None:
+            hop_a(depth - 1)
+
+        monitor.start()
+        try:
+            await asyncio.sleep(0.05)
+            hop_a(30)
+            await asyncio.sleep(0.05)
+        finally:
+            await monitor.stop()
+        side = [w for w in log.warnings if "so far; main thread is in" in w]
+        assert side
+        hops = side[0].count("in hop_a\n") + side[0].count("in hop_b\n")
+        assert hops == 20, "the 20 innermost frames, all in the hops"
+
+    @pytest.mark.asyncio
+    async def test_the_caller_context_is_in_every_entry(self) -> None:
+        log = _Log()
+        monitor = LoopLagMonitor(
+            log, warn_after_s=0.1, poll_s=0.02, min_interval_s=0, context=lambda: "project /p",
+        )
+        monitor.start()
+        try:
+            await asyncio.sleep(0.05)
+            time.sleep(0.3)
+            await asyncio.sleep(0.05)
+        finally:
+            await monitor.stop()
+        assert log.warnings and all(w.startswith(f"[pid {os.getpid()} project /p] ") for w in log.warnings)
 
     @pytest.mark.asyncio
     async def test_a_paused_process_is_not_reported_as_a_blocked_loop(self) -> None:
@@ -283,6 +351,16 @@ class TestLoopLagMonitor:
         clock("stop", {"generation": 0})
         assert len(seen) == 1
 
+    def test_a_collection_started_after_the_clock_reading_is_never_negative(self) -> None:
+        from navin.webui.stall_watch import GcClock
+
+        clock = GcClock()
+        read_before = time.monotonic()
+        clock("start", {"generation": 0})  # the collector starts between the two reads
+        clock.started = read_before + 0.1
+        note = clock.describe(read_before)
+        assert "running for -" not in note and "generation 0 running for 0.0s" in note
+
     @pytest.mark.asyncio
     async def test_a_slow_full_collection_runs_the_reaction_on_the_loop_once(self) -> None:
         import gc
@@ -322,6 +400,7 @@ class TestCliFreezeWatch:
         asyncio.run(run())
         text = path.read_text(encoding="utf-8")
         assert "event loop blocked for" in text
+        assert f"[pid {os.getpid()}] " in text
         assert "test_cli_freeze_is_written_to_the_freeze_log" in text
 
     def test_the_cli_never_freezes_live_widgets_after_a_slow_collection(self, tmp_path, monkeypatch):
@@ -335,18 +414,20 @@ class TestCliFreezeWatch:
 
         monkeypatch.setattr("navin.config.paths.get_logs_dir", lambda: tmp_path)
         monkeypatch.setattr(faulthandler, "enable", lambda *args, **kwargs: None)
-        host = SimpleNamespace()
+        host = SimpleNamespace(workspace=tmp_path / "proj")
 
         async def run() -> None:
             TuiRuntime._start_freeze_watch(host)
             try:
                 assert host._loop_lag._after_slow_full_gc is None
+                assert host._loop_lag._prefix() == f"[pid {os.getpid()} project {tmp_path / 'proj'}] "
+                host._loop_lag._log.info("engine was paused for {:.1f}s", 31.0)
             finally:
                 await host._loop_lag.stop()
                 host._freeze_file.close()
 
         asyncio.run(run())
-        assert (tmp_path / "cli-freeze.log").exists()
+        assert "engine was paused for 31.0s" in (tmp_path / "cli-freeze.log").read_text(encoding="utf-8")
 
     def test_dream_commit_runs_off_the_event_loop(self):
         import inspect
@@ -656,74 +737,128 @@ def thawed_heap():
 
 def test_idle_heap_pass_runs_only_idle_and_once_an_interval(thawed_heap) -> None:
     clock = _Clock()
-    # deep_growth=1: the first pass freezes the whole live heap (far more than
-    # one object in a full test run) and that is the baseline, not growth. On
-    # the CI runner the whole suite's heap made the second pass deep once.
-    keeper = IdleHeapPass(clock, min_interval_s=60.0, deep_growth=1)
-    assert keeper.frozen_after_deep is None
+    # The first pass freezes the whole live heap: that is the baseline, not
+    # growth, whatever the resident memory reads after it.
+    keeper = IdleHeapPass(clock, min_interval_s=60.0, deep_growth_bytes=1, deep_min_interval_s=0.0)
+    assert keeper.resident_after_deep is None
     assert keeper.tick(idle=False) is False
     assert keeper.passes == 0
     assert keeper.tick(idle=True) is True
     assert gc.get_freeze_count() > 0  # the survivors are out of the next collections
-    assert keeper.frozen_after_deep is not None
+    assert keeper.resident_after_deep is not None and keeper.resident_after_deep > 0
     assert keeper.tick(idle=True) is False  # same minute
-    clock.now += 60.0
-    assert keeper.tick(idle=True) is True  # nothing frozen since the baseline: ordinary
-    assert keeper.passes == 2
-    assert keeper.deep_passes == 0
+    assert keeper.passes == 1
 
 
-def test_idle_heap_pass_thaws_everything_once_the_frozen_set_grew(thawed_heap) -> None:
+def test_idle_heap_pass_thaws_everything_once_the_resident_memory_grew(thawed_heap) -> None:
     clock = _Clock()
-    keeper = IdleHeapPass(clock, min_interval_s=0.0, deep_growth=1)
+    resident = {"bytes": 100 << 20}
+    keeper = IdleHeapPass(
+        clock, min_interval_s=0.0, deep_growth_bytes=50 << 20, deep_min_interval_s=0.0,
+        resident=lambda: resident["bytes"],
+    )
     assert keeper.tick(idle=True) is True  # first pass: the baseline
+    assert keeper.resident_after_deep == 100 << 20
     kept = [[i] for i in range(1000)]  # survivors the next ordinary pass freezes
+    resident["bytes"] += 49 << 20
     clock.now += 1.0
-    assert keeper.tick(idle=True) is True  # ordinary: the frozen set grows by them
+    assert keeper.tick(idle=True) is True  # ordinary: grown, not past the bound
     assert keeper.deep_passes == 0
+    frozen_before_deep = gc.get_freeze_count()
+    resident["bytes"] += 2 << 20
     clock.now += 1.0
     assert keeper.tick(idle=True) is True  # grown past the bound: thaw, collect all, freeze
     assert keeper.deep_passes == 1
-    # The growth baseline moved to the thawed-and-refrozen heap (the kept
-    # lists included); objects freed by refcount since may lower the live count.
-    assert keeper.frozen_after_deep >= 1000
-    assert gc.get_freeze_count() <= keeper.frozen_after_deep
+    # The growth baseline moved to the reading after the deep pass.
+    assert keeper.resident_after_deep == 151 << 20
+    assert gc.get_freeze_count() > 0 and frozen_before_deep > 0
+    clock.now += 1.0
+    assert keeper.tick(idle=True) is True and keeper.deep_passes == 1, "no growth since the deep pass"
     assert len(kept) == 1000
 
 
-def test_idle_heap_pass_walks_the_frozen_heap_once_per_pass(monkeypatch) -> None:
-    """The ordinary pass collected every generation (1.5 to 2.4 s with the loop
-    stopped) and read ``gc.get_freeze_count`` before and after (1.0 s once
-    for 4.9 M frozen objects). Now: young generations only, one count."""
+def test_an_ordinary_idle_heap_pass_never_walks_the_heap(monkeypatch) -> None:
+    """171 of 208 desktop freeze stacks of 2026-11-01 ended in
+    ``self.frozen = gc.get_freeze_count()``: a walk of the whole permanent
+    generation once a minute. An ordinary pass now reads the resident memory
+    only, and the deep pass still comes once it grew."""
+    import navin.webui.stall_watch as stall_watch
+
+    def walks_the_heap(*args: object) -> int:
+        raise AssertionError("an idle heap pass walked the heap")
+
+    collected: list[int] = []
+    calls: list[str] = []
+    monkeypatch.setattr(stall_watch.gc, "get_freeze_count", walks_the_heap)
+    monkeypatch.setattr(stall_watch.gc, "get_objects", walks_the_heap)
+    monkeypatch.setattr(stall_watch.gc, "collect", lambda generation=2: collected.append(generation) or 0)
+    monkeypatch.setattr(stall_watch.gc, "freeze", lambda: calls.append("freeze"))
+    monkeypatch.setattr(stall_watch.gc, "unfreeze", lambda: calls.append("unfreeze"))
+    clock = _Clock()
+    resident = {"bytes": 400 << 20}
+    reads: list[int] = []
+
+    def read_resident() -> int:
+        reads.append(resident["bytes"])
+        return resident["bytes"]
+
+    keeper = IdleHeapPass(
+        clock, min_interval_s=60.0, deep_growth_bytes=100 << 20, deep_min_interval_s=600.0,
+        resident=read_resident,
+    )
+    assert keeper.tick(idle=True) is True  # first pass: full, once, sets the baseline
+    assert collected == [2] and keeper.resident_after_deep == 400 << 20
+    assert keeper.tick(idle=True) is False and keeper.tick(idle=False) is False
+    assert len(reads) == 2, "a tick that runs no pass reads nothing"
+    for _ in range(5):  # ordinary passes: young generations, a freeze, one reading
+        clock.now += 60.0
+        resident["bytes"] += 10 << 20
+        assert keeper.tick(idle=True) is True
+    assert collected == [2, 1, 1, 1, 1, 1] and keeper.deep_passes == 0
+    assert "unfreeze" not in calls and len(reads) == 7
+    resident["bytes"] += 60 << 20  # 110 MB past the baseline, but too soon
+    clock.now += 60.0
+    assert keeper.tick(idle=True) is True and keeper.deep_passes == 0
+    clock.now += 300.0  # 660 s since the baseline: the deep pass is due
+    assert keeper.tick(idle=True) is True
+    assert keeper.deep_passes == 1 and collected[-1] == 2 and calls[-2:] == ["unfreeze", "freeze"]
+    assert keeper.resident_after_deep == 510 << 20
+
+
+def test_an_idle_heap_pass_without_a_memory_reading_falls_back_to_time(monkeypatch) -> None:
     import navin.webui.stall_watch as stall_watch
 
     collected: list[int] = []
-    walks: list[int] = []
-    frozen = {"count": 1_000}
     monkeypatch.setattr(stall_watch.gc, "collect", lambda generation=2: collected.append(generation) or 0)
     monkeypatch.setattr(stall_watch.gc, "freeze", lambda: None)
     monkeypatch.setattr(stall_watch.gc, "unfreeze", lambda: None)
-    monkeypatch.setattr(stall_watch.gc, "get_freeze_count", lambda: walks.append(1) or frozen["count"])
     clock = _Clock()
-    keeper = IdleHeapPass(clock, min_interval_s=60.0, deep_growth=500)
-    assert keeper.tick(idle=True) is True  # first pass: full, once, sets the baseline
-    assert collected == [2] and walks == [1]
-    assert keeper.tick(idle=True) is False and keeper.tick(idle=False) is False
-    assert walks == [1], "a tick that runs no pass never walks the frozen heap"
-    clock.now += 60.0
-    frozen["count"] = 1_400
+    keeper = IdleHeapPass(
+        clock, min_interval_s=60.0, deep_min_interval_s=600.0, deep_fallback_interval_s=3600.0,
+        resident=lambda: None,
+    )
     assert keeper.tick(idle=True) is True
-    assert collected == [2, 1] and walks == [1, 1] and keeper.deep_passes == 0
-    clock.now += 60.0
-    assert keeper.tick(idle=True) is True  # 400 grown: still ordinary
-    frozen["count"] = 1_600
-    clock.now += 60.0
-    assert keeper.tick(idle=True) is True  # read after the last pass: 400 < 500
-    assert keeper.deep_passes == 0
-    clock.now += 60.0
-    assert keeper.tick(idle=True) is True  # 600 grown since the baseline: deep
-    assert keeper.deep_passes == 1 and collected[-1] == 2
-    assert walks == [1] * 5 and keeper.frozen_after_deep == 1_600
+    clock.now += 3000.0
+    assert keeper.tick(idle=True) is True and keeper.deep_passes == 0
+    clock.now += 600.0
+    assert keeper.tick(idle=True) is True and keeper.deep_passes == 1
+    assert collected == [2, 1, 2]
+
+
+def test_resident_memory_is_read_from_the_system_and_follows_the_heap() -> None:
+    from navin.webui.stall_watch import _resident_without_psutil, resident_memory_bytes
+
+    before = resident_memory_bytes()
+    assert before is not None and before > 1 << 20
+    ballast = bytearray(64 << 20)
+    ballast[:: 4096] = b"x" * len(ballast[:: 4096])  # touch every page
+    after = resident_memory_bytes()
+    assert after is not None and after - before >= 32 << 20
+    direct = _resident_without_psutil()
+    assert direct is not None and direct >= after - (16 << 20)
+    if sys.platform != "darwin":  # macOS gives the peak, never below the current reading
+        assert direct - after < 16 << 20
+    del ballast
 
 
 def test_the_gateway_loop_ticks_the_heap_pass_only_when_no_session_is_busy() -> None:

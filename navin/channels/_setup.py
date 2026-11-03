@@ -110,6 +110,7 @@ def _one_of(*alternatives: tuple[str, ...]) -> SetupRequirement:
 
 _GROUP_POLICIES = {"mention", "open", "allowlist"}
 _DIRECT_GROUP_POLICIES = {"mention", "open"}
+_TEAMS_GROUP_POLICIES = {"mention", "open", "off"}
 
 CHANNEL_SETUP_SPECS: dict[str, ChannelSetupSpec] = {
     "websocket": ChannelSetupSpec(
@@ -232,6 +233,7 @@ CHANNEL_SETUP_SPECS: dict[str, ChannelSetupSpec] = {
             "port": _field("int"),
             "path": _field(),
             "allowFrom": _field("list"),
+            "groupPolicy": _field("enum", choices=_TEAMS_GROUP_POLICIES),
         },
         required=(_required("appId"), _required("appPassword")),
         official_url="https://dev.teams.microsoft.com/apps",

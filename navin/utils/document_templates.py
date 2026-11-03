@@ -23,6 +23,7 @@ the agent which template to use and how to deliver the final file.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import mimetypes
 import os
@@ -30,6 +31,7 @@ import re
 import shlex
 import shutil
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -695,12 +697,33 @@ def document_template_runtime_lines(
     ]
 
 
+# One materialization at a time in this process: two turns building their
+# context together must not remove a folder the other one is copying.
+_MATERIALIZE_LOCK = threading.Lock()
+
+
+def _materialized_lines(build: Any, *args: Any, **kwargs: Any) -> list[str]:
+    """Run a lines builder that copies folders into the project, serialized."""
+    with _MATERIALIZE_LOCK:
+        return build(*args, **kwargs)
+
+
 async def document_template_context_provider(
     request: "RequestContext",
 ) -> RuntimeContextBlock | None:
-    """Runtime-context provider registered by the agent loop."""
-    lines = document_template_runtime_lines(
-        request.metadata,
+    """Runtime-context provider registered by the agent loop.
+
+    Materializing the template copies (and first removes) folders in the
+    project: seconds on a WSL or network project, so never on the loop.
+    """
+    metadata = request.metadata
+    # Presence only: validating the mention reads the bundled templates.
+    if not isinstance(metadata, Mapping) or not metadata.get(DOCUMENT_TEMPLATE_METADATA_KEY):
+        return None
+    lines = await asyncio.to_thread(
+        _materialized_lines,
+        document_template_runtime_lines,
+        metadata,
         workspace=request.workspace,
     )
     content = wrap_runtime_context_lines(lines)
@@ -844,8 +867,20 @@ def document_toolchain_runtime_lines(
 async def document_toolchain_context_provider(
     request: "RequestContext",
 ) -> RuntimeContextBlock | None:
-    """Runtime-context provider: bundled document generators, template or not."""
-    lines = document_toolchain_runtime_lines(
+    """Runtime-context provider: bundled document generators, template or not.
+
+    The converters and engines are copied into the project, an outdated
+    engine removed first: ``shutil.rmtree`` held the desktop loop 1.4 s on
+    2026-11-01 20:49 while the prompt was built. The text check stays here
+    (no disk), the folder work runs on a thread.
+    """
+    if request.workspace is None or not wants_document_toolchain(
+        request.original_user_text, request.metadata
+    ):
+        return None
+    lines = await asyncio.to_thread(
+        _materialized_lines,
+        document_toolchain_runtime_lines,
         request.original_user_text,
         request.metadata,
         workspace=request.workspace,

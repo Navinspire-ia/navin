@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL, NAVIN_TTS_VOICE
+from navin.audio.models import (
+    NAVIN_STT_MODEL,
+    NAVIN_TTS_MODEL,
+    NAVIN_TTS_VOICE,
+    teammate_voice,
+    voice_profile,
+)
 from navin.audio.transcription import resolve_transcription_config
 from navin.audio.tts import live_voice_status, resolve_tts_config, synthesize_speech
 from navin.config.loader import load_config, save_config
@@ -29,7 +35,7 @@ from navin.webui.settings_api import (
     update_transcription_settings,
     update_voice_settings,
 )
-from navin.webui.voice_api import voice_preview_payload
+from navin.webui.voice_api import teammate_speech_payload, voice_preview_payload
 from navin.webui.voice_session_ws import (
     clear_voice_sessions_for_tests,
     close_voice_sessions,
@@ -269,6 +275,48 @@ async def test_preview_requires_the_selected_provider_key(byok):
     with patch("navin.webui.voice_api.synthesize_speech_with_config") as synth, pytest.raises(WebUISettingsError):
         await voice_preview_payload({"provider": ["openai"], "text": ["Bonjour."]})
     synth.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_teammate_speaks_with_a_voice_of_its_gender_and_nothing_is_saved(byok):
+    byok.voice.tts_model = "gpt-4o-mini-tts"
+    byok.voice.voice = "coral"
+    save_config(byok)
+    original = load_config().model_dump()
+    with patch("navin.webui.voice_api.synthesize_speech_with_config", new=AsyncMock(return_value=b"ID3")) as synth:
+        mark = await teammate_speech_payload({"text": ["Login fixed."], "gender": ["male"], "key": ["mark"], "lang": ["fr"], "name": ["Mark"]})
+        salma = await teammate_speech_payload({"text": ["Tests green."], "gender": ["female"], "key": ["salma"], "lang": ["fr"]})
+        own = await teammate_speech_payload({"text": ["Hi."], "voice": ["ONYX"], "gender": ["female"], "key": ["x"]})
+        unknown = await teammate_speech_payload({"text": ["Hi."], "gender": [""], "key": ["y"]})
+        named = await teammate_speech_payload({"text": ["Hi."], "gender": [""], "key": ["y"], "name": ["Sofia"]})
+    assert voice_profile(mark["voice"])[0] == "male" and voice_profile(salma["voice"])[0] == "female"
+    assert salma["voice"] != "coral"  # not the lead's own voice while another one fits
+    assert own["voice"] == "onyx"  # the teammate's own voice, spelled as the provider spells it
+    assert unknown["voice"] == named["voice"] == "coral"  # nothing known about it: the lead's voice
+    assert [call.args[1].voice for call in synth.call_args_list] == [mark["voice"], salma["voice"], "onyx", "coral", "coral"]
+    # Only a teammate that sounds like Navin says its name first.
+    assert [call.args[0] for call in synth.call_args_list] == ["Login fixed.", "Tests green.", "Hi.", "Hi.", "Sofia: Hi."]
+    assert base64.b64decode(mark["audio_base64"]) == b"ID3"
+    assert load_config().model_dump() == original
+    for bad in ({"text": [""]}, {"text": ["x" * 1201]}, {"text": ["Hi."], "voice": ["v" * 81]}):
+        with pytest.raises(WebUISettingsError):
+            await teammate_speech_payload(bad)
+
+
+def test_teammate_voices_follow_the_language_and_spread_over_a_gender():
+    # Polly: the user's language first, the lead's voice only when nothing else fits.
+    assert teammate_voice("aws/polly-neural", "female", "fr", key="salma", avoid="Lea") == "Gabrielle"
+    assert teammate_voice("aws/polly-neural", "male", "fr-FR", key="mark") in {"Remi", "Liam"}
+    assert teammate_voice("aws/polly-neural", "male", "ar", key="karim") == "Zayd"
+    assert teammate_voice("aws/polly-neural", "female", "de", key="grace") in {"Joanna", "Ruth", "Amy", "Danielle"}
+    # The same teammate always gets the same voice; teammates of one gender are spread.
+    picks = {teammate_voice("gpt-4o-mini-tts", "male", key=name) for name in ("mark", "ethan", "karim", "jack", "ryan")}
+    assert len(picks) > 1 and all(voice_profile(voice)[0] == "male" for voice in picks)
+    assert teammate_voice("gpt-4o-mini-tts", "male", key="mark") == teammate_voice("gpt-4o-mini-tts", "male", key="mark")
+    # Two voices only: the lead's is still used rather than no voice at all.
+    assert teammate_voice("qwen/qwen-audio-3.0-tts-flash", "male", key="mark", avoid="loongjohn") == "loongjohn"
+    assert teammate_voice("qwen/qwen-audio-3.0-tts-flash", "female", key="salma") == "longanhuan_v3.6"
+    assert teammate_voice("some/unknown-tts", "female") == ""
 
 
 @pytest.mark.asyncio

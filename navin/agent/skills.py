@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import unicodedata
@@ -28,7 +29,18 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 )
 
 _RESOLVED_PATH_CACHE: dict = {}
+# Resolved skill roots shared by every loader with the same roots. The
+# context builder makes a new loader per request, and resolving ~400 roots
+# (most do not exist) is a realpath walk each: on the Windows desktop with a
+# WSL project that was the 10 s+ stack in the context-usage route dumps
+# (_resolved_roots -> ntpath.realpath). Dropped by every rescan, so a root
+# created or retargeted is seen with the scan that found it.
+_RESOLVED_ROOTS_CACHE: dict[tuple, tuple[float, frozenset[Path]]] = {}
+_RESOLVED_ROOTS_TTL_S = 30.0
+_RESOLVED_ROOTS_CACHE_MAX = 64
 _SKILL_META_TTL: dict = {}
+_SEARCH_ROWS: dict[tuple, tuple] = {}
+_SEARCH_ROWS_LOCK = threading.Lock()
 # The directory scan shared by every SkillsLoader built for the same roots.
 # A teammate launch builds one loader per member and a subagent wave one per
 # spawn; each used to walk every library (plugins, home, builtin) on its own,
@@ -53,12 +65,26 @@ _SKILL_META_CACHE_MAX = 512
 # the gateway event loop while a turn is being prepared: in a WSL guest the
 # PATH carries every Windows directory over the /mnt/c 9P mount, where one
 # stat can take a second, and the scan froze every open chat for ~2 s each
-# time the cache expired. Keep the answer for 10 minutes and never probe
-# Windows mounts for a skill's Linux binary.
-_WHICH_CACHE: dict[tuple[str, str], tuple[float, bool]] = {}
+# time the cache expired. Never probe Windows mounts for a skill's Linux
+# binary.
+#
+# A missing binary is the expensive answer: which() tries every PATH entry
+# (times every PATHEXT suffix on Windows: ~800 probes for 60 entries) before
+# giving up. Re-asking every 2 s cost the Windows desktop seconds per
+# context-usage poll (desktop-engine.log, 2026-11-01). The answer is now keyed
+# by (binary, PATH, PATHEXT) and checked against the PATH folders' mtimes:
+# installing or removing a program writes into one of those folders, and a
+# PATH change is a new key, so a new tool shows up on the next call after
+# the folder stamp is re-read (at most _PATH_STAMP_TTL_S later). The backstop
+# TTLs cover the changes a folder mtime does not show (a chmod +x).
+_WHICH_CACHE: dict[tuple[str, str, str], tuple[tuple[int, ...], float, bool]] = {}
 _WHICH_TTL_S = 600.0
-_MISSING_WHICH_TTL_S = 2.0
+_MISSING_WHICH_TTL_S = 60.0
 _WHICH_PATH_CACHE: tuple[str, str] | None = None
+# PATH folder mtimes, re-read at most this often for all binaries together.
+_PATH_STAMP_TTL_S = 1.0
+_PATH_STAMP_CACHE: dict[tuple[str, ...], tuple[float, tuple[int, ...]]] = {}
+_PATH_STAMP_CACHE_MAX = 32
 
 
 def _which_search_path() -> str:
@@ -108,11 +134,10 @@ _NAVIN_NON_SKILL_CHILDREN = frozenset({
 
 
 def _dedup_paths(paths: list[Path]) -> list[Path]:
-    unique: list[Path] = []
-    for path in paths:
-        if path not in unique:
-            unique.append(path)
-    return unique
+    # dict keys use Path hashing, which agrees with Path equality on every
+    # platform. The list-membership version compared every pair: 230 000
+    # Path.__eq__ calls (0.12 s, more on Windows) per loader for ~400 roots.
+    return list(dict.fromkeys(paths))
 
 
 def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
@@ -331,8 +356,10 @@ def clear_skills_index_cache() -> None:
         _INDEX_CACHE.clear()
         _SCAN_GENERATION += 1
         _WHICH_CACHE.clear()
+        _PATH_STAMP_CACHE.clear()
     _SKILL_META_TTL.clear()
     _RESOLVED_PATH_CACHE.clear()
+    _RESOLVED_ROOTS_CACHE.clear()
     with _SHARED_SCAN_LOCK:
         _SHARED_SCAN_CACHE.clear()
     _PLUGIN_SKILL_DIRS_CACHE = None
@@ -346,29 +373,44 @@ def clear_home_skill_dir_cache() -> None:
     clear_skills_index_cache()
 
 
-def _dir_stamp(path: Path) -> tuple[str, int, tuple[str, ...]]:
-    """Identity of a skill root: the folder plus its immediate children.
+def _dir_stamp(path: Path) -> tuple[str, int, tuple[tuple[str, int], ...]]:
+    """Identity of a skill root: what :func:`iter_skill_files` reads in it.
 
-    Editing ``SKILL.md`` updates the skill directory, not always the parent
-    ``skills/`` folder. Child names are part of the key so two writes in the
+    One entry per child that can be a skill, with a mark: the ``SKILL.md``
+    mtime for a folder (-1 without one: ``SKILL.md`` written, edited,
+    replaced or removed moves it), the file mtime for a loose ``.md``
+    playbook. Everything else is left out on purpose: ``~/.navin`` is both
+    a skill root and the folder where config, logs, sessions and indexes
+    are rewritten every few seconds, and stamping those (the old folder
+    plus children mtimes) rebuilt the whole catalog on every
+    context-usage poll. Names are part of the key so two writes in the
     same filesystem-timestamp tick still bust the cache.
     """
-    try:
-        latest = path.stat().st_mtime_ns
-    except OSError:
-        return (str(path), 0, ())
-    names: list[str] = []
+    harness_root = path.name.startswith(".")
+    skip_dirs = _NAVIN_NON_SKILL_CHILDREN if path.name == ".navin" else frozenset()
+    marks: list[tuple[str, int]] = []
     try:
         with os.scandir(path) as it:
             for entry in it:
-                names.append(entry.name)
+                name = entry.name
                 try:
-                    latest = max(latest, entry.stat().st_mtime_ns)
+                    if entry.is_dir():
+                        if name in skip_dirs:
+                            continue
+                        try:
+                            mark = os.stat(os.path.join(entry.path, "SKILL.md")).st_mtime_ns
+                        except OSError:
+                            mark = -1
+                    elif name == "SKILL.md" or (not harness_root and name.lower().endswith(".md")):
+                        mark = entry.stat().st_mtime_ns
+                    else:
+                        continue
                 except OSError:
                     continue
+                marks.append((name, mark))
     except OSError:
-        pass
-    return (str(path), latest, tuple(sorted(names)))
+        return (str(path), 0, ())
+    return (str(path), 1, tuple(sorted(marks)))
 
 
 def _home_skill_dirs() -> list[Path]:
@@ -398,21 +440,54 @@ def _home_skill_dirs() -> list[Path]:
         return list(dirs)
 
 
-def _cached_which(command: str) -> bool:
-    import time
+def _which_dirs(command: str, search_path: str) -> tuple[str, ...]:
+    """The folders shutil.which looks into for *command*, in its order."""
+    dirname = os.path.dirname(command)
+    if dirname:
+        return (dirname,)
+    entries = search_path.split(os.pathsep) if search_path else []
+    if sys.platform == "win32":
+        # which() also tries the current directory first on Windows.
+        entries.insert(0, os.curdir)
+    # An empty PATH entry is the current directory for which().
+    return tuple(dict.fromkeys(entry or os.curdir for entry in entries))
 
+
+def _dirs_stamp(dirs: tuple[str, ...], now: float) -> tuple[int, ...]:
+    """mtime_ns of each folder (-1 when missing), re-read every _PATH_STAMP_TTL_S."""
+    hit = _PATH_STAMP_CACHE.get(dirs)
+    if hit is not None and now - hit[0] < _PATH_STAMP_TTL_S:
+        return hit[1]
+    stamps: list[int] = []
+    for folder in dirs:
+        try:
+            stamps.append(os.stat(folder).st_mtime_ns)
+        except (OSError, ValueError):
+            stamps.append(-1)
+    stamp = tuple(stamps)
+    if dirs not in _PATH_STAMP_CACHE and len(_PATH_STAMP_CACHE) >= _PATH_STAMP_CACHE_MAX:
+        _PATH_STAMP_CACHE.clear()
+    _PATH_STAMP_CACHE[dirs] = (now, stamp)
+    return stamp
+
+
+def _cached_which(command: str) -> bool:
+    """shutil.which for a skill requirement, valid while the PATH folders are unchanged."""
     now = time.monotonic()
     search_path = _which_search_path()
-    key = (command, search_path)
+    pathext = os.environ.get("PATHEXT", "") if sys.platform == "win32" else ""
+    key = (command, search_path, pathext)
+    stamp = _dirs_stamp(_which_dirs(command, search_path), now)
     hit = _WHICH_CACHE.get(key)
-    ttl = _WHICH_TTL_S if hit and hit[1] else _MISSING_WHICH_TTL_S
-    if hit is not None and now - hit[0] < ttl:
-        return hit[1]
+    if hit is not None and hit[0] == stamp:
+        ttl = _WHICH_TTL_S if hit[2] else _MISSING_WHICH_TTL_S
+        if now - hit[1] < ttl:
+            return hit[2]
     try:
         found = shutil.which(command, path=search_path) is not None
     except (OSError, ValueError):
         found = False
-    _WHICH_CACHE[key] = (now, found)
+    _WHICH_CACHE[key] = (stamp, now, found)
     return found
 
 
@@ -474,14 +549,17 @@ class SkillsLoader:
         # Skills the user keeps for every project, the way OMP and Claude Code
         # do (~/.omp/agent/skills, ~/.claude/skills, ...). Without these, a
         # library installed once in $HOME was invisible to every workspace.
+        workspace_set = set(self.workspace_skill_dirs)
         self.user_skill_dirs = [
             path
             for path in _dedup_paths(_home_skill_dirs())
-            if path not in self.workspace_skill_dirs
+            if path not in workspace_set
         ]
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
         self._scan_cache: tuple[float, int, list[dict[str, str]], dict[str, Path]] | None = None
+        # (the _scan_cache tuple it describes, _roots_stamp() taken for it)
+        self._scan_stamp: tuple[tuple, tuple] | None = None
         self._scan_refreshing = threading.Lock()
 
     def _gate_workspace_roots(self, paths: list[Path]) -> list[Path]:
@@ -513,7 +591,10 @@ class SkillsLoader:
         within two seconds without a restart. On the event loop thread an
         expired scan is served as it was while a background thread rescans:
         a rescan stats every skill folder, 1.4 to 9.5 s measured on the loop
-        for a WSL project (CLI and desktop logs, 2026-10-26).
+        for a WSL project (CLI and desktop logs, 2026-10-26). Once expired,
+        the scan is kept as long as the stamp of its roots is unchanged
+        (:meth:`_roots_stamp`, one stat per folder instead of four or five
+        per skill): a new, renamed or removed skill changes that stamp.
         """
         now = time.monotonic()
         cached = self._scan_cache
@@ -525,7 +606,53 @@ class SkillsLoader:
             if _on_event_loop_thread():
                 self._refresh_scan_in_background()
                 return cached[2], cached[3]
+        return self._rescan(now)
+
+    def _roots_stamp(self) -> tuple:
+        """Cheap identity of every folder :meth:`_scan_now` reads.
+
+        The workspace's dot-folder list moves when a harness appears; each
+        root's :func:`_dir_stamp` moves when a skill folder or a loose
+        ``.md`` is added, renamed or removed, or a ``SKILL.md`` is written,
+        edited or removed. Roots that do not exist yet are stamped too, so
+        creating one is seen.
+        """
+        workspace_harnesses = tuple(harness_dirs(self.workspace))
+        home_dirs = tuple(_home_skill_dirs())
+        plugin_dirs = tuple(self._plugin_skill_dirs())
+        roots = [
+            *self.workspace_skill_dirs,
+            *self.user_skill_dirs,
+            *(skills_dir for _, skills_dir in plugin_dirs),
+        ]
+        if self.builtin_skills:
+            roots.append(self.builtin_skills)
+        return (workspace_harnesses, home_dirs, plugin_dirs, tuple(_dir_stamp(root) for root in roots))
+
+    def _rescan(self, now: float) -> tuple[list[dict[str, str]], dict[str, Path]]:
+        """An expired scan: kept when its roots are unchanged, else read again."""
+        kept = self._revalidate_scan(now)
+        if kept is not None:
+            return kept
         return self._scan_now(now)
+
+    def _revalidate_scan(self, now: float) -> tuple[list[dict[str, str]], dict[str, Path]] | None:
+        cached = self._scan_cache
+        stamped = getattr(self, "_scan_stamp", None)
+        if cached is None or stamped is None or stamped[0] is not cached or cached[1] != _SCAN_GENERATION:
+            return None
+        stamp = self._roots_stamp()
+        if stamp != stamped[1]:
+            return None
+        refreshed = (now, cached[1], cached[2], cached[3])
+        self._scan_cache = refreshed
+        self._scan_stamp = (refreshed, stamp)
+        key = self._shared_scan_key()
+        with _SHARED_SCAN_LOCK:
+            shared = _SHARED_SCAN_CACHE.get(key)
+            if shared is not None and shared[2] is cached[2]:
+                _SHARED_SCAN_CACHE[key] = (now, *shared[1:])
+        return cached[2], cached[3]
 
     def _shared_scan_key(self) -> tuple:
         return (
@@ -539,7 +666,7 @@ class SkillsLoader:
             shared = _SHARED_SCAN_CACHE.get(self._shared_scan_key())
         if shared is None:
             return None
-        scan_time, generation, skills, by_name, workspace_dirs, user_dirs = shared
+        scan_time, generation, skills, by_name, workspace_dirs, user_dirs, stamp = shared
         if generation != _SCAN_GENERATION:
             return None
         # The roots the scan saw: _skill_roots() and skill_source() must agree
@@ -547,6 +674,7 @@ class SkillsLoader:
         self.workspace_skill_dirs = list(workspace_dirs)
         self.user_skill_dirs = list(user_dirs)
         self._scan_cache = (scan_time, generation, skills, by_name)
+        self._scan_stamp = (self._scan_cache, stamp)
         return self._scan_cache
 
     def _refresh_scan_in_background(self) -> None:
@@ -555,7 +683,7 @@ class SkillsLoader:
 
         def refresh() -> None:
             try:
-                self._scan_now(time.monotonic())
+                self._rescan(time.monotonic())
             except Exception:
                 logger.opt(exception=True).warning("background skills rescan failed")
             finally:
@@ -579,10 +707,16 @@ class SkillsLoader:
             self.workspace_skill_dirs = self._gate_workspace_roots(
                 self.workspace_skill_dirs
             )
+        workspace_set = set(self.workspace_skill_dirs)
         self.user_skill_dirs = [
             path for path in _dedup_paths(_home_skill_dirs())
-            if path not in self.workspace_skill_dirs
+            if path not in workspace_set
         ]
+        # Stamped before the walk: a skill written during it changes the
+        # stamp, so the next expiry reads it.
+        stamp = self._roots_stamp()
+        # A root may have been created or retargeted: resolve them again.
+        _RESOLVED_ROOTS_CACHE.clear()
         skills: list[dict[str, str]] = []
         seen_names: set[str] = set()
         for workspace_skills in self.workspace_skill_dirs:
@@ -613,18 +747,20 @@ class SkillsLoader:
             )
         by_name = {entry["name"]: Path(entry["path"]) for entry in skills}
         self._scan_cache = (now, _SCAN_GENERATION, skills, by_name)
+        self._scan_stamp = (self._scan_cache, stamp)
         with _SHARED_SCAN_LOCK:
             if len(_SHARED_SCAN_CACHE) >= 64:
                 _SHARED_SCAN_CACHE.clear()
             _SHARED_SCAN_CACHE[self._shared_scan_key()] = (
                 now, _SCAN_GENERATION, skills, by_name,
-                tuple(self.workspace_skill_dirs), tuple(self.user_skill_dirs),
+                tuple(self.workspace_skill_dirs), tuple(self.user_skill_dirs), stamp,
             )
         return skills, by_name
 
     def invalidate_scan(self) -> None:
         """Forget the cached directory scan (after writing a skill file)."""
         self._scan_cache = None
+        self._scan_stamp = None
         with _SHARED_SCAN_LOCK:
             _SHARED_SCAN_CACHE.pop(self._shared_scan_key(), None)
         _SKILL_META_TTL.clear()
@@ -777,21 +913,54 @@ class SkillsLoader:
         # Keep resolving the file on every read so retargeted symlinks are
         # still rejected, with Path's platform-specific equality semantics.
         ancestors = {resolved, *resolved.parents}
-        return any(root in ancestors for root in self._resolved_roots())
+        return not self._resolved_roots().isdisjoint(ancestors)
 
-    def _resolved_roots(self) -> list[Path]:
-        """Resolved skill roots, cached with the scan (resolve() is stat-heavy)."""
-        cached = getattr(self, "_resolved_roots_cache", None)
-        if cached is not None and cached[0] == _SCAN_GENERATION:
-            return cached[1]
-        resolved: list[Path] = []
-        for root in self._skill_roots():
-            try:
-                resolved.append(root.resolve())
-            except OSError:
-                continue
-        self._resolved_roots_cache = (_SCAN_GENERATION, resolved)
-        return resolved
+    def _resolved_roots(self) -> frozenset[Path]:
+        """Resolved skill roots, shared across loaders (resolve() is stat-heavy).
+
+        Asked once per skill per prompt build: the instance memo answers by
+        identity of the root lists (replaced, never mutated, by each scan)
+        so the ~400-root key is built only when the roots changed.
+        """
+        now = time.monotonic()
+        plugin_dirs = tuple(skills_dir for _, skills_dir in self._plugin_skill_dirs())
+        memo = getattr(self, "_resolved_roots_memo", None)
+        if (
+            memo is not None
+            and memo[0] is self.workspace_skill_dirs
+            and memo[1] is self.user_skill_dirs
+            and memo[2] == plugin_dirs
+            and memo[3] == self.builtin_skills
+            and memo[4] == _SCAN_GENERATION
+            and now - memo[5] < _RESOLVED_ROOTS_TTL_S
+        ):
+            return memo[6]
+        roots = (
+            *self.workspace_skill_dirs,
+            *self.user_skill_dirs,
+            *plugin_dirs,
+            *((self.builtin_skills,) if self.builtin_skills else ()),
+        )
+        key = (_SCAN_GENERATION, roots)
+        cached = _RESOLVED_ROOTS_CACHE.get(key)
+        if cached is not None and now - cached[0] < _RESOLVED_ROOTS_TTL_S:
+            checked_at, frozen = cached
+        else:
+            resolved: set[Path] = set()
+            for root in roots:
+                try:
+                    resolved.add(root.resolve())
+                except OSError:
+                    continue
+            checked_at, frozen = now, frozenset(resolved)
+            if key not in _RESOLVED_ROOTS_CACHE and len(_RESOLVED_ROOTS_CACHE) >= _RESOLVED_ROOTS_CACHE_MAX:
+                _RESOLVED_ROOTS_CACHE.clear()
+            _RESOLVED_ROOTS_CACHE[key] = (checked_at, frozen)
+        self._resolved_roots_memo = (
+            self.workspace_skill_dirs, self.user_skill_dirs, plugin_dirs,
+            self.builtin_skills, _SCAN_GENERATION, checked_at, frozen,
+        )
+        return frozen
 
     def _skill_path(self, name: str) -> Path | None:
         """Resolve the SKILL.md that wins for *name*, or None."""
@@ -919,7 +1088,7 @@ class SkillsLoader:
         return "\n\n---\n\n".join(parts)
 
     def _index_cache_key(self, exclude: set[str] | None) -> tuple:
-        stamps: list[tuple[str, int, tuple[str, ...]]] = []
+        stamps: list[tuple[str, int, tuple[tuple[str, int], ...]]] = []
         for path in (
             *self.workspace_skill_dirs,
             *self.user_skill_dirs,
@@ -948,16 +1117,20 @@ class SkillsLoader:
 
         Directory changes invalidate immediately. A short TTL also refreshes
         availability after package installs or environment changes, while a
-        fan-out of subagents still shares one catalog build.
+        fan-out of subagents still shares one catalog build. A rebuild for
+        the TTL alone (same directory stamps) keeps the scan: availability
+        is what it re-checks, and the requirement checks are cached against
+        the PATH folders.
         """
         key = self._index_cache_key(exclude)
         with _INDEX_LOCK:
             hit = _INDEX_CACHE.get(key)
             if hit is not None and time.monotonic() - hit[0] < _INDEX_TTL_S:
                 return hit[1]
-            # The directory stamps already proved this catalog changed.
-            # Do not rebuild a fresh index from a still-cached old scan.
-            self.invalidate_scan()
+            if hit is None:
+                # The directory stamps prove this catalog changed (or was
+                # never built): do not rebuild it from a still-cached old scan.
+                self.invalidate_scan()
             available: list[str] = []
             unavailable: list[str] = []
             for entry in self.list_skills(filter_unavailable=False):
@@ -998,14 +1171,8 @@ class SkillsLoader:
         ))
         if not tokens:
             return []
-        scored: list[tuple[int, dict[str, str]]] = []
-        for entry in self.list_skills(filter_unavailable=False):
-            name = entry["name"]
-            desc = self._get_skill_description(name)
-            name_l = _search_text(name)
-            desc_l = _search_text(desc)
-            name_tokens = set(re.findall(r"[^\W_]+", name_l))
-            desc_tokens = set(re.findall(r"[^\W_]+", desc_l))
+        scored: list[tuple[int, str, str, str]] = []
+        for name, desc, source, name_l, name_tokens, desc_tokens in self._search_rows():
             score = 100 if normalized.lstrip("$") == name_l else 0
             for token in tokens:
                 if token in name_tokens:
@@ -1014,25 +1181,67 @@ class SkillsLoader:
                     score += 2
                 if token in desc_tokens:
                     score += 1
-            if score <= 0:
-                continue
-            meta = self._get_skill_meta(name)
-            scored.append((
-                score,
-                {
-                    "name": name,
-                    "description": desc,
-                    "source": entry["source"],
-                    "available": self._check_requirements(meta),
-                    "missing": self._get_missing_requirements(meta),
-                },
-            ))
-        scored.sort(key=lambda pair: (
-            -pair[0],
-            0 if is_owned_skill_source(pair[1]["source"]) else 1,
-            pair[1]["name"],
+            if score > 0:
+                scored.append((score, name, desc, source))
+        scored.sort(key=lambda item: (
+            -item[0],
+            0 if is_owned_skill_source(item[3]) else 1,
+            item[1],
         ))
-        return [row for _score, row in scored[:limit]]
+        # Requirements only for the rows returned: a common word ("tool",
+        # "run") matched 90 skills, and reading each one's metadata cost more
+        # than the whole ranking.
+        rows: list[dict[str, str]] = []
+        for _score, name, desc, source in scored[:limit]:
+            meta = self._get_skill_meta(name)
+            rows.append({
+                "name": name,
+                "description": desc,
+                "source": source,
+                "available": self._check_requirements(meta),
+                "missing": self._get_missing_requirements(meta),
+            })
+        return rows
+
+    def catalog_token(self) -> tuple[object, frozenset[str]]:
+        """Identity of the catalog this loader lists right now.
+
+        The same scan object comes back while no skill folder changed (see
+        :meth:`_scan`), a new one once a SKILL.md is added, edited or removed,
+        so work derived from the catalog (search rows, the skills graph) is
+        kept per token. The disabled set is part of it.
+        """
+        return (self._scan()[0], frozenset(self.disabled_skills or ()))
+
+    def _search_rows(self) -> tuple[tuple[str, str, str, str, frozenset[str], frozenset[str]], ...]:
+        """Every listed skill with its search text folded, once per scan.
+
+        Folding the accents of 270 names and descriptions on every search (a
+        new request asks for one) cost more than the ranking itself. The text
+        comes from the SKILL.md files, and an edited one makes a new scan.
+        """
+        scan, disabled = self.catalog_token()
+        key = (id(scan), disabled)
+        with _SEARCH_ROWS_LOCK:
+            hit = _SEARCH_ROWS.get(key)
+        if hit is not None and hit[0] is scan:
+            return hit[1]
+        rows = []
+        for entry in self.list_skills(filter_unavailable=False):
+            name = entry["name"]
+            desc = self._get_skill_description(name)
+            name_l = _search_text(name)
+            rows.append((
+                name, desc, entry["source"], name_l,
+                frozenset(re.findall(r"[^\W_]+", name_l)),
+                frozenset(re.findall(r"[^\W_]+", _search_text(desc))),
+            ))
+        built = tuple(rows)
+        with _SEARCH_ROWS_LOCK:
+            if len(_SEARCH_ROWS) >= 16:
+                _SEARCH_ROWS.clear()
+            _SEARCH_ROWS[key] = (scan, built)
+        return built
 
     def build_skills_summary(self, exclude: set[str] | None = None) -> str:
         """

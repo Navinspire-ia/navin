@@ -136,6 +136,81 @@ def kill_process_tree(process: subprocess.Popen[Any]) -> None:
             process.kill()
 
 
+def _linux_descendants(pid: int) -> list[int]:
+    """Every live descendant of ``pid``, read from ``/proc`` (Linux only).
+
+    The process group misses a worker that moved to its own group or session;
+    the parent links in ``/proc`` still reach it while the tree is intact.
+    Other systems have no ``/proc`` and rely on the group alone.
+    """
+    if not sys.platform.startswith("linux"):
+        return []
+    import os
+
+    children: dict[int, list[int]] = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as stat:
+                fields = stat.read().rsplit(b") ", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            continue  # exited between the listing and the read: nothing to kill
+        children.setdefault(int(fields[1]), []).append(int(entry))
+    found: list[int] = []
+    todo = [pid]
+    while todo:
+        for child in children.get(todo.pop(), ()):
+            found.append(child)
+            todo.append(child)
+    return found
+
+
+def _still_running(pid: int) -> bool:
+    """True while ``pid`` exists and is not a zombie (a zombie uses no CPU)."""
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    if not sys.platform.startswith("linux"):
+        return True
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as stat:
+            return stat.read().rsplit(b") ", 1)[1][:1] != b"Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return False  # reaped between the two checks
+
+
+def _kill_until_gone(pids: list[int], *, wait: float) -> None:
+    """SIGKILL ``pids`` and wait, up to ``wait`` seconds, until none runs.
+
+    A signal is only a request: a process busy in the kernel dies when it
+    leaves it. Returning before the tree is gone would hand the caller a
+    timeout while the worker still burns CPU, so the kill is repeated and
+    awaited.
+    """
+    import os
+    import signal
+    import time
+
+    deadline = time.monotonic() + wait
+    alive = list(pids)
+    while alive:
+        for pid in alive:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        alive = [pid for pid in alive if _still_running(pid)]
+        if not alive or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    if alive:
+        from loguru import logger
+
+        logger.warning("processes still running {:.0f}s after SIGKILL: {}", wait, alive)
+
+
 def run_killing_tree(
     argv: list[str],
     *,
@@ -151,7 +226,8 @@ def run_killing_tree(
     each timed-out ``pyright --project`` run kept a node process at 100% CPU
     and 2.7 GB of RAM forever, until the machine stalled and the web UI froze
     on a black screen. Here the child leads its own group and the timeout (or
-    any exception, Ctrl-C included) kills the whole group.
+    any exception, Ctrl-C included) kills the whole group, plus on Linux every
+    descendant that left it, and waits until they are gone.
 
     Raises :class:`subprocess.TimeoutExpired` like ``subprocess.run``.
     """
@@ -164,7 +240,11 @@ def run_killing_tree(
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
+        # Read the tree before the kill: once the launcher dies its workers are
+        # re-parented and the links to them are lost.
+        descendants = _linux_descendants(process.pid)
         kill_process_tree(process)
+        _kill_until_gone(descendants, wait=5)
         with suppress(OSError, ValueError, subprocess.SubprocessError):
             process.communicate(timeout=5)
         raise

@@ -22,6 +22,7 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from navin.quality import wsl_route
 from navin.security.workspace_access import WorkspaceScope
 from navin.utils.git_argv import git_argv
 from navin.utils.proc import no_window_kwargs
@@ -556,13 +557,28 @@ def _git_argv(root: Path) -> list[str] | None:
     return git_argv(root)
 
 
-def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+def _run_git(
+    root: Path, *args: str, background: bool = False,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run one git command for ``root``; None when git is missing or failed to run.
+
+    ``background`` marks a read nobody is waiting on (a panel poll): a git
+    that gave no answer then raises at once instead of returning None, so the
+    caller stops before its next git command. Each one paid its own full
+    timeout through a wedged ``wsl.exe``: two in a row made /github/pr take
+    20 s. Every launch also tells :mod:`navin.utils.wsl_health` how it ended.
+    """
     argv = _git_argv(root)
     if argv is None:
         return None
+    command = [*argv, *args]
+    if background:
+        refused = wsl_route.background_refusal(command)
+        if refused is not None:
+            raise ProjectSearchError(refused, status=503)
     try:
-        return subprocess.run(  # noqa: S603
-            [*argv, *args],
+        completed = subprocess.run(  # noqa: S603
+            command,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -570,8 +586,18 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
             timeout=_GIT_TIMEOUT_S,
             **no_window_kwargs(),
         )
+    except subprocess.TimeoutExpired as exc:
+        wsl_route.note_launch(command, timed_out=True)
+        if background:
+            subcommand = args[0] if args else "command"
+            raise ProjectSearchError(
+                f"git {subcommand} gave no answer in {_GIT_TIMEOUT_S} s", status=504,
+            ) from exc
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
+    wsl_route.note_launch(command, timed_out=False, completed=completed)
+    return completed
 
 
 _STATUS_LABELS = {
@@ -580,13 +606,16 @@ _STATUS_LABELS = {
 }
 
 
-def _branch_state(root: Path) -> dict[str, Any]:
+def _branch_state(root: Path, *, background: bool = False) -> dict[str, Any]:
     """Branch name, upstream presence and ahead/behind counts.
 
     Feeds the source-control header and the "work not pushed" badge, so a
-    failure here degrades to empty fields rather than an error.
+    failure here degrades to empty fields rather than an error. A ``status``
+    that failed ends it there: ``stash list`` would only pay a second timeout.
+    ``background`` (a panel poll) raises :class:`ProjectSearchError` instead
+    when git gave no answer, see :func:`_run_git`.
     """
-    out = _run_git(root, "status", "--branch", "--porcelain=v2")
+    out = _run_git(root, "status", "--branch", "--porcelain=v2", background=background)
     state: dict[str, Any] = {
         "branch": "",
         "has_upstream": False,
@@ -608,7 +637,7 @@ def _branch_state(root: Path) -> dict[str, Any]:
                     state["ahead"] = int(part[1:] or 0)
                 elif part.startswith("-"):
                     state["behind"] = int(part[1:] or 0)
-    out = _run_git(root, "stash", "list")
+    out = _run_git(root, "stash", "list", background=background)
     if out is not None and out.returncode == 0:
         lines = [line for line in out.stdout.splitlines() if line.strip()]
         state["stash_count"] = len(lines)

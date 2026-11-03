@@ -1124,6 +1124,13 @@ class CollabMemberConfig(Base):
     email: str = ""
     avatar: str = "round"
     color: str = "#6b7280"
+    # Who the teammate sounds like in Live ("" = taken from the default team
+    # for its id and name, else unknown).
+    gender: Literal["", "female", "male"] = ""
+    # Live voice id for this teammate ("" = picked from its gender).
+    voice: str = ""
+    # "custom:<hash>" once a photo was uploaded (navin.collab.photos), else "".
+    photo: str = ""
     # A model preset name ("default" = the main model), like task routing.
     model_preset: str = "default"
     reasoning_effort: str | None = None
@@ -1143,8 +1150,8 @@ def _default_collab_members() -> list[CollabMemberConfig]:
 # Bump when the default tool sets grow: saved teams get the new tools on load
 # (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing,
 # v4: mobile and appfactory for everyone, infra for DevOps, Infra, Architect
-# and Security).
-COLLAB_TOOLS_VERSION = 4
+# and Security; v5: drawn human faces and genders for the default teammates).
+COLLAB_TOOLS_VERSION = 5
 
 
 class CollabTeamConfig(Base):
@@ -1201,20 +1208,25 @@ class CollabConfig(Base):
 
         Teammates starved of tools failed their jobs, so every saved teammate gets
         its role's full default toolbox added (nothing the user added is removed),
-        and the old read-only default becomes the shared project.
+        and the old read-only default becomes the shared project. From v5 a
+        default teammate still showing its old robot gets its drawn face, and
+        its gender (who it sounds like in Live).
         """
         version = (data.get("tools_version") or data.get("toolsVersion") or 0) if isinstance(data, dict) else 0
         if not isinstance(data, dict) or version >= COLLAB_TOOLS_VERSION:
             return data
+        # The saved file spells it toolsVersion: both spellings are replaced,
+        # or the old number won and the upgrade ran again on every load.
+        data = {key: value for key, value in data.items() if key not in {"tools_version", "toolsVersion"}}
         members = data.get("members")
         if not isinstance(members, list):
             # Fresh team: the defaults are already the full toolboxes.
             return {**data, "tools_version": COLLAB_TOOLS_VERSION}
-        from navin.collab.team import ROLE_TOOLS
+        from navin.collab.team import LEGACY_DEFAULT_AVATARS, ROLE_TOOLS, default_spec
 
         upgraded = []
         for member in members:
-            if isinstance(member, dict):
+            if isinstance(member, dict) and version < 4:
                 role = member.get("role") or "custom"
                 tools = [str(t) for t in member.get("tools") or []]
                 for tool in ROLE_TOOLS.get(role, ROLE_TOOLS["custom"]):
@@ -1223,6 +1235,12 @@ class CollabConfig(Base):
                 member = {**member, "tools": tools}
                 if version < 2 and member.get("sandbox") == "readonly" and role in {"architect", "security", "reviewer"}:
                     member["sandbox"] = "workspace"
+            if isinstance(member, dict) and version < 5 and (spec := default_spec(member)) is not None:
+                member = dict(member)
+                if member.get("avatar", "round") == LEGACY_DEFAULT_AVATARS.get(str(spec["id"])):
+                    member["avatar"] = "person"
+                if not member.get("gender"):
+                    member["gender"] = spec.get("gender", "")
             upgraded.append(member)
         return {**data, "members": upgraded, "tools_version": COLLAB_TOOLS_VERSION}
 

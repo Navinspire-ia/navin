@@ -33,6 +33,9 @@ from navin.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_M
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
 WEBUI_FORK_MARKER_EVENT = "fork_marker"
+# A Collaboration Mode teammate speaking in the chat under its own name.
+TEAM_REPLY_EVENT = "team_reply"
+_TEAM_AUTHOR_FIELDS = ("id", "name", "title", "role", "avatar", "color", "photo", "gender", "voice")
 _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _MAX_TRANSCRIPT_FILE_BYTES // 2
 _TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
@@ -1126,7 +1129,15 @@ def write_session_messages_as_transcript(
     messages: list[dict[str, Any]],
 ) -> None:
     """Write a minimal WebUI transcript from already-truncated session messages."""
-    target_chat_id = _chat_id_from_session_key(target_key)
+    _write_transcript_lines(target_key, session_messages_transcript_rows(_chat_id_from_session_key(target_key), messages))
+
+
+def session_messages_transcript_rows(
+    chat_id: str | None,
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Display rows for saved session messages (user prompts, tool steps, answers)."""
+    target_chat_id = chat_id
     results: dict[str, Any] = {}
     for msg in messages:
         call_id = msg.get("tool_call_id")
@@ -1167,7 +1178,53 @@ def write_session_messages_as_transcript(
         else:
             continue
         rows.append(row)
-    _write_transcript_lines(target_key, rows)
+    return rows
+
+
+def session_messages_thread_page(
+    session_key: str,
+    messages: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+    before: str | None = None,
+) -> dict[str, Any] | None:
+    """One page of a session that has no display transcript, newest first.
+
+    The CLI keeps its conversation in the session only, so a page built from
+    the display transcript came back empty and a live-share guest of a CLI
+    chat saw nothing of it. Same payload and cursors as
+    :func:`build_webui_thread_response`, built in memory: nothing is written.
+    """
+    rows = session_messages_transcript_rows(_chat_id_from_session_key(session_key), messages)
+    if not rows:
+        return None
+    turns: list[list[dict[str, Any]]] = []
+    for row in rows:
+        if not turns or _is_user_transcript_row(row):
+            turns.append([])
+        turns[-1].append(row)
+    page_limit = _coerce_page_limit(limit)
+    before_ordinal = _decode_page_cursor(before)
+    upper = len(turns) if before_ordinal is None else min(before_ordinal, len(turns))
+    first, count = upper, 0
+    while first > 0 and count < page_limit:
+        first -= 1
+        count += len(replay_transcript_to_ui_messages(turns[first]))
+    lines = [row for turn in turns[first:upper] for row in turn]
+    msgs = replay_transcript_to_ui_messages(lines)
+    has_more = first > 0
+    return {
+        "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+        "sessionKey": session_key,
+        "messages": msgs,
+        "has_pending_tool_calls": False,
+        "page": {
+            "before_cursor": _encode_page_cursor(first) if has_more else None,
+            "has_more_before": has_more,
+            "loaded_message_count": len(msgs),
+            "user_message_offset": sum(1 for turn in turns[:first] for row in turn if _is_user_transcript_row(row)),
+        },
+    }
 
 
 def drop_stale_rebuilt_transcript(session_key: str, messages: list[dict[str, Any]]) -> bool:
@@ -1294,8 +1351,45 @@ def _is_legacy_raw_subagent_result(message: dict[str, Any]) -> bool:
         text.startswith("[Subagent '")
         and "\n\nTask:" in text
         and "\n\nResult:" in text
-        and "Summarize this naturally" in text
+        and ("Summarize this naturally" in text or "already posted this report in the chat" in text)
     )
+
+
+def _team_author(raw: Any) -> dict[str, str] | None:
+    """Who speaks in a teammate's chat message (never its email)."""
+    if not isinstance(raw, Mapping) or not raw.get("id"):
+        return None
+    return {key: str(raw[key]) for key in _TEAM_AUTHOR_FIELDS if raw.get(key)}
+
+
+def team_reply_event(chat_id: str, event: Any) -> dict[str, Any] | None:
+    """The chat message a team exchange becomes; None for journal-only ones.
+
+    A Collaboration Mode teammate's report to the lead and its question to
+    the user read as the teammate's own reply in the chat, under its name,
+    job and photo, kept with the chat's history. Assignments, exchanges
+    between teammates and helpers' reports stay in the team journal.
+    """
+    sender = dict(getattr(event, "sender", None) or {})
+    target = dict(getattr(event, "target", None) or {})
+    if str(sender.get("id") or "") in {"", "lead", "user"}:
+        return None
+    kind = getattr(event, "kind", "")
+    if not ((kind == "result" and target.get("id") == "lead") or (kind == "message" and target.get("id") == "user")):
+        return None
+    text = str(getattr(event, "full_text", "") or getattr(event, "content", "") or "").strip()
+    author = _team_author(sender)
+    if not text or author is None:
+        return None
+    return {
+        "event": TEAM_REPLY_EVENT,
+        "chat_id": chat_id,
+        "entry_id": str(getattr(event, "entry_id", "") or ""),
+        "kind": kind,
+        "status": getattr(event, "status", None),
+        "author": author,
+        "text": text,
+    }
 
 
 def _session_user_event(
@@ -2268,6 +2362,21 @@ def replay_transcript_to_ui_messages(
 
     for idx, rec in enumerate(lines):
         ev = rec.get("event")
+        if ev == TEAM_REPLY_EVENT:
+            # A teammate's own message: never folded into the lead's answer.
+            author = _team_author(rec.get("author"))
+            text = rec.get("text")
+            if author is not None and isinstance(text, str) and text.strip():
+                messages.append({
+                    "id": _new_id("tm", idx),
+                    "role": "assistant",
+                    "content": text,
+                    "author": author,
+                    "createdAt": _created_at_ms(rec, idx),
+                })
+                active_activity_segment_id = None
+                active_file_edit_segment_id = None
+            continue
         if ev == "user":
             active_activity_segment_id = None
             active_file_edit_segment_id = None

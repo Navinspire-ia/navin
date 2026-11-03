@@ -137,9 +137,14 @@ def _unknown_kind_error(remote: ForgeRemote) -> ForgeError:
 
 
 def github_pr_view_payload(scope: WorkspaceScope) -> dict[str, Any]:
-    """Current branch PR/MR (if any) plus basic metadata for the Code panel."""
+    """Current branch PR/MR (if any) plus basic metadata for the Code panel.
+
+    A panel poll, so git runs in ``background`` mode: a git that gave no
+    answer raises :class:`ProjectSearchError` at once instead of going on to
+    ``remote get-url`` and paying a second timeout.
+    """
     root = _root(scope)
-    state = _branch_state(root)
+    state = _branch_state(root, background=True)
     branch = str(state.get("branch") or "")
     ctx = forge_context(root)
     base: dict[str, Any] = {

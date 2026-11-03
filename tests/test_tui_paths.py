@@ -80,6 +80,40 @@ class MarkdownPathStyleTests(unittest.TestCase):
 
 
 class ClipboardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # These describe WSL interop working, whatever this machine's state;
+        # the wiped interop entry has its own test below.
+        patcher = patch("navin.utils.wsl.host_interop_available", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_wsl_without_interop_still_copies_and_reads_through_init(self) -> None:
+        """systemd-binfmt wiped WSLInterop: clip.exe failed with "Exec format
+        error" and pasting elsewhere gave an older copy."""
+        clip = "/mnt/c/WINDOWS/system32/clip.exe"
+        powershell = "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+        exes = {"clip.exe": clip, "powershell.exe": powershell}
+        done = SimpleNamespace(returncode=0, stdout="tête\r\n".encode("utf-8"))
+        with (
+            patch("navin.utils.wsl.host_interop_available", return_value=False),
+            patch("navin.utils.wsl.is_wsl_guest", return_value=True),
+            patch("navin.utils.wsl.os.access", return_value=True),
+            patch("navin.tui.clipboard.sys.platform", "linux"),
+            patch("navin.tui.clipboard.shutil.which", side_effect=exes.get),
+            patch("navin.tui.clipboard.subprocess.run", return_value=done) as run,
+        ):
+            self.assertTrue(write_clipboard("tête"))
+            self.assertEqual(run.call_args.args[0], ["/init", clip, "clip.exe"])
+            self.assertEqual(run.call_args.kwargs["input"], "tête".encode("utf-16-le"))
+            self.assertEqual(read_clipboard(), "tête")
+            self.assertEqual(run.call_args.args[0][:3], ["/init", powershell, "powershell.exe"])
+            self.assertIn("Get-Clipboard -Raw", run.call_args.args[0][-1])
+            # The text as copied: PowerShell's own line break no longer added
+            # one more line to every multi-line paste.
+            self.assertIn("[Console]::Out.Write($t)", run.call_args.args[0][-1])
+            run.return_value = SimpleNamespace(returncode=0, stdout="deux\nlignes\n".encode("utf-8"))
+            self.assertEqual(read_clipboard(), "deux\nlignes\n")
+
     def test_paste_prefers_the_current_os_clipboard(self) -> None:
         self.assertEqual(pick_paste_text("old", "a much longer os paste"), "a much longer os paste")
         self.assertEqual(pick_paste_text("a stale long copy", "new"), "new")

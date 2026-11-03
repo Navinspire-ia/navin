@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from navin.collab.team import (
     ALL_TOOLS,
     AVATAR_KEYS,
+    GENDER_KEYS,
     PATTERN_KEYS,
     ROLE_DEFAULT_EFFORT,
     ROLE_DEFAULT_SANDBOX,
@@ -30,6 +31,8 @@ from navin.webui.settings_api import WebUISettingsError
 
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}$")
+# A voice id as the speech providers name them (Lea, en-US-Neural2-F, marin...).
+_VOICE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,79}$")
 _MAX_MEMBERS = 32
 _MAX_PROMPT = 8000
 _MAX_TEAMS = 24
@@ -58,9 +61,20 @@ def collab_payload() -> dict[str, Any]:
             continue
         presets.append({"name": name, "label": preset.label or name, "model": preset.model})
     from navin.collab.mail import smtp_status
+    from navin.collab.photos import photo_data_url
 
+    collab = config.collab.model_dump()
+    # The pictures travel once, beside the team: each teammate only keeps a
+    # marker, so saving the team back never re-sends them.
+    photos = {
+        member["id"]: url
+        for member in collab.get("members") or []
+        if str(member.get("photo") or "").startswith("custom:")
+        and (url := photo_data_url(member["id"]))
+    }
     return {
-        "collab": config.collab.model_dump(),
+        "collab": collab,
+        "photos": photos,
         "email": smtp_status(),
         "catalog": {
             "roles": [
@@ -78,6 +92,7 @@ def collab_payload() -> dict[str, Any]:
             "skills": _skills_catalog(config.workspace_path),
             "presets": presets,
             "avatars": list(AVATAR_KEYS),
+            "genders": list(GENDER_KEYS),
             "sandboxes": list(SANDBOX_KEYS),
             "patterns": list(PATTERN_KEYS),
             "efforts": ["", "low", "medium", "high"],
@@ -119,6 +134,9 @@ def _clean_member(raw: Any, index: int, presets: set[str], seen: set[str]) -> di
         return out[:80]
 
     effort = raw.get("reasoning_effort", raw.get("reasoningEffort"))
+    voice = str(raw.get("voice") or "").strip()
+    if voice and not _VOICE.match(voice):
+        raise WebUISettingsError(f"{name}: invalid voice", field="voice")
     return {
         "id": member_id,
         "name": name,
@@ -128,6 +146,9 @@ def _clean_member(raw: Any, index: int, presets: set[str], seen: set[str]) -> di
         "email": email,
         "avatar": raw.get("avatar") if raw.get("avatar") in AVATAR_KEYS else "round",
         "color": color if _COLOR.match(color) else "#6b7280",
+        "gender": raw.get("gender") if raw.get("gender") in GENDER_KEYS else "",
+        "voice": voice,
+        "photo": _clean_photo(member_id, name, raw.get("photo")),
         "model_preset": preset,
         "reasoning_effort": (str(effort).strip() or None) if effort else None,
         "sandbox": raw.get("sandbox") if raw.get("sandbox") in SANDBOX_KEYS else "workspace",
@@ -136,6 +157,25 @@ def _clean_member(raw: Any, index: int, presets: set[str], seen: set[str]) -> di
         "skills": names("skills"),
         "enabled": bool(raw.get("enabled", True)),
     }
+
+
+def _clean_photo(member_id: str, name: str, value: Any) -> str:
+    """A new picture (data URL) is kept now; a marker stays while its file does.
+
+    "" (back to the face) needs nothing here: the file goes once the team is
+    saved (``prune_photos``), so a refused save never loses a photo.
+    """
+    from navin.collab.photos import PhotoError, photo_marker, save_photo
+
+    text = str(value or "").strip()
+    if text.startswith("data:"):
+        try:
+            return save_photo(member_id, text)
+        except PhotoError as exc:
+            raise WebUISettingsError(f"{name}: {exc}", field="photo") from exc
+    if text.startswith("custom:"):
+        return photo_marker(member_id)
+    return ""
 
 
 def _clean_teams(raw: Any, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -178,6 +218,7 @@ def update_collab(values: dict[str, Any]) -> dict[str, Any]:
         config.collab.teams = fresh.teams
         config.collab.default_team = fresh.default_team
         save_config(config)
+        _prune_photos(config.collab)
         return collab_payload()
     current = config.collab.model_dump()
     presets = {"default", *config.model_presets.keys()}
@@ -241,7 +282,14 @@ def update_collab(values: dict[str, Any]) -> dict[str, Any]:
     except ValidationError as exc:
         raise WebUISettingsError(f"invalid team settings: {exc.errors()[0].get('msg')}") from exc
     save_config(config)
+    _prune_photos(config.collab)
     return collab_payload()
+
+
+def _prune_photos(collab: CollabConfig) -> None:
+    from navin.collab.photos import prune_photos
+
+    prune_photos({member.id for member in collab.members if member.photo})
 
 
 __all__ = ["collab_payload", "default_team", "update_collab"]

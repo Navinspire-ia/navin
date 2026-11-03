@@ -44,6 +44,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { TeamBotAvatar } from "@/components/team/TeamBotAvatar";
 import { agentErrorKey } from "@/lib/agent-errors";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { formatTurnLatency } from "@/lib/format";
@@ -63,7 +64,28 @@ import type {
   UIImage,
   UIMediaAttachment,
   UIMessage,
+  UIMessageAuthor,
 } from "@/lib/types";
+
+/** A teammate's message: its face, its name and its job, like a colleague's. */
+function TeammateByline({ author }: { author: UIMessageAuthor }) {
+  return (
+    <div className="mb-1.5 flex min-w-0 items-center gap-2" data-testid="teammate-byline">
+      <TeamBotAvatar
+        avatar={author.avatar}
+        color={author.color}
+        photo={author.photo}
+        seed={author.id}
+        gender={author.gender}
+        size={28}
+      />
+      <span className="truncate text-[13.5px] font-semibold text-foreground">{author.name}</span>
+      {author.title ? (
+        <span className="truncate text-[12.5px] text-muted-foreground">{author.title}</span>
+      ) : null}
+    </div>
+  );
+}
 
 interface MessageBubbleProps {
   message: UIMessage;
@@ -497,6 +519,7 @@ export const MessageBubble = memo(function MessageBubble({
         baseAnim,
       )}
     >
+      {message.author ? <TeammateByline author={message.author} /> : null}
       {hasReasoning ? (
         <ReasoningCard
           parts={[reasoning]}

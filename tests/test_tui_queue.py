@@ -342,6 +342,8 @@ def test_model_and_effort_share_the_footer_line_without_context_or_permission(tm
             st.context_window = 200000
             with patch.object(app.runtime, "reasoning_details", return_value=(effort, ())):
                 app._set_status()
+                # The level is read in a worker thread, then shown.
+                await app.workers.wait_for_complete()
             await pilot.pause()
             meta = app.query_one(ComposerMeta)
             model = app.query_one("#meta-model", Static)

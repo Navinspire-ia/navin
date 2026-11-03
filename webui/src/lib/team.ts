@@ -34,6 +34,12 @@ export interface TeamMember {
   email: string;
   avatar: string;
   color: string;
+  /** Who the teammate sounds like in Live ("" = not set). */
+  gender?: TeamGender;
+  /** Its Live voice ("" = one of its gender, from the speech settings). */
+  voice?: string;
+  /** "custom:<hash>" once a photo is saved, a data URL until Save, "" = its face. */
+  photo?: string;
   model_preset: string;
   reasoning_effort: string | null;
   sandbox: TeamSandbox;
@@ -80,8 +86,11 @@ export interface CollabRoleDefaults {
   effort: string;
 }
 
+export type TeamGender = "" | "female" | "male";
+
 export interface CollabCatalog {
   roles: CollabRoleDefaults[];
+  genders?: string[];
   tools: string[];
   skills: Array<{ name: string; description: string }>;
   presets: Array<{ name: string; label: string; model: string }>;
@@ -94,6 +103,8 @@ export interface CollabCatalog {
 export interface CollabPayload {
   collab: CollabSettings;
   catalog: CollabCatalog;
+  /** Uploaded photos, teammate id -> data URL (a teammate keeps a marker only). */
+  photos?: Record<string, string>;
   /** Whether the Email channel (SMTP) can send, and where to set it up. */
   email?: { ready: boolean; hint: string };
 }
@@ -107,6 +118,9 @@ export interface TeamIdentity {
   avatar?: string;
   color?: string;
   email?: string;
+  photo?: string;
+  gender?: string;
+  voice?: string;
 }
 
 export type TeamEntryKind = "assign" | "message" | "result" | "user" | "note" | "email";
@@ -138,6 +152,9 @@ export function parseTeamIdentity(raw: unknown): TeamIdentity | null {
     avatar: text("avatar"),
     color: text("color"),
     email: text("email"),
+    photo: text("photo"),
+    gender: text("gender"),
+    voice: text("voice"),
   };
 }
 

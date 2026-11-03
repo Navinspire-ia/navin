@@ -18,6 +18,28 @@ export interface ShareSnapshot {
   scope?: "session" | "site";
 }
 
+/** What the conversation of a snapshot shows, to tell a changed one from a repeat.
+ *  Message ids are made anew for every page the host builds, so they say nothing. */
+export function snapshotThreadSignature(snapshot: ShareSnapshot | null): string {
+  const body = snapshot?.thread as {
+    messages?: { role?: string; content?: unknown }[];
+    has_pending_tool_calls?: boolean;
+    page?: { user_message_offset?: number };
+  } | null | undefined;
+  const messages = body?.messages ?? [];
+  const last = messages.at(-1);
+  const content = typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? "");
+  return [
+    snapshot?.chat_id ?? "",
+    messages.length,
+    body?.page?.user_message_offset ?? 0,
+    Boolean(body?.has_pending_tool_calls),
+    last?.role ?? "",
+    content.length,
+    content.slice(-200),
+  ].join("\u0000");
+}
+
 /** navin/share/context.py */
 export interface ShareContext {
   generated_at: number;
@@ -148,6 +170,9 @@ export class RelaySocket {
   // Frames are decrypted asynchronously; a chain keeps them in order.
   private inbound: Promise<void> = Promise.resolve();
   private eventParts: { id: string; total: number; parts: string[] } | null = null;
+  // A payload too big for one relay frame (a snapshot whose newest message
+  // alone is huge) comes in parts, put back together here.
+  private payloadParts: { id: string; total: number; parts: string[] } | null = null;
 
   constructor(private readonly session: RelaySession) {
     this.ws = new WebSocket(session.socketUrl());
@@ -159,6 +184,7 @@ export class RelaySocket {
     this.ws.onerror = () => this.onerror?.(new Event("error"));
     this.ws.onclose = (ev) => {
       this.eventParts = null;
+      this.payloadParts = null;
       this.readyState = 3;
       this.onclose?.({ code: ev.code, reason: ev.reason });
     };
@@ -213,6 +239,11 @@ export class RelaySocket {
     } catch {
       return; // not sealed with this link's key
     }
+    if (payload.type === "payload_part") {
+      const whole = this.joinPayloadPart(payload);
+      if (!whole) return;
+      payload = whole;
+    }
     if (payload.type === "snapshot") {
       const snapshot = payload as unknown as ShareSnapshot;
       hooks.onSnapshot(snapshot);
@@ -256,6 +287,34 @@ export class RelaySocket {
 
   private emit(frame: Record<string, unknown>): void {
     this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(frame) }));
+  }
+
+  /** One part of a payload sent in parts; the whole payload once the last part is in. */
+  private joinPayloadPart(part: Record<string, unknown>): Record<string, unknown> | null {
+    const { index, total, id } = part;
+    if (
+      typeof index !== "number" || !Number.isSafeInteger(index)
+      || typeof total !== "number" || !Number.isSafeInteger(total) || total < 1
+      || index < 0 || index >= total || typeof id !== "string" || typeof part.part !== "string"
+    ) {
+      this.payloadParts = null;
+      return null;
+    }
+    if (index === 0) this.payloadParts = { id, total, parts: [] };
+    const pending = this.payloadParts;
+    if (!pending || pending.id !== id || pending.total !== total || pending.parts.length !== index) {
+      this.payloadParts = null;
+      return null;
+    }
+    pending.parts.push(part.part);
+    if (pending.parts.length < total) return null;
+    this.payloadParts = null;
+    try {
+      const whole = JSON.parse(pending.parts.join("")) as unknown;
+      return whole && typeof whole === "object" && !Array.isArray(whole) ? (whole as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
   }
 
   async sendSealed(payload: Record<string, unknown>): Promise<void> {

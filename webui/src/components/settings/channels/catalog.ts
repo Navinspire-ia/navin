@@ -76,6 +76,13 @@ const GROUP_BEHAVIOR_ALLOWLIST_OPTIONS: ChannelConfigOption[] = [
   { value: "allowlist", label: "Allowlist" },
 ];
 
+// Teams answers group chats and channels on a mention by default; "off"
+// keeps the bot to direct messages.
+const TEAMS_GROUP_BEHAVIOR_OPTIONS: ChannelConfigOption[] = [
+  ...GROUP_BEHAVIOR_OPTIONS,
+  { value: "off", label: "Off (direct messages only)" },
+];
+
 const BOOLEAN_OPTIONS: ChannelConfigOption[] = [
   { value: "true", label: "On" },
   { value: "false", label: "Off" },
@@ -898,6 +905,13 @@ export const CHANNEL_PRESENTATION: Record<string, ChannelPresentation> = {
           key: "channels.msteams.allowFrom",
           label: "Allowed users",
           placeholder: "Teams user IDs, comma separated",
+          optional: true,
+        },
+        {
+          key: "channels.msteams.groupPolicy",
+          label: "Group chats and channels",
+          defaultValue: "mention",
+          options: TEAMS_GROUP_BEHAVIOR_OPTIONS,
           optional: true,
         },
       ],

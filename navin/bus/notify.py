@@ -64,9 +64,22 @@ def _forward_remote(title: str, detail: str | None, level: str, key: str | None,
     The notify tool forwards its own calls (source "agent") to report how many
     channels got them, so they are not copied twice here.
     """
-    forwarder = _remote_forwarder
-    if forwarder is None or source == "agent" or level not in REMOTE_LEVELS:
+    if source == "agent" or level not in REMOTE_LEVELS:
         return
+    forward_remote(title, detail, level, key)
+
+
+def forward_remote(title: str, detail: str | None, level: str, key: str | None) -> bool:
+    """Copy one notification to the remote channels with notifications on.
+
+    For a notification that does not go through :func:`publish_notification`
+    (a frame addressed to one chat) and that its caller already picked as
+    worth hearing about away from the app, whatever its level. Returns False
+    when no forwarder is installed (a CLI run, a test).
+    """
+    forwarder = _remote_forwarder
+    if forwarder is None:
+        return False
     args = (title, detail or "", level, key or "")
     try:
         loop = asyncio.get_running_loop()
@@ -74,8 +87,9 @@ def _forward_remote(title: str, detail: str | None, level: str, key: str | None,
         loop = None
     if loop is None:
         _call_forwarder(forwarder, args)  # already on a worker thread or in a plain script
-        return
+        return True
     loop.run_in_executor(None, _call_forwarder, forwarder, args)
+    return True
 
 
 def clear_notification_bus() -> None:

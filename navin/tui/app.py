@@ -31,6 +31,11 @@ from textual.selection import SELECT_ALL, Selection
 from textual.widget import Widget
 from textual.widgets import Input, Static, TextArea
 
+# Loaded with the app, not on the first copy: a CLI left open while Navin's
+# files change on disk (an update, a dev checkout) loaded the newer
+# clipboard.py against the navin.utils.wsl it had started with, and the
+# ImportError on copy-on-select closed the CLI.
+import navin.tui.clipboard as tui_clipboard
 from navin.optional_live import live_modules_available
 from navin.tui.agi import AgiScreen
 from navin.tui.evolve import EvolveScreen
@@ -111,6 +116,13 @@ from navin.tui.screens import (
     ToolsScreen,
 )
 from navin.tui.settings import SettingsHub
+from navin.tui.team_view import (
+    TeamReply,
+    is_team_reply,
+    refresh_team_meta,
+    run_team_command,
+    team_journal_line,
+)
 from navin.tui.terminal import forces_synchronized_output
 from navin.tui.textmarkup import escape
 from navin.tui.theme import NAVIN_THEMES
@@ -259,6 +271,13 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "description": "Resolve, keep separate or discard changes that could not be merged automatically",
         "accepts_args": True,
         "arg_hint": "[resolve|keep|discard]",
+    },
+    {
+        "command": "/team",
+        "title": "Team mode",
+        "description": "Collaboration Mode: on / off, this chat's team and its teammates (/team <team>, /team none)",
+        "accepts_args": True,
+        "arg_hint": "[on|off|<team>|none]",
     },
     *(
         {
@@ -591,6 +610,25 @@ def _clip_note(text: str, limit: int = 160) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+#: Languages the chat's code blocks show most; their lexers are imported at start.
+WARM_LEXERS = ("python", "bash", "json", "javascript", "typescript", "diff", "yaml", "markdown")
+
+
+def warm_code_lexers() -> None:
+    """Worker thread: scan pygments' plugin entry points and import the common lexers.
+
+    Both happened on the UI loop at the first code block of a session.
+    """
+    from pygments.lexers import get_lexer_by_name
+    from pygments.plugin import find_plugin_lexers
+
+    # An unknown fence language makes pygments scan the installed entry points.
+    for _lexer in find_plugin_lexers():
+        pass
+    for name in WARM_LEXERS:
+        get_lexer_by_name(name)
+
+
 class NavinApp(App[None]):
     """Textual app hosting the chat transcript and the agent runtime."""
 
@@ -898,6 +936,11 @@ class NavinApp(App[None]):
         self._render_mode()
         self._set_status("starting engine…")
         self._one(Composer).focus()
+        # The first code block scanned the pygments plugin entry points and
+        # imported its lexer on the UI loop (2.6 s and 1.0 s, cli-freeze.log).
+        self.run_worker(
+            asyncio.to_thread(warm_code_lexers), group="warm-lexers", exit_on_error=False,
+        )
         self.set_interval(0.12, self._tick_spinner)
         self.set_interval(2, self._refresh_context_status)
         if live_modules_available():
@@ -1645,10 +1688,20 @@ class NavinApp(App[None]):
         st = self.runtime.status
         mode = get_mode(self.prefs.mode)
         reasoning = getattr(self, "_reasoning_label", "")
+        self._status_extra = extra
         if self._engine_ready and not animation_only:
-            with contextlib.suppress(Exception):
-                reasoning = self.runtime.reasoning_details()[0]
-                self._reasoning_label = reasoning
+            label_of = getattr(self.runtime, "reasoning_label", None)
+            cached = label_of() if callable(label_of) else None
+            if cached is None and not getattr(self, "_reasoning_loading", False):
+                # Preset, model or session changed: the catalog is read in a
+                # thread, the status line keeps the last label until then.
+                self._reasoning_loading = True
+                self.run_worker(
+                    self._load_reasoning_label(), group="reasoning-label",
+                    exclusive=True, exit_on_error=False,
+                )
+            elif cached is not None:
+                reasoning = self._reasoning_label = cached
         try:
             self.query_one("#composer-shell", ComposerShell).set_busy(st.turn_active)
         except Exception:  # noqa: BLE001 - shell not mounted yet
@@ -1670,6 +1723,16 @@ class NavinApp(App[None]):
                 self.query_one("#dock", DockBar).set_panel(self.prefs.sidebar)
             with contextlib.suppress(Exception):
                 self._one(Sidebar).set_panel_label(self.prefs.sidebar)
+
+    async def _load_reasoning_label(self) -> None:
+        """Read the reasoning level in a thread, then show it if it changed."""
+        try:
+            label, _options = await asyncio.to_thread(self.runtime.reasoning_details)
+            if label != getattr(self, "_reasoning_label", ""):
+                self._reasoning_label = label
+                self._set_status(getattr(self, "_status_extra", ""))
+        finally:
+            self._reasoning_loading = False
 
     def _render_mode(self) -> None:
         self._refresh_side()
@@ -1716,6 +1779,8 @@ class NavinApp(App[None]):
         self._load_agi_side()
         self._load_git()
         self._reload_projects()
+        # This chat's team on the footer: after boot, a chat switch, settings.
+        refresh_team_meta(self)
         self._set_status()
 
     @work(thread=True, exclusive=True, group="agi-side")
@@ -2422,6 +2487,9 @@ class NavinApp(App[None]):
 
             await run_merge_command(self, raw_arg)
             return True
+        if head == "/team":
+            await run_team_command(self, raw_arg)
+            return True
         return False
 
     @on(Composer.HistoryRequested)
@@ -2702,20 +2770,12 @@ class NavinApp(App[None]):
                 await self._flash(f"checkpoint saved: [b]{escape(event.name)}[/b]", "success")
             return
         if isinstance(event, UiTeamMessage):
-            # Collaboration Mode journal: who talks to whom, why, and what.
-            from navin.tui.runtime import team_face
-
-            head = team_face(event.sender)
-            if event.target:
-                head += f" [dim]→[/dim] {team_face(event.target)}"
-            tag = {
-                "assign": "task", "result": "report" if event.status == "ok" else "stopped",
-                "user": "interrupts", "email": "email sent",
-            }.get(event.kind) or (event.status or "")
-            if tag:
-                head += f"  [dim]{escape(tag)}[/dim]"
-            body = event.content if len(event.content) <= 900 else event.content[:900] + "..."
-            await self.transcript.add(SystemNote(f"{head}\n{escape(body)}"))
+            # Collaboration Mode journal: who talks to whom, why, and what. A
+            # teammate's report, or its message to the user, is its own reply.
+            if is_team_reply(event):
+                await self.transcript.add(TeamReply.from_event(event))
+            else:
+                await self.transcript.add(SystemNote(team_journal_line(event)))
             return
         if isinstance(event, UiNotification):
             detail = f"\n[dim]{escape(event.detail)}[/dim]" if event.detail else ""
@@ -3540,13 +3600,11 @@ class NavinApp(App[None]):
         self.composer.action_paste_image()
 
     async def _paste_into_field(self, field: Input | TextArea) -> None:
-        from navin.tui.clipboard import pick_paste_text, read_clipboard
-
         try:
-            os_text = await asyncio.to_thread(read_clipboard)
+            os_text = await asyncio.to_thread(tui_clipboard.read_clipboard)
         except Exception:  # noqa: BLE001 - keep modal inputs usable on clipboard errors
             os_text = ""
-        text = pick_paste_text(self.clipboard, os_text)
+        text = tui_clipboard.pick_paste_text(self.clipboard, os_text)
         if text and field.is_mounted and field is self.focused:
             field.post_message(events.Paste(text))
 
@@ -3675,16 +3733,39 @@ class NavinApp(App[None]):
             return ""
         return str(path)
 
+    def open_url(self, url: str, *, new_tab: bool = True) -> None:
+        """Open a link in the system browser, off the UI thread and silently.
+
+        Textual's version calls ``webbrowser.open`` on the event loop. On Linux
+        that runs ``www-browser`` on this very terminal and waits for it: under
+        WSL it is wslview, whose "Exec format error" lines were printed over the
+        chat, and a console browser would take the screen. A terminal has no
+        tabs, so ``new_tab`` changes nothing here, as in Textual.
+        """
+        self.run_worker(self._open_url(url), group="open-url")
+
+    async def _open_url(self, url: str) -> None:
+        from navin.utils.open_browser import open_external_url, unavailable_reason
+
+        def attempt() -> str:
+            return "" if open_external_url(url) else unavailable_reason(url)
+
+        reason = await asyncio.to_thread(attempt)
+        if not reason:
+            return
+        # Nothing opened: the link is one paste away instead of lost.
+        self.copy_to_clipboard(url, quiet=True)
+        self.notify(f"{reason} Link copied: {url}", severity="warning")
+
     def copy_to_clipboard(self, text: str, *, to_os: bool = True, quiet: bool = False) -> bool:
         """Keep the in-app copy always. Paste with Ctrl+V / Cmd+V."""
-        from navin.tui.clipboard import osc52_allowed
         from navin.utils.tool_hints import clip_transcript
 
         payload = clip_transcript(text)
         if not payload:
             return False
         self._clipboard = payload
-        if to_os and osc52_allowed(payload):
+        if to_os and tui_clipboard.osc52_allowed(payload):
             # Instant, and the only path over SSH; the host write follows.
             super().copy_to_clipboard(payload)
         self._pending_copy = (payload, to_os)
@@ -3698,15 +3779,14 @@ class NavinApp(App[None]):
 
     async def _flush_clipboard(self) -> None:
         """Serialize host writes and coalesce selection changes off the UI thread."""
-        from navin.tui.clipboard import osc52_allowed, write_os_clipboard
 
         def write(payload: str, to_os: bool) -> None:
             # A missing codec or unavailable host backend must not stop typing.
             written = False
             with contextlib.suppress(Exception):
                 if to_os:
-                    written = write_os_clipboard(payload)
-            if to_os and not written and not osc52_allowed(payload):
+                    written = tui_clipboard.write_os_clipboard(payload)
+            if to_os and not written and not tui_clipboard.osc52_allowed(payload):
                 # No host backend: leave a file the user can open.
                 self._write_last_copy(payload)
 
@@ -3771,9 +3851,7 @@ class NavinApp(App[None]):
 
     def copy_from_pointer(self) -> None:
         """Right-click: copy the selection or the last message."""
-        from navin.tui.clipboard import pointer_copy_text
-
-        text = pointer_copy_text(self._selected_text(), self._last_copyable_text())
+        text = tui_clipboard.pointer_copy_text(self._selected_text(), self._last_copyable_text())
         if not text:
             return
         self.copy_to_clipboard(text)
@@ -3797,6 +3875,8 @@ class NavinApp(App[None]):
                 lines += ["## You", "", widget.raw_text, ""]
             elif isinstance(widget, AssistantMessage):
                 lines += [f"## {widget.bot_name}", "", widget.text, ""]
+            elif isinstance(widget, TeamReply):
+                lines += [f"## {widget.speaker}", "", widget.markdown, ""]
         target = self.runtime.workspace / "exports"
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"tui-{self.runtime.chat_id}-{int(asyncio.get_running_loop().time())}.md"
@@ -3859,13 +3939,18 @@ class NavinApp(App[None]):
             return
         from navin.tui.live_share import CliLiveShare
 
+        # Bound to this runtime: the chat it moves to keeps the link, another
+        # project's runtime does not (its events never reach these guests).
+        runtime = self.runtime
         try:
             share = CliLiveShare(
-                chat_id=self.runtime.chat_id,
-                session_key=self.runtime.session_key,
-                sessions_workspace=self.runtime.workspace,
+                chat_id=runtime.chat_id,
+                session_key=lambda: runtime.session_key,
+                sessions_workspace=runtime.workspace,
                 project_root=self.project_root,
                 on_guest_message=self._on_guest_message,
+                model=lambda: str(runtime.status.model or ""),
+                history=runtime.history_snapshot,
             )
             share.create(access=values.get("access") or "read", ttl=values.get("ttl") or "24h")
         except Exception as exc:  # noqa: BLE001 - nothing shared, told to the user
@@ -4328,14 +4413,20 @@ class NavinApp(App[None]):
         for the rest. Repaints wait for the last event; the view lands on it.
         """
         transcript = self.transcript
+        before = (len(transcript.children), self._current)
         with self.batch_update():
             try:
                 return bool(await release())
             finally:
                 if transcript.is_attached:
                     transcript.auto_follow = True
-                    transcript.screen._refresh_layout()
-                    transcript.scroll_end(animate=False, immediate=True)
+                    # A session not working replays nothing: its history paint
+                    # already laid the chat out. A forced full layout here cost
+                    # 1.7 s on a long chat (cli-freeze.log, 2026-11-01). When
+                    # rows were replayed, the scroll waits for the next normal
+                    # refresh, which lays them out once.
+                    if (len(transcript.children), self._current) != before:
+                        transcript.scroll_end(animate=False)
 
     async def _clear_chat_view(self) -> None:
         await self.transcript.remove_children()
@@ -4958,8 +5049,11 @@ class NavinApp(App[None]):
             frame=self._live_frame, level=self._live.level if self._live is not None else 0.0,
         )
 
-    def _live_say(self, text: str) -> None:
-        """Speak once: the same words land as progress and as the answer."""
+    def _live_say(self, text: str, voice: str = "") -> None:
+        """Speak once: the same words land as progress and as the answer.
+
+        *voice* is a teammate's own voice ("" = Navin's).
+        """
         from navin.tui.live_voice import normalize_speech
 
         live = self._live
@@ -4967,7 +5061,40 @@ class NavinApp(App[None]):
         if live is None or not key or key in self._live_spoken:
             return
         self._live_spoken = [*self._live_spoken[-30:], key]
-        live.speak(text)
+        if voice:
+            live.speak(text, voice=voice)
+        else:
+            live.speak(text)
+
+    def _live_say_teammate(self, event: UiTeamMessage) -> None:
+        """A teammate's report or question, said with its own voice.
+
+        Its voice from Settings > Team, else one of its gender among the
+        voices of the speech model. When it can only sound like Navin, its
+        name comes first so the user knows who speaks.
+        """
+        from navin.audio.tts import resolve_tts_config
+        from navin.tui.live_voice import speech_text
+        from navin.webui.voice_api import teammate_voice_for
+
+        live = self._live
+        if live is None:
+            return
+        spoken = speech_text(event.content, code_note=self._live_text("code"))
+        if not spoken:
+            return
+        sender = event.sender or {}
+        cfg = resolve_tts_config(live.config)
+        voice = teammate_voice_for(
+            cfg.model, cfg.voice,
+            chosen=str(sender.get("voice") or ""), gender=str(sender.get("gender") or ""),
+            language="", key=str(sender.get("id") or ""),
+        )
+        if voice == cfg.voice:
+            name = str(sender.get("name") or "").strip()
+            self._live_say(f"{name}: {spoken}" if name else spoken)
+            return
+        self._live_say(spoken, voice=voice)
 
     def _live_call(self) -> None:
         """The agent needs the user: ring the terminal (the call)."""
@@ -4979,6 +5106,12 @@ class NavinApp(App[None]):
 
         if isinstance(event, UiProgress) and not event.tool_hint:
             self._live_say(speech_text(event.text))
+        elif isinstance(event, UiTeamMessage):
+            # A teammate's report to the lead or its question to the user, in
+            # its own voice; assignments and peer exchanges stay silent.
+            target = str((event.target or {}).get("id") or "")
+            if is_team_reply(event) and target in {"lead", "user"}:
+                self._live_say_teammate(event)
         elif isinstance(event, UiAssistantMessage):
             from navin.tui.live_voice import live_digest
 

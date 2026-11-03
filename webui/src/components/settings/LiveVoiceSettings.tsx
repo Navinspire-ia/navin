@@ -14,6 +14,7 @@ import { MediaModelPicker, MediaSettingsSurface } from "./MediaModelPicker";
 import { SettingsPicker } from "./SettingsPicker";
 import { liveVoiceSetup } from "@/lib/live-voice-setup";
 import { liveDictationEnabled, setLiveDictation } from "@/hooks/useLiveVoice";
+import { setTeamVoices, teamVoicesEnabled } from "@/hooks/useTeammateVoices";
 import { realtimeVoiceOptions, type LiveVoiceOption } from "@/lib/live-voices";
 import { intlLocale } from "@/i18n/intl";
 import type { SettingsPayload, TranscriptionSettingsUpdate, VoiceSettingsUpdate } from "@/lib/types";
@@ -48,6 +49,7 @@ export function LiveVoiceSettings({
   };
   const reduced = useReducedMotion();
   const [dictation, setDictation] = useState(liveDictationEnabled);
+  const [teamVoices, setTeamVoicesOn] = useState(teamVoicesEnabled);
   const setup = liveVoiceSetup(settings);
   const sttProviders = settings.transcription?.providers ?? [];
   const ttsProviders = settings.voice?.providers ?? [];
@@ -178,6 +180,8 @@ export function LiveVoiceSettings({
                   onChange={(_, checked) => onVoice((prev) => ({ ...prev, realtimeEnabled: checked ? null : false }))} />
                 <Toggle label={tx("dictation")} onText={tx("dictationHint")} offText={tx("dictationHint")} checked={dictation}
                   onChange={(_, checked) => { setLiveDictation(Boolean(checked)); setDictation(Boolean(checked)); }} />
+                <Toggle label={tx("teamVoices")} onText={tx("teamVoicesHint")} offText={tx("teamVoicesHint")} checked={teamVoices}
+                  onChange={(_, checked) => { setTeamVoices(Boolean(checked)); setTeamVoicesOn(Boolean(checked)); }} />
                 <TextField label={tx("language")} placeholder={tx("automaticLanguage")} value={transcription.language}
                   maxLength={3} onChange={(_, value) => onTranscription((prev) => ({ ...prev, language: value ?? "" }))} />
                 <SpinButton label={tx("durationLimit")} value={String(transcription.maxDurationSec)} min={1} max={600} step={1}

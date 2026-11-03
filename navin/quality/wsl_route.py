@@ -301,6 +301,17 @@ def refusal(argv: list[str] | tuple[str, ...]) -> str | None:
     return wsl_health.refuse_reason(distro) if distro else None
 
 
+def background_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
+    """:func:`refusal` for a read nobody is waiting on (panel poll, bulk stat).
+
+    Also refuses during the short degraded window that follows a liveness
+    check WSL did not answer (:func:`wsl_health.background_refuse_reason`).
+    Not a wsl.exe argv: None.
+    """
+    distro = distro_of(argv)
+    return wsl_health.background_refuse_reason(distro) if distro else None
+
+
 def tool_argv(
     spec: dict[str, Any], root: Path, workdir: Path, args: list[str],
     *, location: wsl.WslLocation | None = None,

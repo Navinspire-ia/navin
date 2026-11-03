@@ -15,7 +15,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from navin.quality.check_budget import current_budget
 from navin.quality.evidence import VerificationEvidence
@@ -155,35 +155,277 @@ def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
         snapshot = _wsl_snapshot(location)
         if snapshot is not None:
             return snapshot
-    paths = None
-    try:
-        result = subprocess.run(  # noqa: S603
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
-            cwd=root, capture_output=True, timeout=5, **no_window_kwargs(),
-        )
-        if result.returncode == 0:
-            paths = [os.fsdecode(path) for path in result.stdout.split(b"\0") if path]
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    if paths is None:
-        paths = []
-        for current, directories, names in os.walk(root):
-            directories[:] = [name for name in directories if name not in _GENERATED_DIRS]
-            paths.extend(str((Path(current) / name).relative_to(root)) for name in names)
     # Plain string work per file: on a 3,700-file repo, building a PurePosixPath
     # and a Path for each one cost more than the stat calls themselves, and
     # this runs twice around every exec.
     snapshot = {}
     root_text = str(root)
-    for raw in paths:
-        path = raw.replace("\\", "/")
-        if _is_development_file(path):
-            try:
-                stat = os.stat(os.path.join(root_text, raw))
-                snapshot[path] = (stat.st_mtime_ns, stat.st_size)
-            except OSError:
-                snapshot[path] = None
+    for path, raw in _development_files(root):
+        try:
+            stat = os.stat(os.path.join(root_text, raw))
+            snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            snapshot[path] = None
     return snapshot
+
+
+# The file list behind a snapshot changes only when a folder gains, loses or
+# renames an entry (that folder's mtime moves), when the git index moves (add,
+# rm, checkout, commit, stash) or when an ignore file changes. Checking those
+# stamps is a few hundred stats; `git ls-files` is a process plus a full index
+# read, and the snapshot runs twice around every exec that may edit files (36
+# to 75 ms each on 4,500 to 9,900 files, 2026-11-02). The files themselves are
+# still stat'ed every time: an edit in place moves no folder.
+_RACY_NS = 2_000_000_000  # FAT stamps to 2 s: a stamp this close to the listing is never trusted
+_MAX_WATCHED_DIRS = 20_000
+_MAX_LISTINGS = 32
+_GIT_REDIRECTS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+
+
+@dataclass(frozen=True)
+class _Listing:
+    files: tuple[tuple[str, str], ...]  # ("/" path, path as listed) of the development files
+    stamps: tuple[tuple[str, int, int], ...] | None  # None: not reusable
+    # A tree whose stamps could not be taken (too many folders, git refused)
+    # is listed plainly until then, without trying again on every snapshot.
+    plain_until: float = 0.0
+
+
+_LISTINGS: dict[str, _Listing] = {}
+_LISTINGS_LOCK = threading.Lock()
+_PLAIN_LISTING_S = 600.0
+
+
+def _development_files(root: Path) -> tuple[tuple[str, str], ...]:
+    key = str(root)
+    with _LISTINGS_LOCK:
+        listing = _LISTINGS.get(key)
+    if listing is not None and listing.stamps is not None and _stamps_hold(listing.stamps):
+        return listing.files
+    plain = listing is not None and listing.stamps is None and time.monotonic() < listing.plain_until
+    fresh = _list_files(root, stamped=not plain)
+    with _LISTINGS_LOCK:
+        if plain:
+            pass  # keep the plain marker until it expires
+        elif fresh.stamps is None and not fresh.plain_until:
+            _LISTINGS.pop(key, None)
+        else:
+            if len(_LISTINGS) >= _MAX_LISTINGS and key not in _LISTINGS:
+                _LISTINGS.pop(next(iter(_LISTINGS)))
+            _LISTINGS[key] = fresh
+    return fresh.files
+
+
+def _stamp(path: str) -> tuple[int, int]:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return (-1, -1)
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _stamps_hold(stamps: tuple[tuple[str, int, int], ...]) -> bool:
+    return all(_stamp(path) == (mtime, size) for path, mtime, size in stamps)
+
+
+def _git_listing(root: Path) -> list[str] | None:
+    """``git ls-files`` of ``root``, or None when git cannot list it.
+
+    None is an answer, not a lost error: no git, not a repository or a
+    timeout all mean the caller walks the folder itself instead.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+            cwd=root, capture_output=True, timeout=5, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return [os.fsdecode(path) for path in result.stdout.split(b"\0") if path]
+
+
+def _list_files(root: Path, *, stamped: bool = True) -> _Listing:
+    # Taken before the listing: a folder that moves while git reads it is
+    # newer than this and the listing is not kept.
+    listed_ns = time.time_ns()
+    paths = _git_listing(root)
+    walked: list[str] | None = None
+    if paths is None:
+        paths, walked = [], []
+        for current, directories, names in os.walk(root):
+            directories[:] = [name for name in directories if name not in _GENERATED_DIRS]
+            walked.append(current)
+            paths.extend(str((Path(current) / name).relative_to(root)) for name in names)
+    files = tuple(
+        (path, raw) for raw in paths if _is_development_file(path := raw.replace("\\", "/"))
+    )
+    if not stamped:
+        return _Listing(files=files, stamps=None)
+    stamps = _listing_stamps(root, paths, walked, listed_ns)
+    if stamps is None:
+        return _Listing(files=files, stamps=None, plain_until=time.monotonic() + _PLAIN_LISTING_S)
+    if not stamps:
+        return _Listing(files=files, stamps=None)  # a folder moved just now: list again next time
+    return _Listing(files=files, stamps=stamps)
+
+
+def _racy(stamps: Iterable[tuple[str, int, int]], listed_ns: int) -> bool:
+    return any(mtime >= listed_ns - _RACY_NS for _path, mtime, _size in stamps)
+
+
+def _listing_stamps(
+    root: Path, paths: list[str], walked: list[str] | None, listed_ns: int,
+) -> tuple[tuple[str, int, int], ...] | None:
+    """Every folder and file whose change can change the listing.
+
+    None when the tree cannot be stamped (kept plain for a while), () when a
+    folder changed too recently to trust its stamp (the agent just wrote a
+    file there). That second answer is found from the listed folders alone,
+    before the walk for unlisted ones, so a busy folder costs a few stats
+    more than the plain listing, never a walk.
+    """
+    root_text = str(root)
+    folders: set[str] = {root_text}
+    marks: list[str] = []
+    if walked is not None:
+        # The walk read every folder it keeps: their stamps cover all of it.
+        folders.update(walked)
+    else:
+        git_marks = _git_marks(root)
+        if git_marks is None:
+            return None
+        marks.extend(git_marks)
+        relative: set[str] = set()
+        for raw in paths:
+            path = raw.replace("\\", "/")
+            if path.rsplit("/", 1)[-1] == ".gitignore":
+                marks.append(os.path.join(root_text, raw))
+            parent = path.rpartition("/")[0]
+            while parent and parent not in relative:
+                relative.add(parent)
+                parent = parent.rpartition("/")[0]
+        folders.update(os.path.join(root_text, folder) for folder in relative)
+    if len(folders) > _MAX_WATCHED_DIRS:
+        return None
+    stamps = tuple((path, *_stamp(path)) for path in (*sorted(folders), *marks))
+    if _racy(stamps, listed_ns):
+        return ()
+    if walked is not None:
+        return stamps
+    # A folder git lists nothing under (empty, or only ignored files) starts
+    # to count once a file lands in it: watch those folders too, down to the
+    # ones git ignores (their content is never listed).
+    unlisted = _unlisted_folders(root, folders)
+    if unlisted is None:
+        return None
+    extra = tuple((path, *_stamp(path)) for path in sorted(unlisted))
+    if _racy(extra, listed_ns):
+        return ()
+    return stamps + extra
+
+
+def _child_folders(folders: Iterable[str], known: set[str]) -> list[str] | None:
+    """Sub-folders of ``folders`` not in ``known``; None when one cannot be read.
+
+    A folder that vanished since the listing has no children to watch (its
+    own stamp reads as missing). One that exists but cannot be listed (no
+    permission) could hide files git sees later: the tree is then not
+    cached at all.
+    """
+    children: list[str] = []
+    for folder in folders:
+        try:
+            with os.scandir(folder) as entries:
+                children.extend(
+                    entry.path for entry in entries
+                    if entry.name not in _GENERATED_DIRS
+                    and entry.is_dir(follow_symlinks=False)
+                    and entry.path not in known
+                )
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            return None
+    return children
+
+
+def _unlisted_folders(root: Path, listed: set[str]) -> set[str] | None:
+    """Folders without a listed file that git does not ignore, level by level."""
+    found: set[str] = set()
+    level = _child_folders(listed, listed)
+    while level:
+        if len(listed) + len(found) + len(level) > _MAX_WATCHED_DIRS:
+            return None
+        ignored = _git_ignored(root, level)
+        if ignored is None:
+            return None
+        kept = [folder for folder in level if folder not in ignored]
+        found.update(kept)
+        level = _child_folders(kept, listed | found)
+    if level is None:
+        return None
+    return found
+
+
+def _git_ignored(root: Path, folders: list[str]) -> set[str] | None:
+    """The folders among ``folders`` that the ignore rules exclude."""
+    names = {os.path.relpath(folder, root).replace("\\", "/"): folder for folder in folders}
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-z", "--stdin"],
+            cwd=root, input=b"\0".join(os.fsencode(name) for name in names),
+            capture_output=True, timeout=5, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode not in (0, 1):  # 1: nothing ignored
+        return None
+    return {
+        names[name] for name in (os.fsdecode(raw).rstrip("/") for raw in result.stdout.split(b"\0") if raw)
+        if name in names
+    }
+
+
+def _git_marks(root: Path) -> list[str] | None:
+    """The index and the ignore files that rule ``git ls-files`` for ``root``."""
+    if any(os.environ.get(name) for name in _GIT_REDIRECTS):
+        return None
+    ignores: list[str] = []
+    for base in (root, *root.parents):
+        if base != root:
+            ignores.append(str(base / ".gitignore"))
+        dot_git = base / ".git"
+        if dot_git.is_dir():
+            git_dir = common = dot_git
+            break
+        if dot_git.is_file():
+            # A worktree or a submodule: ".git" names the real folder.
+            try:
+                line = dot_git.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                return None
+            if not line.startswith("gitdir:"):
+                return None
+            git_dir = (base / line.removeprefix("gitdir:").strip()).resolve()
+            # A worktree names its shared repository in "commondir"; a
+            # submodule has none and is its own repository.
+            common = git_dir
+            commondir = git_dir / "commondir"
+            if commondir.is_file():
+                try:
+                    common = (git_dir / commondir.read_text(encoding="utf-8").strip()).resolve()
+                except (OSError, UnicodeDecodeError):
+                    return None  # unreadable: this tree is listed plainly
+            break
+    else:
+        return None
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return [
+        str(git_dir / "index"), str(common / "info" / "exclude"),
+        os.path.join(config_home, "git", "ignore"), *ignores,
+    ]
 
 
 def _is_development_file(path: str) -> bool:

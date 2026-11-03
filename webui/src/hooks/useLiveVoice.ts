@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useRealtimeVoiceSession } from "@/hooks/useRealtimeVoiceSession";
 import { useVoiceSession, type VoiceSessionErrorKey } from "@/hooks/useVoiceSession";
 import { fetchLiveRealtimeStatus, searchNavinDocs } from "@/lib/api";
+import { teamVoicesEnabled, useTeammateVoices } from "@/hooks/useTeammateVoices";
 import type { PendingApproval } from "@/lib/approvals";
 import type { PendingChoice } from "@/lib/choices";
 import {
@@ -547,6 +548,22 @@ export function useLiveVoice({
     onError: (key, detail) => handleError(key, detail),
   });
 
+  // Teammates' replies, each with its own voice: the lead waits for them,
+  // and a teammate waits while the lead talks.
+  const leadSpeakingRef = useRef(false);
+  leadSpeakingRef.current = engine === "realtime" ? realtime.ttsPlaying : session.ttsPlaying;
+  const teammates = useTeammateVoices({
+    token,
+    language: speechStrings.language,
+    outputDeviceId: session.outputDeviceId,
+    leadSpeaking: () => leadSpeakingRef.current,
+    // A reply that could not be voiced is still heard, with the lead's voice.
+    onFailed: (speaker, text, failure) => {
+      console.warn("Teammate voice failed, the lead reads it", failure);
+      speakRef.current(`${speaker.name}: ${text}`);
+    },
+  });
+
   const { start: startSession } = session;
   startPipelineRef.current = startSession;
   const stopSession = useCallback(async () => {
@@ -554,13 +571,16 @@ export function useLiveVoice({
   }, [realtime.stop, session.stop]);
   stopSessionRef.current = stopSession;
   const speak = useCallback(
-    (text: string) => (engineRef.current === "realtime" ? realtime.speak(text) : session.speak(text)),
-    [realtime.speak, session.speak],
+    (text: string) => {
+      teammates.leadSpoke();
+      return engineRef.current === "realtime" ? realtime.speak(text) : session.speak(text);
+    },
+    [realtime.speak, session.speak, teammates.leadSpoke],
   );
-  const stopSpeaking = useCallback(
-    () => (engineRef.current === "realtime" ? realtime.stopSpeaking() : session.stopSpeaking()),
-    [realtime.stopSpeaking, session.stopSpeaking],
-  );
+  const stopSpeaking = useCallback(() => {
+    teammates.stop();
+    return engineRef.current === "realtime" ? realtime.stopSpeaking() : session.stopSpeaking();
+  }, [realtime.stopSpeaking, session.stopSpeaking, teammates.stop]);
   const setMuted = useCallback(
     (value: boolean) => {
       session.setMuted(value);
@@ -568,6 +588,19 @@ export function useLiveVoice({
     },
     [realtime.setMuted, session.setMuted],
   );
+  // The microphone must not take a teammate's voice for the user's: it is off
+  // while a teammate speaks, and back on after (unless the user had muted it).
+  const mutedForTeammateRef = useRef(false);
+  const micMuted = engine === "realtime" ? realtime.muted : session.muted;
+  useEffect(() => {
+    if (teammates.busy && !mutedForTeammateRef.current && !micMuted) {
+      mutedForTeammateRef.current = true;
+      setMuted(true);
+    } else if (!teammates.busy && mutedForTeammateRef.current) {
+      mutedForTeammateRef.current = false;
+      setMuted(false);
+    }
+  }, [micMuted, setMuted, teammates.busy]);
   const activeState = engine === "realtime" ? realtime.state : session.state;
 
   const stop = useCallback(() => {
@@ -576,8 +609,9 @@ export function useLiveVoice({
     setEnabled(false);
     setLastHeard(null);
     setLastPrompt(null);
+    teammates.stop();
     void stopSession();
-  }, [stopSession]);
+  }, [stopSession, teammates.stop]);
 
   const toggle = useCallback(() => {
     if (enabledRef.current) {
@@ -639,12 +673,26 @@ export function useLiveVoice({
   // Read each finished assistant message once, in order, as soon as it lands:
   // the plan before the work, the report after it.
   useEffect(() => {
-    if (!enabled || activeState !== "listening") return;
+    if (!enabled || activeState !== "listening" || teammates.busy) return;
+    const ownVoices = teamVoicesEnabled();
     let onScreen: Map<string, number> | null = null;
     for (const message of messages) {
       if (message.role !== "assistant" || message.kind === "trace" || message.isStreaming) continue;
       if (spokenIdsRef.current.has(message.id)) continue;
       spokenIdsRef.current.add(message.id);
+      if (message.author) {
+        // A teammate's reply, in its own voice; what follows waits for it.
+        const said = speechTextFromMarkdown(message.content, speechStrings);
+        if (!said) continue;
+        onScreen ??= assistantSpeechCounts(messages, speechStrings);
+        if (!claimSpeechKey(spokenKeysRef.current, onScreen, speechDedupeKey(said))) continue;
+        if (ownVoices) {
+          teammates.say(message.author, said);
+          break;
+        }
+        speak(`${message.author.name}: ${said}`);
+        continue;
+      }
       const digest = summaryAskedRef.current ? null : liveDigest(message.content);
       summaryAskedRef.current = false;
       if (digest) {
@@ -660,15 +708,18 @@ export function useLiveVoice({
       if (!claimSpeechKey(spokenKeysRef.current, onScreen, speechDedupeKey(text))) continue;
       speak(text);
     }
-  }, [activeState, enabled, messages, speak, speechStrings]);
+  }, [activeState, enabled, messages, speak, speechStrings, teammates.busy, teammates.say]);
 
   // The transcript groups progress with tool traces. Hear the agent's actual
-  // explanations as they arrive, while keeping raw tool output silent.
+  // explanations as they arrive, while keeping raw tool output silent. A
+  // passing remark is dropped while a teammate speaks, never said over it.
+  const teammateBusyRef = useRef(false);
+  teammateBusyRef.current = teammates.busy;
   useEffect(() => {
     if (!enabled || !chatId || activeState !== "listening") return;
     return client.onChat(chatId, (event) => {
       const progress = spokenProgressFromEvent(event);
-      if (!progress || !enabledRef.current) return;
+      if (!progress || !enabledRef.current || teammateBusyRef.current) return;
       const text = speechTextFromMarkdown(progress.text, speechStrings);
       const key = `${progress.turnId}:${speechDedupeKey(text)}`;
       if (!text || spokenProgressRef.current.has(key)) return;
@@ -694,26 +745,27 @@ export function useLiveVoice({
   }, [t]);
 
   // An approval card is read aloud once; the next utterance answers it. It
-  // comes before any question card: the run is suspended on it.
+  // comes before any question card: the run is suspended on it. A teammate
+  // speaking finishes first.
   useEffect(() => {
-    if (!enabled || activeState !== "listening") return;
+    if (!enabled || activeState !== "listening" || teammates.busy) return;
     const approval = respondToApproval ? pendingApprovals[0] : undefined;
     if (!approval || announcedApprovalsRef.current.has(approval.requestId)) return;
     announcedApprovalsRef.current.add(approval.requestId);
     const spoken = speechForApproval(approval, approvalStrings);
     speak(spoken);
     callUser(approval.requestId, spoken);
-  }, [activeState, approvalStrings, callUser, enabled, pendingApprovals, respondToApproval, speak]);
+  }, [activeState, approvalStrings, callUser, enabled, pendingApprovals, respondToApproval, speak, teammates.busy]);
 
   // A question card is read aloud once; the next utterance answers it.
   useEffect(() => {
-    if (!enabled || activeState !== "listening") return;
+    if (!enabled || activeState !== "listening" || teammates.busy) return;
     const choice = pendingChoices[0];
     if (!choice || announcedChoicesRef.current.has(choice.requestId)) return;
     announcedChoicesRef.current.add(choice.requestId);
     speak(speechForChoice(choice, choiceStrings));
     callUser(choice.requestId, choice.question);
-  }, [activeState, callUser, choiceStrings, enabled, pendingChoices, speak]);
+  }, [activeState, callUser, choiceStrings, enabled, pendingChoices, speak, teammates.busy]);
 
   // "Calls" the user back after a long run: chime, plus an OS banner when the
   // tab is in the background.
@@ -764,7 +816,7 @@ export function useLiveVoice({
     enabled,
     sessionState: activeState,
     muted: rt ? realtime.muted : session.muted,
-    ttsPlaying: rt ? realtime.ttsPlaying : session.ttsPlaying,
+    ttsPlaying: (rt ? realtime.ttsPlaying : session.ttsPlaying) || teammates.busy,
     agentWorking: isStreaming,
     error,
   });

@@ -914,3 +914,47 @@ class WorkspaceSwitchTests(unittest.IsolatedAsyncioTestCase):
         self.runtime._sealed.pop(key)
         self.runtime._log_turn(OutboundMessage(channel="system", chat_id="x", content="ignored"), workspace)
         self.assertEqual(len(self.runtime._replay), 1)
+
+    async def test_a_session_switch_resolves_the_folder_off_the_loop_and_its_replay_never_does(self):
+        """cli-freeze.log 2026-11-01: _replay_off_screen > release_held > resolve_root, 3.5 s."""
+        import threading
+        from unittest.mock import patch
+
+        from navin.bus.events import OutboundMessage
+        from navin.bus.outbound_events import StreamDeltaEvent
+        from navin.tui import runtime as rt
+        from navin.utils import resolve_cache
+
+        ui_thread = threading.get_ident()
+        resolved_on: list[int] = []
+        real = rt.resolve_root
+
+        def tracked(path, **kwargs):
+            resolved_on.append(threading.get_ident())
+            return real(path, **kwargs)
+
+        turn = await self._task()
+        self.runtime.agent_loop._active_tasks = {"cli:1": [turn]}
+        drawn: list[tuple[str, bool]] = []
+
+        async def dispatch(msg, *, replay=False):
+            drawn.append((msg.content, replay))
+
+        self.runtime._dispatch = dispatch
+        workspace = str(self.runtime.workspace)
+        with patch.object(rt, "resolve_root", side_effect=tracked):
+            await self.runtime.switch_session("cli:1")
+            self.assertEqual(len(resolved_on), 1)
+            self.assertNotEqual(resolved_on[0], ui_thread)  # resolved in a worker thread
+            resolved_on.clear()
+            # The 5 s root cache has long expired by the next switch: no disk either.
+            resolve_cache.clear_root_cache()
+            await self.runtime.switch_session("cli:1")
+            message = OutboundMessage(channel="cli", chat_id="1", content="Hel", event=StreamDeltaEvent("Hel", "s"))
+            self.runtime._log_turn(message, workspace)
+            self.assertFalse(await self.runtime.release_held())
+            self.assertFalse(self.runtime.session_busy(workspace, "cli:2"))
+            self.runtime._forget_replay(workspace, "cli:1")
+        self.assertEqual(resolved_on, [])
+        self.assertEqual(drawn, [("Hel", True)])
+        self.assertEqual(self.runtime._replay, {})

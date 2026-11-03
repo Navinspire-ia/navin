@@ -51,7 +51,8 @@ from navin.agent.tools.context import (
 from navin.agent.tools.file_state import FileStates
 from navin.agent.tools.loader import ToolLoader
 from navin.agent.tools.registry import ToolRegistry
-from navin.bus.events import InboundMessage
+from navin.bus.events import InboundMessage, OutboundMessage
+from navin.bus.notify import forward_remote
 from navin.bus.outbound_events import (
     NotificationEvent,
     SubagentProgressEvent,
@@ -255,6 +256,19 @@ _OUTCOMES_DIR: tuple[Path, Path] | None = None
 # line is re-sent at most this often, since it carries no news.
 _PROGRESS_SAME_LINE_INTERVAL_S = 1.5
 _LIVE_PROGRESS_CHANNELS = frozenset({"websocket", "cli"})
+# Chat apps a conversation can live on (session key "<channel>:<chat_id>").
+# They show no team journal: a teammate's report to the lead and its question
+# to the user are posted there as a signed message instead.
+_REMOTE_CHAT_CHANNELS = frozenset({
+    "whatsapp", "msteams", "slack", "telegram", "email", "discord", "matrix",
+    "mattermost", "signal",
+})
+# Room for a signed teammate message in a chat app: under the 4000-character
+# chunk Telegram uses, so one report stays one message on every channel.
+_REMOTE_TEAM_MESSAGE_MAX = 3900
+# A teammate's report shown in the desktop chat or the CLI (the team journal
+# keeps 4000 characters of it).
+_TEAM_REPLY_MAX_CHARS = 100_000
 # Recent steps carried on each progress frame, so an expanded card can show
 # what the subagent has been doing without a second request.
 _MAX_PROGRESS_STEPS = 8
@@ -1853,12 +1867,17 @@ class SubagentManager:
         feed = self._feed_for(session_key)
         feed.append(entry)
         self._persist_feed_entry(session_key, entry)
-        self._publish_team_entry(session_key, entry)
+        self._publish_team_entry(session_key, entry, text=content)
         self._notify_team_entry(session_key, entry)
         return entry
 
     def _notify_team_entry(self, session_key: str, entry: dict[str, Any]) -> None:
-        """The moments worth a notification: a teammate finished, stopped, or asks the user."""
+        """The moments worth a notification: a teammate finished, stopped, or asks the user.
+
+        In the desktop chat the notification also goes to the remote channels
+        whose notifications the user switched on (Teams, WhatsApp...), the
+        question included: it is the user being asked something while away.
+        """
         name = entry["sender"].get("name") or "A teammate"
         target_id = (entry.get("target") or {}).get("id")
         if entry["kind"] == "result":
@@ -1875,16 +1894,18 @@ class SubagentManager:
         outbound = getattr(self.bus, "outbound", None)
         if channel not in _LIVE_PROGRESS_CHANNELS or not chat_id or outbound is None:
             return
+        detail = _clip(entry["content"], 240)
+        key = f"team:{entry['entry_id']}"
         try:
             outbound.put_nowait(outbound_message_for_event(
                 channel=channel, chat_id=chat_id,
                 event=NotificationEvent(
-                    title=title, level=level, detail=_clip(entry["content"], 240),
-                    key=f"team:{entry['entry_id']}", source="session",
+                    title=title, level=level, detail=detail, key=key, source="session",
                 ),
             ))
         except Exception:
             logger.debug("Team notification for {} dropped (outbound bus full)", session_key)
+        forward_remote(title, detail, level, key)
 
     def team_feed(self, session_key: str) -> list[dict[str, Any]]:
         return list(self._feed_for(session_key))
@@ -1935,19 +1956,60 @@ class SubagentManager:
         future = _journal_executor().submit(fn, *args)
         self._pending_journal_writes.append(future)
 
-    def _publish_team_entry(self, session_key: str, entry: dict[str, Any]) -> None:
+    def _publish_team_entry(
+        self, session_key: str, entry: dict[str, Any], *, text: str | None = None,
+    ) -> None:
         channel, _, chat_id = session_key.partition(":")
+        if channel in _REMOTE_CHAT_CHANNELS and chat_id:
+            self._relay_team_entry_to_chat(channel, chat_id, entry, text)
+            return
         if channel not in _LIVE_PROGRESS_CHANNELS or not chat_id:
             return
         outbound = getattr(self.bus, "outbound", None)
         if outbound is None:
             return
         try:
+            # The journal keeps a clipped copy; the chat shows the whole report.
+            whole = (text or "").strip()
+            full_text = whole[:_TEAM_REPLY_MAX_CHARS] if len(whole) > len(entry["content"]) else ""
             outbound.put_nowait(outbound_message_for_event(
-                channel=channel, chat_id=chat_id, event=TeamMessageEvent(**entry),
+                channel=channel, chat_id=chat_id, event=TeamMessageEvent(**entry, full_text=full_text),
             ))
         except Exception:
             logger.debug("Team message for {} dropped (outbound bus full)", session_key)
+
+    def _relay_team_entry_to_chat(
+        self, channel: str, chat_id: str, entry: dict[str, Any], text: str | None,
+    ) -> None:
+        """Post a teammate's report or question in the chat app, signed with its name.
+
+        Only what the user would read from a colleague: a Collaboration Mode
+        teammate's report to the lead and its question to the user. A helper's
+        report to a teammate, assignments and peer exchanges stay in the team
+        journal.
+        """
+        target_id = (entry.get("target") or {}).get("id")
+        task_id = entry.get("task_id")
+        if entry["kind"] == "result":
+            if task_id not in self._task_members or target_id != "lead":
+                return
+        elif entry["kind"] != "message" or target_id != "user":
+            return
+        sender = entry["sender"]
+        name = str(sender.get("name") or "").strip() or "A teammate"
+        title = str(sender.get("title") or "").strip()
+        signature = f"**{name}** ({title})" if title else f"**{name}**"
+        body = (text if text is not None else entry["content"]).strip()
+        content = f"{signature}\n\n{body}"
+        if len(content) > _REMOTE_TEAM_MESSAGE_MAX:
+            content = content[: _REMOTE_TEAM_MESSAGE_MAX - 1].rstrip() + "\u2026"
+        outbound = getattr(self.bus, "outbound", None)
+        if outbound is None:
+            return
+        try:
+            outbound.put_nowait(OutboundMessage(channel=channel, chat_id=chat_id, content=content))
+        except asyncio.QueueFull:
+            logger.warning("Teammate message for {}:{} dropped (outbound bus full)", channel, chat_id)
 
     def collab_round(self, session_key: str, mission: str, member_id: str) -> int:
         """Count one more assignment of *member_id* in *mission*; return it.
@@ -3124,6 +3186,9 @@ class SubagentManager:
         except Exception:  # noqa: BLE001 - delivery matters more than the journal
             logger.exception("Subagent [{}] result journal write failed", task_id)
         status_text = "completed successfully" if status == "ok" else "failed"
+        # A teammate's report is already in the chat under its own name: the
+        # lead must not say it again.
+        teammate = ""
         if task_id in self._task_members:
             self.post_team_feed(
                 origin.get("session_key") or f"{origin['channel']}:{origin['chat_id']}",
@@ -3132,6 +3197,7 @@ class SubagentManager:
             identity = self.member_identity(task_id) or {}
             if identity.get("name"):
                 label = f"{identity['name']} ({identity.get('title') or identity.get('role')})"
+                teammate = identity["name"]
         override = origin.get("session_key") or f"{origin['channel']}:{origin['chat_id']}"
         if spawner is _AUTO_SPAWNER:
             spawner = self._spawn_parents.get(task_id)
@@ -3166,6 +3232,7 @@ class SubagentManager:
             status_text=status_text,
             task=task,
             result=result,
+            teammate=teammate,
         )
 
         # Inject as system message to trigger main agent.

@@ -261,6 +261,8 @@ class WebUISettingsRouter:
             return self._handle_settings_live_voice_update(request)
         if path == "/api/settings/voice/preview":
             return await self._handle_settings_voice_preview(request)
+        if path == "/api/settings/voice/teammate":
+            return await self._handle_settings_voice_teammate(request)
         if path == "/api/settings/network-safety/update":
             return self._handle_settings_network_safety_update(request)
         if path == "/api/settings/cli-apps":
@@ -989,6 +991,18 @@ class WebUISettingsRouter:
         except Exception:
             self.logger.exception("voice preview failed")
             return self._error_response(502, "voice preview failed")
+        return self._json_response(payload)
+
+    async def _handle_settings_voice_teammate(self, request: WsRequest) -> Response:
+        """Live: one clip of a teammate speaking with its own voice."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        from navin.webui.voice_api import teammate_speech_payload
+
+        try:
+            payload = await teammate_speech_payload(self._query(request))
+        except WebUISettingsError as exc:
+            return self._error_response(exc.status, exc.message)
         return self._json_response(payload)
 
     async def _handle_settings_cli_apps_action(

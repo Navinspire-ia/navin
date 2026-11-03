@@ -1,11 +1,15 @@
 import { cn } from "@/lib/utils";
+import { useTeamPhoto } from "@/lib/team-photos";
+
+import { TeamPortrait } from "./TeamPortrait";
 
 /**
- * A teammate's bot face. Each `avatar` key is a distinct robot head (visor,
- * antenna, cyclops...) tinted with the teammate's color, so Mark and Salma are
- * told apart at a glance in the team view, the agent cards and Settings.
+ * A teammate's face: its uploaded photo, else a drawn human face ("person",
+ * the default team's), else a bot head (visor, antenna, cyclops...), tinted
+ * with the teammate's color, so Mark and Salma are told apart at a glance in
+ * the chat, the team view, the agent cards and Settings.
  */
-export const TEAM_AVATAR_KEYS = ["visor", "round", "antenna", "square", "cyclops", "ears", "dome", "crest"] as const;
+export const TEAM_AVATAR_KEYS = ["person", "visor", "round", "antenna", "square", "cyclops", "ears", "dome", "crest"] as const;
 
 export function TeamBotAvatar({
   avatar = "round",
@@ -14,6 +18,9 @@ export function TeamBotAvatar({
   active = false,
   title,
   className,
+  photo,
+  seed,
+  gender,
 }: {
   avatar?: string;
   color?: string;
@@ -22,8 +29,15 @@ export function TeamBotAvatar({
   active?: boolean;
   title?: string;
   className?: string;
+  /** "custom:<hash>" (a saved photo) or a picked picture's data URL. */
+  photo?: string;
+  /** The teammate's id: its saved photo and its drawn face. */
+  seed?: string;
+  gender?: string;
 }) {
   const tint = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6b7280";
+  const picture = useTeamPhoto(seed, photo);
+  const person = avatar === "person";
   return (
     <span
       className={cn("relative inline-flex shrink-0 items-center justify-center rounded-full", className)}
@@ -39,9 +53,21 @@ export function TeamBotAvatar({
           style={{ boxShadow: `0 0 0 1.5px ${tint}66` }}
         />
       ) : null}
-      <svg viewBox="0 0 32 32" width={size * 0.78} height={size * 0.78} fill="none">
-        <BotHead avatar={avatar} tint={tint} />
-      </svg>
+      {picture ? (
+        <span className="absolute inset-0 overflow-hidden rounded-full">
+          <img src={picture} alt="" draggable={false} className="h-full w-full object-cover" data-testid="teammate-photo" />
+        </span>
+      ) : person ? (
+        <span className="absolute inset-0 overflow-hidden rounded-full">
+          <svg viewBox="0 0 32 32" width={size} height={size} fill="none" data-testid="teammate-portrait">
+            <TeamPortrait seed={seed ?? ""} gender={gender} tint={tint} />
+          </svg>
+        </span>
+      ) : (
+        <svg viewBox="0 0 32 32" width={size * 0.78} height={size * 0.78} fill="none">
+          <BotHead avatar={avatar} tint={tint} />
+        </svg>
+      )}
     </span>
   );
 }

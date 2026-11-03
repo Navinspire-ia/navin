@@ -1552,6 +1552,8 @@ def _open_webui_on_windows_host(url: str) -> bool:
     from navin.utils.proc import detached_no_window_kwargs
     from navin.webui.sidebar_state import webui_theme
 
+    if not wsl.host_interop_available():
+        return False
     want_app_window = os.environ.get("NAVIN_WEBUI_TAB", "").strip() not in {"1", "true", "yes"}
     local_app_data = wsl.windows_env("LOCALAPPDATA")
     browser = wsl.find_host_browser(local_app_data) if want_app_window else None
@@ -1591,9 +1593,9 @@ def _open_webui_browser(url: str, *, wait: bool = True) -> None:
     with its own taskbar entry. ``NAVIN_WEBUI_TAB=1`` forces a normal tab.
     """
     import subprocess
-    import webbrowser
 
     from navin.utils import wsl
+    from navin.utils.open_browser import open_external_url, unavailable_reason
 
     if wait:
         _wait_for_webui(url)
@@ -1631,16 +1633,14 @@ def _open_webui_browser(url: str, *, wait: bool = True) -> None:
             except OSError:
                 pass  # Fall back to a normal browser tab below.
 
-    try:
-        # webbrowser reports False for "no way to open anything"; a claimed
-        # success can still fail later inside gio, but at least the honest
-        # failures stop printing a green check mark over a dead end.
-        if webbrowser.open(url):
-            console.print(f"[green]✓[/green] Opened WebUI: [cyan]{display_url}[/cyan]")
-        else:
-            console.print(f"[yellow]No browser found; open {display_url} yourself.[/yellow]")
-    except Exception as exc:
-        console.print(f"[yellow]Could not open browser ({exc}); visit {display_url}[/yellow]")
+    # The quiet opener rather than webbrowser, which under WSL ran wslview on
+    # this terminal and printed its "Exec format error" lines here.
+    if open_external_url(url):
+        console.print(f"[green]✓[/green] Opened WebUI: [cyan]{display_url}[/cyan]")
+    else:
+        console.print(
+            f"[yellow]{escape(unavailable_reason(url))} Open {display_url} yourself.[/yellow]"
+        )
 
 
 def _print_webui_foreground_lifecycle(*, attached: bool) -> None:

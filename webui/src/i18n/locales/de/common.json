@@ -213,8 +213,6 @@
           "back": "Zurück zu den Dateien"
         },
         "control": {
-          "contextTitle": "Kontext: {{used}} von {{window}} Tokens",
-          "context": "Kontext",
           "stopAgent": "Agent stoppen"
         },
         "progress": {

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import posixpath
 import re
 import time
@@ -1566,7 +1565,11 @@ def _highlight_preview_source(code: str, filename: str, dark: bool) -> Text:
 
 
 def safe_cell_text(text: str) -> str:
-    """Drop leading zero-width characters (see ``_patch_rich_graphemes``)."""
+    """Drop leading zero-width characters (ZWJ, VS16, combining marks).
+
+    With nothing before them they draw nothing. rich before 14.3.3 also looped
+    forever measuring them and froze the CLI; pyproject keeps rich>=14.3.3, so
+    every rich and Textual width path is protected by rich itself."""
     index = _leading_zero_width(text)
     return text[index:] if index else text
 
@@ -1576,75 +1579,6 @@ def _leading_zero_width(text: str) -> int:
     while index < len(text) and (text[index] in "\u200d\ufe0f" or not get_character_cell_size(text[index])):
         index += 1
     return index
-
-
-def _patch_rich_graphemes() -> None:
-    """rich 14.3.1 ``split_graphemes`` never advances on a zero-width character
-    (combining mark, U+200B, U+FE0F...) with no span before it, and ``cell_len``
-    raises on a trailing ZWJ. Every width helper (chop_cells, set_cell_size,
-    Textual wrapping) then spins forever on the UI thread and the whole CLI
-    freezes. This is the fixed rich 14.3.4 algorithm, installed over the old one."""
-    import rich.cells as cells
-
-    if getattr(cells.split_graphemes, "_navin_safe", False):
-        return
-    special = {"\u200d", "\ufe0f"}
-
-    def split_graphemes(text: str, unicode_version: str = "auto"):
-        cell_table = cells.load_cell_table(unicode_version)
-        size_of = cells.get_character_cell_size
-        count = len(text)
-        index = 0
-        last_measured: str | None = None
-        total = 0
-        spans: list[tuple[int, int, int]] = []
-        while index < count:
-            character = text[index]
-            if character in special:
-                if not spans:
-                    spans.append((index, index + 1, 0))
-                    index += 1
-                    continue
-                start, _end, size = spans[-1]
-                if character == "\u200d":
-                    index += 2 if index < count - 1 else 1
-                    spans[-1] = (start, index, size)
-                else:
-                    index += 1
-                    if last_measured and last_measured in cell_table.narrow_to_wide:
-                        last_measured = None
-                        size += 1
-                        total += 1
-                    spans[-1] = (start, index, size)
-                continue
-            width = size_of(character, unicode_version)
-            if width:
-                last_measured = character
-                spans.append((index, index + 1, width))
-                total += width
-            elif spans:
-                start, _end, size = spans[-1]
-                spans[-1] = (start, index + 1, size)
-            else:
-                spans.append((index, index + 1, 0))
-            index += 1
-        return spans, total
-
-    def cell_len_text(text: str, unicode_version: str) -> int:
-        if cells._is_single_cell_widths(text):
-            return len(text)
-        if "\u200d" not in text and "\ufe0f" not in text:
-            return sum(cells.get_character_cell_size(c, unicode_version) for c in text)
-        return cells.split_graphemes(text, unicode_version)[1]
-
-    split_graphemes._navin_safe = True  # type: ignore[attr-defined]
-    cells.split_graphemes = split_graphemes
-    cells._cell_len = cell_len_text
-    with contextlib.suppress(Exception):
-        cells.cached_cell_len.cache_clear()
-
-
-_patch_rich_graphemes()
 
 
 def chop_cells(text: str, width: int) -> list[str]:

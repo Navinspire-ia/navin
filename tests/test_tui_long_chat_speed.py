@@ -530,7 +530,10 @@ def test_changing_the_effort_fills_its_bars_and_glows_then_settles(tmp_path):
             bars = app.query_one("#meta-effort", Static)
 
             def choose(effort):
-                with patch.object(app.runtime, "reasoning_details", return_value=(effort, ())):
+                # The status line reads the level kept in memory since the
+                # catalog read left the UI loop (a 2.8 s freeze): a pick
+                # updates that level, the catalog is never read here.
+                with patch.object(app.runtime, "reasoning_label", return_value=effort):
                     app._set_status()
 
             async def settle(condition, frames):

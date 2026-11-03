@@ -228,7 +228,13 @@ class CheckpointStore:
         files: dict[str, bytes | None] | None = None,
         skipped: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Snapshot the session (and optionally file states). Returns metadata."""
+        """Snapshot the session (and optionally file states). Returns metadata.
+
+        Safe from a worker thread while the loop keeps the session: the
+        message list is copied first (one atomic list copy), and appends made
+        after that belong to the next checkpoint.
+        """
+        messages = list(session.messages)
         now = datetime.now()
         name = now.strftime("%Y%m%d-%H%M%S")
         if note:
@@ -244,9 +250,9 @@ class CheckpointStore:
             "note": note.strip(),
             "auto": bool(auto),
             "prompt": prompt.strip()[:200],
-            "message_count": len(session.messages),
+            "message_count": len(messages),
             "last_consolidated": session.last_consolidated,
-            "messages": session.messages,
+            "messages": messages,
             "files": _encode_files(files or {}),
             # Explicit exclusion manifest: paths the recorder could not
             # snapshot (size cap, file-count cap, unreadable). A restore
@@ -287,11 +293,37 @@ class CheckpointStore:
 
     @staticmethod
     def _write(target: Path, payload: dict[str, Any]) -> None:
+        """Atomic, fsynced write of one checkpoint.
+
+        Streamed one top-level value (and one message) at a time: the turn
+        start runs it in a worker thread, and one ``json.dumps`` of a long
+        chat holds the interpreter lock for its whole encoding (38 ms for a
+        4 MB chat), so the event loop could not run during it. Each message
+        is encoded in a single call, so a message changed by the loop while
+        the thread writes is never read half-updated. The bytes are the same
+        as ``json.dumps(payload, ensure_ascii=False)`` (same separators).
+        """
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
+                f.write("{")
+                for index, (key, value) in enumerate(payload.items()):
+                    f.write((", " if index else "") + json.dumps(key, ensure_ascii=False) + ": ")
+                    if isinstance(value, list):
+                        f.write("[")
+                        for position, item in enumerate(value):
+                            f.write((", " if position else "") + json.dumps(item, ensure_ascii=False))
+                        f.write("]")
+                    elif isinstance(value, dict) and all(isinstance(name, str) for name in value):
+                        f.write("{")
+                        for position, (name, item) in enumerate(value.items()):
+                            f.write((", " if position else "") + json.dumps(name, ensure_ascii=False) + ": "
+                                    + json.dumps(item, ensure_ascii=False))
+                        f.write("}")
+                    else:
+                        f.write(json.dumps(value, ensure_ascii=False))
+                f.write("}")
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, target)

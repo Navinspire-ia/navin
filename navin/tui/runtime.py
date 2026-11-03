@@ -79,6 +79,9 @@ class _FileLog:
         with contextlib.suppress(Exception):
             self._handle.write(f"{stamp} | {fmt.format(*args)}\n")
 
+    # A paused process is logged at info level by the watch: same file.
+    info = warning
+
 
 @dataclass(frozen=True)
 class UiEvent:
@@ -227,18 +230,39 @@ TEAM_GLYPHS = {
 }
 
 
-def team_face(identity: dict[str, str] | None) -> str:
-    """``◉ Salma`` in the teammate's color, as Textual markup."""
+# Identities that are not teammates: their role says nothing about a job.
+_NO_JOB_IDS = frozenset({"lead", "user"})
+
+
+def team_job(identity: dict[str, str] | None) -> str:
+    """A teammate's job as the chat names it: its title, else its role."""
+    if not identity or str(identity.get("id") or "") in _NO_JOB_IDS:
+        return ""
+    title = str(identity.get("title") or "").strip()
+    if title:
+        return title
+    role = str(identity.get("role") or "").strip().replace("_", " ")
+    return "" if role in {"", "custom"} else role.capitalize()
+
+
+def team_face(identity: dict[str, str] | None, *, with_job: bool = False) -> str:
+    """``◉ Salma`` in the teammate's color, as Textual markup.
+
+    ``with_job`` adds the job: ``◉ Mark · Senior Developer``.
+    """
     if not identity:
         return ""
-    from rich.markup import escape
+    from navin.tui.textmarkup import escape
 
     color = identity.get("color") or ""
     glyph = TEAM_GLYPHS.get(identity.get("avatar") or "", "◉")
     name = escape(identity.get("name") or "?")
+    job = team_job(identity) if with_job else ""
     if len(color) == 7 and color.startswith("#"):
-        return f"[b {color}]{glyph} {name}[/]"
-    return f"[b]{glyph} {name}[/b]"
+        face = f"[b {color}]{glyph} {name}[/]"
+        return f"{face} [{color}]· {escape(job)}[/]" if job else face
+    face = f"[b]{glyph} {name}[/b]"
+    return f"{face} · {escape(job)}" if job else face
 
 
 @dataclass(frozen=True)
@@ -434,6 +458,8 @@ PARKED_CHECK_EVERY_S = 5.0
 REPLAY_LIMIT = 4000
 #: Longest a session opened mid-turn holds its live messages while it is drawn.
 HOLD_MAX_S = 30.0
+#: Project roots whose resolved folder the runtime remembers (a handful in practice).
+WORKSPACE_KEYS_MAX = 256
 #: Events not replayed: open cards are drawn again from the brokers, and the
 #: subagent rows from the subagent manager, both with their current state.
 _NOT_REPLAYED = (
@@ -461,8 +487,13 @@ class _ParkedEngine:
 
 
 def _workspace_id(path: str | Path) -> str:
-    # A root resolved again for every streamed event: 1.4 s of the CLI loop
-    # once (freeze log of 2026-10-31). Roots are cached a few seconds.
+    """Resolved project folder: reads the disk, so call it from a worker thread.
+
+    The runtime keeps the result per folder (:meth:`TuiRuntime._key_for`):
+    the 5 s root cache always missed on a session switch, and replaying a
+    session resolved the root on the UI loop again (up to 3.5 s during file
+    system stalls, freeze log of 2026-11-01).
+    """
     return str(resolve_root(path))
 
 
@@ -552,6 +583,10 @@ class TuiRuntime:
         self._replay: dict[tuple[str, str], list[OutboundMessage]] = {}
         # Log entries already drawn by a release in progress, by the same key.
         self._sealed: dict[tuple[str, str], int] = {}
+        # Resolved folder of each project root this runtime opened, by the
+        # folder as configured: learned off the loop when an engine starts or a
+        # session opens, so streamed events and release_held never stat it.
+        self._workspace_keys: dict[str, str] = {}
         # While a session opened mid-turn is being drawn, its live messages wait
         # in the replay buffer instead of landing in a transcript being rebuilt.
         self._holding = False
@@ -721,6 +756,7 @@ class TuiRuntime:
         # about a second of plain Python: build them off the UI loop so the
         # first frame and typing never wait for the engine.
         await self._build_engine_off_loop()
+        await self._learn_workspace_key()
         self._enable_interaction()
         await asyncio.to_thread(self._adopt_session_model_pin)
         await asyncio.to_thread(self._refresh_status)
@@ -850,7 +886,12 @@ class TuiRuntime:
             # they could never be collected (2.2 M objects and +240 MB after
             # 30 probe turns). The loaded chat is frozen once, on history
             # paint, and thawed on session switch.
-            self._loop_lag = LoopLagMonitor(_FileLog(self._freeze_file))
+            # Several CLIs share this file: every entry carries the pid and
+            # the project this CLI shows, read when the entry is written.
+            self._loop_lag = LoopLagMonitor(
+                _FileLog(self._freeze_file),
+                context=lambda: f"project {getattr(self, 'workspace', None) or '?'}",
+            )
             self._loop_lag.start()
 
     def _enable_interaction(self) -> None:
@@ -1015,6 +1056,36 @@ class TuiRuntime:
 
     # -- project switch ---------------------------------------------------
 
+    def _remember_key(self, path: str, key: str) -> None:
+        if len(self._workspace_keys) >= WORKSPACE_KEYS_MAX:
+            self._workspace_keys.clear()
+        self._workspace_keys[path] = key
+        # The resolved folder is its own key: callers passing it back hit the map.
+        self._workspace_keys.setdefault(key, key)
+
+    def _key_for(self, path: str | Path) -> str:
+        """Resolved folder of a project root, from the map when it was learned.
+
+        Every folder this runtime opens is learned off the loop first
+        (:meth:`_learn_workspace_key`); only a folder never opened here (one
+        named by the projects panel) is resolved on the spot, once.
+        """
+        raw = os.fspath(path)
+        key = self._workspace_keys.get(raw)
+        if key is None:
+            key = _workspace_id(raw)
+            self._remember_key(raw, key)
+        return key
+
+    async def _learn_workspace_key(self, path: str | Path | None = None) -> str:
+        """Resolve a project root in a worker thread, once per folder."""
+        raw = os.fspath(self.workspace if path is None else path)
+        key = self._workspace_keys.get(raw)
+        if key is None:
+            key = await asyncio.to_thread(_workspace_id, raw)
+            self._remember_key(raw, key)
+        return key
+
     def running_work(self) -> int:
         """Turns and subagents still running in this engine."""
         return _work_count(self.agent_loop)
@@ -1025,10 +1096,10 @@ class TuiRuntime:
 
     def session_busy(self, path: str | Path, key: str) -> bool:
         """Whether one session of a project open in this CLI still works."""
-        wanted = _workspace_id(path)
+        wanted = self._key_for(path)
         return any(
             key in keys for workspace, keys in self.running_sessions().items()
-            if _workspace_id(workspace) == wanted
+            if self._key_for(workspace) == wanted
         )
 
     def running_sessions(self) -> dict[str, set[str]]:
@@ -1052,15 +1123,15 @@ class TuiRuntime:
 
     def sessions_for(self, path: str | Path) -> Any:
         """The live session store of a project open in this process, else None."""
-        wanted = _workspace_id(path)
-        if self.agent_loop is not None and _workspace_id(self.workspace) == wanted:
+        wanted = self._key_for(path)
+        if self.agent_loop is not None and self._key_for(self.workspace) == wanted:
             return getattr(self.agent_loop, "sessions", None)
         engine = self._parked.get(wanted)
         return getattr(engine.agent_loop, "sessions", None) if engine is not None else None
 
     def _park_engine(self) -> str:
         """Move the working engine on screen to the background; it keeps running."""
-        key = _workspace_id(self.workspace)
+        key = self._key_for(self.workspace)
         self._parked[key] = _ParkedEngine(
             workspace=str(self.workspace),
             config=self.config,
@@ -1090,6 +1161,7 @@ class TuiRuntime:
         engine = self._parked.pop(key, None)
         if engine is None:
             return False
+        self._remember_key(engine.workspace, key)
         self.config = engine.config
         self.bus = engine.bus
         self.agent_loop = engine.agent_loop
@@ -1180,15 +1252,15 @@ class TuiRuntime:
         comes back on screen, as it is, when the project is opened again.
         """
         target = Path(workspace).expanduser()
-        if not target.is_dir():
+        if not await asyncio.to_thread(target.is_dir):
             raise WorkspaceSwitchError(f"Not a folder: {target}")
         previous = str(self.config.agents.defaults.workspace)
         previous_session = self.session_key
         preset = getattr(self.agent_loop, "model_preset", None)
         parked = await self._leave_engine()
-        resolved = str(target.resolve())
+        resolved = str(await asyncio.to_thread(target.resolve))
         try:
-            if self._adopt_parked(_workspace_id(resolved), session_id, preset):
+            if self._adopt_parked(await self._learn_workspace_key(resolved), session_id, preset):
                 await asyncio.to_thread(self._refresh_status)
             else:
                 await self._start_on(resolved, session_id, preset)
@@ -1299,7 +1371,7 @@ class TuiRuntime:
         event = outbound_event_from_message(msg)
         if isinstance(event, _NOT_REPLAYED):
             return
-        key = (_workspace_id(workspace), f"{msg.channel}:{msg.chat_id}")
+        key = (self._key_for(workspace), f"{msg.channel}:{msg.chat_id}")
         log = self._replay.setdefault(key, [])
         # Entries already drawn by a release in progress are never changed.
         sealed = self._sealed.get(key, 0)
@@ -1315,7 +1387,7 @@ class TuiRuntime:
             del log[: len(log) - REPLAY_LIMIT]
 
     def _forget_replay(self, workspace: str, key: str | None = None) -> None:
-        folder = _workspace_id(workspace)
+        folder = self._key_for(workspace)
         for entry in [k for k in self._replay if k[0] == folder and (key is None or k[1] == key)]:
             del self._replay[entry]
 
@@ -1338,7 +1410,7 @@ class TuiRuntime:
         Called once its history is painted. True means its turn ended while
         the chat was being drawn: paint the history again, it holds the answer.
         """
-        key = (_workspace_id(self.workspace), self.session_key)
+        key = (self._key_for(self.workspace), self.session_key)
         try:
             if self._hold_completed:
                 self._replay.pop(key, None)
@@ -1453,7 +1525,7 @@ class TuiRuntime:
             await self._emit(UiTeamMessage(
                 event.kind, dict(event.sender),
                 dict(event.target) if event.target else None,
-                event.content, event.status,
+                event.full_text or event.content, event.status,
             ))
             return
         if isinstance(event, SubagentProgressEvent):
@@ -1763,9 +1835,28 @@ class TuiRuntime:
             )
         return rows
 
+    def reasoning_label(self) -> str | None:
+        """Reasoning level shown in the status line, from memory only.
+
+        None until :meth:`reasoning_details` ran for the preset, model and
+        session on screen: the status line refreshes several times a second
+        and the catalog check behind the options once took 2.8 s of the UI
+        loop (os.path.getmtime, cli-freeze.log 2026-11-01).
+        """
+        cached = getattr(self, "_reasoning_cache", None)
+        if cached is None or cached[0] != self._reasoning_cache_key():
+            return None
+        return cached[1]
+
+    def _reasoning_cache_key(self) -> tuple[str, str, str, str]:
+        st = self.status
+        return (str(st.model_preset or ""), str(st.provider or ""), str(st.model or ""), self.session_key)
+
     def reasoning_details(self) -> tuple[str, tuple[tuple[str, str], ...]]:
+        """Current reasoning level and its options; reads the model catalog, run it off the UI loop."""
         from navin.tui.models import reasoning_options
 
+        key = self._reasoning_cache_key()
         resolved = self.config.resolve_preset(self.status.model_preset)
         options = reasoning_options(resolved.provider or "", resolved.model)
         effort = resolved.reasoning_effort or ""
@@ -1774,7 +1865,9 @@ class TuiRuntime:
             choices = session.metadata.get("tui_reasoning_efforts", {})
             effort = choices.get(self._reasoning_key(resolved), effort)
         values = {value for value, _ in options}
-        return (effort if effort in values else ""), options
+        label = effort if effort in values else ""
+        self._reasoning_cache = (key, label)
+        return label, options
 
     def _reasoning_key(self, resolved: Any) -> str:
         return f"{self.status.model_preset}:{resolved.provider}:{resolved.model}"
@@ -1789,6 +1882,7 @@ class TuiRuntime:
         session = self.agent_loop.sessions.get_or_create(self.session_key)
         session.metadata.setdefault("tui_reasoning_efforts", {})[self._reasoning_key(resolved)] = effort
         self.agent_loop.sessions.save(session)
+        self._reasoning_cache = (self._reasoning_cache_key(), effort)
 
     def tool_rows(self) -> list[dict[str, Any]]:
         loop = self.agent_loop
@@ -1851,6 +1945,33 @@ class TuiRuntime:
         if loop is None:
             raise RuntimeError("engine not ready")
         return loop.sessions.set_title(key, title)
+
+    def team_state(self) -> dict[str, Any]:
+        """Collaboration Mode as this chat sees it (the desktop's Team picker).
+
+        ``picked`` is the team stored on the chat (None when it never chose
+        one, so the default team applies); the rest is ``team_summary``.
+        """
+        from navin.collab.runtime import current_collab, session_team_id, team_summary
+
+        collab = current_collab()
+        picked = session_team_id(getattr(self.agent_loop, "sessions", None), self.session_key)
+        return {
+            **team_summary(collab, picked),
+            "picked": picked,
+            "default_team": str(getattr(collab, "default_team", "") or ""),
+        }
+
+    def set_session_team(self, team_id: str) -> None:
+        """This chat's team ("off" = none), kept on the session like the desktop's pick."""
+        from navin.collab.runtime import SESSION_TEAM_KEY, TEAM_OFF
+
+        sessions = getattr(self.agent_loop, "sessions", None)
+        if sessions is None:
+            raise RuntimeError("engine not ready")
+        session = sessions.get_or_create(self.session_key)
+        session.metadata[SESSION_TEAM_KEY] = team_id.strip()[:80] or TEAM_OFF
+        sessions.save(session)
 
     def ensure_session_titles(self) -> None:
         """Fill missing names from the first user line and persist them.
@@ -1953,6 +2074,8 @@ class TuiRuntime:
         started = self._turn_starts.get((str(self.workspace), self.session_key))
         self._turn_started_at = (started or time.monotonic()) if self.status.turn_active else None
         self._streamed_this_turn = False
+        # Its replay (release_held) and its streamed events find the folder here.
+        await self._learn_workspace_key()
         await asyncio.to_thread(self._adopt_session_model_pin)
         await asyncio.to_thread(self._refresh_status)
         # Opening a chat whose turn was interrupted picks that work up again;

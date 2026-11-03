@@ -38,6 +38,12 @@ from navin.utils.proc import no_window_kwargs
 CHECK_TIMEOUT_S = 20.0
 # Least time between two checks of one distribution, whatever asked for them.
 RECHECK_EVERY_S = 30.0
+# After a check that got no answer, background reads (panel polls, bulk stat)
+# fail at once for this long, even when some other launch answers meanwhile.
+# A WSL that hangs one launch in two kept flapping between "does not start
+# new sessions" and "starts new sessions again" within seconds (6 times on
+# 2026-11-01/02), and every poll in between paid its full timeout.
+DEGRADED_FOR_S = 60.0
 # What the user runs on the Windows side to clear it.
 RESTART_COMMAND = "wsl --shutdown"
 
@@ -52,6 +58,8 @@ class _Down:
 
 _lock = threading.Lock()
 _down: dict[str, _Down] = {}
+# distro key -> (monotonic deadline, detail of the hung check)
+_degraded: dict[str, tuple[float, str]] = {}
 _checking: set[str] = set()
 _last_check: dict[str, float] = {}
 
@@ -90,6 +98,39 @@ def refuse_reason(distro: str) -> str | None:
     return (
         f"WSL {down.distro} does not start new sessions ({down.detail}); "
         f"run `{RESTART_COMMAND}` on Windows, then retry"
+    )
+
+
+def background_refuse_reason(distro: str) -> str | None:
+    """Why a background read into ``distro`` must not start now, else None.
+
+    For reads nobody is waiting on: the git status behind a panel poll, the
+    bulk stat of the index. Beyond :func:`refuse_reason`, they are also turned
+    away for :data:`DEGRADED_FOR_S` after a liveness check got no answer,
+    even if another launch answered since: on a WSL that hangs one launch in
+    two, that answer cleared the verdict within seconds and the next poll paid
+    its full timeout again. Never use it for what the user starts (commit,
+    push, PR create, file save): those keep their own chance to get through.
+    """
+    if not distro:
+        return None
+    confirmed = refuse_reason(distro)
+    if confirmed is not None:
+        return confirmed
+    key = distro.lower()
+    now = time.monotonic()
+    with _lock:
+        entry = _degraded.get(key)
+        if entry is not None and entry[0] <= now:
+            _degraded.pop(key, None)
+            entry = None
+    if entry is None:
+        return None
+    deadline, detail = entry
+    return (
+        f"WSL {distro} gave no answer to a liveness check ({detail}); background reads "
+        f"are paused for {max(1, round(deadline - now))} s. If it lasts, run "
+        f"`{RESTART_COMMAND}` on Windows"
     )
 
 
@@ -160,6 +201,9 @@ def _check(distro: str) -> None:
         with _lock:
             _checking.discard(key)
     if verdict is None:
+        with _lock:
+            # A liveness check that answered is a verdict, unlike a stray launch.
+            _degraded.pop(key, None)
         answered(distro)
         return
     state, detail = verdict
@@ -169,6 +213,8 @@ def _check(distro: str) -> None:
             distro=distro, state=state, detail=detail,
             since=previous.since if previous is not None else time.time(),
         )
+        if state == "hung":
+            _degraded[key] = (time.monotonic() + DEGRADED_FOR_S, detail)
     if previous is None:
         logger.warning(
             "WSL {} does not start new sessions ({}): {} on Windows clears it",
@@ -186,5 +232,6 @@ def reset() -> None:
     """Forget every verdict (tests, and a fresh engine)."""
     with _lock:
         _down.clear()
+        _degraded.clear()
         _checking.clear()
         _last_check.clear()

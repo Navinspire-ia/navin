@@ -2492,7 +2492,11 @@ class AgentLoop:
         auto_checkpoint_name: str | None = None
         if session is not None and original_user_text and not ephemeral:
             try:
-                meta = self.checkpoints.save(
+                # The whole chat is written and fsynced: 30 to 170 ms for 2
+                # to 4 MB chats measured on the loop (2026-11-02), which froze
+                # every chat and the CLI at the start of each turn.
+                meta = await asyncio.to_thread(
+                    self.checkpoints.save,
                     session,
                     auto=True,
                     prompt=original_user_text,
@@ -2825,6 +2829,36 @@ class AgentLoop:
         """Relay a provider-level model substitution so channel UIs can report it."""
         self._runtime_events().model_failed_over(chosen_model, served_model)
 
+    def _prewarm_workspace_context(self) -> None:
+        """Build what the first turn of this project reads, before it is asked.
+
+        The first turn of a process waited 2.3 to 2.5 s for its first model
+        call (2026-11-02 probe): skill suggestions, project commands and the
+        repo map were all built cold, under the 2.5 s bound of the context
+        providers, while later turns read them cached (70 to 150 ms). Built
+        here when the loop starts, the first message finds them ready. Each
+        piece keeps its own invalidation, so nothing is served stale; a piece
+        that fails is logged and the turn builds it itself.
+        """
+        if not self.workspace:
+            return
+        from navin.agent.project_runbook import project_runbook
+        from navin.agent.tools.metagraph import _cached_runtime_context_lines
+
+        root = Path(self.workspace)
+        pieces = [
+            ("project commands", lambda: project_runbook(root)),
+            ("repo map", lambda: _cached_runtime_context_lines(root)),
+        ]
+        suggest = getattr(self.tools.get("skill"), "_suggest_for_request", None)
+        if callable(suggest):
+            pieces.insert(0, ("skill suggestions", lambda: suggest("prepare the context of this project")))
+        for label, build in pieces:
+            try:
+                build()
+            except BaseException:  # thread boundary: a navin_core panic is a BaseException
+                logger.opt(exception=True).warning("First-turn warm-up of the {} failed", label)
+
     async def run(
         self, *, recovery_channel: str = "websocket", recovery_session_key: str | None = None,
     ) -> None:
@@ -2848,6 +2882,14 @@ class AgentLoop:
             # Only the gateway (all sessions, websocket runtime) serves chat
             # apps, so only it resumes their interrupted requests.
             external = recovery_session_key is None and recovery_channel == "websocket"
+            if not external and self.workspace:
+                # A CLI serves one project: what its first turn reads is built
+                # now, while the user types, instead of during that turn. The
+                # gateway serves many projects and warms none of them.
+                threading.Thread(
+                    target=self._prewarm_workspace_context,
+                    name="navin-first-turn-context", daemon=True,
+                ).start()
             if external:
                 await asyncio.to_thread(self._adopt_interrupted_turns)
                 # The gateway owns automatic updates: check at start and every

@@ -169,6 +169,78 @@ def test_real_share_manager_reads_the_cli_session(tmp_path: Path) -> None:
     assert "link" in asyncio.run(scenario())
 
 
+def test_the_link_follows_the_chat_and_model_the_cli_moves_to(tmp_path: Path) -> None:
+    from navin.session.context_usage_meta import LAST_CONTEXT_USAGE_KEY
+    from navin.session.manager import SessionManager
+
+    sessions = SessionManager(tmp_path)
+    for key, model in (("cli:first", "anthropic/claude-sonnet-5.5"), ("cli:second", "anthropic/claude-sonnet-5")):
+        session = sessions.get_or_create(key)
+        session.metadata[LAST_CONTEXT_USAGE_KEY] = {"prompt_tokens": 1000, "context_window": 1_000_000, "model": model}
+        session.add_message("user", f"prompt in {key}")
+        sessions.save(session)
+    runtime = {"key": "cli:first", "model": "anthropic/claude-opus-5.5"}
+    share = CliLiveShare(
+        chat_id="first",
+        session_key=lambda: runtime["key"],
+        sessions_workspace=tmp_path,
+        project_root=None,
+        on_guest_message=lambda text, meta: None,
+        store_path=tmp_path / "cli-shares.json",
+        model=lambda: runtime["model"],
+    )
+    context = share.manager._context("first")
+    # The model the CLI runs now, not the one of the last turn.
+    assert context["usage"]["model"] == "anthropic/claude-opus-5.5"
+    assert context["conversation"]["model"] == "anthropic/claude-opus-5.5"
+    assert context["conversation"]["prompts"][0]["text"] == "prompt in cli:first"
+    # /new or the Sessions picker: the guests read the chat the CLI is on.
+    runtime.update(key="cli:second", model="")
+    context = share.manager._context("first")
+    assert context["conversation"]["prompts"][0]["text"] == "prompt in cli:second"
+    assert context["usage"]["model"] == "anthropic/claude-sonnet-5"
+
+
+def test_a_guest_of_a_cli_chat_reads_its_conversation_page_by_page(tmp_path: Path) -> None:
+    """The CLI writes no display transcript: a guest opened on an empty chat."""
+    chat: list[dict[str, Any]] = []
+    for turn in range(30):
+        chat.append({"role": "user", "content": f"question {turn}"})
+        chat.append({"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"c{turn}", "type": "function", "function": {"name": "exec", "arguments": json.dumps({"command": f"ls {turn}"})}},
+        ]})
+        chat.append({"role": "tool", "tool_call_id": f"c{turn}", "content": f"out {turn}"})
+        chat.append({"role": "assistant", "content": f"answer {turn}"})
+    runtime = {"key": "cli:direct"}
+    share = CliLiveShare(
+        chat_id="direct",
+        session_key=lambda: runtime["key"],
+        sessions_workspace=tmp_path,
+        project_root=None,
+        on_guest_message=lambda text, meta: None,
+        store_path=tmp_path / "cli-shares.json",
+        history=lambda: list(chat),
+    )
+    manager = share.manager
+    page = manager._transcript("direct", None, 40, 160 * 1024)
+    shown = page["messages"]
+    assert [m["content"] for m in shown[-2:] if m["role"] == "assistant"][-1] == "answer 29"
+    assert any(m.get("kind") == "trace" for m in shown)  # the tool steps, as the CLI ran them
+    assert page["page"]["has_more_before"] is True
+    assert page["page"]["user_message_offset"] == 30 - sum(1 for m in shown if m["role"] == "user")
+    cursor = page["page"]["before_cursor"]
+    while cursor:
+        older = manager._transcript("direct", cursor)
+        shown = older["messages"] + shown
+        cursor = older["page"]["before_cursor"] if older["page"]["has_more_before"] else None
+    assert [m["content"] for m in shown if m["role"] == "user"] == [f"question {i}" for i in range(30)]
+    assert older["page"]["user_message_offset"] == 0
+    # A new turn in the CLI is on the next page a guest opens.
+    chat.extend([{"role": "user", "content": "et maintenant"}, {"role": "assistant", "content": "fait"}])
+    latest = manager._transcript("direct", None, 40, 160 * 1024)["messages"]
+    assert [m["content"] for m in latest[-2:]] == ["et maintenant", "fait"]
+
+
 def test_runtime_forwards_to_the_share_observer() -> None:
     from navin.tui.runtime import TuiRuntime
 

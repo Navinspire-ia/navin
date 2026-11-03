@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import unittest
 from unittest import mock
 
-from navin.utils.open_browser import open_external_url
+from navin.utils import wsl
+from navin.utils.open_browser import open_external_url, unavailable_reason
 
 
 class OpenExternalUrlTest(unittest.TestCase):
@@ -105,3 +107,64 @@ class OpenExternalUrlTest(unittest.TestCase):
             self.assertTrue(open_external_url("https://navin.live/connect"))
             host.assert_called_once()
             browser.assert_not_called()
+
+    def test_wsl_without_interop_or_display_launches_nothing(self):
+        """Every Linux opener ends in wslview there, which printed over the CLI."""
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=True),
+            mock.patch("navin.utils.wsl.host_interop_available", return_value=False),
+            # Not even WSL's /init can start a Windows program.
+            mock.patch("navin.utils.wsl.windows_program_argv", side_effect=list),
+            mock.patch.dict(os.environ, {"DISPLAY": "", "WAYLAND_DISPLAY": ""}),
+            mock.patch("subprocess.run") as run,
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("webbrowser.open") as browser,
+        ):
+            self.assertFalse(open_external_url("https://navin.live/connect"))
+            self.assertEqual(unavailable_reason("https://navin.live/connect"), wsl.INTEROP_OFF)
+        run.assert_not_called()
+        popen.assert_not_called()
+        browser.assert_not_called()
+
+    def test_wslg_whose_only_browser_is_wslview_is_not_a_success(self):
+        """The machine this was found on: DISPLAY=:0, x-www-browser and the https handler are wslview."""
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=True),
+            mock.patch("navin.utils.wsl.host_interop_available", return_value=False),
+            mock.patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER": "wslview"}),
+            mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n if n in {"wslview", "x-www-browser"} else None),
+            mock.patch("os.path.realpath", return_value="/usr/bin/wslview"),
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertFalse(open_external_url("https://navin.live/connect"))
+        popen.assert_not_called()
+
+    def test_wslg_with_a_real_linux_browser_opens_it_directly(self):
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=True),
+            mock.patch("navin.utils.wsl.host_interop_available", return_value=False),
+            mock.patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER": ""}),
+            mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/firefox" if n in {"firefox", "/usr/bin/firefox"} else None),
+            mock.patch("os.path.realpath", side_effect=lambda p: p),
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertTrue(open_external_url("https://navin.live/connect"))
+        # Straight to the browser: xdg-open would pick the wslview handler.
+        self.assertEqual(popen.call_args.args[0], ["/usr/bin/firefox", "https://navin.live/connect"])
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_no_launcher_is_an_honest_false_never_webbrowser(self):
+        """webbrowser ran www-browser on the CLI's own terminal and waited for it."""
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=False),
+            mock.patch("sys.platform", "linux"),
+            mock.patch("os.path.isfile", return_value=False),
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("webbrowser.open") as browser,
+        ):
+            self.assertFalse(open_external_url("https://navin.live/pricing"))
+            self.assertEqual(unavailable_reason("https://navin.live/pricing"), "No browser could be opened from here.")
+        popen.assert_not_called()
+        browser.assert_not_called()
+        self.assertEqual(unavailable_reason("notes/plan.md"), "Only web links open in the browser.")

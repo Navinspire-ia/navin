@@ -305,6 +305,12 @@ _SLOW_WEBUI_HTTP_LOG_MS = 1_000
 # of near-simultaneous polls that one window refresh produces.
 _ACCOUNT_CACHE_TTL_S = 20.0
 _GITHUB_CHECKS_CACHE_TTL_S = 30.0
+# The PR view runs `git status` (wsl.exe for a WSL project) then a forge API
+# call: polled every minute by each window, it took 20 s when WSL hung.
+_GITHUB_PR_CACHE_TTL_S = 30.0
+# The machine report runs about ten git calls (wsl.exe each on a WSL project)
+# and is polled by Settings and the Dev Git panel: 61 slow calls, max 31.2 s.
+_GIT_MACHINE_CACHE_TTL_S = 30.0
 _LSP_SEARCH_CACHE_TTL_S = 60.0
 _VERSION_CHECK_CACHE_TTL_S = 300.0
 _CONTEXT_USAGE_CACHE_TTL_S = 8.0
@@ -3565,6 +3571,7 @@ class GatewayHTTPHandler:
                 paths=[] if staged_only else (paths or None),
                 amend=_query_first(query, "amend") == "1",
             )
+            self._forget_forge_views(scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -3610,6 +3617,7 @@ class GatewayHTTPHandler:
                 scope,
                 rebase=_query_first(query, "rebase") == "1",
             )
+            self._forget_forge_views(scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -3625,6 +3633,7 @@ class GatewayHTTPHandler:
         try:
             scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(git_undo_last_commit_payload, scope)
+            self._forget_forge_views(scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -3640,6 +3649,7 @@ class GatewayHTTPHandler:
         try:
             scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(git_sync_payload, scope)
+            self._forget_forge_views(scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -3717,14 +3727,17 @@ class GatewayHTTPHandler:
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
+        op = _query_first(query, "op") or "list"
         try:
             scope = await self._session_scope(decoded_key)
             payload = await asyncio.to_thread(
                 git_branch_payload,
                 scope,
-                op=_query_first(query, "op") or "list",
+                op=op,
                 name=_query_first(query, "name"),
             )
+            if op != "list":
+                self._forget_forge_views(scope)
         except ProjectSearchError as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -3759,10 +3772,31 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         try:
             scope = await asyncio.to_thread(self.workspaces.scope_for_session_key, decoded_key)
-            payload = await asyncio.to_thread(github_pr_view_payload, scope)
+            # Keyed by project and coalesced like github/checks: every window
+            # and every chat on one repository polls this, and a call that
+            # timed out in the UI is retried while the first is still running.
+            # The retry joins that call instead of starting more git processes.
+            payload = await self.route_cache.get(
+                f"github:pr:{scope.project_path}",
+                lambda: asyncio.get_running_loop().run_in_executor(
+                    _REMOTE_EXECUTOR,
+                    partial(github_pr_view_payload, scope),
+                ),
+                ttl=_GITHUB_PR_CACHE_TTL_S,
+            )
         except (ProjectSearchError, GithubPrError) as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
+
+    def _forget_forge_views(self, scope: Any) -> None:
+        """Drop the cached PR view and CI rollup of ``scope``'s project.
+
+        For the routes that change what they show (commit and push, sync,
+        pull, branch switch, undo, PR create): the next poll waits for a fresh
+        answer instead of being served the one from before the action.
+        """
+        for prefix in ("github:pr", "github:checks"):
+            self.route_cache.invalidate(f"{prefix}:{scope.project_path}")
 
     async def _handle_github_pr_create(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):
@@ -3782,6 +3816,7 @@ class GatewayHTTPHandler:
                 body=_query_first(query, "body"),
                 draft=_query_first(query, "draft") != "0",
             )
+            self._forget_forge_views(scope)
         except (ProjectSearchError, GithubPrError) as e:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
@@ -4064,7 +4099,7 @@ class GatewayHTTPHandler:
         if self.session_manager is None:
             return _http_error(503, "session manager unavailable")
 
-        from navin.webui.context_usage import context_usage_payload
+        from navin.webui.context_usage import apply_context_window, context_usage_base
 
         async def _compute() -> dict[str, Any]:
             session_data = await asyncio.to_thread(
@@ -4078,24 +4113,25 @@ class GatewayHTTPHandler:
             except Exception:
                 project_path = None
             return await asyncio.to_thread(
-                context_usage_payload,
+                context_usage_base,
                 session_data,
                 project_path=project_path,
             )
 
-        # Keyed on the config file version: a context size saved in Settings
-        # must show on the next poll, not after the TTL.
-        try:
-            from navin.config.loader import _file_signature, get_config_path
-
-            version = _file_signature(get_config_path())
-        except Exception:
-            version = None
-        payload = await self.route_cache.get(
-            f"context-usage:{decoded_key}:{version}",
+        # The costly part (session read, prompt rebuild) is cached per chat
+        # and refreshed in the background once the TTL lapses. It used to be
+        # keyed on the config file version as well, so every config write
+        # (several an hour on the desktop) sent each open chat back to a cold
+        # rebuild: the 2 to 3 s slow calls of desktop-engine.log, 2026-11-01.
+        # The window is applied on every poll from the config parse shared
+        # per file version, so a context size saved in Settings still shows
+        # on the next poll.
+        base = await self.route_cache.get(
+            f"context-usage:{decoded_key}",
             _compute,
             ttl=_CONTEXT_USAGE_CACHE_TTL_S,
         )
+        payload = await asyncio.to_thread(apply_context_window, base)
         return _http_json_response(payload)
 
     async def _handle_git_diff(self, request: WsRequest, key: str) -> Response:
@@ -5869,7 +5905,8 @@ class GatewayHTTPHandler:
         root = await asyncio.to_thread(self._git_setup_root, query)
         host = _query_first(query, "host") or ""
         if action == "machine":
-            call = partial(git_setup.machine_report, root)
+            # A panel poll: refused at once while WSL is down or degraded.
+            call = partial(git_setup.machine_report, root, background=True)
         elif action == "setup":
             call = partial(git_setup.setup_account, host, root=root)
         elif action == "identity":
@@ -5886,7 +5923,15 @@ class GatewayHTTPHandler:
                 return _http_error(400, "session is required")
             call = partial(git_setup.use_https_remote, _query_first(query, "remote") or "", root=root)
         try:
-            if action == "setup":
+            if action == "machine":
+                # Polled by Settings and the Dev Git panel of every window:
+                # coalesced per project root, a fixed answer reused briefly.
+                payload = await self.route_cache.get(
+                    f"git:machine:{root or ''}",
+                    lambda: asyncio.to_thread(call),
+                    ttl=_GIT_MACHINE_CACHE_TTL_S,
+                )
+            elif action == "setup":
                 # Crosses the network to a forge: off the shared to_thread pool,
                 # like the other remote routes.
                 payload = await asyncio.get_running_loop().run_in_executor(_REMOTE_EXECUTOR, call)
@@ -5898,6 +5943,9 @@ class GatewayHTTPHandler:
                 {"error": exc.message, "message": exc.message, "code": exc.code},
                 status=exc.status,
             )
+        if action != "machine":
+            # A fix changes what the report shows: the next poll asks git again.
+            self.route_cache.invalidate_prefix("git:machine:")
         return _http_json_response(payload)
 
     async def _handle_webui_diagnostics(self, request: WsRequest) -> Response:

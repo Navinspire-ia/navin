@@ -166,6 +166,83 @@ def is_wsl_guest() -> bool:
     return False
 
 
+_BINFMT_MISC = "/proc/sys/fs/binfmt_misc"
+
+INTEROP_OFF = (
+    "WSL cannot start Windows programs right now (interop is off), "
+    "so the Windows browser cannot be opened from here."
+)
+
+
+def host_interop_available(binfmt_dir: str = _BINFMT_MISC) -> bool:
+    """Whether this distribution can still start Windows programs.
+
+    WSL 2 runs a ``.exe`` through the ``WSLInterop`` entry of binfmt_misc.
+    With systemd on, systemd-binfmt clears every entry when it starts, and
+    from then on each Windows program fails with "Exec format error" (wslview
+    prints one such line per program it tries). The registry is read rather
+    than a program tried: one directory listing instead of a process. When
+    binfmt_misc is not mounted (WSL 1 has none) the answer is yes and the
+    launch itself decides.
+    """
+    try:
+        names = os.listdir(binfmt_dir)
+    except OSError:
+        return True
+    if "status" not in names:
+        return True
+    if _first_line(os.path.join(binfmt_dir, "status")) == "disabled":
+        return False
+    return any(
+        name.startswith("WSLInterop") and _first_line(os.path.join(binfmt_dir, name)) != "disabled"
+        for name in names
+    )
+
+
+def _first_line(path: str) -> str:
+    """First line of a binfmt_misc file, empty when it cannot be read.
+
+    Empty reads as "not disabled": a registered entry whose flags cannot be
+    read is left for the launch to judge.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            return handle.readline().strip()
+    except OSError:
+        return ""
+
+
+# WSL's own init: the program binfmt_misc hands every Windows program to.
+WSL_INIT = "/init"
+_WINDOWS_PROGRAM_SUFFIXES = (".exe", ".com")
+
+
+def windows_program_argv(argv: list[str]) -> list[str]:
+    """``argv`` in a form that starts a Windows program from this distribution.
+
+    A ``.exe`` starts through the ``WSLInterop`` entry of binfmt_misc, which
+    hands it to WSL's ``/init``. Once systemd-binfmt has wiped that entry (see
+    :func:`host_interop_available`), every launch fails with "Exec format
+    error": the CLI's copies never reached the Windows clipboard (pasting
+    elsewhere gave an older copy) and images could no longer be pasted.
+    ``/init`` still starts the program when called the way binfmt_misc calls
+    it with the entry's ``P`` flag: the program's path, its own argv[0], then
+    the arguments; stdin, stdout and the exit code go through as usual. So the
+    CLI keeps working without the root command that registers the entry again.
+
+    Anything else comes back unchanged: a Linux program, a WSL whose interop
+    entry is there, any other system.
+    """
+    if not argv or not argv[0].lower().endswith(_WINDOWS_PROGRAM_SUFFIXES):
+        return list(argv)
+    if not is_wsl_guest() or host_interop_available():
+        return list(argv)
+    program = argv[0] if os.path.isabs(argv[0]) else shutil.which(argv[0])
+    if not program or not os.path.isabs(program) or not os.access(WSL_INIT, os.X_OK):
+        return list(argv)
+    return [WSL_INIT, program, os.path.basename(program), *argv[1:]]
+
+
 def wsl_executable() -> str | None:
     global _exe_cache
     now = time.monotonic()
@@ -445,14 +522,28 @@ def host_open_commands(url: str) -> list[list[str]]:
 
 
 def open_url_on_host(url: str) -> bool:
-    """Open ``url`` in the Windows default browser. True when something took it."""
+    """Open ``url`` in the Windows default browser. True when something took it.
+
+    With WSL's interop entry wiped, wslview is skipped (it starts Windows
+    programs itself, each one failing with "Exec format error" over the CLI)
+    and PowerShell / Explorer go through WSL's ``/init`` instead
+    (:func:`windows_program_argv`). Nothing is started when even that is out.
+    """
+    interop = host_interop_available()
     for argv in host_open_commands(url):
+        if not interop and argv[0] == "wslview":
+            continue
         exe = shutil.which(argv[0])
         if not exe:
             continue
+        command = [exe, *argv[1:]]
+        if not interop:
+            command = windows_program_argv(command)
+            if command[0] != WSL_INIT:
+                continue
         try:
             proc = subprocess.run(  # noqa: S603
-                [exe, *argv[1:]],
+                command,
                 capture_output=True,
                 timeout=15,
                 check=False,

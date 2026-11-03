@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import subprocess
 import tarfile
+import tempfile
 import threading
 import time
 import unittest
@@ -333,6 +334,12 @@ class HostBrowserTest(unittest.TestCase):
 
 
 class HostOpenTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # These cases are about the launch order; interop has its own tests.
+        patcher = mock.patch.object(wsl, "host_interop_available", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_wslview_is_preferred_and_a_url_survives_powershell(self) -> None:
         url = "http://127.0.0.1:8765/#/?bootstrapSecret=s&project=%2Fhome"
         commands = wsl.host_open_commands(url)
@@ -376,6 +383,101 @@ class HostOpenTest(unittest.TestCase):
     def test_nothing_available_is_reported_not_raised(self) -> None:
         with mock.patch.object(wsl.shutil, "which", return_value=None):
             self.assertFalse(wsl.open_url_on_host("http://x"))
+
+    def test_without_interop_nothing_is_launched(self) -> None:
+        """wslview printed one "Exec format error" line per Windows program over the CLI."""
+        run = mock.Mock()
+        with mock.patch.object(wsl, "host_interop_available", return_value=False):
+            with mock.patch.object(wsl, "windows_program_argv", side_effect=list):
+                with mock.patch.object(wsl.subprocess, "run", run):
+                    self.assertFalse(wsl.open_url_on_host("http://x"))
+        run.assert_not_called()
+
+    def test_without_interop_entry_powershell_opens_the_link_through_init(self) -> None:
+        """The interop entry is gone but /init still starts Windows programs:
+        wslview is skipped, PowerShell gets the link."""
+        run = mock.Mock(return_value=mock.Mock(returncode=0))
+        with (
+            mock.patch.object(wsl, "host_interop_available", return_value=False),
+            mock.patch.object(wsl, "is_wsl_guest", return_value=True),
+            mock.patch.object(wsl.os, "access", side_effect=lambda path, mode: path == wsl.WSL_INIT),
+            mock.patch.object(wsl.shutil, "which", side_effect=lambda n: f"/mnt/c/bin/{n}"),
+            mock.patch.object(wsl.subprocess, "run", run),
+        ):
+            self.assertTrue(wsl.open_url_on_host("http://x/?a=1&b=2"))
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["/init", "/mnt/c/bin/powershell.exe", "powershell.exe"])
+        self.assertEqual(command[-1], "Start-Process 'http://x/?a=1&b=2'")
+
+
+class InteropRegistryTest(unittest.TestCase):
+    def _registry(self, entries: dict[str, str]) -> str:
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        for name, body in entries.items():
+            Path(root, name).write_text(body, encoding="utf-8")
+        return root
+
+    def test_a_registered_entry_means_windows_programs_start(self) -> None:
+        root = self._registry(
+            {"status": "enabled\n", "register": "", "WSLInterop": "enabled\ninterpreter /init\n"}
+        )
+        self.assertTrue(wsl.host_interop_available(root))
+
+    def test_the_entry_wiped_by_systemd_binfmt_is_seen(self) -> None:
+        """The machine this was found on: python3.12 registered again, WSLInterop gone."""
+        root = self._registry({"status": "enabled\n", "register": "", "python3.12": "enabled\n"})
+        self.assertFalse(wsl.host_interop_available(root))
+
+    def test_a_disabled_entry_or_registry_is_off(self) -> None:
+        entry_off = self._registry({"status": "enabled\n", "WSLInterop": "disabled\n"})
+        registry_off = self._registry({"status": "disabled\n", "WSLInterop": "enabled\n"})
+        self.assertFalse(wsl.host_interop_available(entry_off))
+        self.assertFalse(wsl.host_interop_available(registry_off))
+
+    def test_the_late_entry_of_newer_wsl_counts(self) -> None:
+        root = self._registry({"status": "enabled\n", "WSLInterop-late": "enabled\n"})
+        self.assertTrue(wsl.host_interop_available(root))
+
+    def test_no_registry_to_read_leaves_the_launch_to_decide(self) -> None:
+        self.assertTrue(wsl.host_interop_available(self._registry({})))
+        self.assertTrue(wsl.host_interop_available(str(Path(self._registry({}), "absent"))))
+
+
+class WindowsProgramWithoutInteropTest(unittest.TestCase):
+    """systemd-binfmt wiped WSLInterop: clip.exe and PowerShell failed with
+    "Exec format error", so the CLI's copies never reached Windows and no image
+    could be pasted. WSL's /init still starts them, called as binfmt_misc would."""
+
+    CLIP = "/mnt/c/WINDOWS/system32/clip.exe"
+    POWERSHELL = "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+    def _argv(self, argv, *, guest=True, interop=False, init_runs=True, on_path=None):
+        with (
+            mock.patch.object(wsl, "is_wsl_guest", return_value=guest),
+            mock.patch.object(wsl, "host_interop_available", return_value=interop),
+            mock.patch.object(wsl.os, "access", side_effect=lambda path, mode: init_runs and path == wsl.WSL_INIT),
+            mock.patch.object(wsl.shutil, "which", side_effect=lambda name: (on_path or {}).get(name)),
+        ):
+            return wsl.windows_program_argv(argv)
+
+    def test_a_windows_program_goes_through_init_like_binfmt_would(self) -> None:
+        # The program's path, its own argv[0], then its arguments (flag P).
+        self.assertEqual(self._argv([self.CLIP]), ["/init", self.CLIP, "clip.exe"])
+        self.assertEqual(
+            self._argv([self.POWERSHELL, "-NoProfile", "-Command", "Get-Clipboard -Raw"]),
+            ["/init", self.POWERSHELL, "powershell.exe", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+        )
+        # A bare name is looked up on PATH first: /init needs the file itself.
+        self.assertEqual(self._argv(["CLIP.EXE"], on_path={"CLIP.EXE": self.CLIP}), ["/init", self.CLIP, "clip.exe"])
+
+    def test_everything_else_is_left_alone(self) -> None:
+        self.assertEqual(self._argv([self.CLIP], interop=True), [self.CLIP])
+        self.assertEqual(self._argv([self.CLIP], guest=False), [self.CLIP])
+        self.assertEqual(self._argv([self.CLIP], init_runs=False), [self.CLIP])
+        self.assertEqual(self._argv(["wl-copy"]), ["wl-copy"])
+        self.assertEqual(self._argv(["clip.exe"]), ["clip.exe"])
+        self.assertEqual(self._argv([]), [])
 
 
 class WslExecutableCacheTest(unittest.TestCase):
@@ -591,6 +693,114 @@ class WslHealthTest(unittest.TestCase):
         with patch.object(wsl, "resolve_distro", return_value="Ubuntu"), \
                 patch("subprocess.run", side_effect=AssertionError("probe launched wsl.exe")):
             self.assertIsNone(wsl_route._run_probe({"ruff": {"binary": {"name": "ruff"}}}, location, 5.0))
+
+    _WSL_GIT = ["wsl.exe", "-d", "Ubuntu", "--cd", "/home/me/proj", "--exec", "git"]
+
+    def _hang_one_check(self) -> None:
+        with patch.object(wsl_health.subprocess, "run", side_effect=subprocess.TimeoutExpired(["wsl.exe"], 20)):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+
+    def test_a_hung_check_pauses_background_reads_even_after_a_stray_answer(self) -> None:
+        """Desktop log 2026-11-01/02: six "does not start new sessions" warnings, each
+        cleared 0 to 24 s later by some other launch that answered, so every poll in
+        between paid its whole timeout. Background reads now wait the window out;
+        what the user starts is never held back by it."""
+        from navin.quality import wsl_route
+
+        self.assertIsNone(wsl_health.background_refuse_reason("Ubuntu"))
+        self._hang_one_check()
+        wsl_health.answered("Ubuntu")  # the stray answer that used to clear everything
+        self.assertIsNone(wsl_health.status())
+        self.assertIsNone(wsl_health.refuse_reason("Ubuntu"))
+        self.assertIsNone(wsl_route.refusal(self._WSL_GIT))
+        reason = wsl_route.background_refusal(self._WSL_GIT)
+        assert reason is not None
+        self.assertIn("Ubuntu", reason)
+        self.assertIn("paused", reason)
+        self.assertIn(wsl_health.RESTART_COMMAND, reason)
+        self.assertIsNotNone(wsl_health.background_refuse_reason("ubuntu"))
+        self.assertIsNone(wsl_route.background_refusal(["git", "status"]))
+
+        later = time.monotonic() + wsl_health.DEGRADED_FOR_S + 1
+        with patch.object(wsl_health.time, "monotonic", return_value=later):
+            self.assertIsNone(wsl_health.background_refuse_reason("Ubuntu"))
+
+    def test_a_check_that_answers_ends_the_pause(self) -> None:
+        self._hang_one_check()
+        self.assertIsNotNone(wsl_health.background_refuse_reason("Ubuntu"))
+        healthy = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
+        with patch.object(wsl_health, "RECHECK_EVERY_S", 0), \
+                patch.object(wsl_health.subprocess, "run", return_value=healthy):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        self.assertIsNone(wsl_health.background_refuse_reason("Ubuntu"))
+        self.assertIsNone(wsl_health.status())
+
+    def test_a_service_error_pauses_nothing_once_cleared(self) -> None:
+        # wsl.exe failing at once costs no timeout: only the confirmed verdict refuses.
+        failed = subprocess.CompletedProcess([], 1, stdout=b"Wsl/Service/E_UNEXPECTED", stderr=b"")
+        with patch.object(wsl_health.subprocess, "run", return_value=failed):
+            wsl_health.suspect("Ubuntu")
+            self._settle()
+        self.assertIsNotNone(wsl_health.background_refuse_reason("Ubuntu"))
+        wsl_health.answered("Ubuntu")
+        self.assertIsNone(wsl_health.background_refuse_reason("Ubuntu"))
+
+    def test_background_git_fails_at_once_and_user_git_still_runs(self) -> None:
+        from navin.webui import project_search
+
+        self._hang_one_check()
+        wsl_health.answered("Ubuntu")
+        done = subprocess.CompletedProcess(self._WSL_GIT, 0, stdout="ok", stderr="")
+        with patch.object(project_search, "_git_argv", return_value=list(self._WSL_GIT)), \
+                patch.object(project_search.subprocess, "run", return_value=done) as run:
+            with self.assertRaises(project_search.ProjectSearchError) as ctx:
+                project_search._run_git(Path("/p"), "status", background=True)
+            self.assertEqual(ctx.exception.status, 503)
+            self.assertIn("paused", ctx.exception.message)
+            self.assertEqual(run.call_count, 0)
+            # Commit, push, PR create go through _run_git without background.
+            self.assertIs(project_search._run_git(Path("/p"), "commit", "-m", "x"), done)
+            self.assertEqual(run.call_count, 1)
+
+    def test_the_machine_report_poll_fails_at_once_and_setup_still_runs(self) -> None:
+        from navin.webui import git_setup
+
+        target = git_setup.GitTarget(argv=tuple(self._WSL_GIT), distro="Ubuntu", root="/p")
+        self._hang_one_check()
+        with patch.object(git_setup, "resolve_target", return_value=target), \
+                patch.object(git_setup.subprocess, "run", side_effect=AssertionError("wsl.exe launched")):
+            with self.assertRaises(git_setup.GitSetupError) as ctx:
+                git_setup.machine_report("/p", background=True)
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertEqual(ctx.exception.code, "wsl_unavailable")
+        done = subprocess.CompletedProcess(self._WSL_GIT, 0, stdout="git version 2.43.0", stderr="")
+        with patch.object(git_setup.subprocess, "run", return_value=done) as run:
+            self.assertIs(git_setup._run(target.argv, "--version"), done)
+        self.assertEqual(run.call_count, 1)
+
+    def test_a_machine_report_poll_that_gets_no_answer_is_not_git_missing(self) -> None:
+        from navin.webui import git_setup
+
+        target = git_setup.GitTarget(argv=tuple(self._WSL_GIT), distro="Ubuntu", root="/p")
+        hung = subprocess.TimeoutExpired(self._WSL_GIT, git_setup._GIT_TIMEOUT_S)
+        with patch.object(git_setup, "resolve_target", return_value=target), \
+                patch.object(wsl_health, "_schedule_check") as check, \
+                patch.object(git_setup.subprocess, "run", side_effect=hung) as run:
+            with self.assertRaises(git_setup.GitSetupError) as ctx:
+                git_setup.machine_report("/p", background=True)
+        self.assertEqual(ctx.exception.code, "git_timeout")
+        self.assertEqual(run.call_count, 1)
+        check.assert_called_once_with("Ubuntu")
+
+    def test_bulk_stat_skips_the_launch_while_paused(self) -> None:
+        location = wsl.WslLocation(distro="Ubuntu", path=PurePosixPath("/home/me/proj"))
+        self._hang_one_check()
+        wsl_health.answered("Ubuntu")
+        with patch.object(wsl, "resolve_distro", return_value="Ubuntu"), \
+                patch.object(wsl_bulk.subprocess, "run", side_effect=AssertionError("wsl.exe launched")):
+            self.assertIsNone(wsl_bulk._run(location, "true", b""))
 
 
 class GeneratedScriptsRunForRealTest(unittest.TestCase):

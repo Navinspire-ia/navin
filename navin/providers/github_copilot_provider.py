@@ -8,9 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-import webbrowser
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 
 import httpx
 from oauth_cli_kit.models import OAuthToken
@@ -103,8 +101,9 @@ def login_github_copilot(
         printer(f"Open: {verify_url}")
         printer(f"Code: {user_code}")
         if verify_complete:
-            with suppress(Exception):
-                webbrowser.open(verify_complete)
+            from navin.utils.open_browser import open_external_url
+
+            open_external_url(verify_complete)
 
         deadline = time.time() + expires_in
         current_interval = interval

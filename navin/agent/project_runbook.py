@@ -18,6 +18,7 @@ manifests' mtimes.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import os
 import re
@@ -710,6 +711,29 @@ def _dotnet_present(folder: Path) -> bool:
         return False
 
 
+_DOTNET_PATTERNS = ("*.csproj", "*.sln", "*.fsproj")
+
+
+def _is_project_folder(folder: Path) -> bool:
+    """``_has_any(folder, MANIFESTS) or _dotnet_present(folder)``, one listing.
+
+    Those two cost 40 stats and 3 globs per folder (9 ms for 28 folders), on
+    every turn. A name the listing lacks, case aside, cannot exist; the few
+    left are checked with ``exists()``, so a case-insensitive disk and a
+    broken link answer as before.
+    """
+    try:
+        with os.scandir(folder) as entries:
+            names = [entry.name for entry in entries]
+    except OSError:
+        return False
+    present = {name.lower() for name in names}
+    if any(name.lower() in present and (folder / name).exists() for name in MANIFESTS):
+        return True
+    # fnmatch folds case on Windows only, like Path.glob.
+    return any(fnmatch.fnmatch(name, pattern) for name in names for pattern in _DOTNET_PATTERNS)
+
+
 def _project_dirs(root: Path) -> list[Path]:
     """The root and the sub-projects that hold their own manifest."""
     found: list[Path] = []
@@ -717,7 +741,7 @@ def _project_dirs(root: Path) -> list[Path]:
     def consider(folder: Path) -> None:
         if len(found) >= _MAX_DIRS or folder in found or folder.name in _SKIP_DIRS:
             return
-        if _has_any(folder, MANIFESTS) or _dotnet_present(folder):
+        if _is_project_folder(folder):
             found.append(folder)
 
     consider(root)

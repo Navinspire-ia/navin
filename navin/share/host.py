@@ -34,11 +34,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import re
 import secrets
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -64,6 +66,21 @@ FIRST_PAGE_BYTES = 160 * 1024
 # even one large action fits through the relay without losing its contents.
 EVENT_PART_CHARS = 16 * 1024
 MAX_RELAY_FRAME = 1000 * 1024
+# Any other payload too big for one relay frame (a page whose newest message
+# alone is huge) crosses in parts. 64k characters stay under the frame even
+# for 4-byte characters whose JSON escaping doubles: 512 KiB, 690 KiB sealed.
+PAYLOAD_PART_CHARS = 64 * 1024
+# A page is made of whole turns. One agent turn can weigh megabytes (hundreds
+# of tool results: 10 MB seen on a real chat), and the page holding it was
+# over the relay limit, so the snapshot was never sent: the guest stayed on
+# "Loading the conversation" and, without a snapshot, ignored every live
+# event too. Such a page now opens on its newest messages that fit; the
+# older ones wait on this machine and come with "Earlier messages".
+TRIMMED_CURSOR_PREFIX = "share~"
+TRIMMED_PAGES_PER_CHAT = 16
+TRIMMED_PAGE_TTL_S = 6 * 3600
+# Room for the page's own fields around its messages.
+PAGE_ENVELOPE_BYTES = 4 * 1024
 # Link access levels: (may drive the agent, may download the session).
 ACCESS_LEVELS = {"read": (False, False), "write": (True, False), "full": (True, True)}
 MAX_MEDIA_BYTES = 40 * 1024 * 1024
@@ -110,6 +127,52 @@ def _fit_context(context: Any, max_bytes: int = MAX_PAGE_BYTES) -> Any:
     if dropped:
         fitted["truncated"] = dropped
     return fitted
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def newest_that_fit(messages: list[Any], max_bytes: int) -> int:
+    """Where the newest messages that fit ``max_bytes`` start.
+
+    The newest message is always kept, whatever its size: the guest sees the
+    end of the chat, and a payload too big for one frame crosses in parts.
+    """
+    start, used = len(messages), 0
+    while start > 0:
+        size = _json_size(messages[start - 1]) + 1
+        if start < len(messages) and used + size > max_bytes:
+            break
+        used += size
+        start -= 1
+    return start
+
+
+def _user_count(messages: list[Any]) -> int:
+    """User rows, counted as the guest page counts its prompts."""
+    return sum(1 for message in messages if isinstance(message, dict) and message.get("role") == "user")
+
+
+def _trimmed_cursor(before: str | None, digest: str) -> str:
+    """The cursor of a page's older messages kept on this machine.
+
+    It carries the page's own turn cursor: if the kept messages are gone (the
+    host restarted), the guest still goes on with the turns before them.
+    """
+    raw = json.dumps({"b": before or "", "h": digest}, separators=(",", ":")).encode("utf-8")
+    return TRIMMED_CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _trimmed_fallback(cursor: str) -> str | None:
+    """The turn cursor inside a trimmed-page cursor, None when there is none."""
+    body = cursor[len(TRIMMED_CURSOR_PREFIX):]
+    try:
+        data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return None
+    before = data.get("b") if isinstance(data, dict) else None
+    return before if isinstance(before, str) and before and not before.startswith(TRIMMED_CURSOR_PREFIX) else None
 
 
 # Frames already seen per share: a replayed guest frame is ignored.
@@ -325,6 +388,7 @@ class ShareManager:
         thread_for: Any = None,
         media_fetch: Any = None,
         session_key_for: Any = None,
+        model_for: Any = None,
     ) -> None:
         self.channel = channel
         self.store = ShareStore(store_path)
@@ -334,6 +398,9 @@ class ShareManager:
         # chat_id -> saved session key: a desktop chat is ``websocket:<id>``,
         # the CLI shares its own ``cli:<chat>`` session.
         self.session_key_for = session_key_for or (lambda chat_id: f"websocket:{chat_id}")
+        # chat_id -> the model the host runs right now, when it knows it (the
+        # CLI's runtime). Without it the chat's saved model pick is shown.
+        self.model_for = model_for
         self._connect = connect
         # (chat_id, limit, before) -> WebuiThreadPersistedPayload with signed media URLs.
         self.thread_for = thread_for
@@ -349,6 +416,10 @@ class ShareManager:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._context_cache: dict[str, tuple[float, Any]] = {}
         self._context_locks: dict[str, asyncio.Lock] = {}
+        # chat_id -> cursor -> (kept at, older messages, their page). Built in
+        # worker threads (pages are read off the loop), hence the lock.
+        self._trimmed: dict[str, dict[str, tuple[float, list[Any], dict[str, Any]]]] = {}
+        self._trimmed_lock = threading.Lock()
         self._site_client: Any = None
         self._started = False
 
@@ -583,8 +654,23 @@ class ShareManager:
 
     async def _to_guest(self, share_id: str, guest_id: str, payload: dict[str, Any]) -> None:
         cipher = self.ciphers.get(share_id)
-        if cipher is not None:
-            await self._send_relay(share_id, {"type": "send", "guest": guest_id, "data": cipher.seal(payload)})
+        if cipher is None:
+            return
+        sealed = cipher.seal(payload)
+        if len(sealed) + 64 <= MAX_RELAY_FRAME:
+            await self._send_relay(share_id, {"type": "send", "guest": guest_id, "data": sealed})
+            return
+        # Too big for one frame: sent in parts the guest page puts back
+        # together, instead of the frame being dropped.
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        transfer_id = secrets.token_hex(12)
+        total = (len(raw) + PAYLOAD_PART_CHARS - 1) // PAYLOAD_PART_CHARS
+        for index in range(total):
+            part = {
+                "type": "payload_part", "id": transfer_id, "index": index, "total": total,
+                "part": raw[index * PAYLOAD_PART_CHARS:(index + 1) * PAYLOAD_PART_CHARS],
+            }
+            await self._send_relay(share_id, {"type": "send", "guest": guest_id, "data": cipher.seal(part)})
 
     async def _on_relay(self, share: Share, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -623,6 +709,16 @@ class ShareManager:
         if kind == "hello" and guest.conn is None:
             guest.name = str(payload.get("name") or "").strip()[:40] or "Invité"
             await self._attach_guest(share, guest)
+        elif kind == "hello":
+            # The guest page dialed again (a phone waking up, a network change)
+            # and took its seat back, or the host came back online. A new
+            # socket on the page opens on a snapshot only: without one it
+            # ignored every event, and what was said meanwhile never showed.
+            # Its seat, name and rights stay; it gets the current page again.
+            if guest.requests.allow():
+                self._background(self._send_snapshot(share, guest))
+            else:
+                logger.debug("share {}: hello again from {} refused (slow down)", share.share_id[:6], guest_id[:6])
         elif kind == "envelope" and guest.conn is not None:
             if not guest.messages.allow():
                 await self._to_guest(share.share_id, guest.guest_id, {"type": "refused", "reason": "slow_down"})
@@ -693,11 +789,7 @@ class ShareManager:
         guest.conn = conn
         if share.scope == "site":
             # Never registered with the channel: no chat event can reach it.
-            await self._to_guest(share.share_id, guest.guest_id, {
-                "type": "snapshot", "scope": "site", "chat_id": "", "thread": None, "context": None,
-                "rights": {"drive": False, "download": False},
-                "expires_at": share.expires_at, "site": bool(share.site_url),
-            })
+            await self._send_snapshot(share, guest)
             self._notify(share.share_id)
             return
         guest.in_channel = True
@@ -711,6 +803,21 @@ class ShareManager:
         }
         ch._conn_default[conn] = share.chat_id
         guest.pump = asyncio.create_task(self._pump(share, guest))
+        await self._send_snapshot(share, guest)
+        ch._attach(conn, share.chat_id)
+        await ch._presence_join(conn, share.chat_id)
+        await ch._hydrate_after_subscribe(share.chat_id)
+        self._notify(share.share_id)
+
+    async def _send_snapshot(self, share: Share, guest: Guest) -> None:
+        """The page a guest opens on: the end of the chat, its rights, the expiry."""
+        if share.scope == "site":
+            await self._to_guest(share.share_id, guest.guest_id, {
+                "type": "snapshot", "scope": "site", "chat_id": "", "thread": None, "context": None,
+                "rights": {"drive": False, "download": False},
+                "expires_at": share.expires_at, "site": bool(share.site_url),
+            })
+            return
         # The snapshot leaves as soon as the last page is read: it used to wait
         # for git log/status as well, seconds on a large project, during which
         # a phone showed "Loading the conversation". The context follows on
@@ -729,31 +836,87 @@ class ShareManager:
         })
         if context is None:
             self._background(self._push_context(share, guest))
-        ch._attach(conn, share.chat_id)
-        await ch._presence_join(conn, share.chat_id)
-        await ch._hydrate_after_subscribe(share.chat_id)
-        self._notify(share.share_id)
 
     def _transcript(
         self, chat_id: str, before: str | None = None, limit: int = HISTORY_PAGE, max_bytes: int = MAX_PAGE_BYTES,
     ) -> Any:
-        """One page of history (latest first, older on request): a frame stays far below the relay's limit."""
-        try:
-            from navin.webui.transcript import build_webui_thread_response
+        """One page of history (latest first, older on request), within ``max_bytes``.
 
-            while True:
-                if self.thread_for is not None:
-                    page = self.thread_for(chat_id, limit, before)
-                else:
-                    page = build_webui_thread_response(
-                        self.session_key_for(chat_id), limit=limit, direction=None if before else "latest", before=before,
-                    )
-                if limit <= 8 or len(json.dumps(page, ensure_ascii=False)) <= max_bytes:
-                    return page
-                limit //= 2
+        A page too heavy for that opens on its newest messages; the older ones
+        stay here under a cursor of their own (see ``TRIMMED_CURSOR_PREFIX``).
+        """
+        try:
+            if before and before.startswith(TRIMMED_CURSOR_PREFIX):
+                kept = self._take_trimmed(chat_id, before)
+                if kept is None:
+                    # Kept no longer (a restart): on with the turns before them.
+                    fallback = _trimmed_fallback(before)
+                    if fallback is None:
+                        return None
+                    return self._transcript(chat_id, fallback, limit, max_bytes)
+                page = kept
+            elif self.thread_for is not None:
+                page = self.thread_for(chat_id, limit, before)
+            else:
+                from navin.webui.transcript import build_webui_thread_response
+
+                page = build_webui_thread_response(
+                    self.session_key_for(chat_id), limit=limit, direction=None if before else "latest", before=before,
+                )
+            return self._fit_page(chat_id, page, max_bytes)
         except Exception as exc:  # noqa: BLE001 - a guest still gets the live events
-            logger.debug("share transcript failed: {}", exc)
+            logger.warning("share transcript failed: {}", exc)
             return None
+
+    def _fit_page(self, chat_id: str, page: Any, max_bytes: int) -> Any:
+        """``page`` within ``max_bytes``: its newest messages, the rest kept for later."""
+        if not isinstance(page, dict) or _json_size(page) <= max_bytes:
+            return page
+        messages = list(page.get("messages") or [])
+        cut = newest_that_fit(messages, max(1024, max_bytes - PAGE_ENVELOPE_BYTES))
+        if cut <= 0:
+            return page
+        head, tail = messages[:cut], messages[cut:]
+        info = dict(page.get("page") or {})
+        before = info.get("before_cursor")
+        digest = hashlib.sha256(
+            json.dumps([chat_id, before, len(messages), cut, _json_size(head[-1])], default=str).encode("utf-8"),
+        ).hexdigest()[:24]
+        cursor = _trimmed_cursor(before if isinstance(before, str) else None, digest)
+        older_page = {
+            **info,
+            "loaded_message_count": len(head),
+        }
+        with self._trimmed_lock:
+            kept = self._trimmed.setdefault(chat_id, {})
+            now = time.monotonic()
+            for stale in [key for key, (at, _m, _p) in kept.items() if now - at > TRIMMED_PAGE_TTL_S]:
+                kept.pop(stale, None)
+            kept.pop(cursor, None)
+            kept[cursor] = (now, head, older_page)
+            while len(kept) > TRIMMED_PAGES_PER_CHAT:
+                kept.pop(next(iter(kept)))
+        shown = {
+            **info,
+            "before_cursor": cursor,
+            "has_more_before": True,
+            "loaded_message_count": len(tail),
+            "user_message_offset": int(info.get("user_message_offset") or 0) + _user_count(head),
+        }
+        return {**page, "messages": tail, "page": shown}
+
+    def _take_trimmed(self, chat_id: str, cursor: str) -> dict[str, Any] | None:
+        """The page of older messages kept under ``cursor``, None when gone.
+
+        Kept, not consumed: a second guest of the chat, or a retry after a
+        lost reply, reads the same messages again.
+        """
+        with self._trimmed_lock:
+            entry = self._trimmed.get(chat_id, {}).get(cursor)
+            if entry is None or time.monotonic() - entry[0] > TRIMMED_PAGE_TTL_S:
+                return None
+            _at, head, older_page = entry
+        return {"messages": list(head), "has_pending_tool_calls": False, "page": dict(older_page)}
 
     def _context(self, chat_id: str) -> Any:
         """Dates, project, git, prompts: the full picture for someone joining."""
@@ -766,7 +929,8 @@ class ShareManager:
             except BundleError:
                 session_file = None
             root = self.project_root_for(chat_id)
-            return session_context(session_file, Path(root) if root else None)
+            model = self.model_for(chat_id) if self.model_for is not None else None
+            return session_context(session_file, Path(root) if root else None, model)
         except Exception as exc:  # noqa: BLE001 - the share works without it
             logger.debug("share context failed: {}", exc)
             return None

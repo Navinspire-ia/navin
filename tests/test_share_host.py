@@ -318,6 +318,56 @@ def test_guests_waiting_on_the_relay_are_known_again_after_the_host_reconnects(t
     _run(scenario, tmp_path)
 
 
+def test_a_guest_back_on_its_seat_gets_the_chat_again_and_the_live_events(tmp_path):
+    """A phone asleep or changing network dials again and takes its seat back.
+    The host ignored its hello (it already knew the guest), so the page's new
+    socket never got a snapshot and dropped every event from then on: the
+    guest no longer saw anything new."""
+    pages = [[{"role": "user", "content": "bonjour"}]]
+
+    def thread_for(chat_id: str, limit: int, before: str | None) -> dict[str, Any]:
+        return {"messages": [dict(m) for m in pages[-1]], "page": {"has_more_before": False}}
+
+    async def scenario(manager, channel, base):
+        manager.thread_for = thread_for
+        info = manager.create("chat-1", ttl="1h", access="write")
+        share_id = info["share_id"]
+        await _wait(lambda: manager.describe(share_id)["online"])
+        key = info["link"].split("#", 1)[1]
+        ws = await connect(f"{base}/guest/{share_id}")
+        joined = json.loads(await ws.recv())
+        assert joined["type"] == "welcome", joined
+        seat = joined["guest"]
+        first = GuestClient(ws, ShareCipher(key, share_id))
+        await first.send({"type": "hello", "name": "Sami"})
+        assert [m["content"] for m in (await first.next("snapshot"))["thread"]["messages"]] == ["bonjour"]
+        await _wait(lambda: channel.attached)
+        conn = channel.attached[0][0]
+        guest_id = manager.describe(share_id)["guests"][0]["guest_id"]
+        await manager.set_guest(share_id, guest_id, drive=True)
+        await first.next("rights")
+
+        # The connection drops; the agent goes on meanwhile.
+        pages.append(pages[-1] + [{"role": "assistant", "content": "pendant la coupure"}])
+        again = await connect(f"{base}/guest/{share_id}?seat={seat}")
+        welcome = json.loads(await again.recv())
+        assert welcome["type"] == "welcome", welcome
+        assert welcome["guest"] == seat and welcome["resumed"] is True
+        back = GuestClient(again, ShareCipher(key, share_id))
+        await back.send({"type": "hello", "name": "Sami"})
+        snapshot = await back.next("snapshot")
+        assert [m["content"] for m in snapshot["thread"]["messages"]] == ["bonjour", "pendant la coupure"]
+        # Same seat, same guest: name and rights kept, attached once.
+        assert snapshot["rights"] == {"drive": True, "download": False}
+        assert [g["name"] for g in manager.describe(share_id)["guests"]] == ["Sami"]
+        assert len(channel.attached) == 1
+        # And the live events reach the page's new socket.
+        await conn.send(json.dumps({"event": "delta", "chat_id": "chat-1", "text": "en direct"}))
+        assert json.loads((await back.next("event"))["frame"])["text"] == "en direct"
+
+    _run(scenario, tmp_path)
+
+
 def test_guests_get_the_threads_media_through_the_encrypted_pipe_only_for_signed_urls(tmp_path):
     async def scenario(manager, channel, base):
         asked: list[str] = []
@@ -411,3 +461,124 @@ def test_a_guest_only_ever_sees_its_shared_chat_and_cannot_smuggle_fields(tmp_pa
         assert (await guest.next("refused"))["reason"] == "too_long"
 
     _run(scenario, tmp_path)
+
+
+async def _next_whole(guest: GuestClient, kind: str, timeout: float = 10) -> dict[str, Any]:
+    """The next ``kind`` payload, put back together when it came in parts."""
+    parts: list[str] = []
+    while True:
+        payload = await guest.next(timeout=timeout)
+        if payload.get("type") == "payload_part":
+            assert payload["index"] == len(parts)
+            parts.append(payload["part"])
+            if len(parts) < payload["total"]:
+                continue
+            payload, parts = json.loads("".join(parts)), []
+        if payload.get("type") == kind:
+            return payload
+
+
+def test_a_chat_with_a_huge_turn_opens_at_once_and_every_older_message_follows(tmp_path):
+    """The user's shared chat: one agent turn of 10 MB. Its page was over the
+    relay limit, the snapshot was never sent, and the guest stayed on
+    "Loading the conversation", deaf to live events as well."""
+    from navin.share.host import FIRST_PAGE_BYTES, MAX_RELAY_FRAME
+
+    earlier = [
+        {"role": "user", "content": "bonjour"},
+        {"role": "assistant", "content": "salut"},
+        {"role": "assistant", "content": "pret"},
+    ]
+    huge = [{"role": "user", "content": "lance l'audit"}]
+    huge += [{"role": "tool", "kind": "trace", "content": f"tool {i} " + "é" * 3000} for i in range(298)]
+    huge.append({"role": "assistant", "content": "Rapport complet " + "x" * 1_200_000})
+    whole = earlier + huge
+    asked: list[Any] = []
+
+    def thread_for(chat_id: str, limit: int, before: str | None) -> dict[str, Any]:
+        # Pages of whole turns, as the transcript store builds them.
+        asked.append(before)
+        if before is None:
+            return {"messages": [dict(m) for m in huge], "has_pending_tool_calls": False, "page": {
+                "before_cursor": "turn-1", "has_more_before": True, "user_message_offset": 1,
+            }}
+        assert before == "turn-1"
+        return {"messages": [dict(m) for m in earlier], "has_pending_tool_calls": False, "page": {
+            "before_cursor": None, "has_more_before": False, "user_message_offset": 0,
+        }}
+
+    async def scenario(manager, channel, base):
+        manager.thread_for = thread_for
+        frames: list[int] = []
+        send_relay = manager._send_relay
+
+        async def measured(share_id: str, payload: dict[str, Any]) -> None:
+            frames.append(len(json.dumps(payload)))
+            await send_relay(share_id, payload)
+
+        manager._send_relay = measured
+        info = manager.create("chat-1", ttl="1h")
+        await _wait(lambda: manager.describe(info["share_id"])["online"])
+        guest = await _join(manager, base, info)
+
+        # The snapshot arrives, on the newest message: alone over one relay
+        # frame, it crossed in parts instead of being dropped.
+        snapshot = await _next_whole(guest, "snapshot")
+        shown = snapshot["thread"]["messages"]
+        assert shown == [huge[-1]]
+        page = snapshot["thread"]["page"]
+        assert page["has_more_before"] is True and page["user_message_offset"] == 2
+        assert max(frames) <= MAX_RELAY_FRAME
+
+        # Live events reach the guest, now that it has its snapshot.
+        await _wait(lambda: channel.attached)
+        await channel.attached[0][0].send(json.dumps({"event": "delta", "chat_id": "chat-1", "text": "suite"}))
+        assert json.loads((await _next_whole(guest, "event"))["frame"])["text"] == "suite"
+
+        # "Earlier messages" until the start: each one once, in order, with
+        # the prompt offset the guest's prompt list counts on.
+        cursor, pages = page["before_cursor"], 0
+        while cursor:
+            await guest.send({"type": "history", "before": cursor})
+            history = await _next_whole(guest, "history")
+            older = history["thread"]["messages"]
+            assert older and _json_bytes(history["thread"]) <= 460 * 1024
+            shown = older + shown
+            page = history["thread"]["page"]
+            assert page["user_message_offset"] == sum(1 for m in whole[: len(whole) - len(shown)] if m["role"] == "user")
+            cursor = page["before_cursor"] if page["has_more_before"] else None
+            pages += 1
+        assert shown == whole
+        assert 3 < pages <= 8 and max(frames) <= MAX_RELAY_FRAME
+        # The huge turn was read once: its older messages waited on the host.
+        assert asked == [None, "turn-1"]
+        assert FIRST_PAGE_BYTES < MAX_RELAY_FRAME
+
+    _run(scenario, tmp_path)
+
+
+def _json_bytes(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
+def test_older_messages_kept_no_longer_fall_back_to_the_turns_before_them(tmp_path):
+    """After a host restart the kept messages are gone: the guest goes on
+    with the turns before them instead of a dead "Earlier messages"."""
+    from navin.share.host import ShareManager
+
+    def thread_for(chat_id: str, limit: int, before: str | None) -> dict[str, Any]:
+        if before is None:
+            messages = [{"role": "tool", "content": "y" * 20_000} for _ in range(20)]
+            return {"messages": messages, "page": {"before_cursor": "turn-7", "has_more_before": True}}
+        return {"messages": [{"role": "user", "content": f"before {before}"}], "page": {"has_more_before": False}}
+
+    first = ShareManager(FakeChannel(), store_path=tmp_path / "a.json", sessions_workspace=tmp_path, thread_for=thread_for)
+    page = first._transcript("chat-1", None, 40, 160 * 1024)
+    assert len(page["messages"]) == 7 and page["page"]["before_cursor"].startswith("share~")
+    kept = first._transcript("chat-1", page["page"]["before_cursor"])
+    assert len(kept["messages"]) == 13 and kept["page"]["before_cursor"] == "turn-7"
+    # Another chat cannot read them, and a restarted host no longer holds them.
+    restarted = ShareManager(FakeChannel(), store_path=tmp_path / "b.json", sessions_workspace=tmp_path, thread_for=thread_for)
+    for manager, chat in ((first, "chat-2"), (restarted, "chat-1")):
+        older = manager._transcript(chat, page["page"]["before_cursor"])
+        assert older["messages"] == [{"role": "user", "content": "before turn-7"}]

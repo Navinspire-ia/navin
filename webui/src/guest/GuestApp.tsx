@@ -4,7 +4,7 @@
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowDown, Bell, BellOff, ChevronUp, Download, Globe2, Hand, Loader2, Lock, Moon, MoreHorizontal, PanelLeft, Radio, RefreshCw, Send, ShieldCheck, SquareTerminal, Sun } from "lucide-react";
+import { ArrowDown, Bell, BellOff, ChevronUp, Download, Globe2, Hand, Loader2, Lock, Moon, MoreHorizontal, PanelLeft, Radio, RefreshCw, ShieldCheck, SquareTerminal, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,6 @@ import { NavinClient } from "@/lib/navin-client";
 import type { UIMessage, WebuiThreadPagePayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
-import { applyComposerTurnMode } from "@/components/thread/ComposerModeMenu";
 import { SubagentChatView, SubagentsButton, SubagentsSidePanel } from "@/components/thread/SubagentsSidePanel";
 
 import { GuestMedia, withGuestMedia } from "./guest-media";
@@ -31,11 +30,11 @@ import navinIcon from "./navin-icon.png";
 import { GuestSiteTunnel, type SiteFailure } from "./guest-site";
 import { GuestFilesClient } from "./guest-files";
 import { guestNotify, notificationsEnabled, notificationsSupported, toggleNotifications } from "./guest-notify";
-import { GuestControlBar, useGuestMode } from "./GuestControlBar";
+import { GuestComposer } from "./GuestComposer";
 import { GuestLivePanel, SiteView, type LiveTab } from "./GuestLivePanel";
 import { GuestSidebar } from "./GuestSidebar";
 import { useGuestTheme } from "./guest-theme";
-import { JOIN_STAGE_PERCENT, RelaySession, type ShareContext, type ShareSnapshot } from "./relay-socket";
+import { JOIN_STAGE_PERCENT, RelaySession, snapshotThreadSignature, type ShareContext, type ShareSnapshot } from "./relay-socket";
 import { ShareCipher, parseShareLocation } from "./share-crypto";
 
 const NAME_KEY = "navin.guest.name";
@@ -170,6 +169,11 @@ function GuestSession({
   const { theme, toggle: toggleTheme } = useGuestTheme();
   const [session, setSession] = useState<RelaySession | null>(null);
   const [snapshot, setSnapshot] = useState<ShareSnapshot | null>(null);
+  // Bumped when a later snapshot shows another conversation than the one on
+  // screen: back from a lost connection (a phone asleep, a network change)
+  // or the host back online, the chat opens again on what was said meanwhile.
+  const [threadVersion, setThreadVersion] = useState(0);
+  const shownThread = useRef<string | null>(null);
   const [rights, setRights] = useState<Rights>({ drive: false, download: false });
   const [hostOnline, setHostOnline] = useState(true);
   // Every seat is taken by a socket about to time out: the relay said so
@@ -236,7 +240,12 @@ function GuestSession({
       const relay = new RelaySession(relaySocketUrl(shareId), cipher, name, {
         onJoinStage: (stage) => setJoinPercent((prev) => Math.max(prev, JOIN_STAGE_PERCENT[stage])),
         onSnapshot: (snap) => {
-          setSnapshot((prev) => prev ?? snap);
+          const signature = snapshotThreadSignature(snap);
+          if (shownThread.current !== signature) {
+            if (shownThread.current !== null) setThreadVersion((n) => n + 1);
+            shownThread.current = signature;
+            setSnapshot(snap);
+          }
           setRights(snap.rights);
           if (snap.context) setContext(snap.context);
           setSiteOn((was) => {
@@ -639,10 +648,10 @@ function GuestSession({
           </DropdownMenu>
         </header>
         <GuestThread
+          key={`${snapshot.chat_id}:${threadVersion}`}
           chatId={snapshot.chat_id}
           thread={snapshot.thread}
           canDrive={rights.drive}
-          usage={context?.usage ?? null}
           media={media}
           loadOlder={loadOlder}
           onJumped={() => {
@@ -754,12 +763,10 @@ function GuestThread({
   onCloseSidebar,
   live,
   sidebar,
-  usage,
 }: {
   chatId: string;
   thread: unknown;
   canDrive: boolean;
-  usage: ShareContext["usage"];
   media: GuestMedia;
   loadOlder: OlderLoader;
   onJumped: () => void;
@@ -769,13 +776,11 @@ function GuestThread({
 }) {
   const { t } = useTranslation();
   const { client } = useClient();
-  const [mode, setMode] = useGuestMode();
   // Subagents the host's agent spawns: listed on the right, read in the chat.
   const subagents = useGuestSubagents(client, chatId);
   const initial = useMemo(() => threadPage(thread, "hist"), [thread]);
   const stream = useNavinStream(chatId, initial.messages, initial.pending);
   const { setMessages } = stream;
-  const [draft, setDraft] = useState("");
   const [page, setPage] = useState({ before: initial.before, hasMore: initial.hasMore, userOffset: initial.userOffset });
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [revealId, setRevealId] = useState<string | null>(null);
@@ -790,8 +795,6 @@ function GuestThread({
   const shown = useMemo(() => withGuestMedia(stream.messages, media), [stream.messages, media, mediaVersion]);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
-  const coarse = useMemo(() => window.matchMedia?.("(pointer: coarse)").matches ?? false, []);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Follow-up: a reply landed or the agent asks something while the guest looks away.
   const wasStreaming = useRef(stream.isStreaming);
@@ -899,22 +902,6 @@ function GuestThread({
     setUnseen(0);
   };
 
-  // The composer grows with its text, up to a few lines.
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [draft]);
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text || !canDrive) return;
-    stream.send(applyComposerTurnMode(text, mode));
-    setDraft("");
-  };
-
   return (
     <>
       <div className="relative flex min-h-0 flex-1">
@@ -992,51 +979,12 @@ function GuestThread({
           </motion.button>
         ) : null}
       </AnimatePresence>
-      <form
-        onSubmit={submit}
-        className="border-t border-border/70 px-3 py-2.5 sm:px-4 sm:py-3"
-        style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
-      >
-        <GuestControlBar
-          usage={usage}
-          canDrive={canDrive}
-          streaming={stream.isStreaming}
-          mode={mode}
-          onMode={setMode}
-          onStop={() => stream.stop()}
-        />
-        <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            disabled={!canDrive}
-            rows={1}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              // On touch keyboards Enter is a new line; the send button sends.
-              if (e.key === "Enter" && !e.shiftKey && !coarse) submit(e);
-            }}
-            placeholder={
-              canDrive
-                ? t("chat.liveShare.guest.placeholder", { defaultValue: "Message the agent..." })
-                : t("chat.liveShare.guest.placeholderReadOnly", { defaultValue: "Read only. Ask to drive to write." })
-            }
-            className="max-h-40 min-h-[42px] flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-base outline-none sm:text-sm focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-          />
-          {/* A prompt sent mid-run follows the current turn, as on the host. */}
-          {!stream.isStreaming || draft.trim() ? (
-            <Button
-              type="submit"
-              size="icon"
-              className="h-[42px] w-[42px] shrink-0"
-              disabled={!canDrive || !draft.trim()}
-              aria-label={t("chat.liveShare.guest.send", { defaultValue: "Send" })}
-            >
-              <Send className="h-4 w-4" aria-hidden />
-            </Button>
-          ) : null}
-        </div>
-      </form>
+      <GuestComposer
+        canDrive={canDrive}
+        streaming={stream.isStreaming}
+        onSend={(content) => stream.send(content)}
+        onStop={() => stream.stop()}
+      />
       </div>
       {subagents.open ? (
         <SubagentsSidePanel

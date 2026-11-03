@@ -181,3 +181,59 @@ def test_a_scratch_file_outside_the_project_never_arms_the_gate(tmp_path):
     )
     assert state.pending is True
     assert state.paths == {str(project / "app.py")}
+
+
+def _git_repo(root):
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / ".gitignore").write_text("build/\n*.log\n")
+    for folder in ("src", "build", "empty"):
+        (root / folder).mkdir()
+    (root / "src" / "a.py").write_text("A = 1\n")
+    (root / "build" / "keep.py").write_text("B = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+
+
+def _backdate(root):
+    # A listing taken within 2 s of a folder change is never trusted: age the tree.
+    import os
+    import time
+
+    old = time.time() - 60
+    for current, _dirs, names in os.walk(root):
+        for name in (*names, current):
+            path = current if name == current else os.path.join(current, name)
+            os.utime(path, (old, old))
+
+
+def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
+    import time
+
+    _git_repo(tmp_path)
+    _backdate(tmp_path)
+    cv._LISTINGS.clear()
+    first = cv.workspace_code_snapshot(tmp_path)
+    assert "src/a.py" in first
+    assert str(tmp_path) in cv._LISTINGS and cv._LISTINGS[str(tmp_path)].stamps is not None
+    kept = cv._LISTINGS[str(tmp_path)]
+    # An edit in place moves no folder: same listing, new stamp.
+    time.sleep(0.01)
+    (tmp_path / "src" / "a.py").write_text("A = 22222\n")
+    edited = cv.workspace_code_snapshot(tmp_path)
+    assert cv._LISTINGS[str(tmp_path)] is kept
+    assert edited["src/a.py"] != first["src/a.py"]
+    # A new file in a watched folder, an empty folder and a git add are all seen.
+    (tmp_path / "src" / "b.py").write_text("B = 2\n")
+    assert "src/b.py" in cv.workspace_code_snapshot(tmp_path)
+    (tmp_path / "empty" / "c.py").write_text("C = 3\n")
+    assert "empty/c.py" in cv.workspace_code_snapshot(tmp_path)
+    (tmp_path / "build" / "ignored.py").write_text("X = 1\n")
+    assert "build/ignored.py" not in cv.workspace_code_snapshot(tmp_path)
+    (tmp_path / "a.log").write_text("x")
+    assert not any(path.endswith(".log") for path in cv.workspace_code_snapshot(tmp_path))
+    (tmp_path / "newdir").mkdir()
+    (tmp_path / "newdir" / "d.py").write_text("D = 4\n")
+    assert "newdir/d.py" in cv.workspace_code_snapshot(tmp_path)
+    (tmp_path / "src" / "a.py").unlink()
+    # Still in the git index: listed, with no stamp, exactly like git ls-files.
+    assert cv.workspace_code_snapshot(tmp_path)["src/a.py"] is None
+    assert cv.workspace_code_snapshot(tmp_path) == _reference_snapshot(tmp_path)

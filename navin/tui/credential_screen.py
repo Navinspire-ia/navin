@@ -84,9 +84,9 @@ def connector_status(service: str) -> tuple[bool, str]:
 
 
 def open_browser(url: str) -> bool:
-    import webbrowser
+    from navin.utils.open_browser import open_external_url
 
-    return bool(webbrowser.open(url))
+    return open_external_url(url)
 
 
 class CredentialScreen(ModalScreen[dict[str, str]]):

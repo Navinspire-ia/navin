@@ -21,6 +21,10 @@ class _FakeLoader:
     def list_skills(self, filter_unavailable: bool = True):
         return self._entries
 
+    def catalog_token(self):
+        # Stable for this fake: its catalog never changes.
+        return (self._entries, frozenset())
+
     def _get_skill_meta(self, name):
         return self._meta.get(name, {})
 
@@ -102,3 +106,31 @@ class SkillsGraphTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogCacheTests(unittest.TestCase):
+    def test_graph_and_search_are_kept_per_catalog_and_follow_a_skill_edit(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from navin.agent import skills as skills_module
+        from navin.agent.skills import SkillsLoader
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".navin" / "skills" / "alpha-tool"
+            folder.mkdir(parents=True)
+            (folder / "SKILL.md").write_text("---\nname: alpha-tool\ndescription: Alpha zebra helper\n---\nbody\n")
+            loader = SkillsLoader(root, builtin_skills_dir=root / "none")
+            first = build_skills_graph(loader)
+            again = build_skills_graph(loader)
+            self.assertEqual(set(first.nodes), {"alpha-tool"})
+            self.assertEqual(first.edges, again.edges)
+            self.assertEqual([row["name"] for row in loader.search_skills("zebra")], ["alpha-tool"])
+            folder2 = root / ".navin" / "skills" / "beta-tool"
+            folder2.mkdir()
+            (folder2 / "SKILL.md").write_text("---\nname: beta-tool\ndescription: Beta quokka helper\n---\nbody\n")
+            loader.invalidate_scan()
+            skills_module._SKILL_META_TTL.clear()
+            self.assertEqual(set(build_skills_graph(loader).nodes), {"alpha-tool", "beta-tool"})
+            self.assertEqual([row["name"] for row in loader.search_skills("quokka")], ["beta-tool"])

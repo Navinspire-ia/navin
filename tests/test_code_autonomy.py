@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +22,7 @@ from navin.agent.project_agents import _parse_agent_file, _parse_agent_toml
 from navin.agent.runner import AgentRunner, AgentRunSpec
 from navin.agent.skills import (
     SkillsLoader,
+    _cached_which,
     _home_skill_dirs,
     clear_home_skill_dir_cache,
     clear_skills_index_cache,
@@ -136,17 +139,108 @@ def test_windows_bom_and_malformed_skills_do_not_break_the_catalog(tmp_path):
     assert loader.get_skill_availability("odd") == (False, "ENV: NAVIN_TEST_MISSING_ENV_7C1")
 
 
-def test_a_dependency_installed_during_the_task_refreshes_the_cached_catalog(tmp_path):
+def _install_tool(folder: Path, name: str) -> Path:
+    """A real executable which() finds (PATHEXT suffix on Windows)."""
+    suffix = ".bat" if sys.platform == "win32" else ""
+    tool = write(folder / f"{name}{suffix}", "@echo off\n" if suffix else "#!/bin/sh\n")
+    tool.chmod(0o755)
+    return tool
+
+
+def _age_folder(folder: Path) -> None:
+    """Back-date a folder so the next write in it moves its mtime for sure."""
+    old = folder.stat().st_mtime_ns - 10_000_000_000
+    os.utime(folder, ns=(old, old))
+
+
+def test_a_dependency_installed_during_the_task_refreshes_the_cached_catalog(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _age_folder(bin_dir)
+    monkeypatch.setenv("PATH", str(bin_dir))
     write(tmp_path / "skills/deploy/SKILL.md", '---\nmetadata: {navin: {requires: {bins: [navin-test-tool-7c1]}}}\n---\nDeploy.\n')
-    with patch("navin.agent.skills.time.monotonic", return_value=100.0) as clock, patch(
-        "navin.agent.skills.shutil.which", return_value=None,
-    ) as which:
+    with patch("navin.agent.skills.time.monotonic", return_value=100.0) as clock:
         loader = SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
         assert "Unavailable" in loader.build_skills_index()
-        which.return_value = "/new-bin/navin-test-tool-7c1"
+        # A real install writes into a PATH folder: its mtime moves.
+        _install_tool(bin_dir, "navin-test-tool-7c1")
         clock.return_value = 103.0
         assert loader.build_skills_index() == "deploy"
         assert loader.get_skill_availability("deploy") == (True, "")
+
+
+def test_a_missing_requirement_is_probed_again_only_when_path_changes(tmp_path, monkeypatch):
+    old_bin = tmp_path / "old-bin"
+    new_bin = tmp_path / "new-bin"
+    old_bin.mkdir()
+    _install_tool(new_bin, "navin-test-tool-7c2")
+    monkeypatch.setenv("PATH", str(old_bin))
+    probes: list[str] = []
+    real_which = shutil.which
+
+    def counting_which(command, *args, **kwargs):
+        probes.append(command)
+        return real_which(command, *args, **kwargs)
+
+    with patch("navin.agent.skills.time.monotonic", return_value=100.0) as clock, patch(
+        "navin.agent.skills.shutil.which", side_effect=counting_which,
+    ):
+        assert _cached_which("navin-test-tool-7c2") is False
+        # Past the folder stamp TTL, PATH folders unchanged: no new PATH walk
+        # (the walk that cost the Windows desktop seconds per poll).
+        clock.return_value = 130.0
+        assert _cached_which("navin-test-tool-7c2") is False
+        assert probes == ["navin-test-tool-7c2"]
+        # A PATH change is a new key: the tool shows up on the very next call.
+        monkeypatch.setenv("PATH", f"{old_bin}{os.pathsep}{new_bin}")
+        assert _cached_which("navin-test-tool-7c2") is True
+        assert probes == ["navin-test-tool-7c2", "navin-test-tool-7c2"]
+        # The backstop still re-probes what a folder mtime cannot show.
+        clock.return_value = 130.0 + 601.0
+        assert _cached_which("navin-test-tool-7c2") is True
+        assert len(probes) == 3
+
+
+def test_an_expired_scan_is_kept_while_its_folders_are_unchanged(tmp_path):
+    skill(tmp_path / "skills/first")
+    with patch("navin.agent.skills.time.monotonic", return_value=100.0) as clock:
+        loader = SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
+        assert [entry["name"] for entry in loader.list_skills(filter_unavailable=False)] == ["first"]
+        walks: list[float] = []
+        real_scan_now = loader._scan_now
+
+        def counting_scan_now(now: float):
+            walks.append(now)
+            return real_scan_now(now)
+
+        with patch.object(loader, "_scan_now", side_effect=counting_scan_now):
+            clock.return_value = 110.0
+            assert [entry["name"] for entry in loader.list_skills(filter_unavailable=False)] == ["first"]
+            assert walks == [], "unchanged folders: the expired scan is kept, not walked again"
+            skill(tmp_path / "skills/second")
+            clock.return_value = 120.0
+            names = [entry["name"] for entry in loader.list_skills(filter_unavailable=False)]
+            assert names == ["first", "second"]
+            assert walks == [120.0], "a new skill folder is read on the first expired call"
+
+
+def test_skill_roots_are_resolved_once_for_every_loader(tmp_path):
+    skill(tmp_path / "skills/deploy")
+    first = SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
+    assert first.load_skill("deploy")
+    second = SkillsLoader(tmp_path, builtin_skills_dir=tmp_path / "none")
+    roots = set(second._skill_roots())
+    real_resolve = Path.resolve
+    resolved_roots: list[Path] = []
+
+    def tracking_resolve(self, *args, **kwargs):
+        if self in roots:
+            resolved_roots.append(self)
+        return real_resolve(self, *args, **kwargs)
+
+    with patch.object(Path, "resolve", autospec=True, side_effect=tracking_resolve):
+        assert second.load_skill("deploy")
+    assert resolved_roots == [], "the new loader reuses the roots the first one resolved"
 
 
 def test_new_home_harnesses_are_discovered_without_restarting(tmp_path):

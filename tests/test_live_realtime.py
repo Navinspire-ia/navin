@@ -308,6 +308,188 @@ def test_managed_nova_microphone_is_resampled_for_the_gateway():
     assert frames.from_page('{"type":"input_audio_buffer.append","audio":"!"}') is None
 
 
+class _OpenPage(_Socket):
+    """A page that sends its frames, then stays on the call until told to stop."""
+
+    def __init__(self, incoming=None):
+        super().__init__(incoming)
+        self.stop = asyncio.Event()
+
+    async def __anext__(self):
+        await asyncio.sleep(0)
+        if self.incoming:
+            return self.incoming.pop(0)
+        await self.stop.wait()
+        raise StopAsyncIteration
+
+
+class _GatewayUpstream(_Socket):
+    """Gateway stand-in: says session.created, then only what it is given."""
+
+    def __init__(self, frames=()):
+        super().__init__()
+        self.queue: asyncio.Queue = asyncio.Queue()
+        for frame in (json.dumps({"type": "session.created"}), *frames):
+            self.queue.put_nowait(frame)
+
+    async def __anext__(self):
+        frame = await self.queue.get()
+        if frame is None:
+            raise StopAsyncIteration
+        return frame
+
+    async def close(self, *_):
+        self.closed = True
+        self.queue.put_nowait(None)
+
+
+def test_managed_nova_that_never_acknowledges_the_session_makes_the_page_fall_back(monkeypatch):
+    import navin.live.realtime as realtime
+
+    monkeypatch.setattr(realtime, "NOVA_READY_TIMEOUT_S", 0.05)
+    update = json.dumps({"type": "session.update", "session": {"instructions": "Speak French"}})
+
+    async def run():
+        page = _OpenPage([update])
+        upstream = _GatewayUpstream()
+
+        async def connect(target):
+            return upstream
+
+        await asyncio.wait_for(bridge(page, _navin_config(), connect=connect), 5)
+        errors = [json.loads(f)["error"] for f in page.sent if json.loads(f).get("type") == "error"]
+        assert errors and errors[0]["code"] == "realtime_unresponsive"
+        assert "amazon/nova-2-sonic" in errors[0]["message"]
+        assert page.closed and upstream.closed
+
+    asyncio.run(run())
+
+
+def test_managed_nova_acknowledged_session_keeps_relaying(monkeypatch):
+    import navin.live.realtime as realtime
+
+    monkeypatch.setattr(realtime, "NOVA_READY_TIMEOUT_S", 0.05)
+    update = json.dumps({"type": "session.update", "session": {"instructions": "Speak French"}})
+
+    async def run():
+        page = _OpenPage([update])
+        upstream = _GatewayUpstream([json.dumps({"type": "session.updated"})])
+
+        async def connect(target):
+            return upstream
+
+        call = asyncio.create_task(bridge(page, _navin_config(), connect=connect))
+        await asyncio.sleep(0.2)
+        assert not call.done(), "an acknowledged session must stay open"
+        upstream.queue.put_nowait(json.dumps({"type": "response.audio.delta", "delta": "BBBB"}))
+        await asyncio.sleep(0.05)
+        page.stop.set()
+        await asyncio.wait_for(call, 5)
+        assert any("BBBB" in frame for frame in page.sent)
+        assert not any(json.loads(f).get("type") == "error" for f in page.sent)
+
+    asyncio.run(run())
+
+
+class _StreamingPage(_OpenPage):
+    """A page whose microphone streams for a while, then goes quiet (muted)."""
+
+    def __init__(self, first, chunks, interval):
+        super().__init__([first])
+        self.chunks = chunks
+        self.interval = interval
+
+    async def __anext__(self):
+        if self.incoming:
+            await asyncio.sleep(0)
+            return self.incoming.pop(0)
+        if self.chunks:
+            self.chunks -= 1
+            await asyncio.sleep(self.interval)
+            return json.dumps({"type": "input_audio_buffer.append",
+                               "audio": base64.b64encode(bytes([7, 1]) * 2400).decode()})
+        await self.stop.wait()
+        raise StopAsyncIteration
+
+
+def test_managed_nova_keeps_bedrock_fed_while_the_microphone_is_muted(monkeypatch):
+    import navin.live.realtime as realtime
+
+    monkeypatch.setattr(realtime, "NOVA_SILENCE_AFTER_S", 0.15)
+    monkeypatch.setattr(realtime, "NOVA_SILENCE_CHUNK_S", 0.01)
+    update = json.dumps({"type": "session.update", "session": {"instructions": "Speak French"}})
+
+    def audio_of(frame):
+        event = json.loads(frame)
+        return base64.b64decode(event["audio"]) if event.get("type") == "input_audio_buffer.append" else None
+
+    async def run(cfg):
+        page = _StreamingPage(update, chunks=15, interval=0.01)
+        upstream = _GatewayUpstream([json.dumps({"type": "session.updated"})])
+
+        async def connect(target):
+            return upstream
+
+        call = asyncio.create_task(bridge(page, cfg, connect=connect))
+        await asyncio.sleep(0.8)
+        page.stop.set()
+        await asyncio.wait_for(call, 5)
+        return [audio for audio in map(audio_of, upstream.sent) if audio is not None]
+
+    sent = asyncio.run(run(_navin_config()))
+    spoken = [i for i, audio in enumerate(sent) if any(audio)]
+    silent = [i for i, audio in enumerate(sent) if not any(audio)]
+    assert len(spoken) == 15
+    # Silence once the microphone went quiet, never between its chunks.
+    assert silent and min(silent) > max(spoken)
+    assert all(len(sent[i]) == 160 * 2 for i in silent)  # one tick of 16 kHz PCM16
+
+    cfg = _navin_config()
+    cfg.voice.live_realtime_provider = "openai"
+    cfg.voice.live_realtime_model = "gpt-realtime"
+    cfg.providers.openai.api_key = "sk-user"
+    assert all(any(audio) for audio in asyncio.run(run(cfg)))  # other models: nothing added
+
+
+def test_a_dropped_upstream_is_reported_to_the_page_once():
+    from websockets.exceptions import ConnectionClosedError
+
+    update = json.dumps({"type": "session.update", "session": {"instructions": "Speak French"}})
+    audio = json.dumps({"type": "input_audio_buffer.append", "audio": base64.b64encode(bytes(4800)).decode()})
+
+    class _DroppingUpstream(_GatewayUpstream):
+        """The connection vanishes: the reader and the writers all see it."""
+
+        async def send(self, frame):
+            if self.sent:
+                self.queue.put_nowait(ConnectionClosedError(None, None))
+                raise ConnectionClosedError(None, None)
+            self.sent.append(frame)
+
+        async def __anext__(self):
+            frame = await self.queue.get()
+            if isinstance(frame, BaseException):
+                raise frame
+            if frame is None:
+                raise StopAsyncIteration
+            return frame
+
+    async def run():
+        page = _OpenPage([update, audio, audio])
+        upstream = _DroppingUpstream([json.dumps({"type": "session.updated"})])
+
+        async def connect(target):
+            return upstream
+
+        await asyncio.wait_for(bridge(page, _navin_config(), connect=connect), 5)
+        errors = [json.loads(f)["error"] for f in page.sent if json.loads(f).get("type") == "error"]
+        assert [error["code"] for error in errors] == ["realtime_dropped"]
+        assert errors[0]["message"] == "connection lost"
+        assert page.closed and upstream.closed
+
+    asyncio.run(run())
+
+
 def test_gemini_live_is_translated_from_and_to_the_realtime_protocol():
     tr = GeminiLiveTranslator("models/gemini-3.8-live")
     setup = tr.from_page({"type": "session.update", "session": {

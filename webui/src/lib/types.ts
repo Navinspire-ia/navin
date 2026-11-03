@@ -58,6 +58,20 @@ export interface UIMediaAttachment {
 
 export interface UIMessageSource { kind: "cron" | "local_trigger" | "trigger" | string; label?: string; }
 
+/** A Collaboration Mode teammate speaking in the chat under its own name. */
+export interface UIMessageAuthor {
+  id: string;
+  name: string;
+  title?: string;
+  role?: string;
+  avatar?: string;
+  color?: string;
+  /** "custom:<hash>": an uploaded photo, read from Settings > Team. */
+  photo?: string;
+  gender?: string;
+  voice?: string;
+}
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -108,6 +122,8 @@ export interface UIMessage {
   taskRole?: string;
   /** Lightweight provenance for proactive assistant messages. */
   source?: UIMessageSource;
+  /** Set when a teammate, not Navin, wrote this message (name, job, face). */
+  author?: UIMessageAuthor;
   /** Stable protocol metadata for grouping all activity emitted by one user turn. */
   turnId?: string;
   turnPhase?: UITurnPhase;
@@ -3207,6 +3223,16 @@ export type InboundEvent =
       event: "product_module_request";
       chat_id?: string;
       module?: string;
+    }
+  | {
+      /** Collaboration Mode: a teammate's report or question, shown as its own message. */
+      event: "team_reply";
+      chat_id: string;
+      entry_id?: string;
+      kind?: string;
+      status?: string | null;
+      author: Record<string, unknown>;
+      text: string;
     }
   | {
       /** Collaboration Mode: one live team exchange. */

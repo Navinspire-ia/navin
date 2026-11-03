@@ -739,18 +739,23 @@ class LiveVoiceSession:
             self.interrupt()  # the user talks over the voice: it stops
         await self.on_transcript(text)
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, voice: str = "") -> None:
+        """Say *text*; *voice* is a teammate's own voice ("" = Navin's)."""
         text = (text or "").strip()
         if text and self.active:
-            self._queue.put_nowait(text)
+            self._queue.put_nowait((text, (voice or "").strip()))
 
     async def _speak_loop(self) -> None:
         from navin.audio.tts import resolve_tts_config, synthesize_speech_with_config
 
         while True:
-            text = await self._queue.get()
+            item = await self._queue.get()
+            text, voice = item if isinstance(item, tuple) else (item, "")
             epoch = self._epoch
             cfg = resolve_tts_config(self.config)
+            if voice and voice != cfg.voice:
+                # A teammate speaking: its voice for this text only.
+                cfg = dataclasses.replace(cfg, voice=voice)
             if cfg.response_format != "wav" and not Speaker.available("audio/mpeg"):
                 # Linux without ffplay: paplay / aplay read WAV only.
                 cfg = dataclasses.replace(cfg, response_format="wav")

@@ -186,3 +186,17 @@ def test_slow_read_serves_the_last_good_runbook(monkeypatch):
     assert time.monotonic() - started < 5
     assert "old line" in content
     assert kept == fresh
+
+
+def test_project_folder_listing_matches_the_manifest_and_dotnet_rules(tmp_path):
+    from navin.agent import project_runbook as rb
+
+    cases = {"node": "package.json", "py": "pyproject.toml", "make": "Makefile", "dotnet": "App.csproj",
+             "sln": "x.sln", "plain": "notes.txt"}
+    for folder, name in cases.items():
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / name).write_text("x")
+    (tmp_path / "empty").mkdir()
+    for folder in [*cases, "empty", "missing"]:
+        path = tmp_path / folder
+        assert rb._is_project_folder(path) == (rb._has_any(path, rb.MANIFESTS) or rb._dotnet_present(path)), folder

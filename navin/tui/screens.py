@@ -846,6 +846,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `F8` / `/agents` / click the agents panel | Inspect running and recent agents |
 | Queued **Remove** / **Resume queue** | Remove a waiting message or resume the queue after stopping |
 | `F6` / `/multitask` / queued **Run in parallel** | Start every queued message now, each in its own parallel agent (`/multitask <task>` runs one task) |
+| `/team` | Collaboration Mode: shows on / off, this chat's team and its teammates. `/team on` / `/team off` switch it (same switch as the desktop), `/team <team>` picks this chat's team, `/team none` works without one |
 | Scroll up in a restored chat | Load earlier messages in pages while keeping your reading position |
 | `Cmd+C` / `Ctrl+Insert` | Copy the selection |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |

@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { JOIN_STAGE_PERCENT, RelaySession, type JoinStage } from "./relay-socket";
+import { JOIN_STAGE_PERCENT, RelaySession, snapshotThreadSignature, type JoinStage, type ShareSnapshot } from "./relay-socket";
 import { ShareCipher } from "./share-crypto";
 
 const KEY = "93-SN-eN7t8ig1_BYkfDQPZc87gAuLIEW8FvzMcl958";
@@ -84,6 +84,55 @@ describe("RelaySocket join stages", () => {
     }
     await settleUntil(() => received.length > 0);
     expect(received).toEqual([frame]);
+  });
+
+  it("puts a snapshot sent in parts back together and opens the chat", async () => {
+    // A page whose newest message alone is over one relay frame: the host
+    // used to drop the snapshot, the guest stayed on "Loading" for good.
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const cipher = await ShareCipher.create(KEY, SHARE);
+    const snapshots: unknown[] = [];
+    const session = new RelaySession("wss://relay.test/s", cipher, "Ana", {
+      onSnapshot: (snap) => snapshots.push(snap), onPayload: () => {}, onHostOnline: () => {}, onClosed: () => {},
+    });
+    const socket = session.socketFactory();
+    const ws = FakeWebSocket.last!;
+    ws.open();
+    const snapshot = {
+      type: "snapshot", chat_id: "c1", rights: { drive: false, download: false },
+      thread: { messages: [{ role: "assistant", content: "Rapport " + "é".repeat(300000) }] },
+    };
+    const raw = JSON.stringify(snapshot);
+    const parts = [raw.slice(0, 100000), raw.slice(100000, 200000), raw.slice(200000)];
+    for (let index = 0; index < parts.length; index++) {
+      ws.receive({ type: "data", data: await cipher.seal({ type: "payload_part", id: "p1", index, total: parts.length, part: parts[index] }) });
+    }
+    await settleUntil(() => socket.readyState === FakeWebSocket.OPEN);
+    expect(snapshots).toEqual([snapshot]);
+
+    // A broken sequence is dropped, never half delivered.
+    ws.receive({ type: "data", data: await cipher.seal({ type: "payload_part", id: "p2", index: 1, total: 2, part: "{}" }) });
+    await settle();
+    expect(snapshots).toHaveLength(1);
+  });
+
+  it("tells a changed conversation from the same one sent again", () => {
+    // Back on its seat, the page gets a snapshot again: it reopens the chat
+    // only when something was said meanwhile (ids differ on every page).
+    const snap = (messages: { id: string; role: string; content: string }[], pending = false): ShareSnapshot => ({
+      chat_id: "c1", rights: { drive: false, download: false }, expires_at: 0,
+      thread: { messages, has_pending_tool_calls: pending, page: { user_message_offset: 3 } },
+    });
+    const before = snap([{ id: "a-1", role: "user", content: "bonjour" }, { id: "a-2", role: "assistant", content: "salut" }]);
+    const resent = snap([{ id: "b-1", role: "user", content: "bonjour" }, { id: "b-2", role: "assistant", content: "salut" }]);
+    expect(snapshotThreadSignature(resent)).toBe(snapshotThreadSignature(before));
+    const grown = snap([...(before.thread as { messages: { id: string; role: string; content: string }[] }).messages, { id: "b-3", role: "assistant", content: "suite" }]);
+    expect(snapshotThreadSignature(grown)).not.toBe(snapshotThreadSignature(before));
+    const longer = snap([{ id: "c-1", role: "user", content: "bonjour" }, { id: "c-2", role: "assistant", content: "salut, voici la suite" }]);
+    expect(snapshotThreadSignature(longer)).not.toBe(snapshotThreadSignature(before));
+    expect(snapshotThreadSignature(snap([{ id: "d", role: "user", content: "bonjour" }], true))).not.toBe(
+      snapshotThreadSignature(snap([{ id: "e", role: "user", content: "bonjour" }])),
+    );
   });
 
   it("reports each real step up to the snapshot", async () => {

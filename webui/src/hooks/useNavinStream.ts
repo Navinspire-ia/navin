@@ -29,6 +29,7 @@ import {
 } from "@/lib/choices";
 import { liveToolActivityLabelFor } from "@/lib/live-activity";
 import type { StreamError } from "@/lib/navin-client";
+import { parseTeamIdentity } from "@/lib/team";
 import type {
   InboundEvent,
   OutboundCliAppMention,
@@ -1513,6 +1514,20 @@ export function useNavinStream(
         return;
       }
 
+      if (ev.event === "team_reply") {
+        // A teammate answers under its own name, job and face: its own
+        // message, never merged into the lead's.
+        const author = parseTeamIdentity(ev.author);
+        const text = typeof ev.text === "string" ? ev.text : "";
+        if (!author || !text.trim()) return;
+        const id = ev.entry_id ? `team-${ev.entry_id}` : crypto.randomUUID();
+        setMessages((prev) => (
+          prev.some((message) => message.id === id)
+            ? prev
+            : [...prev, { id, role: "assistant", content: text, author, createdAt: Date.now() }]
+        ));
+        return;
+      }
       if (ev.event === "message") {
         if (
           suppressStreamUntilTurnEndRef.current &&

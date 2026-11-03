@@ -25,6 +25,7 @@ Neither changes what any route does; they only make the next stall legible.
 from __future__ import annotations
 
 import asyncio
+import functools
 import gc
 import os
 import sys
@@ -60,6 +61,9 @@ _SELECTOR_FILES = frozenset({"selectors.py", "windows_events.py"})
 
 _MAX_FRAMES_PER_THREAD = 6
 _MAX_THREADS = 24
+# Innermost frames of the blocked main thread in a freeze report. Eight left
+# many CLI stacks with no navin frame at all (only Textual and asyncio).
+_MAIN_THREAD_FRAMES = 20
 
 Interesting = Callable[[str], bool]
 
@@ -191,8 +195,16 @@ class LoopLagMonitor:
         min_interval_s: float = LOOP_LAG_MIN_INTERVAL_S,
         after_slow_full_gc: Callable[[], None] | None = None,
         slow_full_gc_s: float = SLOW_FULL_GC_S,
+        context: Callable[[], str] | None = None,
     ) -> None:
         self._log = log
+        # Several CLIs append to one cli-freeze.log: each entry names its
+        # process, and the caller may add more (the CLI adds its project).
+        self._context = context
+        # Last main-thread stack the side thread sampled during a block, with
+        # the heartbeat stamp it belongs to: the report written once the loop
+        # resumes shows it even when no "so far" entry was written.
+        self._last_sample: tuple[float, str] | None = None
         self._warn_after_s = max(0.05, float(warn_after_s))
         self._poll_s = max(0.01, float(poll_s))
         self._min_interval_s = max(0.0, float(min_interval_s))
@@ -243,23 +255,37 @@ class LoopLagMonitor:
         reported = self.reports
         while True:
             now = time.monotonic()
-            gap = now - self._beat
+            previous = self._beat
+            gap = now - previous
             self._beat = now
             if gap >= self._warn_after_s + self._poll_s:
                 held = gap - self._poll_s
+                sample = self._last_sample
                 if paused_not_blocked(held, reported_meanwhile=self.reports != reported):
                     self._log.info(
-                        "engine was paused for {:.1f}s with nothing running on its loop "
+                        "{}engine was paused for {:.1f}s with nothing running on its loop "
                         "(computer asleep, or the process was not scheduled)",
+                        self._prefix(),
                         held,
                     )
                 else:
+                    where = (
+                        f"; main thread was last seen in:\n{sample[1]}"
+                        if sample is not None and sample[0] == previous
+                        else "; no main thread stack was sampled during it"
+                    )
                     self._log.warning(
-                        "event loop was blocked for {:.1f}s; every request waited that long",
+                        "{}event loop was blocked for {:.1f}s; every request waited that long{}",
+                        self._prefix(),
                         held,
+                        where,
                     )
             reported = self.reports
             await asyncio.sleep(self._poll_s)
+
+    def _prefix(self) -> str:
+        extra = self._context() if self._context is not None else ""
+        return f"[pid {os.getpid()}{' ' + extra if extra else ''}] "
 
     def _slow_full_gc_seen(self, _seconds: float) -> None:
         """Called inside the collector: hand the reaction to the loop."""
@@ -284,9 +310,10 @@ class LoopLagMonitor:
     def _watch(self) -> None:
         last_report = float("-inf")
         while not self._stop.wait(self._poll_s):
+            beat = self._beat
             now = time.monotonic()
-            stale = now - self._beat
-            if stale < self._warn_after_s or now - last_report < self._min_interval_s:
+            stale = now - beat
+            if stale < self._warn_after_s:
                 continue
             frame = sys._current_frames().get(self._loop_ident or -1)
             if idle_in_selector(frame):
@@ -294,19 +321,27 @@ class LoopLagMonitor:
                 # scheduled (host under load, WSL paused, laptop waking up).
                 self.idle_gaps += 1
                 continue
-            last_report = now
-            self.reports += 1
+            # Sampled on every poll of a block, logged at most once an
+            # interval: the 8.7 s block of 2026-11-01 20:58 fell inside the
+            # interval of an earlier report and its final entry had no stack.
             where = (
-                "".join(traceback.format_stack(frame)[-8:]).rstrip()
+                "".join(traceback.format_stack(frame)[-_MAIN_THREAD_FRAMES:]).rstrip()
                 if frame is not None
                 else "(main thread frame unavailable)"
             )
-            gc_note = self._gc.describe(now)
+            gc_note = self._gc.describe()
+            if gc_note:
+                where = f"{where}\n  {gc_note}"
+            self._last_sample = (beat, where)
+            if now - last_report < self._min_interval_s:
+                continue
+            last_report = now
+            self.reports += 1
             self._log.warning(
-                "event loop blocked for {:.1f}s so far; main thread is in:\n{}{}",
+                "{}event loop blocked for {:.1f}s so far; main thread is in:\n{}",
+                self._prefix(),
                 stale,
                 where,
-                f"\n  {gc_note}" if gc_note else "",
             )
 
 
@@ -367,11 +402,15 @@ class GcClock:
             self._on_slow_full(took)
 
     def describe(self, now: float | None = None) -> str:
+        # ``started`` first, the clock after: a collection that began after
+        # the caller read its clock printed "running for -0.1s" (2026-11-01).
         started, generation = self.started, self.generation
         if started is None:
             return ""
-        now = time.monotonic() if now is None else now
-        return f"(garbage collection of generation {generation} running for {now - started:.1f}s)"
+        elapsed = (time.monotonic() if now is None else now) - started
+        if elapsed < 0:
+            elapsed = max(0.0, time.monotonic() - started)
+        return f"(garbage collection of generation {generation} running for {elapsed:.1f}s)"
 
 
 _STARTUP_HEAP_FROZEN = False
@@ -398,20 +437,105 @@ def freeze_startup_heap() -> bool:
 # over the unfrozen objects only: cheap once the previous pass froze the rest.
 IDLE_HEAP_PASS_MIN_INTERVAL_S = 60.0
 # Frozen objects may hold cycles that died since (a finished turn's tasks and
-# tracebacks). Once the frozen set grew this much past the last baseline, the
-# next idle pass thaws everything first, collects it all and freezes again:
-# rare, and idle only. The baseline is set by the first ordinary pass (which
-# puts away whatever the engine built up before its first idle minute) and by
-# every deep pass.
-IDLE_HEAP_DEEP_GROWTH = 500_000
+# tracebacks, and any cyclic garbage that reached generation 2 before an
+# ordinary pass froze it). Once the process resident memory grew this much
+# past the last baseline, the next idle pass thaws everything first, collects
+# it all and freezes again: rare, and idle only. The baseline is set by the
+# first pass (which puts away whatever the engine built up before its first
+# idle minute) and by every deep pass. Resident memory, not the frozen count:
+# ``gc.get_freeze_count()`` walks the whole permanent generation, and reading
+# it after every pass stopped the desktop loop about once a minute (171 of
+# 208 "event loop blocked" stacks of 2026-11-01 ended on that line).
+IDLE_HEAP_DEEP_GROWTH_BYTES = 128 * 1024 * 1024
+# Two deep passes at least this far apart, whatever the memory does (a native
+# cache growing outside the Python heap must not turn every idle minute into
+# a full walk of the heap).
+IDLE_HEAP_DEEP_MIN_INTERVAL_S = 600.0
+# When this process cannot read its own resident memory, a deep pass this
+# often instead, so frozen garbage is still given back.
+IDLE_HEAP_DEEP_FALLBACK_INTERVAL_S = 3600.0
 # Generation the ordinary pass collects. A full collection walked every object
 # built since the last pass: 1.5 to 2.4 s with the loop stopped, 8 times in the
 # gateway log of 2026-10-30/31, while the desktop UI kept asking. Python's own
 # automatic collections still run in the engine; garbage frozen by a young pass
-# is given back by the deep pass once the frozen set grew.
+# is given back by the deep pass once the resident memory grew.
 IDLE_HEAP_ORDINARY_GENERATION = 1
 # A pass at least this long is logged with its kind, for the next audit.
 SLOW_HEAP_PASS_S = 0.5
+
+
+@functools.lru_cache(maxsize=1)
+def _this_process(pid: int) -> Any:
+    """``psutil.Process`` of *pid*, built once (keyed on the pid for a fork)."""
+    try:
+        import psutil
+    except ImportError:  # a frozen build that did not ship its native module
+        return None
+    return psutil.Process(pid)
+
+
+def _resident_without_psutil() -> int | None:
+    """Resident memory read straight from the system, each read O(1)."""
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/statm", encoding="ascii") as handle:
+                pages = int(handle.read().split()[1])
+        except (OSError, ValueError, IndexError):
+            return None
+        return pages * os.sysconf("SC_PAGE_SIZE")
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class _Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = _Counters()
+        counters.cb = ctypes.sizeof(counters)
+        kernel32 = ctypes.WinDLL("kernel32")
+        psapi = ctypes.WinDLL("psapi")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return None
+        return int(counters.WorkingSetSize)
+    try:
+        import resource
+    except ImportError:
+        return None
+    # macOS and the BSDs: the peak, which still only grows with the heap.
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(peak) if sys.platform == "darwin" else int(peak) * 1024
+
+
+def resident_memory_bytes() -> int | None:
+    """This process's resident memory, without walking any object.
+
+    psutil reads ``/proc/self/statm`` on Linux and ``GetProcessMemoryInfo``
+    on Windows: a constant cost, whatever the size of the heap. None when
+    the system gives no reading.
+    """
+    process = _this_process(os.getpid())
+    if process is None:
+        return _resident_without_psutil()
+    import psutil
+
+    try:
+        return int(process.memory_info().rss)
+    except (psutil.Error, OSError):
+        return _resident_without_psutil()
 
 
 class IdleHeapPass:
@@ -425,7 +549,11 @@ class IdleHeapPass:
     subagent running, the pass collects and freezes the survivors, so the
     collections Python starts on its own during the next turns only walk the
     objects created since. Cyclic garbage pinned by a freeze is given back by
-    the deep pass once the frozen set grew by ``IDLE_HEAP_DEEP_GROWTH``.
+    the deep pass once the resident memory grew by ``IDLE_HEAP_DEEP_GROWTH_BYTES``.
+
+    An ordinary pass reads nothing whose cost grows with the heap: a young
+    collection, ``gc.freeze()`` (a list splice) and one resident memory
+    reading. Only the deep pass walks the frozen objects, by collecting them.
     """
 
     def __init__(
@@ -433,25 +561,40 @@ class IdleHeapPass:
         clock: Callable[[], float] = time.monotonic,
         *,
         min_interval_s: float = IDLE_HEAP_PASS_MIN_INTERVAL_S,
-        deep_growth: int = IDLE_HEAP_DEEP_GROWTH,
+        deep_growth_bytes: int = IDLE_HEAP_DEEP_GROWTH_BYTES,
+        deep_min_interval_s: float = IDLE_HEAP_DEEP_MIN_INTERVAL_S,
+        deep_fallback_interval_s: float = IDLE_HEAP_DEEP_FALLBACK_INTERVAL_S,
+        resident: Callable[[], int | None] = resident_memory_bytes,
     ) -> None:
         self._clock = clock
         self._min_interval_s = min_interval_s
-        self._deep_growth = deep_growth
+        self._deep_growth_bytes = deep_growth_bytes
+        self._deep_min_interval_s = deep_min_interval_s
+        self._deep_fallback_interval_s = deep_fallback_interval_s
+        self._resident = resident
         self._last_pass_at = float("-inf")
-        # Frozen count the growth is measured from: after the first ordinary
-        # pass, then after each deep pass. Not the count at construction:
-        # ``freeze_startup_heap`` and the first pass itself freeze the whole
-        # live heap, which is size, not growth (a deep pass over it right
-        # after would only repeat the walk the first pass just did).
-        self.frozen_after_deep: int | None = None
-        # Frozen count read once, after the last pass froze. ``gc.get_freeze_count``
-        # walks the whole permanent generation: read before every pass as well,
-        # it stopped the loop 1.0 s on 2026-10-31 07:48 (4.9 M frozen objects).
-        self.frozen: int | None = None
+        # When the baseline was set: the first pass, then each deep pass.
+        self._baseline_at: float | None = None
+        # Resident memory the growth is measured from: after the first pass,
+        # then after each deep pass. Not the reading at construction: the
+        # first pass collects and freezes the whole live heap, which is size,
+        # not growth. None while no pass ran, or when the system gives no
+        # reading (the deep pass then comes on the fallback interval).
+        self.resident_after_deep: int | None = None
+        # Resident memory read at the start of the last pass.
+        self.resident: int | None = None
         self.passes = 0
         self.deep_passes = 0
         self.last_pass_s = 0.0
+
+    def _deep_due(self, now: float, resident: int | None) -> bool:
+        baseline_at = self._baseline_at
+        if baseline_at is None or now - baseline_at < self._deep_min_interval_s:
+            return False
+        base = self.resident_after_deep
+        if resident is None or base is None:
+            return now - baseline_at >= self._deep_fallback_interval_s
+        return resident - base >= self._deep_growth_bytes
 
     def tick(self, *, idle: bool) -> bool:
         """Run a pass when the engine is idle and the interval has passed."""
@@ -461,30 +604,29 @@ class IdleHeapPass:
         if now - self._last_pass_at < self._min_interval_s:
             return False
         self._last_pass_at = now
-        base = self.frozen_after_deep
-        deep = (
-            base is not None and self.frozen is not None
-            and self.frozen - base >= self._deep_growth
-        )
+        first = self._baseline_at is None
+        self.resident = self._resident()
+        deep = self._deep_due(now, self.resident)
         started = time.perf_counter()
         if deep:
             gc.unfreeze()
         # The first pass puts away everything built before the first idle
         # minute: a full collection, once, so no startup garbage is pinned.
-        gc.collect(2 if deep or base is None else IDLE_HEAP_ORDINARY_GENERATION)
+        gc.collect(2 if deep or first else IDLE_HEAP_ORDINARY_GENERATION)
         gc.freeze()
         self.last_pass_s = time.perf_counter() - started
-        self.frozen = gc.get_freeze_count()  # the one permanent-generation walk of a pass
         self.passes += 1
         if deep:
             self.deep_passes += 1
-        if deep or base is None:
-            self.frozen_after_deep = self.frozen
+        if deep or first:
+            self._baseline_at = now
+            self.resident_after_deep = self._resident()
         if self.last_pass_s >= SLOW_HEAP_PASS_S:
             from loguru import logger
 
             logger.info(
-                "engine {} heap pass took {:.1f}s while idle ({} objects frozen)",
-                "deep" if deep else "ordinary", self.last_pass_s, self.frozen,
+                "engine {} heap pass took {:.1f}s while idle ({} MB resident before it)",
+                "deep" if deep else "ordinary", self.last_pass_s,
+                "?" if self.resident is None else self.resident // (1024 * 1024),
             )
         return True

@@ -30,7 +30,9 @@ so at once and the page falls back to the STT -> chat -> TTS pipeline.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -46,11 +48,33 @@ XAI_DEFAULT_MODEL = "grok-voice-latest"
 # One realtime turn of audio is small; a few MB covers any upstream frame.
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 OPEN_TIMEOUT_S = 15.0
+# A hung upstream never answers the closing handshake: without a bound the
+# bridge held it, and the page's socket, 10 more seconds after telling the
+# page (measured on the managed Nova route, 2026-11-02).
+CLOSE_TIMEOUT_S = 2.0
 # A transient upstream hiccup (DNS blip, 5xx, reset) gets one more try before the page falls back.
 CONNECT_ATTEMPTS = 2
 CONNECT_RETRY_DELAY_S = 0.5
 # WebSocket close codes that mean "the session simply ended" rather than a failure.
 _CLEAN_CLOSE_CODES = {1000, 1001}
+# The gateway's Nova Sonic route acknowledges session.update (session.updated)
+# once Bedrock accepted the stream, normally within a second or two. Until then
+# it reads nothing else from the page, so a silent Bedrock stream would only
+# show up later as a keepalive timeout. Past this delay the page falls back.
+NOVA_READY_TIMEOUT_S = 10.0
+# Bedrock ends a Nova Sonic stream that stops receiving input events
+# ("Timed out waiting for input events"), and its turn detection needs the
+# silence after a sentence to answer it. A muted microphone sends nothing at
+# all: after this gap the bridge streams silence itself, at the real-time
+# rate, until the page's audio comes back. Silence is what an open
+# microphone in a quiet room sends anyway.
+NOVA_SILENCE_AFTER_S = 1.0
+NOVA_SILENCE_CHUNK_S = 0.1
+_NOVA_INPUT_RATE = 16_000  # the gateway's Nova adapter reads 16 kHz PCM16
+
+
+class UpstreamSilentError(RuntimeError):
+    """The upstream accepted the socket but never acknowledged the session."""
 
 
 @dataclass(frozen=True)
@@ -315,6 +339,14 @@ def realtime_status(config: Any) -> dict[str, Any]:
     return status
 
 
+def _frame_type(frame: str) -> str:
+    try:
+        event = json.loads(frame)
+    except ValueError:
+        return ""
+    return str(event.get("type") or "") if isinstance(event, dict) else ""
+
+
 def _error_frame(code: str, message: str = "") -> str:
     return json.dumps({"type": "error", "error": {"type": "navin_bridge", "code": code, "message": message}})
 
@@ -327,6 +359,7 @@ async def _connect(target: RealtimeTarget) -> Any:
         additional_headers=target.headers,
         max_size=MAX_FRAME_BYTES,
         open_timeout=OPEN_TIMEOUT_S,
+        close_timeout=CLOSE_TIMEOUT_S,
         ping_interval=20,
         ping_timeout=20,
     )
@@ -367,6 +400,8 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
         with suppress(Exception):
             await upstream.close()
         return
+    started = time.monotonic()
+    logger.info("live realtime: session started ({}, {})", target.provider, target.model)
 
     translator = None
     xai_transcripts = XaiTranscripts() if target.provider == "xai" else None
@@ -376,8 +411,12 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
         from navin.live.gemini_live import GeminiLiveTranslator
 
         translator = GeminiLiveTranslator(target.model)
+    session_sent = asyncio.Event()
+    session_acked = asyncio.Event()
+    page_audio_at = time.monotonic()
 
     async def page_to_upstream() -> None:
+        nonlocal page_audio_at
         async for frame in browser:
             if isinstance(frame, bytes):
                 continue
@@ -386,6 +425,13 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
                             nova_frames.from_page(frame) if nova_frames else frame)
                 if outgoing is not None:
                     await upstream.send(outgoing)
+                    if nova_frames:
+                        kind = _frame_type(outgoing)
+                        if kind == "input_audio_buffer.append":
+                            page_audio_at = time.monotonic()
+                        elif kind == "session.update" and not session_sent.is_set():
+                            page_audio_at = time.monotonic()
+                            session_sent.set()
                 continue
             try:
                 parsed = json.loads(frame)
@@ -399,6 +445,8 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
             if translator is None:
                 if isinstance(frame, bytes):
                     continue
+                if nova_frames and not session_acked.is_set() and _frame_type(frame) != "session.created":
+                    session_acked.set()
                 for message in (xai_transcripts.events(frame) if xai_transcripts else [frame]):
                     await browser.send(message)
                 continue
@@ -410,21 +458,63 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
             for event in translator.from_gemini(parsed if isinstance(parsed, dict) else {}):
                 await browser.send(json.dumps(event))
 
+    async def nova_ready_watchdog() -> None:
+        await session_sent.wait()
+        try:
+            await asyncio.wait_for(session_acked.wait(), NOVA_READY_TIMEOUT_S)
+        except TimeoutError:
+            raise UpstreamSilentError(
+                f"{target.model} did not acknowledge the session within {NOVA_READY_TIMEOUT_S:.0f}s "
+                "(the gateway's Bedrock stream is not answering)"
+            ) from None
+        # Acknowledged: nothing more to watch, the relay goes on.
+        await asyncio.Event().wait()
+
+    async def nova_silence() -> None:
+        # See NOVA_SILENCE_AFTER_S: a muted microphone must not end the call.
+        await session_sent.wait()
+        silence = json.dumps({
+            "type": "input_audio_buffer.append",
+            "audio": base64.b64encode(bytes(int(_NOVA_INPUT_RATE * NOVA_SILENCE_CHUNK_S) * 2)).decode("ascii"),
+        })
+        while True:
+            await asyncio.sleep(NOVA_SILENCE_CHUNK_S)
+            if time.monotonic() - page_audio_at >= NOVA_SILENCE_AFTER_S:
+                await upstream.send(silence)
+
     tasks = [asyncio.create_task(page_to_upstream()), asyncio.create_task(upstream_to_page())]
+    if nova_frames:
+        tasks.append(asyncio.create_task(nova_ready_watchdog()))
+        tasks.append(asyncio.create_task(nova_silence()))
     try:
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
+        # One drop ends every relay at once (the reader and the writers all
+        # see the closed socket): the page and the log hear about it once.
+        reported = False
         for task in done:
             exc = task.exception()
-            if exc is None:
+            if exc is None or reported:
+                continue
+            if isinstance(exc, UpstreamSilentError):
+                logger.warning("live realtime: {} unresponsive: {}", target.provider, exc)
+                with suppress(Exception):
+                    await browser.send(_error_frame("realtime_unresponsive", str(exc)[:200]))
+                reported = True
                 continue
             reason = _drop_reason(exc)
             if reason is None:
                 continue
-            logger.warning("live realtime: session ended ({}): {}", target.provider, reason)
+            logger.warning(
+                "live realtime: session ended ({}) after {:.0f}s: {}",
+                target.provider, time.monotonic() - started, reason,
+            )
             with suppress(Exception):
                 await browser.send(_error_frame("realtime_dropped", reason))
+            reported = True
+        if not reported:
+            logger.info("live realtime: session closed ({}) after {:.0f}s", target.provider, time.monotonic() - started)
     finally:
         with suppress(Exception):
             await upstream.close()

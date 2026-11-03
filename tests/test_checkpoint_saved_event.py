@@ -64,3 +64,17 @@ class CheckpointSavedHopTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_checkpoint_streamed_write_is_the_same_json_as_json_dumps(tmp_path):
+    import json
+
+    from navin.agent.checkpoints import CheckpointStore
+
+    payload = {
+        "name": "n", "messages": [{"role": "user", "content": "é \u2603 \"q\""}, {"role": "assistant", "content": ""}],
+        "files": {"a.py": "QUJD", "é.py": None}, "empty": [], "note": "x", "count": 2, "flag": True,
+    }
+    target = tmp_path / "c.json"
+    CheckpointStore._write(target, payload)
+    assert target.read_text(encoding="utf-8") == json.dumps(payload, ensure_ascii=False)

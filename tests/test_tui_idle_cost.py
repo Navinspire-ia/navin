@@ -13,12 +13,31 @@ import gc
 
 import pytest
 from textual.widgets import Static
+from textual.widgets._markdown import MarkdownBlock
 
 from navin.tui import frames
 from navin.tui.frames import IdleCollector, terminal_gc_policy
-from navin.tui.runtime import UiToolEvent, UiTurnStarted
+from navin.tui.runtime import (
+    UiAssistantMessage,
+    UiProgress,
+    UiStreamDelta,
+    UiStreamEnd,
+    UiToolEvent,
+    UiTurnEnd,
+    UiTurnStarted,
+)
 from navin.tui.widgets import ToolCall, WorkingLine, same_height_text
 from tests.test_tui_queue import make_app
+
+MB = 2**20
+
+
+@pytest.fixture(autouse=True)
+def _fresh_gc_bookkeeping(monkeypatch):
+    """Each test starts with no freeze, no torn-down chat and no memory reading."""
+    monkeypatch.setattr(frames, "_freezes", 0)
+    monkeypatch.setattr(frames, "_teardowns", 0)
+    monkeypatch.setattr(frames, "_memory_at_freeze", None)
 
 
 class _Clock:
@@ -29,6 +48,24 @@ class _Clock:
         return self.now
 
 
+class _Memory:
+    """Resident memory as the collector reads it, set by the test."""
+
+    def __init__(self, monkeypatch, start: int = 100 * MB) -> None:
+        self.bytes = start
+        monkeypatch.setattr(frames, "resident_bytes", lambda: self.bytes)
+
+
+class _Timer:
+    """``time.perf_counter`` for one test: these readings, then the last one."""
+
+    def __init__(self, *readings: float) -> None:
+        self._readings = list(readings)
+
+    def __call__(self) -> float:
+        return self._readings.pop(0) if len(self._readings) > 1 else self._readings[0]
+
+
 def _with_pending(monkeypatch, pending: int) -> None:
     monkeypatch.setattr(frames.gc, "get_count", lambda: (0, 0, pending))
 
@@ -37,6 +74,18 @@ def _collections(monkeypatch) -> list[int]:
     calls: list[int] = []
     monkeypatch.setattr(frames.gc, "collect", lambda generation=2: calls.append(generation) or 0)
     return calls
+
+
+def _frozen(monkeypatch) -> list[str]:
+    frozen: list[str] = []
+    monkeypatch.setattr(frames.gc, "freeze", lambda: frozen.append("freeze"))
+    return frozen
+
+
+def _something_to_give_back(monkeypatch, memory: _Memory, growth: int = frames.DEEP_GC_GROWTH_BYTES) -> None:
+    """A freeze since the last deep pass, and resident memory grown past it."""
+    monkeypatch.setattr(frames, "_freezes", frames._freezes + 1)
+    memory.bytes += growth
 
 
 def test_the_policy_leaves_full_collections_to_the_idle_collector():
@@ -62,19 +111,22 @@ def test_a_due_collection_waits_for_a_quiet_moment(monkeypatch):
         assert not collector.tick(), "the stream is painting"
         clock.now += frames.FULL_GC_QUIET_EVENTS_S
         assert collector.tick()
-    assert calls == [frames.ORDINARY_GC_GENERATION] == [1]
+    assert calls == [frames.ORDINARY_GC_GENERATION] == [2], "a quiet pass collects every unfrozen generation"
 
 
 def test_a_long_overdue_collection_runs_even_while_busy(monkeypatch):
     clock = _Clock()
+    _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
+    frozen = _frozen(monkeypatch)
     with terminal_gc_policy():
         _with_pending(monkeypatch, frames.FULL_GC_FORCED)
         collector.note_input()
         collector.note_event()
         assert collector.tick()
-    assert calls == [1]
+    assert calls == [frames.FORCED_GC_GENERATION] == [1], "under the user's fingers: the young generations only"
+    assert frozen == ["freeze"], "the first long turn freezes its survivors"
 
 
 def test_no_pass_while_work_runs_unless_long_overdue(monkeypatch):
@@ -82,33 +134,36 @@ def test_no_pass_while_work_runs_unless_long_overdue(monkeypatch):
     the stream it was waiting for (0.8 to 2.6 s each on a long session)."""
     clock = _Clock()
     busy = {"on": True}
-    count = {"objects": 0}
-    monkeypatch.setattr(frames, "_frozen_count", 0)
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: 0)
-    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: count["objects"])
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock, busy=lambda: busy["on"])
     calls = _collections(monkeypatch)
-    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
+    frozen = _frozen(monkeypatch)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
+    monkeypatch.setattr(frames, "_memory_at_freeze", memory.bytes)
     with terminal_gc_policy():
         _with_pending(monkeypatch, frames.FULL_GC_DUE)
         clock.now += frames.DEEP_GC_QUIET_INPUT_S + frames.DEEP_GC_QUIET_EVENTS_S
         assert not collector.tick(), "no pass in a turn's quiet gap"
-        count["objects"] = frames.DEEP_GC_GROWTH  # this pass freezes a large batch
         _with_pending(monkeypatch, frames.FULL_GC_FORCED)
         assert collector.tick(), "memory stays bounded on an endless turn"
-        assert collector.deep_collections == 0
+        assert frozen == [], "memory did not grow: the next quiet pass collects all of it"
+        memory.bytes += frames.FREEZE_AFTER_GROWTH_BYTES
+        _with_pending(monkeypatch, frames.FULL_GC_FORCED * 2)
+        assert collector.tick() and frozen == ["freeze"], "grown: the long turn's survivors are frozen"
+        memory.bytes += frames.DEEP_GC_GROWTH_BYTES
         assert not collector.tick(), "nor the whole-heap walk while work runs"
+        assert collector.deep_collections == 0
         busy["on"] = False
         assert collector.tick() and collector.deep_collections == 1
-    assert calls == [1, 2]
+    assert calls == [1, 1, 2]
 
 
 def test_an_idle_cli_never_walks_the_whole_heap_on_a_timer(monkeypatch):
     """27 deep passes in one day of the freeze log, 3.3 s each, most of them on
-    an idle CLI that had nothing to give back."""
+    an idle CLI that had nothing to give back. With no freeze since the last
+    one the quiet passes reach everything: even a growing process is spared."""
     clock = _Clock()
-    monkeypatch.setattr(frames, "_frozen_count", 1_000)
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
     thawed: list[str] = []
@@ -117,6 +172,7 @@ def test_an_idle_cli_never_walks_the_whole_heap_on_a_timer(monkeypatch):
         _with_pending(monkeypatch, 0)
         for _ in range(12):
             clock.now += 20 * 60.0
+            memory.bytes += frames.DEEP_GC_GROWTH_BYTES
             assert not collector.tick()
     assert calls == [] and thawed == []
 
@@ -137,20 +193,20 @@ def test_the_ordinary_pass_counts_from_its_own_last_run(monkeypatch):
         assert collector.tick()
         _with_pending(monkeypatch, 3)  # a deep pass elsewhere reset the count
         assert not collector.tick()
-    assert calls == [1, 1]
+    assert calls == [2, 2]
 
 
 def test_a_terminal_in_the_background_counts_as_away(monkeypatch):
     clock = _Clock()
     focused = {"on": True}
-    monkeypatch.setattr(frames, "_frozen_count", 1_000)
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock, focused=lambda: focused["on"])
     calls = _collections(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
     with terminal_gc_policy():
         _with_pending(monkeypatch, 0)
-        monkeypatch.setattr(frames, "_frozen_count", 1_000 + frames.DEEP_GC_GROWTH)
+        _something_to_give_back(monkeypatch, memory)
         collector.note_input()
         clock.now += frames.DEEP_GC_QUIET_EVENTS_S
         focused["on"] = False
@@ -167,7 +223,7 @@ def test_a_broken_focus_hook_surfaces_instead_of_guessing(monkeypatch):
     """The focus hook reads Textual's App.app_focus: if it ever raises, that is
     a bug to see, not a reason to walk the whole heap under the user's eyes."""
     clock = _Clock()
-    monkeypatch.setattr(frames, "_frozen_count", 1_000)
+    memory = _Memory(monkeypatch)
 
     def broken() -> bool:
         raise AttributeError("app_focus")
@@ -176,12 +232,43 @@ def test_a_broken_focus_hook_surfaces_instead_of_guessing(monkeypatch):
     calls = _collections(monkeypatch)
     with terminal_gc_policy():
         _with_pending(monkeypatch, 0)
-        monkeypatch.setattr(frames, "_frozen_count", 1_000 + frames.DEEP_GC_GROWTH)
+        _something_to_give_back(monkeypatch, memory)
         collector.note_input()
         clock.now += frames.DEEP_GC_UNFOCUSED_INPUT_S
         with pytest.raises(AttributeError, match="app_focus"):
             collector.tick()
     assert calls == []
+
+
+def test_a_broken_busy_hook_holds_the_quiet_pass_and_is_logged_once(monkeypatch):
+    """Raised from the spinner tick, the error would close the CLI; taken as
+    "idle", it ran passes in the middle of turns. It holds the quiet pass (the
+    forced one still bounds memory) and is written to the log once."""
+    from loguru import logger
+
+    clock = _Clock()
+    _Memory(monkeypatch)
+
+    def broken() -> bool:
+        raise RuntimeError("runtime not ready")
+
+    collector = IdleCollector(clock, busy=broken)
+    calls = _collections(monkeypatch)
+    _frozen(monkeypatch)
+    seen: list[str] = []
+    sink = logger.add(lambda message: seen.append(str(message)), level="WARNING")
+    try:
+        with terminal_gc_policy():
+            _with_pending(monkeypatch, frames.FULL_GC_DUE)
+            clock.now += frames.FULL_GC_QUIET_INPUT_S
+            for _ in range(3):
+                assert not collector.tick()
+            _with_pending(monkeypatch, frames.FULL_GC_FORCED)
+            assert collector.tick()
+    finally:
+        logger.remove(sink)
+    assert calls == [frames.FORCED_GC_GENERATION]
+    assert sum("busy check failed" in line for line in seen) == 1
 
 
 def test_without_the_policy_python_keeps_its_own_full_collections(monkeypatch):
@@ -256,58 +343,67 @@ def test_a_ticking_status_line_repaints_without_a_reflow(tmp_path):
     asyncio.run(run())
 
 
-def test_survivors_are_frozen_so_the_next_pass_is_short(monkeypatch):
+def test_a_quiet_pass_freezes_what_it_kept_only_once_walking_it_got_slow(monkeypatch):
+    """Freezing after every pass froze the chat's widgets and painted lines
+    while they were shown, and a frozen cycle is never collected: they stayed
+    after they left the chat (CLIs of 2.1 to 11.6 GB on 2026-11-02). A quiet
+    pass freezes only once it got slow, so the next ones are short again."""
     clock = _Clock()
+    _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
-    frozen: list[str] = []
-    monkeypatch.setattr(frames.gc, "freeze", lambda: frozen.append("freeze"))
+    frozen = _frozen(monkeypatch)
     with terminal_gc_policy():
         _with_pending(monkeypatch, frames.FULL_GC_DUE)
         clock.now += frames.FULL_GC_QUIET_INPUT_S
+        monkeypatch.setattr(frames.time, "perf_counter", _Timer(10.0, 10.01))
         assert collector.tick()
-    assert calls == [1] and frozen == ["freeze"]
+        assert frozen == [], "a short pass leaves the heap collectable"
+        _with_pending(monkeypatch, frames.FULL_GC_DUE * 2)
+        monkeypatch.setattr(frames.time, "perf_counter", _Timer(20.0, 20.0 + frames.FREEZE_AFTER_PASS_S * 2))
+        assert collector.tick()
+        assert frozen == ["freeze"], "a slow pass freezes what it kept"
+    assert calls == [2, 2]
 
 
 def test_the_deep_pass_waits_for_the_user_to_be_away(monkeypatch):
     clock = _Clock()
-    monkeypatch.setattr(frames, "_frozen_count", 1_000)
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
+    frozen = _frozen(monkeypatch)
     thawed: list[str] = []
-    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: thawed.append("unfreeze"))
     with terminal_gc_policy():
         _with_pending(monkeypatch, 0)
-        monkeypatch.setattr(frames, "_frozen_count", 1_000 + frames.DEEP_GC_GROWTH)
+        _something_to_give_back(monkeypatch, memory)
         collector.note_input()
         clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert not collector.tick(), "the user was at the keyboard a few seconds ago"
         clock.now += frames.DEEP_GC_QUIET_INPUT_S
         assert collector.tick()
-    assert thawed == ["unfreeze"] and calls == [2]
+        assert thawed == ["unfreeze"] and calls == [2] and frozen == ["freeze"]
+        assert collector.memory_after_deep == memory.bytes, "the next one counts its growth from here"
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert not collector.tick(), "nothing frozen and nothing grown since: no second walk"
 
 
-def test_a_frozen_set_that_keeps_growing_is_reclaimed_once_the_user_steps_away(monkeypatch):
+def test_memory_that_keeps_growing_is_reclaimed_once_the_user_steps_away(monkeypatch):
     """The deep pass walks the whole heap (2 to 6 s measured): on a 2 s typing
     pause it froze the screen under the user's next keys."""
     clock = _Clock()
-    count = {"objects": 0}
-    monkeypatch.setattr(frames, "_frozen_count", 0)
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: 0)
-    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: count["objects"])
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
+    monkeypatch.setattr(frames, "_memory_at_freeze", memory.bytes)
     with terminal_gc_policy():
-        # Each ordinary pass freezes its survivors: here a large batch of them.
-        count["objects"] = frames.DEEP_GC_GROWTH
-        _with_pending(monkeypatch, frames.FULL_GC_DUE)
-        clock.now += frames.FULL_GC_QUIET_INPUT_S
-        assert collector.tick() and collector.deep_collections == 0
-        _with_pending(monkeypatch, 0)
+        # A long turn under the user's eyes: the forced pass freezes its survivors.
+        memory.bytes += frames.DEEP_GC_GROWTH_BYTES
+        _with_pending(monkeypatch, frames.FULL_GC_FORCED)
         collector.note_input()
+        assert collector.tick() and collector.deep_collections == 0
         clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert not collector.tick(), "a typing pause is no time for a whole-heap walk"
         clock.now += frames.DEEP_GC_QUIET_INPUT_S
@@ -315,112 +411,120 @@ def test_a_frozen_set_that_keeps_growing_is_reclaimed_once_the_user_steps_away(m
     assert collector.deep_collections == 1 and calls == [1, 2]
 
 
-def test_a_runaway_frozen_set_still_waits_for_the_user_to_be_away(monkeypatch):
+def test_a_runaway_heap_still_waits_for_the_user_to_be_away(monkeypatch):
     """Measured 2026-10-28 00:08 in the CLI freeze log: the forced deep pass
     (growth past 4x) ran on a 2 s typing pause of a 2 GB session and froze the
     screen for 16 s (10 s of gen-2 collection, 6 s of counting). However large
-    the growth, the whole-heap walk waits for a minute without input or an
-    unfocused terminal; the user never pays it under their fingers."""
+    the growth, the whole-heap walk waits for the user to be away; they never
+    pay it under their fingers."""
     clock = _Clock()
-    count = {"objects": 0}
-    monkeypatch.setattr(frames, "_frozen_count", 0)
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: 0)
-    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: count["objects"])
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock)
     calls = _collections(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
     with terminal_gc_policy():
-        count["objects"] = frames.DEEP_GC_GROWTH * 8
-        _with_pending(monkeypatch, frames.FULL_GC_DUE)
-        clock.now += frames.FULL_GC_QUIET_INPUT_S
-        assert collector.tick() and collector.deep_collections == 0
         _with_pending(monkeypatch, 0)
+        _something_to_give_back(monkeypatch, memory, growth=frames.DEEP_GC_GROWTH_BYTES * 40)
         for _ in range(5):
             collector.note_input()
             clock.now += frames.FULL_GC_QUIET_INPUT_S
             assert not collector.tick(), "a typing pause never pays the whole-heap walk"
         clock.now += frames.DEEP_GC_QUIET_INPUT_S
         assert collector.tick(), "reclaimed once the user is away"
-    assert collector.deep_collections == 1 and calls == [1, 2]
+    assert collector.deep_collections == 1 and calls == [2]
 
 
-def test_the_deep_pass_counts_the_frozen_set_in_c_not_with_a_python_list(monkeypatch):
-    """After a thaw the young generations are the whole heap: ``gc.get_objects``
-    over them built a list of every object (6 s on 2026-10-28 00:08). The deep
-    pass reads ``gc.get_freeze_count`` after freezing instead, a C walk."""
-    listed: list[int] = []
-    counted: list[int] = []
-    monkeypatch.setattr(frames.gc, "get_objects", lambda generation=None: listed.append(generation) or [1, 2, 3])
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: counted.append(1) or 123_456)
-    monkeypatch.setattr(frames.gc, "freeze", lambda: None)
-    monkeypatch.setattr(frames, "_frozen_count", 10)
-    monkeypatch.setattr(frames, "_thawed", False)
-    assert frames._freeze_counted(thawed=True) == 123_456
-    assert listed == [], "a thawed heap is never listed object by object"
-    assert counted == [1]
-    # The ordinary pass keeps counting the few young survivors, no C walk needed.
-    assert frames._freeze_counted() == 123_456 + 9
-    assert listed == [0, 1, 2] and counted == [1]
-
-
-def test_the_freeze_after_a_session_switch_counts_in_c(monkeypatch):
-    """A session switch thaws the heap, then the history paint freezes it: that
-    freeze listed the young generations, the whole heap again (1.0 to 4.0 s in
-    the CLI freeze log of 2026-10-30)."""
-    listed: list[int] = []
-    counted: list[int] = []
-    monkeypatch.setattr(frames.gc, "get_objects", lambda generation=None: listed.append(generation) or [1])
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: counted.append(1) or 3_000_000)
+def test_a_torn_down_chat_brings_the_deep_pass_closer(monkeypatch):
+    """The widgets of a chat frozen while it was shown are garbage once the
+    user switches away: the deep pass then needs half the growth."""
+    clock = _Clock()
+    memory = _Memory(monkeypatch)
+    collector = IdleCollector(clock)
+    calls = _collections(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
-    monkeypatch.setattr(frames.gc, "collect", lambda generation=2: 0)
-    monkeypatch.setattr(frames, "_frozen_count", 2_900_000)
-    monkeypatch.setattr(frames, "_thawed", False)
-    frames.thaw_heap()
-    assert frames.frozen_count() == 0
-    frames.freeze_heap()
-    assert listed == [] and counted == [1]
-    assert frames.frozen_count() == 3_000_000
-    # The next freeze is ordinary again: only the few young survivors are listed.
-    frames.freeze_heap()
-    assert listed == [0, 1, 2] and counted == [1]
-    assert frames.frozen_count() == 3_000_003
+    with terminal_gc_policy():
+        _with_pending(monkeypatch, 0)
+        _something_to_give_back(monkeypatch, memory, growth=frames.DEEP_GC_GROWTH_BYTES // 2)
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert not collector.tick(), "half the growth is not enough on its own"
+        frames.thaw_heap()
+        assert collector.tick() and collector.deep_collections == 1
+    assert calls == [2]
 
 
-def test_collections_never_walk_the_frozen_heap_to_count_it(monkeypatch):
-    """``gc.get_freeze_count()`` after each pass took 2 to 4.5 s in the CLI log."""
+def test_after_a_slow_deep_pass_the_next_one_waits_for_a_longer_absence(monkeypatch):
+    """A deep pass of 75 s on 2026-11-01 22:44: the user who came back to a
+    frozen screen is not made to wait again after the next short break."""
     clock = _Clock()
-    walks: list[int] = []
-    monkeypatch.setattr(frames, "_frozen_count", 7)
-    monkeypatch.setattr(frames, "_thawed", False)
-    monkeypatch.setattr(frames.gc, "get_freeze_count", lambda: walks.append(1) or 7)
+    memory = _Memory(monkeypatch)
     collector = IdleCollector(clock)
     _collections(monkeypatch)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
     monkeypatch.setattr(frames.gc, "unfreeze", lambda: None)
-    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: 5)
-    walks.clear()
     with terminal_gc_policy():
+        _with_pending(monkeypatch, 0)
+        _something_to_give_back(monkeypatch, memory)
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        monkeypatch.setattr(frames.time, "perf_counter", _Timer(0.0, frames.DEEP_GC_SLOW_S))
+        assert collector.tick() and collector.last_deep_s >= frames.DEEP_GC_SLOW_S
+        _something_to_give_back(monkeypatch, memory)
+        collector.note_input()
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert not collector.tick(), "ten minutes away is not enough after a slow pass"
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S * (frames.DEEP_GC_SLOW_ABSENCE - 1)
+        assert collector.tick() and collector.deep_collections == 2
+
+
+def test_no_pass_counts_or_lists_the_heap(monkeypatch):
+    """Counting the frozen set (``gc.get_freeze_count``) or listing objects
+    (``gc.get_objects``) walks the whole heap: up to 3.2 s on each session
+    switch (49 times), 21.7 s right after a deep pass and 3.3 s in an ordinary
+    pass in the CLI freeze log of 2026-11-01/02. Every decision reads the
+    resident memory instead, in O(1)."""
+
+    def walk(*_args: object) -> None:
+        raise AssertionError("walked the heap")
+
+    monkeypatch.setattr(frames.gc, "get_freeze_count", walk)
+    monkeypatch.setattr(frames.gc, "get_objects", walk)
+    clock = _Clock()
+    memory = _Memory(monkeypatch)
+    collector = IdleCollector(clock)
+    calls = _collections(monkeypatch)
+    frozen = _frozen(monkeypatch)
+    thawed: list[str] = []
+    monkeypatch.setattr(frames.gc, "unfreeze", lambda: thawed.append("unfreeze"))
+    with terminal_gc_policy():
+        # A session switch: the old chat torn down, the new one painted and frozen.
+        frames.thaw_heap()
+        assert thawed == [], "a switch never unfreezes: that gave nothing back"
+        frames.freeze_heap()
+        assert calls == [2] and frozen == ["freeze"], "the torn-down chat is collected, not frozen again"
+        # A quiet pass, a pass forced by a long turn, then the deep pass.
         _with_pending(monkeypatch, frames.FULL_GC_DUE)
         clock.now += frames.FULL_GC_QUIET_INPUT_S
         assert collector.tick()
-        assert frames.frozen_count() == 12, "the survivors are added to the count"
-        frames.freeze_heap()
-        assert frames.frozen_count() == 17
-    assert walks == []
+        memory.bytes += frames.FREEZE_AFTER_GROWTH_BYTES
+        collector.note_input()
+        _with_pending(monkeypatch, frames.FULL_GC_DUE + frames.FULL_GC_FORCED)
+        assert collector.tick()
+        memory.bytes += frames.DEEP_GC_GROWTH_BYTES // 2
+        clock.now += frames.DEEP_GC_QUIET_INPUT_S
+        assert collector.tick() and collector.deep_collections == 1
+    assert calls == [2, 2, 1, 2] and thawed == ["unfreeze"] and len(frozen) == 3
 
 
 def test_a_slow_pass_is_logged_with_its_kind(monkeypatch):
     from loguru import logger
 
     clock = _Clock()
+    _Memory(monkeypatch)
     collector = IdleCollector(clock)
-    ticks = iter([0.0, 1.2])
-    monkeypatch.setattr(frames.time, "perf_counter", lambda: next(ticks))
+    monkeypatch.setattr(frames.time, "perf_counter", _Timer(0.0, 1.2))
     monkeypatch.setattr(frames.gc, "collect", lambda generation=2: 0)
     monkeypatch.setattr(frames.gc, "freeze", lambda: None)
-    monkeypatch.setattr(frames, "_unfrozen_objects", lambda: 3)
     seen: list[str] = []
     sink = logger.add(lambda message: seen.append(str(message)), level="WARNING")
     try:
@@ -428,7 +532,7 @@ def test_a_slow_pass_is_logged_with_its_kind(monkeypatch):
     finally:
         logger.remove(sink)
     assert collector.last_pass_s == 1.2
-    assert any("ordinary garbage collection took 1.2s" in line for line in seen)
+    assert any("ordinary garbage collection took 1.2s (resident memory 100 MB)" in line for line in seen)
 
 
 def test_the_idle_tick_never_walks_the_frozen_heap(monkeypatch):
@@ -482,3 +586,102 @@ def test_an_idle_session_checks_its_layout_once_a_second_not_eight_times(tmp_pat
                 app._tick_spinner()
             assert len(placed) == 4, "busy: the layout checks run on every tick"
     asyncio.run(run())
+
+
+async def _long_turn(app, index: int) -> None:
+    """One turn as the agent streams it: text, tool rows with output, an answer."""
+    await app._on_runtime_event(UiTurnStarted(f"question {index}"))
+    for chunk in range(12):
+        await app._on_runtime_event(UiStreamDelta(f"Partie {chunk} de la reponse {index}, avec du **markdown** et `code`. "))
+    await app._on_runtime_event(UiStreamEnd())
+    for call in range(4):
+        call_id = f"t{index}-{call}"
+        if call % 2:
+            name, args = "exec", {"command": f"pytest -q tests/test_{call}.py"}
+        else:
+            name, args = "grep", {"pattern": f"p{call}", "path": "."}
+        await app._on_runtime_event(UiToolEvent(call_id, name, "start", args))
+        if name == "exec":
+            for line in range(8):
+                await app._on_runtime_event(UiToolEvent(call_id, name, "output", output=f"case_{line} ok\n"))
+        await app._on_runtime_event(UiToolEvent(call_id, name, "end", args, result="a.py:1: hit\n" * 40))
+        await app._on_runtime_event(UiProgress(f"Etape {call} terminee."))
+    answer = "\n".join([f"## Resultat {index}", "", *[f"- point {n}: `navin/tui/app.py` ligne {n}" for n in range(20)]])
+    await app._on_runtime_event(UiAssistantMessage(answer))
+    await app._on_runtime_event(UiTurnEnd(latency_ms=1200))
+
+
+def _frozen_garbage_after_long_turns(workspace, turns: int) -> dict:
+    """The long-session scenario below, measured in the calling process.
+
+    Returns the Markdown blocks and the number of objects that only a deep
+    pass could free once the turns are over.
+    """
+    # Freezing on a slow pass is covered above: here no timing decides it.
+    frames.FREEZE_AFTER_PASS_S = 3600.0
+    measured: dict = {}
+
+    async def run():
+        app = make_app(workspace)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app._idle_gc.tick = lambda: False  # the test runs the passes
+            with terminal_gc_policy():
+                gc.collect()
+                frames.freeze_heap()  # the empty chat, as the history paint freezes it
+                for index in range(turns):
+                    await _long_turn(app, index)
+                    await pilot.pause()
+                    await pilot.pause()
+                    app._idle_gc._collect()  # the quiet pass the idle tick runs
+                gc.unfreeze()
+                gc.set_debug(gc.DEBUG_SAVEALL)
+                try:
+                    gc.collect()
+                    left = list(gc.garbage)
+                finally:
+                    gc.set_debug(0)
+                    gc.garbage.clear()
+            measured["markdown"] = [type(item).__qualname__ for item in left if isinstance(item, MarkdownBlock)]
+            measured["left"] = len(left)
+
+    asyncio.run(run())
+    return measured
+
+
+def test_a_long_session_leaves_no_garbage_only_a_deep_pass_could_free(tmp_path):
+    """Freezing after every pass froze the chat's widgets and painted lines
+    while they were shown, and a frozen cycle is never collected: in a probe of
+    the real app half of the frozen set was garbage after 20 turns (26 000
+    objects a turn), and the CLIs of 2026-11-02 reached 2.1 to 11.6 GB. The
+    quiet pass now collects every unfrozen generation.
+
+    Measured in a fresh interpreter, like the CLI process it stands for: in a
+    full test run the render caches of earlier tests' apps die inside the
+    measured turns and were counted as this chat's (8 000 to 121 000 objects,
+    944 in a process of its own)."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    turns = 3
+    repo = Path(__file__).resolve().parents[1]
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from navin.config import loader\n"
+        "loader.set_config_path(Path(sys.argv[1]) / 'config.json')\n"
+        "from tests.test_tui_idle_cost import _frozen_garbage_after_long_turns\n"
+        "print(json.dumps(_frozen_garbage_after_long_turns(Path(sys.argv[1]), int(sys.argv[2]))))\n"
+    )
+    env = {**os.environ, "NAVIN_REASONING_NEGOTIATION_FILE": str(tmp_path / "reasoning_negotiation.json")}
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(turns)],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    measured = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert measured["markdown"] == [], "an answer's Markdown was frozen with the chat, then dropped"
+    assert measured["left"] < 1_000 * turns, f"{measured['left']} objects only a deep pass could free"

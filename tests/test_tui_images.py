@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 from navin.tui import images
@@ -76,6 +77,28 @@ def _fake_helper(mode: str, spawned: list[str]):
 def _windows_clipboard(monkeypatch, helper) -> None:
     monkeypatch.setattr(images, "_HELPER", helper)
     monkeypatch.setattr(images.shutil, "which", lambda name: "/c/powershell.exe" if name == "powershell.exe" else None)
+
+
+def test_without_wsl_interop_powershell_starts_through_init(tmp_path: Path, monkeypatch) -> None:
+    """systemd-binfmt wiped WSLInterop: every PowerShell failed with "Exec
+    format error", so no image could be pasted in the chat."""
+    import subprocess
+
+    from navin.utils import wsl
+
+    powershell = "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+    monkeypatch.setattr(wsl, "is_wsl_guest", lambda: True)
+    monkeypatch.setattr(wsl, "host_interop_available", lambda: False)
+    monkeypatch.setattr(wsl.os, "access", lambda path, mode: path == wsl.WSL_INIT)
+    kept = images._powershell_argv(powershell)
+    assert kept[:3] == ["/init", powershell, "powershell.exe"] and kept[-2] == "-EncodedCommand"
+    seen: list[list[str]] = []
+    answer = subprocess.CompletedProcess([], 0, base64.b64encode(PNG), b"")
+    monkeypatch.setattr(images, "_run", lambda cmd, timeout=8: seen.append(cmd) or answer)
+    target = tmp_path / "shot.png"
+    assert images._save_windows_clipboard_image_once(target, powershell)
+    assert seen[0][:3] == ["/init", powershell, "powershell.exe"] and seen[0][-1] == images._ONCE_SCRIPT
+    assert target.read_bytes() == PNG
 
 
 def test_one_powershell_serves_every_paste(tmp_path: Path, monkeypatch) -> None:

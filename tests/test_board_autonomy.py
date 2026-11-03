@@ -680,6 +680,69 @@ class TestWebApi(unittest.TestCase):
             self.assertIn("autonomy", payload)
             self.assertFalse(payload["autonomy"]["enabled"])
 
+    def test_board_payload_reads_the_board_files_again_only_when_they_change(self):
+        """Every 15 s poll re-read and re-parsed board.json (1 MB for 660 tasks), and
+        the autonomy settings (with a full config parse) twice: /board up to 3.3 s on
+        the Windows desktop with a WSL project."""
+        import os
+
+        from navin.webui import board_api
+        from navin.webui.board_api import board_payload
+
+        class _Scope:
+            def __init__(self, path: str) -> None:
+                self.project_path = path
+
+        def _age(store: ProjectBoardStore) -> None:
+            # Older than the racy window: a write in the same tick cannot hide.
+            for path in (store.board_path, store.milestones_path, store.activity_path):
+                if path.exists():
+                    old = path.stat().st_mtime_ns - 10_000_000_000
+                    os.utime(path, ns=(old, old))
+
+        real_payload = ProjectBoardStore.payload
+        real_state = autonomy_mod.autonomy_state
+        reads: list[str] = []
+        states: list[str] = []
+
+        def _payload(store, **kwargs):
+            reads.append(str(store.project_path))
+            return real_payload(store, **kwargs)
+
+        def _state(project_path):
+            states.append(str(project_path))
+            return real_state(project_path)
+
+        with TemporaryDirectory() as tmp:
+            store = ProjectBoardStore(tmp)
+            store.create_task(title="first", actor="aymen", actor_type="human")
+            board_payload(_Scope(tmp))  # first sight: the project scaffold is written
+            _age(store)
+            board_api._PAYLOAD_CACHE.clear()
+            with (
+                patch.object(ProjectBoardStore, "payload", autospec=True, side_effect=_payload),
+                patch.object(autonomy_mod, "autonomy_state", side_effect=_state),
+            ):
+                first = board_payload(_Scope(tmp), "websocket:a")
+                second = board_payload(_Scope(tmp), "websocket:b")
+                self.assertEqual(len(reads), 1, "unchanged files: served from memory")
+                self.assertEqual(len(states), 2, "one autonomy read per poll, not two")
+                self.assertEqual([t["title"] for t in second["tasks"]], ["first"])
+                self.assertIsNot(first, second, "per-session keys never leak between polls")
+                # A store write is seen on the very next poll.
+                store.create_task(title="second", actor="aymen", actor_type="human")
+                third = board_payload(_Scope(tmp))
+                self.assertEqual([t["title"] for t in third["tasks"]], ["first", "second"])
+                self.assertEqual(len(reads), 2)
+                # Written a moment ago: read again until the racy window has passed.
+                board_payload(_Scope(tmp))
+                self.assertEqual(len(reads), 3)
+                _age(store)
+                board_payload(_Scope(tmp))
+                board_payload(_Scope(tmp))
+                self.assertEqual(len(reads), 4)
+            board_api._PAYLOAD_CACHE.clear()
+
     def test_board_payload_scaffolds_a_project_once_per_process(self):
         """The panel polls /board every 15 s; the scaffold walk cost 12-27 s per poll
         over a WSL share (gateway.log). It runs on first sight of a project only."""

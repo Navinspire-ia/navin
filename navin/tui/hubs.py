@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -908,18 +907,17 @@ class AccountScreen(ModalScreen[str | None]):
         return copied
 
     @on(Button.Pressed, "#signin")
-    def _signin(self) -> None:
+    async def _signin(self) -> None:
+        from navin.utils.open_browser import open_external_url, unavailable_reason
+
         try:
             url = self._ensure_connect_url()
         except Exception as exc:  # noqa: BLE001
             self._status(f"[$error]{escape(str(exc))}[/]")
             return
-        opened = False
-        try:
-            opened = bool(webbrowser.open(url))
-        except Exception:  # noqa: BLE001
-            opened = False
-        hint = "Browser opened." if opened else "Could not open the browser."
+        # Off the UI thread: the Windows openers under WSL take a second or two.
+        opened = await asyncio.to_thread(open_external_url, url)
+        hint = "Browser opened." if opened else escape(unavailable_reason(url))
         self._status(
             f"{hint}\n[b]{escape(url)}[/b]\n"
             "If the browser did not open: press C or Copy link.\n"

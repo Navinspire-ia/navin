@@ -132,3 +132,26 @@ def test_a_skill_lookup_is_checked_once_then_trusted_for_a_few_seconds(tmp_path,
     assert loader._skill_path("deploy") is None
     clear_home_skill_dir_cache()
     clear_skills_index_cache()
+
+
+def test_a_cli_loop_warms_its_first_turn_context_and_survives_a_failing_piece(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from navin.agent import project_runbook
+    from navin.agent.loop import AgentLoop
+    from navin.agent.tools import metagraph
+
+    built = []
+    monkeypatch.setattr(project_runbook, "project_runbook", lambda root: built.append(("runbook", root)) or [])
+    monkeypatch.setattr(metagraph, "_cached_runtime_context_lines", lambda root: built.append(("map", root)) or [])
+
+    def failing_suggest(text):
+        built.append(("skills", text))
+        raise RuntimeError("index broken")
+
+    skill_tool = SimpleNamespace(_suggest_for_request=failing_suggest)
+    fake = SimpleNamespace(workspace=tmp_path, tools=SimpleNamespace(get=lambda name: skill_tool))
+    AgentLoop._prewarm_workspace_context(fake)
+    # A broken piece is logged and the others are still built, for this project.
+    assert [kind for kind, _ in built] == ["skills", "runbook", "map"]
+    assert all(arg == tmp_path for kind, arg in built if kind != "skills")

@@ -976,6 +976,201 @@ class PanelPayloadTest(unittest.TestCase):
         self.assertEqual(ci["request_label"], "merge request")
         self.assertEqual(ci["checks"]["state"], "unknown")
 
+    def test_view_stops_at_the_first_git_that_gave_no_answer(self) -> None:
+        # Desktop log: /github/pr took 20.1 s at p50, a `git status` and then a
+        # `git remote get-url` each paying the 10 s timeout through wsl.exe.
+        from navin.webui import project_search
+        from navin.webui.github_pr_api import github_pr_view_payload
+        from navin.webui.project_search import ProjectSearchError
+
+        hung = subprocess.TimeoutExpired(["git", "status"], project_search._GIT_TIMEOUT_S)
+        with (
+            patch.object(project_search, "_git_argv", return_value=["git", "-C", str(self.root)]),
+            patch.object(project_search.subprocess, "run", side_effect=hung) as run,
+            patch(
+                "navin.webui.github_pr_api.forge_context",
+                side_effect=AssertionError("went on to `git remote get-url`"),
+            ),
+        ):
+            with self.assertRaises(ProjectSearchError) as ctx:
+                github_pr_view_payload(_scope(self.root))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][3:5], ["status", "--branch"])
+        self.assertEqual(ctx.exception.status, 504)
+        self.assertIn("git status gave no answer", ctx.exception.message)
+
+    def test_branch_state_skips_the_stash_list_after_a_failed_status(self) -> None:
+        from navin.webui import project_search
+
+        hung = subprocess.TimeoutExpired(["git", "status"], project_search._GIT_TIMEOUT_S)
+        failed = subprocess.CompletedProcess(["git"], 128, stdout="", stderr="not a git repository")
+        for outcome in (hung, failed):
+            with (
+                patch.object(project_search, "_git_argv", return_value=["git", "-C", str(self.root)]),
+                patch.object(project_search.subprocess, "run", side_effect=[outcome]) as run,
+            ):
+                state = project_search._branch_state(self.root)
+            self.assertEqual(state["branch"], "")
+            self.assertEqual(run.call_count, 1, f"a second git ran after {outcome!r}")
+
+
+class _PrRouteHandler:
+    """The PR routes of the gateway HTTP handler, with a fake workspace lookup."""
+
+    def __init__(self, root: Path) -> None:
+        from types import SimpleNamespace
+
+        from navin.webui.route_cache import CoalescingCache
+        from navin.webui.ws_http import GatewayHTTPHandler
+
+        self.route_cache = CoalescingCache()
+        scope = _scope(root)
+        self.workspaces = SimpleNamespace(scope_for_session_key=lambda _key: scope)
+        for name in (
+            "_handle_github_pr", "_handle_github_pr_create", "_handle_git_sync",
+            "_handle_git_branch", "_forget_forge_views", "_session_scope",
+        ):
+            setattr(self, name, getattr(GatewayHTTPHandler, name).__get__(self))
+
+    def check_api_token(self, _request: Any) -> bool:
+        return True
+
+
+class GitMachineRouteCacheTest(unittest.TestCase):
+    """/api/webui/git/machine is coalesced and dropped by the fixes."""
+
+    def test_polls_share_one_report_and_a_fix_drops_it(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from navin.webui import git_setup
+        from navin.webui.route_cache import CoalescingCache
+        from navin.webui.ws_http import GatewayHTTPHandler
+
+        handler = SimpleNamespace(
+            route_cache=CoalescingCache(),
+            check_api_token=lambda _request: True,
+            _git_setup_root=lambda _query: "/p",
+        )
+        route = GatewayHTTPHandler._handle_webui_git_setup.__get__(handler)
+        reports: list[int] = []
+
+        def report(_root: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertTrue(kwargs.get("background"), "the poll must be a background read")
+            reports.append(1)
+            return {"n": len(reports)}
+
+        async def scenario() -> None:
+            request = SimpleNamespace(path="/api/webui/git/machine?session=s")
+            first, second = await asyncio.gather(route(request, "machine"), route(request, "machine"))
+            self.assertEqual(first.body, second.body)
+            self.assertEqual(len(reports), 1)
+            with patch.object(git_setup, "set_identity", return_value={"ok": True}):
+                await route(SimpleNamespace(path="/api/webui/git/identity?name=a&email=a@b.c"), "identity")
+            await route(request, "machine")
+            self.assertEqual(len(reports), 2)
+
+        with patch.object(git_setup, "machine_report", side_effect=report):
+            asyncio.run(scenario())
+
+
+class PrViewRouteCacheTest(unittest.TestCase):
+    """/github/pr is coalesced per project and dropped by the routes that change it."""
+
+    KEY = "websocket%3Achat-1"
+
+    def setUp(self) -> None:
+        import threading
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve()
+        self.handler = _PrRouteHandler(self.root)
+        self.release = threading.Event()
+        self.calls = 0
+        self.lock = threading.Lock()
+
+    def _view(self, _scope_arg: Any) -> dict[str, Any]:
+        with self.lock:
+            self.calls += 1
+            number = self.calls
+        self.release.wait(5)
+        return {"available": True, "branch": "main", "pr": None, "detail": "", "n": number}
+
+    def _get(self, path: str) -> Any:
+        from types import SimpleNamespace
+
+        route = path.split("?", 1)[0].rsplit("/", 1)[-1]
+        method = {
+            "pr": self.handler._handle_github_pr,
+            "git-sync": self.handler._handle_git_sync,
+            "git-branch": self.handler._handle_git_branch,
+        }[route]
+        return method(SimpleNamespace(path=f"/api/sessions/{self.KEY}/{path}"), self.KEY)
+
+    @staticmethod
+    def _body(response: Any) -> dict[str, Any]:
+        import json
+
+        return json.loads(response.body)
+
+    def test_a_retry_joins_the_call_in_flight_and_a_push_drops_the_answer(self) -> None:
+        import asyncio
+
+        async def scenario() -> None:
+            first = asyncio.create_task(self._get("github/pr"))
+            await asyncio.sleep(0.05)
+            # The UI gave up after 20 s and retried: no second git status.
+            retry = asyncio.create_task(self._get("github/pr"))
+            await asyncio.sleep(0.05)
+            self.assertEqual(self.calls, 1)
+            self.release.set()
+            answers = [self._body(r) for r in await asyncio.gather(first, retry)]
+            self.assertEqual([a["n"] for a in answers], [1, 1])
+            # Within the TTL the next poll is served without any git.
+            self.assertEqual(self._body(await self._get("github/pr"))["n"], 1)
+            self.assertEqual(self.calls, 1)
+
+            # A push (sync) changes the PR checks: the next poll asks again.
+            with patch("navin.webui.ws_http.git_sync_payload", return_value={"ok": True}):
+                await self._get("git-sync")
+            self.assertEqual(self._body(await self._get("github/pr"))["n"], 2)
+            # Listing branches changes nothing; switching does.
+            with patch("navin.webui.ws_http.git_branch_payload", return_value={"ok": True}):
+                await self._get("git-branch?op=list")
+                self.assertEqual(self._body(await self._get("github/pr"))["n"], 2)
+                await self._get("git-branch?op=checkout&name=feature")
+            self.assertEqual(self._body(await self._get("github/pr"))["n"], 3)
+
+        with patch("navin.webui.ws_http.github_pr_view_payload", side_effect=self._view):
+            asyncio.run(scenario())
+
+    def test_an_unanswered_git_is_an_error_and_is_not_kept(self) -> None:
+        import asyncio
+
+        from navin.webui.project_search import ProjectSearchError
+
+        outcomes: list[Any] = [
+            ProjectSearchError("git status gave no answer in 10 s", status=504),
+            {"available": True, "branch": "main", "pr": None, "detail": ""},
+        ]
+
+        def view(_scope_arg: Any) -> dict[str, Any]:
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        async def scenario() -> None:
+            failed = await self._get("github/pr")
+            self.assertEqual(failed.status_code, 504)
+            ok = await self._get("github/pr")
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(self._body(ok)["branch"], "main")
+
+        with patch("navin.webui.ws_http.github_pr_view_payload", side_effect=view):
+            asyncio.run(scenario())
+
 
 # ---------------------------------------------------------------------------
 # Push failure wording

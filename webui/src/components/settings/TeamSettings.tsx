@@ -10,24 +10,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown, Copy, Loader2, Mail, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Copy, ImagePlus, Loader2, Mail, Plus, RotateCcw, Search, Trash2, Volume2, X } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TeamBotAvatar } from "@/components/team/TeamBotAvatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { fetchCollabSettings, saveCollabSettings, sendCollabTestEmail, setCollabEnabled } from "@/lib/api";
+import { fetchCollabSettings, fetchTeammateSpeech, saveCollabSettings, sendCollabTestEmail, setCollabEnabled } from "@/lib/api";
 import type {
   CollabCatalog,
   CollabPayload,
   CollabSettings,
+  TeamGender,
   TeamGroup,
   TeamMember,
   TeamPattern,
   TeamRole,
   TeamSandbox,
 } from "@/lib/team";
+import { setTeamPhotos } from "@/lib/team-photos";
 import { cn } from "@/lib/utils";
 
 const MAX_PROMPT = 8000;
@@ -35,6 +37,30 @@ const SWATCHES = [
   "#6d5bd0", "#2f7de1", "#1f9d74", "#d1495b", "#d4892a",
   "#3a9fb5", "#8a6fdf", "#c2577f", "#5f8f3e", "#64748b",
 ];
+const PHOTO_SIZE = 256;
+const PHOTO_MAX_BYTES = 256 * 1024;
+
+/** A picked picture as a square 256 px WebP (JPEG where WebP is not made). */
+export async function squarePhoto(file: Blob): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const side = Math.min(bitmap.width, bitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = PHOTO_SIZE;
+    canvas.height = PHOTO_SIZE;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("This browser cannot resize pictures");
+    context.drawImage(
+      bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, PHOTO_SIZE, PHOTO_SIZE,
+    );
+    let url = canvas.toDataURL("image/webp", 0.86);
+    if (!url.startsWith("data:image/webp")) url = canvas.toDataURL("image/jpeg", 0.86);
+    if ((url.length - url.indexOf(",") - 1) * 0.75 > PHOTO_MAX_BYTES) throw new Error("The picture is too big");
+    return url;
+  } finally {
+    bitmap.close();
+  }
+}
 
 const PATTERNS: Array<{ key: TeamPattern; label: string; help: string }> = [
   { key: "dev_tester", label: "Developer and Tester", help: "One builds, one tests and sends failures with evidence back until green." },
@@ -273,7 +299,7 @@ function ModelPicker({
 }
 
 export function TeamSettings({ token, onChanged }: { token: string; onChanged?: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const tx = useCallback((key: string, fallback: string, values?: Record<string, unknown>) =>
     String(t(`settings.team.${key}`, { defaultValue: fallback, ...(values ?? {}) })), [t]);
 
@@ -295,9 +321,15 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
   const [emailStatus, setEmailStatus] = useState<{ ready: boolean; hint: string } | null>(null);
   const [testingEmail, setTestingEmail] = useState(false);
   const [emailResult, setEmailResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [voiceTest, setVoiceTest] = useState<{ id: string; playing: boolean; text: string; failed: boolean } | null>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => { voiceAudioRef.current?.pause(); }, []);
 
   const apply = useCallback((payload: CollabPayload, keepSelection = true) => {
     setCatalog(payload.catalog);
+    setTeamPhotos(payload.photos);
     if (payload.email) setEmailStatus(payload.email);
     setSaved(payload.collab);
     setDraft(payload.collab);
@@ -338,6 +370,46 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
   const update = (patch: Partial<CollabSettings>) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   const updateMember = (id: string, patch: Partial<TeamMember>) =>
     setDraft((prev) => prev ? { ...prev, members: prev.members.map((m) => (m.id === id ? { ...m, ...patch } : m)) } : prev);
+
+  const pickPhoto = async (memberId: string, file: File | undefined) => {
+    if (!file) return;
+    setPhotoError(null);
+    try {
+      updateMember(memberId, { photo: await squarePhoto(file) });
+    } catch (err) {
+      console.error("Could not use this picture", err);
+      setPhotoError(tx("fields.photoError", "This picture cannot be used. Pick a PNG, JPEG or WebP image."));
+    }
+  };
+
+  // Hear the teammate as Live will: its own voice, or one of its gender.
+  const testVoice = async (member: TeamMember) => {
+    voiceAudioRef.current?.pause();
+    setVoiceTest({ id: member.id, playing: true, text: "", failed: false });
+    try {
+      const clip = await fetchTeammateSpeech(token, {
+        text: tx("fields.voiceSample", "Hello, I am {{name}}, {{title}}. Ready when you are.", {
+          name: member.name, title: member.title || tx(`roles.${member.role}`, member.role),
+        }),
+        key: member.id,
+        gender: member.gender ?? "",
+        voice: member.voice ?? "",
+        lang: i18n.resolvedLanguage || i18n.language || "",
+        // The sample already says who speaks.
+        name: "",
+      });
+      const audio = new Audio(`data:${clip.mime};base64,${clip.audio_base64}`);
+      voiceAudioRef.current = audio;
+      const used = tx("fields.voiceUsed", "Voice: {{voice}}", { voice: clip.voice });
+      const ended = () => setVoiceTest((current) => (current?.id === member.id ? { ...current, playing: false } : current));
+      audio.onended = ended;
+      audio.onerror = ended;
+      setVoiceTest({ id: member.id, playing: true, text: used, failed: false });
+      await audio.play();
+    } catch (err) {
+      setVoiceTest({ id: member.id, playing: false, text: errorText(err), failed: true });
+    }
+  };
 
   const roleDefaults = (role: TeamRole) => catalog?.roles.find((r) => r.key === role);
 
@@ -781,7 +853,7 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
                   </span>
                   <span className="flex items-center -space-x-1.5 rtl:space-x-reverse">
                     {people.slice(0, 6).map((m) => (
-                      <TeamBotAvatar key={m.id} avatar={m.avatar} color={m.color} size={22} className="ring-2 ring-card" title={m.name} />
+                      <TeamBotAvatar key={m.id} avatar={m.avatar} color={m.color} photo={m.photo} seed={m.id} gender={m.gender} size={22} className="ring-2 ring-card" title={m.name} />
                     ))}
                     {people.length === 0 ? (
                       <span className="text-[11.5px] text-muted-foreground">{tx("teamEmpty", "No teammate")}</span>
@@ -858,7 +930,7 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
                             }
                             className="h-3.5 w-3.5 accent-[#1d6af0]"
                           />
-                          <TeamBotAvatar avatar={m.avatar} color={m.color} size={26} />
+                          <TeamBotAvatar avatar={m.avatar} color={m.color} photo={m.photo} seed={m.id} gender={m.gender} size={26} />
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-medium text-foreground">{m.name}</span>
                             <span className="block truncate text-[11.5px] text-muted-foreground">
@@ -901,38 +973,44 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
           <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
             {draft.members.map((member) => (
-              <button
+              // The switch sits beside the row button, not inside it: a button
+              // inside a button is invalid HTML and React warns about it.
+              <div
                 key={member.id}
-                type="button"
-                onClick={() => setSelectedId(member.id)}
-                aria-current={member.id === selectedId ? "true" : undefined}
                 className={cn(
-                  "flex min-w-[13rem] items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-start transition-colors lg:min-w-0",
+                  "flex min-w-[13rem] items-center rounded-2xl border transition-colors lg:min-w-0",
                   member.id === selectedId
                     ? "border-[#1d6af0]/45 bg-[#1d6af0]/[0.06]"
                     : "border-border/50 bg-card/70 hover:bg-muted/40",
                   !member.enabled && "opacity-60",
                 )}
               >
-                <TeamBotAvatar avatar={member.avatar} color={member.color} size={34} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px] font-medium text-foreground">{member.name || tx("unnamed", "Unnamed")}</span>
-                  <span className="block truncate text-[11.5px] text-muted-foreground">
-                    {member.title || tx(`roles.${member.role}`, member.role)}
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(member.id)}
+                  aria-current={member.id === selectedId ? "true" : undefined}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl py-2.5 pe-2.5 ps-3 text-start"
+                >
+                  <TeamBotAvatar avatar={member.avatar} color={member.color} photo={member.photo} seed={member.id} gender={member.gender} size={34} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-medium text-foreground">{member.name || tx("unnamed", "Unnamed")}</span>
+                    <span className="block truncate text-[11.5px] text-muted-foreground">
+                      {member.title || tx(`roles.${member.role}`, member.role)}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground/80">
+                      {presetLabel(member.model_preset)}
+                      {member.reasoning_effort ? ` · ${tx(`efforts.${member.reasoning_effort}`, member.reasoning_effort)}` : ""}
+                    </span>
                   </span>
-                  <span className="block truncate text-[11px] text-muted-foreground/80">
-                    {presetLabel(member.model_preset)}
-                    {member.reasoning_effort ? ` · ${tx(`efforts.${member.reasoning_effort}`, member.reasoning_effort)}` : ""}
-                  </span>
-                </span>
-                <span onClick={(event) => event.stopPropagation()} className="shrink-0">
+                </button>
+                <span className="shrink-0 pe-3">
                   <Switch
                     checked={member.enabled}
                     onChange={(next) => updateMember(member.id, { enabled: next })}
                     label={tx("memberEnabled", "{{name}} available", { name: member.name })}
                   />
                 </span>
-              </button>
+              </div>
             ))}
             {draft.members.length === 0 ? (
               <p className="px-1 text-[12.5px] text-muted-foreground">{tx("empty", "No teammate yet. Add one or restore the default team.")}</p>
@@ -942,7 +1020,7 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
           {selected ? (
             <Group>
               <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-5">
-                <TeamBotAvatar avatar={selected.avatar} color={selected.color} size={44} />
+                <TeamBotAvatar avatar={selected.avatar} color={selected.color} photo={selected.photo} seed={selected.id} gender={selected.gender} size={44} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[15px] font-semibold text-foreground">{selected.name || tx("unnamed", "Unnamed")}</div>
                   <div className="truncate text-[12px] text-muted-foreground">
@@ -988,8 +1066,81 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
                 <Field label={tx("fields.specialty", "Specialty")} className="sm:col-span-2">
                   <Input value={selected.specialty} maxLength={200} placeholder={tx("fields.specialtyPlaceholder", "e.g. Payments, React performance, OAuth")} onChange={(e) => updateMember(selected.id, { specialty: e.target.value })} className="h-9 rounded-full px-4 text-[13px]" />
                 </Field>
+                <Field label={tx("fields.gender", "Gender")} hint={tx("fields.genderHint", "Live gives the teammate a voice of the same gender.")}>
+                  <select
+                    value={selected.gender ?? ""}
+                    onChange={(e) => updateMember(selected.id, { gender: e.target.value as TeamGender })}
+                    className={selectClass}
+                    aria-label={tx("fields.gender", "Gender")}
+                  >
+                    <option value="">{tx("fields.genderUnset", "Not set")}</option>
+                    <option value="female">{tx("fields.genderFemale", "Woman")}</option>
+                    <option value="male">{tx("fields.genderMale", "Man")}</option>
+                  </select>
+                </Field>
+                <Field
+                  label={tx("fields.voice", "Live voice")}
+                  hint={voiceTest?.id === selected.id && voiceTest.text
+                    ? voiceTest.text
+                    : tx("fields.voiceHint", "Empty: a voice of its gender from your speech settings.")}
+                >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={selected.voice ?? ""}
+                      maxLength={80}
+                      placeholder={tx("fields.voicePlaceholder", "Automatic")}
+                      onChange={(e) => updateMember(selected.id, { voice: e.target.value })}
+                      aria-label={tx("fields.voice", "Live voice")}
+                      className={cn(
+                        "h-9 rounded-full px-4 text-[13px]",
+                        voiceTest?.id === selected.id && voiceTest.failed && "border-destructive/60",
+                      )}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 rounded-full"
+                      onClick={() => void testVoice(selected)}
+                      disabled={voiceTest?.id === selected.id && voiceTest.playing}
+                    >
+                      {voiceTest?.id === selected.id && voiceTest.playing
+                        ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                        : <Volume2 className="me-1.5 h-3.5 w-3.5" aria-hidden />}
+                      {tx("fields.voiceTest", "Listen")}
+                    </Button>
+                  </div>
+                </Field>
 
                 <div className="sm:col-span-2">
+                  <span className="mb-1.5 block text-[12px] font-medium text-muted-foreground">{tx("fields.photo", "Photo")}</span>
+                  <div className="mb-4 flex flex-wrap items-center gap-3">
+                    <TeamBotAvatar avatar={selected.avatar} color={selected.color} photo={selected.photo} seed={selected.id} gender={selected.gender} size={56} />
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      data-testid="teammate-photo-input"
+                      onChange={(e) => {
+                        void pickPhoto(selected.id, e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => photoInputRef.current?.click()}>
+                      <ImagePlus className="me-1.5 h-3.5 w-3.5" aria-hidden />
+                      {selected.photo ? tx("fields.photoChange", "Change photo") : tx("fields.photoUpload", "Upload a photo")}
+                    </Button>
+                    {selected.photo ? (
+                      <Button type="button" size="sm" variant="ghost" className="rounded-full" onClick={() => updateMember(selected.id, { photo: "" })}>
+                        {tx("fields.photoRemove", "Remove photo")}
+                      </Button>
+                    ) : null}
+                    <span className="min-w-[12rem] flex-1 text-[11.5px] leading-5 text-muted-foreground">
+                      {tx("fields.photoHint", "Shown next to the name in the chat and the team view. Saved with the team.")}
+                    </span>
+                  </div>
+                  {photoError ? <p className="-mt-2 mb-3 text-[12px] text-destructive" role="alert">{photoError}</p> : null}
                   <span className="mb-1.5 block text-[12px] font-medium text-muted-foreground">{tx("fields.avatar", "Avatar")}</span>
                   <div className="flex flex-wrap items-center gap-2">
                     {catalog.avatars.map((avatar) => (
@@ -998,13 +1149,13 @@ export function TeamSettings({ token, onChanged }: { token: string; onChanged?: 
                         type="button"
                         onClick={() => updateMember(selected.id, { avatar })}
                         aria-pressed={selected.avatar === avatar}
-                        aria-label={avatar}
+                        aria-label={avatar === "person" ? tx("fields.avatarPerson", "Drawn face") : avatar}
                         className={cn(
                           "rounded-full p-0.5 ring-offset-2 ring-offset-background transition-shadow",
                           selected.avatar === avatar ? "ring-2 ring-[#1d6af0]" : "hover:ring-1 hover:ring-border",
                         )}
                       >
-                        <TeamBotAvatar avatar={avatar} color={selected.color} size={34} />
+                        <TeamBotAvatar avatar={avatar} color={selected.color} seed={selected.id} gender={selected.gender} size={34} />
                       </button>
                     ))}
                   </div>

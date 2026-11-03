@@ -160,8 +160,20 @@ def _run(
     *args: str,
     input_text: str | None = None,
     timeout: float = _GIT_TIMEOUT_S,
+    background: bool = False,
 ) -> subprocess.CompletedProcess[str] | None:
+    """One git (or helper) call; None when it could not run or gave no answer.
+
+    ``background`` (the machine report a panel polls) refuses at once while
+    WSL is down or just hung a liveness check, and raises instead of returning
+    None when the call gave no answer: "git is missing" would be the wrong
+    verdict for a WSL that does not start sessions.
+    """
     argv_full = [*argv, *args]
+    if background:
+        refused = wsl_route.background_refusal(argv_full)
+        if refused is not None:
+            raise GitSetupError(refused, status=503, code="wsl_unavailable")
     try:
         completed = subprocess.run(  # argv list, never a shell string
             argv_full,
@@ -175,8 +187,12 @@ def _run(
             env=git_credentials.apply_noninteractive(dict(os.environ)),
             **no_window_kwargs(),
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         wsl_route.note_launch(argv_full, timed_out=True)
+        if background:
+            raise GitSetupError(
+                f"git gave no answer in {int(timeout)} s", status=504, code="git_timeout",
+            ) from exc
         return None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
@@ -471,12 +487,19 @@ def _check(check_id: str, level: str, params: dict[str, Any] | None = None, fix:
     return {"id": check_id, "level": level, "params": params or {}, "fix": fix}
 
 
-def machine_report(root: Path | str | None = None, *, config: Any | None = None) -> dict[str, Any]:
+def machine_report(
+    root: Path | str | None = None, *, config: Any | None = None, background: bool = False,
+) -> dict[str, Any]:
     """Everything the Git settings and the Dev Git panel show about this machine.
 
     ``checks`` is the ordered list the UI renders: ``{id, level, params, fix}``
     with ``level`` in ok / info / warn / error and ``fix`` either a command to
     copy for this OS or an action the engine can run.
+
+    ``background`` is the panel poll (/api/webui/git/machine): its first git
+    call fails at once with :class:`GitSetupError` while WSL is down or just
+    hung a liveness check, or when it gives no answer, instead of every
+    following call paying the 10 s timeout (31 s seen in the desktop log).
     """
     host = platform_info()
     target = resolve_target(root)
@@ -487,7 +510,7 @@ def machine_report(root: Path | str | None = None, *, config: Any | None = None)
     version_text: str | None = None
     version: tuple[int, int, int] | None = None
     if target.argv is not None:
-        out = _run(target.argv, "--version")
+        out = _run(target.argv, "--version", background=background)
         if out is not None and out.returncode == 0:
             version_text = (out.stdout or "").strip().removeprefix("git version ").strip() or None
             version = parse_version(version_text or "")

@@ -34,6 +34,11 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+# Loaded with the composer, not on the first paste: a CLI left open while
+# Navin's files change on disk would load the newer files against the
+# modules it started with and close on the ImportError.
+import navin.tui.clipboard as tui_clipboard
+import navin.tui.images as tui_images
 from navin.providers.model_names import bedrock_display_name, is_bedrock_model_id
 from navin.tui.brand import MARK, tide_text
 from navin.tui.copy_chip import CopyChip
@@ -4304,6 +4309,8 @@ class ComposerMeta(Horizontal):
     ComposerMeta #meta-reasoning.-lvl-4:light, ComposerMeta #meta-effort.-lvl-4:light { color: #705393; }
     ComposerMeta #meta-reasoning.-glow { text-style: bold; }
     ComposerMeta #meta-reasoning.-lvl-0.-glow { color: $primary; }
+    /* This chat's team when Collaboration Mode is on (/team). */
+    ComposerMeta #meta-team { width: auto; height: 1; padding-left: 2; color: $accent; }
     """
 
     #: Bars per effort level; Auto shows none.
@@ -4329,6 +4336,9 @@ class ComposerMeta(Horizontal):
         yield Static("", id="meta-model", markup=True)
         yield Static("Auto", id="meta-reasoning", markup=False)
         yield Static("", id="meta-effort", markup=False)
+        team = Static("", id="meta-team", markup=False)
+        team.display = False
+        yield team
 
     def _effort_level(self) -> int:
         return self.EFFORT_LEVELS.get((self._effort or "").lower(), 0)
@@ -4440,6 +4450,14 @@ class ComposerMeta(Horizontal):
             live_w.update(label)
         live_w.set_class(on, "-on")
         live_w.tooltip = "Hang up the Live call (/live)" if on else "Start a Live voice call (/live)"
+
+    def set_team(self, label: str) -> None:
+        """``Team: Dev`` while Collaboration Mode works in this chat; hidden otherwise."""
+        team_w = self.query_one("#meta-team", Static)
+        if team_w.content != label:
+            team_w.update(label)
+        team_w.display = bool(label)
+        team_w.tooltip = "Team mode for this chat (/team)" if label else None
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
@@ -4722,23 +4740,19 @@ class Composer(TextArea):
 
     async def _attach_clipboard_image(self, generation: int, snapshot: object) -> bool | None:
         """True when attached, False when no image, None when the prompt moved on."""
-        from navin.tui.images import image_token, save_clipboard_image
-
         try:
-            image = await asyncio.to_thread(save_clipboard_image)
+            image = await asyncio.to_thread(tui_images.save_clipboard_image)
         except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
             image = None
         if generation != self._paste_generation or snapshot != (self.text, self.selection):
             return None
         if image is None:
             return False
-        self.insert(image_token(image) + " ")
+        self.insert(tui_images.image_token(image) + " ")
         self.notify("Image attached - the model will see it.", timeout=3)
         return True
 
     async def _paste_from_clipboard(self, prefer_image: bool = False) -> None:
-        from navin.tui.clipboard import pick_paste_text, read_clipboard
-
         if not prefer_image and getattr(self.app, "_copy_running", False) and self.app.clipboard:
             self._insert_paste(self.app.clipboard)
             return
@@ -4751,18 +4765,18 @@ class Composer(TextArea):
                 return
             tried_image = True
         try:
-            os_text = await asyncio.to_thread(read_clipboard)
+            os_text = await asyncio.to_thread(tui_clipboard.read_clipboard)
         except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
             os_text = ""
         if generation != self._paste_generation or snapshot != (self.text, self.selection):
             return
-        text = pick_paste_text(self.app.clipboard, os_text) if os_text else ""
+        text = tui_clipboard.pick_paste_text(self.app.clipboard, os_text) if os_text else ""
         if not text:
             if not tried_image:
                 attached = await self._attach_clipboard_image(generation, snapshot)
                 if attached is not False:
                     return
-            text = pick_paste_text(self.app.clipboard, "")
+            text = tui_clipboard.pick_paste_text(self.app.clipboard, "")
         if text:
             self._insert_paste(text)
         else:

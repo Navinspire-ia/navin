@@ -265,10 +265,13 @@ def write_autonomy(
 
 
 def _board_git_config() -> Any:
+    # Read on every /board poll: the shared parse per config file version, not
+    # a full read, decrypt and validate each time (~23 ms here, more on the
+    # Windows desktop). Only attributes are read, never written.
     try:
-        from navin.config.loader import load_config
+        from navin.config.loader import load_config_cached
 
-        return load_config().tools.board_git
+        return load_config_cached().tools.board_git
     except Exception:
         return None
 

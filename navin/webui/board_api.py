@@ -10,6 +10,7 @@ the Evolutions view.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -100,17 +101,65 @@ def board_payload(
     session_key: str | None = None,
 ) -> dict[str, Any]:
     store = _store_for_scope(scope)
-    issues_sync = _auto_import_issues(store)
-    payload = _with_session_plan(store.payload(), session_key, store=store)
+    # One read of the autonomy settings per poll: each read is a settings.json
+    # read plus a full config parse; the payload used to do both twice.
     try:
         from navin.board.autonomy import autonomy_state
 
-        payload["autonomy"] = autonomy_state(store.project_path)
+        autonomy = autonomy_state(store.project_path)
     except Exception:
-        payload["autonomy"] = None
+        autonomy = None
+    issues_sync = _auto_import_issues(store, state=autonomy) if autonomy is not None else None
+    payload = _with_session_plan(_store_payload(store), session_key, store=store)
+    payload["autonomy"] = autonomy
     if issues_sync is not None:
         payload["issues_sync"] = issues_sync
     return payload
+
+
+# The store payload per project, reused while its three files are unchanged.
+# The Code panel polls /board every 15 s; each poll re-read and re-parsed
+# board.json (1 MB for 660 tasks), the activity log and the milestones, over
+# the 9P bridge for a WSL project seen from the Windows desktop (/board up to
+# 3.3 s in desktop-engine.log, 2026-11-01). Every store write replaces the
+# file (new inode) or appends to it (new size), so the signature changes;
+# a file written in the last two seconds is read again anyway, in case a
+# second write landed in the same timestamp tick.
+_PAYLOAD_CACHE: dict[str, tuple[tuple, dict[str, Any]]] = {}
+_PAYLOAD_CACHE_LOCK = threading.Lock()
+_PAYLOAD_CACHE_MAX = 32
+_RACY_WINDOW_NS = 2_000_000_000
+
+
+def _file_signature(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
+
+
+def _store_payload(store: ProjectBoardStore) -> dict[str, Any]:
+    """``store.payload()``, served from memory while the board files are unchanged."""
+    signature = tuple(
+        _file_signature(path)
+        for path in (store.board_path, store.milestones_path, store.activity_path)
+    )
+    now_ns = time.time_ns()
+    racy = any(sig is not None and now_ns - sig[0] < _RACY_WINDOW_NS for sig in signature)
+    key = str(store.project_path)
+    with _PAYLOAD_CACHE_LOCK:
+        hit = _PAYLOAD_CACHE.get(key)
+    if hit is not None and hit[0] == signature and not racy:
+        # Callers add per-session keys: never hand out the stored dict itself.
+        return dict(hit[1])
+    payload = store.payload()
+    if not racy:
+        with _PAYLOAD_CACHE_LOCK:
+            if key not in _PAYLOAD_CACHE and len(_PAYLOAD_CACHE) >= _PAYLOAD_CACHE_MAX:
+                _PAYLOAD_CACHE.pop(next(iter(_PAYLOAD_CACHE)))
+            _PAYLOAD_CACHE[key] = (signature, payload)
+    return dict(payload)
 
 
 # Automatic issue intake. With autonomy on and "GitHub issues sync" consented,
@@ -124,18 +173,26 @@ _AUTO_SYNC_STATE: dict[str, dict[str, Any]] = {}
 _AUTO_SYNC_LOCK = threading.Lock()
 
 
-def _auto_import_issues(store: ProjectBoardStore, *, now: float | None = None) -> dict[str, Any] | None:
+def _auto_import_issues(
+    store: ProjectBoardStore,
+    *,
+    now: float | None = None,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Import open issues when consented and due; return the sync state for the panel.
 
     None when the project did not consent (nothing to show). Otherwise a dict
     with ``enabled``, ``last_sync`` (ISO), ``imported`` (last run), ``repo``,
     ``ok`` and ``detail`` so the board can say what happened without a click.
+    ``state`` is the project's ``autonomy_state`` when the caller already
+    read it.
     """
-    from navin.board.autonomy import autonomy_state
+    if state is None:
+        from navin.board.autonomy import autonomy_state
 
-    # autonomy_state reads settings.json with its own defaults for a missing or
-    # unreadable file; it does not raise for a project folder that exists.
-    state = autonomy_state(store.project_path)
+        # autonomy_state reads settings.json with its own defaults for a missing
+        # or unreadable file; it does not raise for a project folder that exists.
+        state = autonomy_state(store.project_path)
     if not state.get("effective", {}).get("sync_github_issues"):
         return None
     key = str(store.project_path)

@@ -21,7 +21,9 @@ pdf-report skill still surfaces when it should.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -57,9 +59,12 @@ class SkillsGraph:
         self,
         nodes: dict[str, SkillNode],
         edges: list[SkillEdge],
+        loader: Any = None,
     ) -> None:
         self.nodes = nodes
         self.edges = edges
+        # suggest() ranks with the loader's own search; without one it has no seeds.
+        self._loader = loader
         self._adj: dict[str, list[SkillEdge]] = {name: [] for name in nodes}
         for edge in edges:
             self._adj.setdefault(edge.src, []).append(edge)
@@ -136,13 +141,46 @@ def _explicit_relations(meta: dict) -> list[str]:
 
 
 def build_skills_graph(loader) -> SkillsGraph:
-    """Build the graph from a SkillsLoader (explicit + keyword edges)."""
+    """Build the graph from a SkillsLoader (explicit + keyword edges).
+
+    The keyword edges compare every pair of skills (36 000 pairs for 270
+    skills, about 50 ms), and every new request rebuilt them. Nodes and edges
+    only depend on what the SKILL.md files say, so they are kept per
+    ``loader.catalog_token()`` (a new token once a SKILL.md is added, edited
+    or removed, or the disabled set changes). Availability follows PATH and
+    the environment: it is read again at every call.
+    """
+    scan, disabled = loader.catalog_token()
+    key = (id(scan), disabled)
+    with _GRAPH_LOCK:
+        hit = _GRAPH_CACHE.get(key)
+    if hit is None or hit[0] is not scan:
+        hit = (scan, *_graph_parts(loader))
+        with _GRAPH_LOCK:
+            if len(_GRAPH_CACHE) >= _MAX_GRAPHS:
+                _GRAPH_CACHE.clear()
+            _GRAPH_CACHE[key] = hit
+    _scan, metas, nodes, edges = hit
+    live = {
+        name: replace(node, available=loader._check_requirements(metas[name]))
+        for name, node in nodes.items()
+    }
+    return SkillsGraph(live, edges, loader=loader)
+
+
+_GRAPH_LOCK = threading.Lock()
+_GRAPH_CACHE: dict[tuple, tuple] = {}
+_MAX_GRAPHS = 16
+
+
+def _graph_parts(loader) -> tuple[dict[str, dict], dict[str, SkillNode], list[SkillEdge]]:
+    metas: dict[str, dict] = {}
     nodes: dict[str, SkillNode] = {}
     token_sets: dict[str, set[str]] = {}
     token_df: dict[str, int] = {}
     for entry in loader.list_skills(filter_unavailable=False):
         name = entry["name"]
-        meta = loader._get_skill_meta(name)
+        meta = metas[name] = loader._get_skill_meta(name)
         desc = loader._get_skill_description(name)
         tags = [t for t in meta.get("tags", []) if isinstance(t, str)]
         nodes[name] = SkillNode(
@@ -160,7 +198,7 @@ def build_skills_graph(loader) -> SkillsGraph:
     seen: set[tuple[str, str]] = set()
     names = sorted(nodes)
     for name in names:
-        meta = loader._get_skill_meta(name)
+        meta = metas[name]
         for other in _explicit_relations(meta):
             if other in nodes and other != name and (name, other) not in seen:
                 seen.add((name, other))
@@ -199,6 +237,4 @@ def build_skills_graph(loader) -> SkillsGraph:
         for e in keyword[:_MAX_NEIGHBOURS_PER_NODE]:
             kept.add((e.src, e.dst, e.weight, e.kind))
     final = [e for e in edges if e.kind == "explicit" or (e.src, e.dst, e.weight, e.kind) in kept]
-    graph = SkillsGraph(nodes, final)
-    graph._loader = loader  # noqa: SLF001 - suggest() reuses the loader ranking
-    return graph
+    return metas, nodes, final
