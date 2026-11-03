@@ -93,3 +93,13 @@ def test_navin_sm_never_offers_an_update(monkeypatch: pytest.MonkeyPatch) -> Non
     assert service.update_policy_for("99.0.0") == {
         "allowed": False, "reason": service.ORGANIZATION_UPDATES_REASON, "mandatory": False,
     }
+
+    # The packaged CLI says the same and never points to the public downloads.
+    from typer.testing import CliRunner
+
+    from navin.cli.commands import app
+
+    monkeypatch.setattr(service, "_install_kind", lambda: "cli")
+    result = CliRunner().invoke(app, ["update", "--check"], terminal_width=200)
+    assert result.exit_code == 1
+    assert "distributed by your organization" in result.output and "navin.live" not in result.output

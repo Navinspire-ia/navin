@@ -3992,6 +3992,7 @@ def update(
     `curl https://navin.live/install`; the desktop app updates itself from
     its own window.
     """
+    from navin import edition
     from navin.update import service
 
     kind = service._install_kind()
@@ -4001,6 +4002,11 @@ def update(
             "Update it with git pull (or pip / uv), not with this command."
         )
         return
+    if not edition.self_updates():
+        # Navin SM: never point to the public downloads, the organization
+        # distributes its versions.
+        console.print(f"[yellow]{escape(service.ORGANIZATION_UPDATES_REASON)}[/yellow]")
+        raise typer.Exit(1)
     if not service.updates_configured():
         console.print(
             "[yellow]This build has no update server configured.[/yellow] "
