@@ -219,6 +219,36 @@ def _backdate(root):
     os.utime(root, (old, old))
 
 
+def _moved(listing) -> list[str]:
+    """The stamps of a kept listing that no longer hold, with their age."""
+    import time
+
+    now = time.time_ns()
+    moved = []
+    for path, mtime, size in listing.stamps or ():
+        current = cv._stamp(path)
+        if current != (mtime, size):
+            moved.append(
+                f"{path}: {(mtime, size)} -> {current}"
+                f" (modified {(now - current[0]) / 1e9:.3f} s ago)"
+            )
+    return moved
+
+
+def _why_relisted(kept, root, moved_after_first) -> str:
+    import os
+
+    present = cv._LISTINGS.get(str(root))
+    return (
+        f"listing of {root} not reused: "
+        f"{'gone' if present is None else 'replaced, stamps=' + str(present.stamps is not None)}; "
+        f"{len(cv._LISTINGS)} listings held; "
+        f"stamps already moved right after the first listing: {moved_after_first}; "
+        f"stamps moved now: {_moved(kept)}; "
+        f"git env: {sorted(k for k in os.environ if k.startswith('GIT_'))}"
+    )
+
+
 def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
     import time
 
@@ -229,11 +259,12 @@ def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
     assert "src/a.py" in first
     assert str(tmp_path) in cv._LISTINGS and cv._LISTINGS[str(tmp_path)].stamps is not None
     kept = cv._LISTINGS[str(tmp_path)]
+    moved_after_first = _moved(kept)
     # An edit in place moves no folder: same listing, new stamp.
     time.sleep(0.01)
     (tmp_path / "src" / "a.py").write_text("A = 22222\n")
     edited = cv.workspace_code_snapshot(tmp_path)
-    assert cv._LISTINGS[str(tmp_path)] is kept
+    assert cv._LISTINGS.get(str(tmp_path)) is kept, _why_relisted(kept, tmp_path, moved_after_first)
     assert edited["src/a.py"] != first["src/a.py"]
     # A new file in a watched folder, an empty folder and a git add are all seen.
     (tmp_path / "src" / "b.py").write_text("B = 2\n")
