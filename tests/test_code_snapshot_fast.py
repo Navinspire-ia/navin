@@ -195,14 +195,28 @@ def _git_repo(root):
 
 def _backdate(root):
     # A listing taken within 2 s of a folder change is never trusted: age the tree.
+    # The index is then rewritten from the aged files and aged itself, kept
+    # newer than the stat data it records. Aged under its own entries, an
+    # index is "racily clean": git may refresh and rewrite it during a later
+    # command, which moves the listing stamp (CI run of 2026-11-04, KeyError).
     import os
     import time
 
     old = time.time() - 60
-    for current, _dirs, names in os.walk(root):
+    git_dir = os.path.join(str(root), ".git")
+    for current, dirs, names in os.walk(root):
+        if current == str(root):
+            dirs[:] = [name for name in dirs if name != ".git"]
         for name in (*names, current):
             path = current if name == current else os.path.join(current, name)
             os.utime(path, (old, old))
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    index_time = old + 30
+    for current, _dirs, names in os.walk(git_dir):
+        for name in (*names, current):
+            path = current if name == current else os.path.join(current, name)
+            os.utime(path, (index_time, index_time))
+    os.utime(root, (old, old))
 
 
 def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
