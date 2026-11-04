@@ -219,6 +219,61 @@ def _backdate(root):
     os.utime(root, (old, old))
 
 
+def _listing_report(root: Path) -> str:
+    """What the listing of *root* stamps and how old each stamp is, for a failure message.
+
+    Built from the product's own helpers, so it names exactly the folders and
+    marks a listing watches; plus the file system clock against time.time_ns(),
+    the git processes still running and the git setup that lists the tree.
+    """
+    import os
+    import shutil
+    import tempfile
+    import time
+
+    root_text = str(root)
+    paths = cv._git_listing(root)
+    marks = list(cv._git_marks(root) or ())
+    folders = {root_text}
+    for raw in paths or ():
+        path = raw.replace("\\", "/")
+        if path.rsplit("/", 1)[-1] == ".gitignore":
+            marks.append(os.path.join(root_text, raw))
+        parent = path.rpartition("/")[0]
+        while parent:
+            folders.add(os.path.join(root_text, parent))
+            parent = parent.rpartition("/")[0]
+    unlisted = cv._unlisted_folders(root, set(folders)) if paths is not None else None
+    with tempfile.NamedTemporaryFile(dir=root.parent) as probe:
+        probe.write(b"x")
+        probe.flush()
+        skew_s = (os.fstat(probe.fileno()).st_mtime_ns - time.time_ns()) / 1e9
+    now = time.time_ns()
+    ages = []
+    for path in (*sorted(folders), *sorted(unlisted or ()), *marks):
+        mtime, size = cv._stamp(path)
+        ages.append(f"{path}: missing" if mtime < 0 else f"{path}: {(now - mtime) / 1e9:.3f} s old, {size} B")
+    running: list[str] = []
+    if shutil.which("ps"):
+        table = subprocess.run(["ps", "-eo", "pid,etimes,args"], capture_output=True, text=True, check=False)
+        for line in table.stdout.splitlines()[1:]:
+            fields = line.split(None, 2)
+            if len(fields) == 3 and fields[2].split()[0].rsplit("/", 1)[-1].startswith("git"):
+                running.append(line.strip())
+    config = subprocess.run(
+        ["git", "-C", root_text, "config", "--list", "--show-origin"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip().splitlines()
+    return (
+        f"git lists {'nothing' if paths is None else len(paths)} paths; "
+        f"git marks: {'none' if cv._git_marks(root) is None else 'found'}; "
+        f"unlisted folders: {'unknown' if unlisted is None else sorted(unlisted)}; "
+        f"file system clock minus time.time_ns(): {skew_s:+.3f} s; stamp ages: {ages}; "
+        f"{len(cv._LISTINGS)} listings held; git processes: {running}; git config: {config}; "
+        f"git env: {sorted(key for key in os.environ if key.startswith('GIT_'))}"
+    )
+
+
 def _moved(listing) -> list[str]:
     """The stamps of a kept listing that no longer hold, with their age."""
     import time
@@ -236,16 +291,12 @@ def _moved(listing) -> list[str]:
 
 
 def _why_relisted(kept, root, moved_after_first) -> str:
-    import os
-
     present = cv._LISTINGS.get(str(root))
     return (
         f"listing of {root} not reused: "
         f"{'gone' if present is None else 'replaced, stamps=' + str(present.stamps is not None)}; "
-        f"{len(cv._LISTINGS)} listings held; "
         f"stamps already moved right after the first listing: {moved_after_first}; "
-        f"stamps moved now: {_moved(kept)}; "
-        f"git env: {sorted(k for k in os.environ if k.startswith('GIT_'))}"
+        f"stamps moved now: {_moved(kept)}; {_listing_report(root)}"
     )
 
 
@@ -257,7 +308,8 @@ def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
     cv._LISTINGS.clear()
     first = cv.workspace_code_snapshot(tmp_path)
     assert "src/a.py" in first
-    assert str(tmp_path) in cv._LISTINGS and cv._LISTINGS[str(tmp_path)].stamps is not None
+    held = cv._LISTINGS.get(str(tmp_path))
+    assert held is not None and held.stamps is not None, _listing_report(tmp_path)
     kept = cv._LISTINGS[str(tmp_path)]
     moved_after_first = _moved(kept)
     # An edit in place moves no folder: same listing, new stamp.
