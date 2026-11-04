@@ -702,23 +702,25 @@ jobs:
             --key-id "${APPLE_API_KEY_ID}" \
             --issuer "${APPLE_API_ISSUER}" \
             --wait
-          # The ticket comes from Apple's CDN once notarization is accepted; a
-          # dropped connection (NSURLError -1005, stapler error 68) is retried
-          # instead of failing a DMG Apple already accepted.
-          stapled=0
-          for attempt in 1 2 3 4 5 6; do
-            if xcrun stapler staple "${dmg}"; then
-              stapled=1
-              break
-            fi
-            echo "stapler attempt ${attempt} failed, retrying in $((attempt * 20))s"
-            sleep $((attempt * 20))
-          done
-          if [ "${stapled}" -ne 1 ]; then
-            echo "::error::stapler could not attach the notarization ticket to $(basename "${dmg}")"
-            exit 1
-          fi
-          xcrun stapler validate "${dmg}"
+          # The ticket comes from Apple's CDN once notarization is accepted, and
+          # validate looks it up there again: a dropped connection (NSURLError
+          # -1005, stapler error 68) on either call is retried instead of
+          # failing a DMG Apple already accepted. The 2.4.7 build stapled its
+          # arm64 DMG, then lost the connection while validating it.
+          retry_stapler() {
+            local action="$1" attempt
+            for attempt in 1 2 3 4 5 6; do
+              if xcrun stapler "${action}" "${dmg}"; then
+                return 0
+              fi
+              echo "stapler ${action} attempt ${attempt} failed, retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            echo "::error::stapler could not ${action} the notarization ticket of $(basename "${dmg}")"
+            return 1
+          }
+          retry_stapler staple
+          retry_stapler validate
           rm -f "${key}"
           (cd "os/macos/${ARCH}" && shasum -a 256 "$(basename "${dmg}")" > "SHA256SUMS-desktop-${ARCH}.txt")
           echo "notarized $(basename "${dmg}")"
