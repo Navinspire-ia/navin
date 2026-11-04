@@ -48,6 +48,17 @@ import type {
   WorkspaceScopePayload,
 } from "@/lib/types";
 
+/** The model that took over the step (``agent_ui.task_progress.relay_model``):
+ *  its name, "" once the chosen model answers again, undefined when absent. */
+function relayModelFromAgentUi(blob: unknown): string | undefined {
+  if (!blob || typeof blob !== "object") return undefined;
+  if ((blob as { kind?: unknown }).kind !== "task_progress") return undefined;
+  const data = (blob as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return undefined;
+  const relay = (data as { relay_model?: unknown }).relay_model;
+  return typeof relay === "string" ? relay.trim() : undefined;
+}
+
 function taskProgressFromAgentUi(blob: unknown): TaskProgressData | null {
   if (!blob || typeof blob !== "object") return null;
   const kind = (blob as { kind?: unknown }).kind;
@@ -717,6 +728,9 @@ export function useNavinStream(
   activityText: string | null;
   /** The backend is summarizing the context right now (shown beside Working). */
   isCompacting: boolean;
+  /** The model that took over the step when the chosen one could not answer,
+   *  and when (epoch ms); null while the chosen model answers. */
+  relayModel: { label: string; at: number } | null;
   send: (content: string, images?: SendAttachment[], options?: SendOptions) => void;
   transcribeAudio: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
   stop: () => void;
@@ -780,6 +794,9 @@ export function useNavinStream(
   const [activeTaskProgress, setActiveTaskProgress] = useState<TaskProgressData | null>(null);
   const [activityText, setActivityText] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [relayModel, setRelayModel] = useState<
+    { label: string; at: number; chatId: string | null } | null
+  >(null);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
@@ -1554,6 +1571,12 @@ export function useNavinStream(
         // Attach them to the last trace row if it was the last emitted item
         // so a sequence of calls collapses into one compact trace group.
         if (ev.kind === "tool_hint" || ev.kind === "progress") {
+          const relay = relayModelFromAgentUi(ev.agent_ui);
+          if (relay !== undefined) {
+            // Another model took over the step: named in front of Working.
+            setRelayModel(relay ? { label: relay, at: Date.now(), chatId } : null);
+            return;
+          }
           const progress = taskProgressFromAgentUi(ev.agent_ui);
           if (progress) setActiveTaskProgress(progress);
           const structuredEvents = enrichToolEventsWithTaskProgress(
@@ -1952,6 +1975,7 @@ export function useNavinStream(
     activeTaskProgress,
     activityText,
     isCompacting,
+    relayModel: relayModel && relayModel.chatId === chatId ? relayModel : null,
     send,
     transcribeAudio,
     stop,

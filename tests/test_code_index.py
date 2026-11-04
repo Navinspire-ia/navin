@@ -1068,15 +1068,50 @@ class WarmerTest(unittest.TestCase):
         self.assertFalse(schedule_warm(None))
         self.assertFalse(schedule_warm(self.root / "does-not-exist"))
 
-    def test_note_file_written_marks_matching_index_dirty(self) -> None:
+    def test_note_file_written_queues_the_edit_instead_of_a_walk(self) -> None:
+        # A forced walk per write cost seconds per edit on a native Windows
+        # project (2026-11-04): the written path is re-stat'd alone, on every root.
+        from unittest import mock
+
         from navin.index import service as index_service
         from navin.index.warmer import note_file_written
 
         index = index_service.get_index(self.root)
         index.ensure()
-        index._dirty = False
-        note_file_written(self.root / "mod.py")
-        self.assertTrue(index._dirty)
+        (self.root / "mod.py").write_text("def written_by_the_agent():\n    return 1\n", encoding="utf-8")
+        with mock.patch("navin.webui.metagraph_notify.schedule_metagraph_refresh"):
+            note_file_written(self.root / "mod.py")
+        self.assertFalse(index._dirty)
+        self.assertEqual(index._dirty_paths, {"mod.py"})
+        with mock.patch.object(
+            index_service, "discover_files", side_effect=AssertionError("no walk for one edit")
+        ):
+            index.ensure()
+        self.assertTrue(index.definition("written_by_the_agent"))
+
+    def test_a_slow_walk_is_trusted_twenty_times_its_cost(self) -> None:
+        # 3 s walks on Windows NTFS were redone on every turn behind a 2 s throttle.
+        import time as _time
+        from unittest import mock
+
+        from navin.index import service as index_service
+
+        index = index_service.get_index(self.root)
+        index.ensure()
+        real_discover = index_service.discover_files
+        walks: list[object] = []
+
+        def slow_discover(root):
+            walks.append(root)
+            _time.sleep(0.15)
+            return real_discover(root)
+
+        with mock.patch.object(index_service, "discover_files", side_effect=slow_discover):
+            index.revalidate(force=True)
+            self.assertGreaterEqual(index._revalidate_ttl(), 3.0)
+            index._revalidated_at -= 2.5  # past the 2 s throttle, inside 20 x 0.15 s
+            index.ensure()
+        self.assertEqual(len(walks), 1)
 
     def test_warm_fulltext_and_semantic_are_best_effort(self) -> None:
         from unittest.mock import MagicMock, patch

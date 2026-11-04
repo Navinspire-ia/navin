@@ -614,6 +614,30 @@ def _merge_responses_extra_body(
     return merged
 
 
+def _openai_client_class() -> Any:
+    """``AsyncOpenAI`` (Langfuse's wrapper when tracing is on), imported once.
+
+    Runs in a worker thread (``_build_client``): the SDK import loads
+    hundreds of modules, and done on the event loop at the first model call
+    of a CLI it froze the screen 1.1 s and 3.3 s (cli-freeze.log, 2026-11-03
+    18:24). A loop thread importing it while a worker does waits on the
+    import lock just the same, so the loop never imports it.
+    """
+    global AsyncOpenAI
+    if AsyncOpenAI is None:
+        if os.environ.get("LANGFUSE_SECRET_KEY") and importlib.util.find_spec("langfuse"):
+            from langfuse.openai import AsyncOpenAI as _AsyncOpenAI
+        else:
+            if os.environ.get("LANGFUSE_SECRET_KEY"):
+                logger.warning(
+                    "LANGFUSE_SECRET_KEY is set but langfuse is not installed; "
+                    "install with `pip install langfuse` to enable tracing"
+                )
+            from openai import AsyncOpenAI as _AsyncOpenAI
+        AsyncOpenAI = _AsyncOpenAI
+    return AsyncOpenAI
+
+
 class OpenAICompatProvider(LLMProvider):
     """Unified provider for all OpenAI-compatible APIs.
 
@@ -763,7 +787,8 @@ class OpenAICompatProvider(LLMProvider):
                 follow_redirects=True,
                 verify=verify,
             )
-        self._client = AsyncOpenAI(
+        client_class = _openai_client_class()
+        self._client = client_class(
             api_key=self._api_key_for_client,
             base_url=self._effective_base,
             default_headers=self._default_headers,
@@ -810,22 +835,10 @@ class OpenAICompatProvider(LLMProvider):
         async with self._client_lock:
             if self._client is not None:
                 return self._client
-            global AsyncOpenAI
-            if AsyncOpenAI is None:
-                if os.environ.get("LANGFUSE_SECRET_KEY") and importlib.util.find_spec("langfuse"):
-                    from langfuse.openai import AsyncOpenAI as _AsyncOpenAI
-                else:
-                    if os.environ.get("LANGFUSE_SECRET_KEY"):
-                        logger.warning(
-                            "LANGFUSE_SECRET_KEY is set but langfuse is not installed; "
-                            "install with `pip install langfuse` to enable tracing"
-                        )
-                    from openai import AsyncOpenAI as _AsyncOpenAI
-                AsyncOpenAI = _AsyncOpenAI
-
-            # Off the event loop: the SSL context loads the system certificate
-            # store, seconds on Windows, and every reset after a connection
-            # error rebuilt it while streams and subagents waited.
+            # Off the event loop: the SDK import (see _openai_client_class)
+            # and the SSL context, which loads the system certificate store,
+            # seconds on Windows; every reset after a connection error rebuilt
+            # it while streams and subagents waited.
             await asyncio.to_thread(self._build_client)
             return self._client
 

@@ -200,6 +200,107 @@ def test_markdown_parser_is_built_once_per_stream():
     asyncio.run(run())
 
 
+def test_an_unlabeled_code_block_is_text_and_never_guesses_its_language(monkeypatch):
+    """pygments' guess_lexer imported every lexer and ran each analyser on the
+    UI loop, at every streamed delta: 1.1 to 3.3 s at the first unlabeled
+    block of a CLI (cli-freeze.log, 2026-11-03 18:24)."""
+    import pygments.lexers
+    import pygments.util
+
+    from navin.tui.settled import render_markdown_lines
+
+    # Recorded, not raised: Textual swallows any exception of guess_lexer.
+    guessed: list[str] = []
+
+    def no_guess(code, *_args, **_kwargs):
+        guessed.append(code)
+        raise pygments.util.ClassNotFound("no guess")
+
+    monkeypatch.setattr(pygments.lexers, "guess_lexer", no_guess)
+    source = "```\nnpm install && npm run build\n```\n\n```python\nprint('ok')\n```\n"
+
+    async def run():
+        app = StreamHost()
+        async with app.run_test(size=(100, 40)) as pilot:
+            stream = app.query_one("#stream", TranscriptMarkdown)
+            await stream.append(source[:30])
+            await stream.append(source[30:])
+            await pilot.pause()
+            fences = list(stream.query(MarkdownFence))
+            assert [fence.code for fence in fences] == ["npm install && npm run build", "print('ok')"]
+            plain, python = (fence.query_one("#code-content").content for fence in fences)
+            assert plain.plain == "npm install && npm run build"
+            assert {span.style for span in plain.spans} <= {"$text"}, "text: no colours guessed for it"
+            stream.complete()
+            await pilot.pause()
+            python = fences[1].query_one("#code-content").content
+            assert {span.style for span in python.spans} - {"$text"}, "a labeled block gets its colours once written"
+    asyncio.run(run())
+    # The settled answer renders its blocks the same way.
+    rows = [line.plain for line in render_markdown_lines(source, 60)]
+    assert any("npm install && npm run build" in row for row in rows)
+    assert guessed == [], "no block, live or settled, asked pygments to guess"
+
+
+def test_a_long_code_block_paints_its_tail_while_written_and_all_of_it_once_complete():
+    """Every paint of a stream rebuilt and recoloured the whole block: 800 ms
+    per paint at 2000 lines of Python on the UI loop (bench of 2026-11-03)."""
+    from navin.tui.markdown_stream import FENCE_LIVE_LINES, CopyableFence
+
+    lines = [f"value_{index} = {index}" for index in range(FENCE_LIVE_LINES * 3)]
+
+    async def run():
+        app = StreamHost()
+        async with app.run_test(size=(100, 40)) as pilot:
+            stream = app.query_one("#stream", TranscriptMarkdown)
+            await stream.append("```python\n")
+            for start in range(0, len(lines), 40):
+                await stream.append("".join(line + "\n" for line in lines[start:start + 40]))
+            await pilot.pause()
+            fence = stream.query_one(CopyableFence)
+            shown = fence.query_one("#code-content").content.plain.splitlines()
+            assert fence.streaming
+            assert len(shown) == FENCE_LIVE_LINES + 1, "a note, then the last lines"
+            assert shown[0].startswith("... ") and str(len(lines) - FENCE_LIVE_LINES) in shown[0]
+            assert shown[1:] == lines[-FENCE_LIVE_LINES:]
+            assert fence.code == "\n".join(lines), "copying takes the whole block"
+            await stream.append("```\n\nDone.\n")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            content = fence.query_one("#code-content").content
+            assert not fence.streaming
+            assert content.plain == "\n".join(lines), "the whole block once written"
+            assert {span.style for span in content.spans} - {"$text"}, "and in colour"
+    asyncio.run(run())
+
+
+def test_an_answer_set_at_once_shows_its_last_code_block_in_full():
+    """set_text and reveal paint the final answer: its last code block was left
+    as if still being written (last lines only, no colours) until the turn ended."""
+    from navin.tui.markdown_stream import FENCE_LIVE_LINES, CopyableFence
+
+    code = "\n".join(f"value_{index} = {index}" for index in range(FENCE_LIVE_LINES * 2))
+    start = "Intro.\n\n```python\n"
+
+    async def run():
+        app = StreamHost()
+        async with app.run_test(size=(100, 40)) as pilot:
+            block = app.query_one(AssistantMessage)
+            await block.delta(start + code[: len(code) // 2])
+            await pilot.pause(0.3)
+            await block.set_text(start + code + "\n```\n")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            fence = block.query_one(CopyableFence)
+            content = fence.query_one("#code-content").content
+            assert not fence.streaming
+            assert content.plain == code, "the whole block"
+            assert {span.style for span in content.spans} - {"$text"}, "in colour"
+    asyncio.run(run())
+
+
 class ScrolledStreamHost(App):
     def compose(self) -> ComposeResult:
         from textual.widgets import Static

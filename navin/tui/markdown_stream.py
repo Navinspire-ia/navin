@@ -10,8 +10,10 @@ import asyncio
 from markdown_it import MarkdownIt
 from textual.await_complete import AwaitComplete
 from textual.containers import Horizontal
+from textual.content import Content
+from textual.highlight import highlight
 from textual.strip import Strip
-from textual.widgets import Markdown
+from textual.widgets import Label, Markdown
 from textual.widgets._markdown import (
     MarkdownBullet,
     MarkdownBulletList,
@@ -27,6 +29,25 @@ from textual.widgets._markdown import (
 from navin.tui.copy_chip import CopyChip
 
 _COLLECTIONS = (MarkdownBulletList, MarkdownOrderedList, MarkdownTable)
+# A code block still being written shows its last lines only, past this many.
+# Every paint of a stream (up to 20 a second) rebuilt and recoloured the whole
+# block: 800 ms per paint for 2000 lines of Python, 180 ms in plain text, on
+# the UI loop, so the screen lagged more with every line the agent wrote.
+# The whole block, in colour, appears once it is written.
+FENCE_LIVE_LINES = 120
+
+
+def fence_highlight(code: str, language: str) -> Content:
+    """Highlight a code block; one without a language is plain text.
+
+    Textual guesses the language of an unlabeled block with pygments'
+    ``guess_lexer``, which imports every lexer module (246) and runs each
+    one's analyser over the code, on the UI loop, again at every streamed
+    delta of the block: 1.1 to 3.3 s stalls at the first one of a CLI
+    (cli-freeze.log, 2026-11-03 18:24) and about 50 ms per delta on a
+    600-line block. A guess was often wrong anyway (command output, logs).
+    """
+    return highlight(code, language=language or "text")
 
 
 class CopyableFence(MarkdownFence):
@@ -49,11 +70,77 @@ class CopyableFence(MarkdownFence):
     }
     """
 
+    @classmethod
+    def highlight(cls, code: str, language: str) -> Content:
+        # A streamed block is built again at every paint: no colours here.
+        # _show_code colours what the block shows, once it is written.
+        return Content(code)
+
+    # Set by TranscriptMarkdown.append while this is the block being written.
+    streaming = False
+    _colour_on_mount = False
+
     def compose(self):
         # Only the label is the click target: the rest of the row stays plain.
         with Horizontal(classes="fence-copy-row"):
             yield CopyChip(lambda: self.code, classes="fence-copy")
-        yield from super().compose()
+        yield Label(self._first_content(), id="code-content")
+
+    def on_mount(self) -> None:
+        if self._colour_on_mount:
+            self._colour_on_mount = False
+            self._colour_later()
+
+    def _long(self) -> bool:
+        return self.code.count("\n") >= FENCE_LIVE_LINES
+
+    def _first_content(self) -> Content:
+        if self.streaming:
+            return self._live_content()
+        if not self._long():
+            return fence_highlight(self.code, self.lexer)
+        # Long and written (a reloaded chat): plain now, colours from a worker.
+        self._colour_on_mount = True
+        return Content(self.code)
+
+    def _live_content(self) -> Content:
+        """The block as it is written: plain text, its last lines when long."""
+        if not self._long():
+            return Content(self.code)
+        lines = self.code.count("\n") + 1
+        tail = self.code.rsplit("\n", FENCE_LIVE_LINES)[1:]
+        note = Content.styled(
+            f"... {lines - len(tail)} more lines above, shown when the block is complete", "dim",
+        )
+        return note.append(Content("\n" + "\n".join(tail)))
+
+    def _show_code(self) -> None:
+        if self.streaming:
+            self.set_content(self._live_content())
+        elif not self._long():
+            self.set_content(fence_highlight(self.code, self.lexer))
+        else:
+            # The tail stays on screen until the coloured block is ready.
+            self._colour_later()
+
+    def _colour_later(self) -> None:
+        """Colour a long written block in a worker thread, then show it."""
+        code, lexer = self.code, self.lexer
+
+        async def colour() -> None:
+            content = await asyncio.to_thread(fence_highlight, code, lexer)
+            if self.is_attached and not self.streaming and self.code == code:
+                self.set_content(content)
+
+        self.run_worker(colour(), group="fence-colour", exclusive=True)
+
+    async def _update_from_block(self, block) -> None:
+        if not isinstance(block, CopyableFence):
+            await super()._update_from_block(block)
+            return
+        self._copy_context(block)
+        self.streaming = block.streaming
+        self._show_code()
 
     def _copy_context(self, block) -> None:
         super()._copy_context(block)
@@ -198,6 +285,13 @@ class TranscriptMarkdown(Markdown):
                 self.post_message(Markdown.TableOfContentsUpdated(self, self.table_of_contents))
         return AwaitComplete(update_document())
 
+    def complete(self) -> None:
+        """The stream ended: every code block shows all its code, in colour."""
+        for fence in self.query(CopyableFence):
+            if fence.streaming:
+                fence.streaming = False
+                fence._show_code()
+
     def append(self, markdown: str) -> AwaitComplete:
         async def append_document():
             async with self.lock:
@@ -224,6 +318,10 @@ class TranscriptMarkdown(Markdown):
                         _, end = collection[2][keep - 1]
                         tokens = tokens[:first] + tokens[end:]
                 blocks = list(self._blocks_with_rows(tokens, start_line))
+                # The last block is the one the stream is writing.
+                for index, block in enumerate(blocks):
+                    if isinstance(block, CopyableFence):
+                        block.streaming = index == len(blocks) - 1
                 if last is not None and blocks:
                     replacement = blocks.pop(0)
                     if keep is not None and isinstance(last, _COLLECTIONS) and type(last) is type(replacement):

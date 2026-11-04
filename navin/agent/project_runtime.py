@@ -100,6 +100,10 @@ _WHICH_CACHE: dict[tuple[str, str], tuple[float, str | None]] = {}
 
 
 _PATH_INDEX: dict[str, tuple[float, dict[str, list[str]]]] = {}
+# PATH entries the index could not list (empty entries, folders refused to
+# us): a Windows lookup still hands them to shutil.which.
+_PATH_UNLISTED: dict[str, frozenset[str]] = {}
+_WIN_DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"
 
 
 def _path_index(path_value: str) -> dict[str, list[str]]:
@@ -108,24 +112,32 @@ def _path_index(path_value: str) -> dict[str, list[str]]:
     One listing per folder instead of one stat per folder and per program:
     on WSL the Windows folders (/mnt/c...) answer slowly, and the 31 cloud CLI
     lookups took 3.4 s (the project map then missed its 2.5 s budget and was
-    dropped) against 0.44 s for listing the whole PATH once.
+    dropped) against 0.44 s for listing the whole PATH once. Names are keyed
+    by ``os.path.normcase``: lowercase on Windows, unchanged elsewhere.
     """
     now = time.monotonic()
     hit = _PATH_INDEX.get(path_value)
     if hit is not None and now - hit[0] < _WHICH_TTL_S:
         return hit[1]
     index: dict[str, list[str]] = {}
+    unlisted: set[str] = set()
     for folder in path_value.split(os.pathsep):
         if not folder:
+            unlisted.add(folder)
             continue
         try:
             names = os.listdir(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # nothing can be found there
         except OSError:
+            unlisted.add(folder)  # refused to us: a file in it may still be reachable
             continue
         for name in names:
-            index.setdefault(name, []).append(folder)
+            index.setdefault(os.path.normcase(name), []).append(folder)
     _PATH_INDEX.clear()
+    _PATH_UNLISTED.clear()
     _PATH_INDEX[path_value] = (now, index)
+    _PATH_UNLISTED[path_value] = frozenset(unlisted)
     return index
 
 
@@ -141,9 +153,41 @@ def which(program: str) -> str | None:
     return found
 
 
+def _find_windows_program(program: str, path_value: str) -> str | None:
+    """``shutil.which`` on Windows, asked only of the PATH folders that hold the name.
+
+    shutil.which stats every PATHEXT spelling of the name in every PATH
+    folder, a dozen stats per folder and per program: on NTFS under the
+    antivirus the project map's lookups took seconds of every turn
+    (2026-11-04 probe). The PATH is listed once (cached like the POSIX
+    index); the folders holding a spelling, in PATH order, and those that
+    could not be listed are handed to shutil.which, which keeps its own
+    order, checks and current-folder rule, so the answer is the same.
+    """
+    if not path_value:
+        return shutil.which(program)
+    pathext = [
+        ext for ext in (os.environ.get("PATHEXT") or _WIN_DEFAULT_PATHEXT).split(os.pathsep) if ext
+    ]
+    spellings = {os.path.normcase(program), *(os.path.normcase(program + ext) for ext in pathext)}
+    index = _path_index(path_value)
+    unlisted = _PATH_UNLISTED.get(path_value, frozenset())
+    holders = {folder for name in spellings for folder in index.get(name, ())}
+    folders = path_value.split(os.pathsep)
+    kept = [folder for folder in folders if folder in holders or folder in unlisted]
+    # A folder holding no spelling answers nothing; with none kept, one of
+    # them still lets shutil.which apply its current-folder rule.
+    search = os.pathsep.join(kept or folders[:1])
+    if not search:
+        return shutil.which(program)
+    return shutil.which(program, path=search)
+
+
 def _find_program(program: str, path_value: str) -> str | None:
-    if os.name == "nt" or os.sep in program:
-        return shutil.which(program)  # PATHEXT rules, or an explicit path
+    if os.path.dirname(program):
+        return shutil.which(program)  # an explicit path
+    if os.name == "nt":
+        return _find_windows_program(program, path_value)
     for folder in _path_index(path_value).get(program, ()):
         candidate = os.path.join(folder, program)
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):

@@ -543,6 +543,30 @@ _MANAGED_QUOTA_ERROR_MESSAGE = (
     "add your own provider key."
 )
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+_USAGE_CEILING_MESSAGE = (
+    "This model reached its usage limit (quota or budget), and no other model "
+    "could take over. Pick another model to keep going now, or try again later."
+)
+
+
+def _usage_ceiling_message(response: LLMResponse) -> str:
+    """A usage ceiling ends the turn, which is not replayed: say it plainly.
+
+    The chat-safe rewrite of such an error ("at capacity, Navin resumes by
+    itself") promised a resumption that a ceiling never gives.
+    """
+    from navin.providers.fallback_policy import QUOTA_CEILING_KIND
+
+    content = (response.content or "").strip()
+    message = (
+        content
+        if response.error_kind == QUOTA_CEILING_KIND and content
+        else _USAGE_CEILING_MESSAGE
+    )
+    detail = (response.error_detail or "").strip()
+    if detail:
+        message += f"\n{_PROVIDER_MESSAGE_PREFIX}{detail}"
+    return message
 
 
 def _provider_label(runtime: LLMRuntime | None, response: LLMResponse | None) -> str:
@@ -2372,6 +2396,7 @@ class AgentRunner:
                 continue
 
             if response.finish_reason == "error":
+                from navin.providers.fallback_policy import is_exhausted_account
                 from navin.providers.user_facing_errors import (
                     is_quota_error_text,
                     user_facing_llm_error,
@@ -2384,6 +2409,8 @@ class AgentRunner:
                     clean
                 ):
                     final_content = _arrearage_error_message(spec.runtime, response)
+                elif is_exhausted_account(response):
+                    final_content = _usage_ceiling_message(response)
                 else:
                     final_content = user_facing_llm_error(
                         clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
@@ -2790,11 +2817,14 @@ class AgentRunner:
             if is_streaming_request and timeout_s is not None
             else timeout_s
         )
+        from navin.providers.model_switch_notice import relay_listener
+
         try:
             # Tag the request with the session key so providers that support
             # cache-affinity routing (OpenRouter session_id, OpenAI
             # prompt_cache_key) keep the whole session on one warm cache.
-            with session_affinity(spec.session_key):
+            # A model taking over the step is named in the working line.
+            with session_affinity(spec.session_key), relay_listener(drafting.relayed):
                 response = (
                     await coro if outer_timeout_s is None
                     else await asyncio.wait_for(coro, timeout=outer_timeout_s)
@@ -4047,6 +4077,18 @@ class _ToolDraftStatus:
     async def waiting(self, model: str | None) -> None:
         name = (model or "the model").rsplit("/", 1)[-1]
         await self._emit(f"{name} is working…", force=True)
+
+    async def relayed(self, model_label: str) -> None:
+        """Another model takes over the step: name it in front of Working.
+
+        An empty label says the chosen model answers again. The status line
+        then names the relay too, instead of the model that could not answer.
+        """
+        emit = getattr(self._hook, "emit_model_relay", None)
+        if emit is not None:
+            await emit(model_label)
+        if model_label:
+            await self.waiting(model_label)
 
     async def feed(self, delta: dict[str, Any]) -> None:
         index = int(delta.get("index") or 0)

@@ -16,6 +16,7 @@ from navin.config.schema import Config
 from navin.providers.factory import (
     build_provider_snapshot,
     build_provider_snapshot_allowing_unconfigured,
+    provider_signature,
     unconfigured_provider_snapshot,
 )
 from navin.providers.unconfigured import UnconfiguredProvider
@@ -109,6 +110,84 @@ class RuntimeRefreshTest(unittest.TestCase):
         )
         resolver.refresh()
         self.assertIsInstance(resolver.runtime.provider, UnconfiguredProvider)
+
+
+class PresetProviderReuseTest(unittest.TestCase):
+    """A preset resolved on every turn runs on one provider and its connections.
+
+    Each turn of a chat or subagent pinned to a preset built a new provider
+    (OpenAI client, SSL context, TLS connection) and dropped it unclosed: the
+    desktop engine held 148 connections to its LLM gateway after three days.
+    """
+
+    @staticmethod
+    def _config(key: str = "sk-test") -> Config:
+        return _config(
+            {
+                "providers": {"mistral": {"apiKey": key}},
+                "agents": {"defaults": {"model": "mistral-large-latest"}},
+                "modelPresets": {"fast": {"model": "mistral-small-latest", "provider": "mistral"}},
+            }
+        )
+
+    def _resolver(self, current: dict[str, Config]) -> ModelRuntimeResolver:
+        return ModelRuntimeResolver(
+            runtime_from_provider_snapshot(build_provider_snapshot(current["config"])),
+            model_presets=dict(current["config"].model_presets),
+            preset_snapshot_loader=lambda name: build_provider_snapshot(current["config"], preset_name=name),
+        )
+
+    def test_a_pinned_preset_reuses_its_provider_on_every_turn(self):
+        resolver = self._resolver({"config": self._config()})
+        first = resolver.resolve_preset("fast")
+        second = resolver.resolve_preset("fast")
+        self.assertIs(first.provider, second.provider)
+        self.assertEqual(second.model, "mistral-small-latest")
+        self.assertIsNot(first.provider, resolver.runtime.provider, "another model keeps its own provider")
+
+    def test_a_changed_preset_gets_a_new_provider(self):
+        current = {"config": self._config()}
+        resolver = self._resolver(current)
+        before = resolver.resolve_preset("fast")
+        current["config"] = self._config(key="sk-rotated")
+        after = resolver.resolve_preset("fast")
+        self.assertIsNot(before.provider, after.provider)
+        self.assertNotEqual(before.snapshot_signature, after.snapshot_signature)
+        self.assertIs(resolver.resolve_preset("fast").provider, after.provider)
+
+    def test_a_preset_riding_on_the_default_provider_follows_the_default(self):
+        # Without a preset loader a preset runs on the default provider, and its
+        # signature names the preset only: shared, it stayed on the default
+        # provider of its first turn after the key or the endpoint changed.
+        first = build_provider_snapshot(self._config())
+        resolver = ModelRuntimeResolver(
+            runtime_from_provider_snapshot(first), model_presets=dict(self._config().model_presets),
+        )
+        self.assertIs(resolver.resolve_preset("fast").provider, first.provider)
+        rotated = build_provider_snapshot(self._config(key="sk-rotated"))
+        resolver.adopt_snapshot(rotated)
+        self.assertIs(resolver.resolve_preset("fast").provider, rotated.provider)
+
+    def test_a_fallback_trusting_another_ca_changes_the_provider_signature(self):
+        # The signature decides which provider is reused: a fallback's CA bundle
+        # is part of what that provider is built from.
+        def config(ca_bundle: str) -> Config:
+            return _config(
+                {
+                    "providers": {
+                        "mistral": {"apiKey": "sk-test"},
+                        "openai": {"apiKey": "sk-backup", "caBundle": ca_bundle},
+                    },
+                    "agents": {"defaults": {"model": "mistral-large-latest"}},
+                    "modelPresets": {"backup": {"model": "gpt-4o", "provider": "openai"}},
+                }
+            )
+
+        first = provider_signature(config("/etc/ssl/bank-a.pem"))
+        second = provider_signature(config("/etc/ssl/bank-b.pem"))
+        self.assertEqual(first[:-1], second[:-1], "the primary is the same")
+        self.assertTrue(first[-1], "the other preset is the fallback")
+        self.assertNotEqual(first[-1], second[-1])
 
 
 class SavedConfigTest(unittest.TestCase):

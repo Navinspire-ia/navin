@@ -421,6 +421,8 @@ interface ThreadComposerProps {
   waitingFor?: TurnWaitingReason | null;
   /** The context is being summarized right now. */
   isCompacting?: boolean;
+  /** The model that took over the step, shown in front of Working. */
+  relayModel?: { label: string; at: number } | null;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
   goalState?: GoalStateWsPayload;
   workspaceScope?: WorkspaceScopePayload | null;
@@ -986,6 +988,7 @@ function ThreadComposerImpl({
   isThinking = false,
   waitingFor = null,
   isCompacting = false,
+  relayModel = null,
   goalState,
   workspaceScope = null,
   workspaceDefaultScope = null,
@@ -2556,6 +2559,7 @@ function ThreadComposerImpl({
         thinking={isThinking}
         waiting={waitingFor}
         compacting={isCompacting}
+        relayModel={relayModel}
         wide={isHero}
       />
       {showSlashMenu ? (

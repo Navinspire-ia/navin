@@ -14,7 +14,9 @@ model the user picked while another model answers.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from loguru import logger
@@ -50,3 +52,41 @@ async def notify_model_switch(chosen_model: str, served_model: str) -> None:
             await result
     except Exception as exc:  # noqa: BLE001 - a notice must never break a turn
         logger.warning("Model switch notification failed: {}", exc)
+
+
+RelayListener = Callable[[str], Awaitable[None] | None]
+
+_relay_listener: ContextVar[RelayListener | None] = ContextVar(
+    "navin_model_relay_listener", default=None
+)
+
+
+@contextmanager
+def relay_listener(listener: RelayListener | None) -> Iterator[None]:
+    """Hear, inside this block, which model takes over a step from the chosen one.
+
+    The runner sets it around a model request, like the session affinity, so
+    the working line names the model that answers instead of the chosen one.
+    """
+    token = _relay_listener.set(listener)
+    try:
+        yield
+    finally:
+        _relay_listener.reset(token)
+
+
+async def notify_relay(model_label: str) -> None:
+    """Tell the request's listener that *model_label* takes over the step.
+
+    An empty label says the chosen model answers again. Silent without a
+    listener; a failing listener is logged, never raised: the step goes on.
+    """
+    listener = _relay_listener.get()
+    if listener is None:
+        return
+    try:
+        result: Any = listener(model_label)
+        if hasattr(result, "__await__"):
+            await result
+    except Exception:  # a notice boundary: logged with its trace, the step goes on
+        logger.opt(exception=True).warning("Model relay notice failed")

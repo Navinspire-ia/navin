@@ -231,6 +231,17 @@ class AgentProgressHook(AgentHook):
         if label:
             await self._emit_task_progress({"label": label, "indeterminate": True})
 
+    async def emit_model_relay(self, model_label: str) -> None:
+        """Name the model that took over the step, in front of Working.
+
+        ``relay_model`` carries it to the CLI working line and the desktop
+        status; an empty name says the chosen model answers again.
+        """
+        label = f"{model_label} · Working…" if model_label else "Working…"
+        await self._emit_task_progress(
+            {"label": label, "indeterminate": True, "relay_model": model_label}
+        )
+
     async def emit_user_notice(self, text: str) -> None:
         """Show a hook ``systemMessage`` as its own activity row."""
         from navin.agent.user_hooks import announce_hook_messages

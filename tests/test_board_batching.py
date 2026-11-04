@@ -59,6 +59,27 @@ class BoardBatchingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tasks["Invoice API"]["depends_on"], [tasks["Scaffold app"]["id"]])
         self.assertEqual(tasks["Invoice UI"]["depends_on"], [tasks["Invoice API"]["id"]])
 
+    async def test_a_plan_is_written_once_and_not_at_all_when_a_step_is_refused(self) -> None:
+        # One write per step: a 46-step plan read and rewrote a 1.5 MB board 46 times (2 s).
+        from unittest import mock
+
+        writes = mock.Mock(wraps=ProjectBoardStore._write_tasks)
+        with mock.patch.object(ProjectBoardStore, "_write_tasks", lambda store, tasks: writes(store, tasks)):
+            out = await self._run(action="create", tasks=[{"title": f"Step {n}"} for n in range(6)])
+        self.assertIn("6 tasks created", out)
+        written = [call.args[1] for call in writes.call_args_list]
+        self.assertEqual(len(written), 2, "the plan in one write, then the claim of its first step")
+        self.assertEqual([task["status"] for task in written[0]], ["backlog"] * 6)
+        self.assertEqual(sum(task["status"] == "in_progress" for task in written[1]), 1)
+        kinds = [entry["kind"] for entry in ProjectBoardStore(self.project).read_activity()]
+        self.assertEqual(kinds.count("task_created"), 6)
+
+        out = await self._run(action="create", tasks=[{"title": "Kept out"}, {"title": "  "}])
+        self.assertIn("each item in tasks needs a title", out)
+        titles = [task["title"] for task in ProjectBoardStore(self.project).read_tasks()]
+        self.assertNotIn("Kept out", titles)
+        self.assertEqual(len(titles), 6)
+
     async def test_done_with_claim_next_starts_the_next_step_in_the_same_call(self) -> None:
         await self._run(action="create", tasks=[{"title": "A"}, {"title": "B", "depends_on": ["A"]}])
         by_title = {t["title"]: t for t in ProjectBoardStore(self.project).read_tasks()}

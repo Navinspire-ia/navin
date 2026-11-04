@@ -340,3 +340,34 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_working_line_names_the_model_that_took_over() -> None:
+    from navin.tui.widgets import format_working_line
+
+    relayed = format_working_line(elapsed_s=12, activity="Working…", relay="Claude Fable 5.1")
+
+    assert relayed.startswith("Claude Fable 5.1 · Working… (")
+    assert format_working_line(elapsed_s=12, activity="Working…").startswith("Working… (")
+
+
+def test_the_cli_hears_which_model_took_over_and_when_the_chosen_one_is_back() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from navin.tui.runtime import TuiRuntime
+
+    runtime = SimpleNamespace(agent_loop=SimpleNamespace(channels_config=None), status=SimpleNamespace(relay_model=""))
+    event = SimpleNamespace(
+        reasoning_end=False, reasoning=False, reasoning_delta=False,
+        tool_events=None, file_edit_events=None, tool_hint=False,
+    )
+
+    def relay(name: str) -> SimpleNamespace:
+        data = {"label": f"{name} · Working…" if name else "Working…", "indeterminate": True, "relay_model": name}
+        return SimpleNamespace(content="", metadata={"_agent_ui": {"kind": "task_progress", "data": data}})
+
+    asyncio.run(TuiRuntime._dispatch_progress(runtime, relay("Claude Fable 5.1"), event))
+    assert runtime.status.relay_model == "Claude Fable 5.1"
+    asyncio.run(TuiRuntime._dispatch_progress(runtime, relay(""), event))
+    assert runtime.status.relay_model == ""

@@ -911,7 +911,8 @@ class BoardTool(Tool):
 
         if action == "create" and tasks:
             # A plan filed one task per call cost one model round trip each
-            # (measured: 6 creates, 6 steps). One call files them all.
+            # (measured: 6 creates, 6 steps). One call files them all, in one
+            # write, and files nothing when one of them is refused.
             created: list[dict[str, Any]] = []
             by_title: dict[str, str] = {}
             for item in tasks:
@@ -921,7 +922,7 @@ class BoardTool(Tool):
                     by_title.get(str(dep).strip().lower(), str(dep))
                     for dep in (item.get("depends_on") or [])
                 ]
-                task = store.create_task(
+                task = store.build_task(
                     title=str(item["title"]),
                     description=item.get("description"),
                     status=status,
@@ -938,8 +939,9 @@ class BoardTool(Tool):
                     actor_type=who_type,
                 )
                 by_title[str(item["title"]).strip().lower()] = task["id"]
-                touched.append(task["id"])
                 created.append(task)
+            store.add_tasks(created)
+            touched.extend(task["id"] for task in created)
             report = f"{len(created)} tasks created:\n" + "\n".join(
                 f"  {_fmt_task(task)}" for task in created
             )

@@ -2007,11 +2007,17 @@ def running_exec_count() -> int:
         return 0
 
 
-def format_working_line(*, elapsed_s: float, background: int = 0, activity: str = "") -> str:
+def format_working_line(
+    *, elapsed_s: float, background: int = 0, activity: str = "", relay: str = ""
+) -> str:
     """Status shown in chat while a turn runs: what the agent is doing now.
-    Keys are Navin keys, not Cursor's."""
+    Keys are Navin keys, not Cursor's. *relay* names the model that took over
+    the step when the chosen one could not answer, in front of the rest."""
     clock = format_elapsed(elapsed_s)
     label = " ".join((activity or "").split()) or "Working"
+    relay = " ".join((relay or "").split())
+    if relay:
+        label = f"{relay} · {label}"
     if cell_len(label) > 72:
         # Cut by terminal cells: wide glyphs take two.
         label = set_cell_size(label, 71).rstrip() + "…"
@@ -3564,6 +3570,10 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             else:
                 await body.update(text)
             self._painted_markdown = text
+            if force and isinstance(body, TranscriptMarkdown):
+                # A final paint (end of stream, reveal, text set at once): its
+                # last code block is written, it shows whole and in colour.
+                body.complete()
 
     async def _flush_stream(self) -> None:
         if not self.is_attached:
@@ -3658,6 +3668,10 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             return
         if self._buffer:
             await self._paint_body(force=self._open)
+        body = await self._ready_body()
+        if isinstance(body, TranscriptMarkdown):
+            # The answer is written: its last code block shows in full.
+            body.complete()
 
     async def set_text(self, text: str, *, render_as: str = "markdown") -> None:
         if not self.is_attached:

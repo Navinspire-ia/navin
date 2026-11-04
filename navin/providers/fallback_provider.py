@@ -5,14 +5,20 @@
 
 from __future__ import annotations
 
+import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from loguru import logger
 
 from navin.providers.base import LLMProvider, LLMResponse
-from navin.providers.fallback_policy import circuit_cooldown_s
+from navin.providers.fallback_policy import (
+    QUOTA_CEILING_KIND,
+    circuit_cooldown_s,
+    is_exhausted_account,
+)
+from navin.providers.model_switch_notice import notify_relay
 
 # Circuit breaker tuned to match OpenAICompatProvider's Responses API breaker.
 _PRIMARY_FAILURE_THRESHOLD = 3
@@ -26,20 +32,38 @@ _MISSING = object()
 PRIMARY_STICKY_RETRIES = 3
 
 
-# Fallback models their provider refused (403 "not available for this
-# account", 404, 401), skipped until the refusal cooldown ends. Shared by every
-# FallbackProvider: a broken model must not be retried on each new turn.
-_REFUSED_UNTIL: dict[str, float] = {}
+#: Why a model is left aside: its provider refused it, or it reached a ceiling.
+_REFUSED = "refused"
+_CEILING = "ceiling"
+
+# Models every chain leaves aside, with the time.monotonic() moment each one
+# comes back and why: refused by its provider (403 "not available for this
+# account", 404, 401), or at a usage ceiling (quota, spent budget, empty
+# balance). Shared by every FallbackProvider: a model that cannot answer is not
+# asked again on each new step or turn, nor by another chat or subagent whose
+# chain names it.
+_REFUSED_UNTIL: dict[str, tuple[float, str]] = {}
 
 
-def _refused_recently(model: str) -> bool:
-    until = _REFUSED_UNTIL.get(model)
-    if until is None:
-        return False
-    if time.monotonic() >= until:
+def _set_aside(model: str, seconds: float, reason: str) -> float:
+    """Leave *model* aside for *seconds*; a longer wait already set wins."""
+    until = time.monotonic() + max(1.0, float(seconds))
+    known = _REFUSED_UNTIL.get(model)
+    if known is not None and known[0] >= until:
+        return known[0]
+    _REFUSED_UNTIL[model] = (until, reason)
+    return until
+
+
+def _aside(model: str) -> tuple[float, str] | None:
+    """When *model* comes back and why it is left aside; None when it can answer."""
+    known = _REFUSED_UNTIL.get(model)
+    if known is None:
+        return None
+    if time.monotonic() >= known[0]:
         _REFUSED_UNTIL.pop(model, None)
-        return False
-    return True
+        return None
+    return known
 
 
 class FallbackProvider(LLMProvider):
@@ -71,8 +95,14 @@ class FallbackProvider(LLMProvider):
         provider_factory: Callable[[Any], LLMProvider],
         on_model_switch: Callable[[str, str], Any] | None = None,
         sticky_retries: int = PRIMARY_STICKY_RETRIES,
+        model_labels: Mapping[str, str] | None = None,
     ):
         self._primary = primary
+        # Display names by model slug ("Claude Fable 5.1"), for what the user reads.
+        self._model_labels = dict(model_labels or {})
+        # A relay answered the last step: the working line names it until the
+        # chosen model answers again.
+        self._relayed = False
         self._fallback_presets = list(fallback_presets)
         self._provider_factory = provider_factory
         self._has_fallbacks = bool(fallback_presets)
@@ -97,6 +127,54 @@ class FallbackProvider(LLMProvider):
                 await result
         except Exception as exc:  # noqa: BLE001 - never fail a turn over a notice
             logger.warning("Model switch notification failed: {}", exc)
+
+    def _label(self, model: str) -> str:
+        return self._model_labels.get(model) or model.rsplit("/", 1)[-1]
+
+    @staticmethod
+    def _leave_aside(
+        model: str,
+        response: LLMResponse,
+        cooldown_s: float,
+        ceilings: dict[str, float],
+        *,
+        share_refusal: bool,
+    ) -> None:
+        """Put a model that cannot answer on the list every chain skips.
+
+        A ceiling always goes there. A refusal of the chosen model stays with
+        this chain: fixing a key in Settings must not leave it aside elsewhere.
+        """
+        if is_exhausted_account(response):
+            ceilings[model] = _set_aside(model, cooldown_s, _CEILING)
+        elif share_refusal and getattr(response, "error_status_code", None) in (401, 403, 404):
+            _set_aside(model, cooldown_s, _REFUSED)
+
+    def _ceiling_response(
+        self, ceilings: dict[str, float], last_response: LLMResponse | None
+    ) -> LLMResponse:
+        """The answer of a relay whose every model reached its usage ceiling."""
+        names = [self._label(model) for model in ceilings]
+        wait_s = max(0.0, min(ceilings.values()) - time.monotonic())
+        minutes = max(1, math.ceil(wait_s / 60))
+        if len(names) == 1:
+            reached = f"{names[0]} reached its usage limit"
+            back = f"It comes back in about {minutes} min"
+        else:
+            reached = f"{', '.join(names[:-1])} and {names[-1]} reached their usage limit"
+            back = f"The first one comes back in about {minutes} min"
+        return LLMResponse(
+            content=(
+                f"{reached}, so no model could take over this step. "
+                f"{back}; pick another model to keep going now."
+            ),
+            finish_reason="error",
+            error_kind=QUOTA_CEILING_KIND,
+            error_should_retry=False,
+            error_retry_after_s=wait_s,
+            error_detail=getattr(last_response, "error_detail", None),
+            error_provider=getattr(last_response, "error_provider", None),
+        )
 
     @property
     def generation(self):
@@ -189,9 +267,20 @@ class FallbackProvider(LLMProvider):
         primary_model = kwargs.get("model") or self._primary.get_default_model()
         primary_was_attempted = False
         primary_error = "unknown error"
+        last_response: LLMResponse | None = None
+        # The models of this chain at a usage ceiling, with when each comes back.
+        ceilings: dict[str, float] = {}
+        primary_aside = _aside(primary_model)
+        if primary_aside is not None and primary_aside[1] == _CEILING:
+            ceilings[primary_model] = primary_aside[0]
+        # Every other model of the chain left aside: the chosen one is asked
+        # anyway. A ceiling may reset early, and one refused call costs less
+        # than a step refused without asking anyone.
+        others_aside = all(_aside(fallback.model) is not None for fallback in self._fallback_presets)
 
-        if self._primary_available():
+        if (self._primary_available() and primary_aside is None) or others_aside:
             primary_was_attempted = True
+            ceilings.pop(primary_model, None)
             response = await self._call_primary_stickily(
                 call, kwargs, primary_model, has_streamed
             )
@@ -199,6 +288,12 @@ class FallbackProvider(LLMProvider):
                 self._primary_failures = 0
                 self._primary_tripped_at = None
                 self._primary_cooldown_s = _PRIMARY_COOLDOWN_S
+                # Back: every chain may ask it again.
+                _REFUSED_UNTIL.pop(primary_model, None)
+                if self._relayed:
+                    # The chosen model answers again: the working line drops the relay.
+                    self._relayed = False
+                    await notify_relay("")
                 return response
             primary_error = (response.content or primary_error)[:120]
 
@@ -222,18 +317,22 @@ class FallbackProvider(LLMProvider):
                 else:
                     kwargs["on_content_delta"] = None
 
+            last_response = response
             self._primary_failures += 1
             cooldown = circuit_cooldown_s(response)
             if cooldown is not None:
                 self._open_primary_circuit(
                     primary_model,
                     cooldown,
-                    "provider asked to come back later"
+                    "quota, budget or credit used up"
+                    if is_exhausted_account(response)
+                    else "provider asked to come back later"
                     if getattr(response, "error_retry_after_s", None)
                     or getattr(response, "retry_after", None)
-                    else "no access to this model"
-                    if getattr(response, "error_status_code", None) in (401, 403, 404)
-                    else "account out of credit",
+                    else "no access to this model",
+                )
+                self._leave_aside(
+                    primary_model, response, cooldown, ceilings, share_refusal=False
                 )
             elif self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
                 self._open_primary_circuit(
@@ -242,16 +341,19 @@ class FallbackProvider(LLMProvider):
                     f"{self._primary_failures} consecutive failures",
                 )
         else:
-            logger.debug("Primary model '{}' circuit open; skipping", primary_model)
+            logger.debug("Primary model '{}' left aside; skipping", primary_model)
 
-        last_response: LLMResponse | None = None
         primary_skipped = not primary_was_attempted
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
-            if _refused_recently(fallback_model):
+            aside = _aside(fallback_model)
+            if aside is not None:
                 # Refused by its provider a moment ago (no access, unknown
-                # model): asking again would only add a failed call.
-                logger.debug("Fallback '{}' skipped: refused recently", fallback_model)
+                # model) or at a usage ceiling: asking again would only add a
+                # failed call.
+                if aside[1] == _CEILING:
+                    ceilings[fallback_model] = aside[0]
+                logger.debug("Fallback '{}' skipped: left aside ({})", fallback_model, aside[1])
                 continue
             if has_streamed is not None and has_streamed[0]:
                 can_hop = last_response is not None and self._should_fallback(
@@ -293,6 +395,8 @@ class FallbackProvider(LLMProvider):
                 )
                 continue
 
+            # Named in front of Working while it takes the step.
+            await notify_relay(self._label(fallback_model))
             original_values = {
                 name: kwargs.get(name, _MISSING)
                 for name in ("model", "max_tokens", "temperature", "reasoning_effort")
@@ -320,13 +424,16 @@ class FallbackProvider(LLMProvider):
                     "Fallback '{}' succeeded after primary '{}' failed",
                     fallback_model, primary_model,
                 )
+                self._relayed = True
                 await self._announce_switch(primary_model, fallback_model)
                 return fallback_response
 
             last_response = fallback_response
             refusal_s = circuit_cooldown_s(fallback_response)
-            if refusal_s is not None and getattr(fallback_response, "error_status_code", None) in (401, 403, 404):
-                _REFUSED_UNTIL[fallback_model] = time.monotonic() + refusal_s
+            if refusal_s is not None:
+                self._leave_aside(
+                    fallback_model, fallback_response, refusal_s, ceilings, share_refusal=True
+                )
             logger.warning(
                 "Fallback '{}' also failed: {}",
                 fallback_model,
@@ -337,6 +444,16 @@ class FallbackProvider(LLMProvider):
             "All {} fallback model(s) failed",
             len(self._fallback_presets),
         )
+        chain = [primary_model, *(fallback.model for fallback in self._fallback_presets)]
+        if (
+            ceilings
+            and all(model in ceilings for model in chain)
+            and not (last_response is not None and LLMProvider.is_arrearage_response(last_response))
+        ):
+            # Every model of the relay is at its ceiling: the turn stops on one
+            # answer saying when the first comes back, and is not replayed.
+            # An exhausted plan or key keeps its own answer (the quota card).
+            return self._ceiling_response(ceilings, last_response)
         # Return the last error response we saw (primary or last fallback).
         if last_response is not None:
             return last_response

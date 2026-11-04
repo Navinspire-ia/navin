@@ -24,9 +24,10 @@ from textual.geometry import Size
 from textual.style import Style
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets._markdown import MarkdownBlock, MarkdownFence
+from textual.widgets._markdown import MarkdownBlock
 
 from navin.tui.copy_chip import COPIED_LABEL, COPIED_SECONDS, COPY_LABEL
+from navin.tui.markdown_stream import fence_highlight
 
 BULLETS = ["• ", "▪ ", "‣ ", "⭑ ", "◦ "]
 
@@ -203,7 +204,7 @@ class _Renderer:
 
     def _fence(self, position: int, token: Token, width: int) -> list[Content]:
         code = token.content.rstrip()
-        highlighted = MarkdownFence.highlight(code, token.info.strip().split(" ")[0] if token.info else "")
+        highlighted = fence_highlight(code, token.info.strip().split(" ")[0] if token.info else "")
         # Live fences: panel background, the copy icon on the top row, one
         # blank row below, the code indented three cells (the fence's
         # padding plus its label's).

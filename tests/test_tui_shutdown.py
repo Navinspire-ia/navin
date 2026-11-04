@@ -5,6 +5,7 @@
 
 import asyncio
 import io
+import os
 import shlex
 import subprocess
 import sys
@@ -453,3 +454,108 @@ def test_switching_to_an_interrupted_chat_schedules_its_recovery(tmp_path):
         assert SessionManager(tmp_path).get_or_create("cli:old").metadata[RECOVERY_KEY]["status"] == "running"
 
     asyncio.run(run())
+
+
+def test_ctrl_z_never_suspends_the_cli_once_its_driver_is_built(tmp_path, monkeypatch):
+    """run_tui ignores SIGTSTP, then Textual's Linux driver installs a handler
+    that stops the process (SIGSTOP): Ctrl+Z reaching the CLI as a signal (a
+    child that put the terminal back in cooked mode, the shutdown window)
+    froze it with all its work, shown by the shell as "Stopped"."""
+    import signal
+
+    from textual.app import App
+
+    from navin.tui import resilience
+    from tests.test_tui_queue import make_app
+
+    tstp = getattr(signal, "SIGTSTP", None)
+    if tstp is None:
+        assert resilience.ignore_ctrl_z() is False, "no job control here: nothing to change"
+        return
+    previous = signal.getsignal(tstp)
+
+    def textual_driver(_app, headless, inline, mouse, size):
+        # What LinuxDriver.__init__ does: Ctrl+Z as a signal stops the process.
+        signal.signal(tstp, lambda *_: os.kill(os.getpid(), signal.SIGSTOP))
+        return SimpleNamespace(is_headless=headless)
+
+    monkeypatch.setattr(App, "_build_driver", textual_driver)
+    try:
+        app = make_app(tmp_path)
+        app._build_driver(True, False, True, None)
+        assert signal.getsignal(tstp) is not signal.SIG_IGN, "tests (headless) keep their handlers"
+        app._build_driver(False, False, True, None)
+        assert signal.getsignal(tstp) is signal.SIG_IGN
+    finally:
+        signal.signal(tstp, previous)
+    # The kernel agrees: a process that ignores SIGTSTP sends it to itself and goes on.
+    script = (
+        "import os, signal\n"
+        "from navin.tui.resilience import ignore_ctrl_z\n"
+        "signal.signal(signal.SIGTSTP, lambda *_: os.kill(os.getpid(), signal.SIGSTOP))\n"
+        "assert ignore_ctrl_z()\n"
+        "os.kill(os.getpid(), signal.SIGTSTP)\n"
+        "print('still running')\n"
+    )
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "still running"
+
+
+def test_every_close_writes_its_reason_to_the_black_box(tmp_path, monkeypatch):
+    from navin.tui import resilience
+    from navin.tui.app import record_close
+
+    log = tmp_path / "black-box.log"
+    monkeypatch.setattr(resilience, "log_path", lambda: log)
+    project = SimpleNamespace(workspace="/work/alpha")
+    assert record_close(SimpleNamespace(_exit_reason="quit (ctrl+q)", return_code=0, runtime=project)) == "quit (ctrl+q)"
+    assert record_close(SimpleNamespace(_exit_reason=None, return_code=None, runtime=project)) == "no reason recorded"
+    try:
+        raise KeyError("render")
+    except KeyError as error:
+        reason = record_close(SimpleNamespace(_exit_reason="panic", return_code=1, runtime=None), error=error)
+    assert reason == "panic; KeyError escaped the app"
+    text = log.read_text(encoding="utf-8")
+    assert f"[pid {os.getpid()} project /work/alpha] closed: quit (ctrl+q) (return code 0)" in text
+    assert "closed: no reason recorded (return code None)" in text, "a close from nowhere is the clue"
+    assert "closed: panic; KeyError escaped the app (return code 1)" in text
+    assert "Traceback (most recent call last)" in text and "KeyError: 'render'" in text
+    # A black box that cannot be written is said in the exit summary.
+    blocked = tmp_path / "not-a-folder"
+    blocked.write_text("", encoding="utf-8")
+    monkeypatch.setattr(resilience, "log_path", lambda: blocked / "cli-freeze.log")
+    runtime = SimpleNamespace(workspace="/work/alpha", shutdown_warnings=[])
+    assert record_close(SimpleNamespace(_exit_reason="quit (ctrl+q)", return_code=0, runtime=runtime)) == "quit (ctrl+q)"
+    assert len(runtime.shutdown_warnings) == 1
+    assert "Why navin-cli closed could not be written to" in runtime.shutdown_warnings[0]
+
+
+def test_a_forced_exit_gives_the_terminal_its_modes_back_without_writing():
+    """A forced exit (second stop signal, the stop watchdog) left the shell
+    without echo; restore() could block there, on a terminal that stopped reading."""
+    from navin.tui.shutdown import TerminalGuard
+
+    nothing = TerminalGuard.__new__(TerminalGuard)
+    nothing._fd = nothing._attrs = None
+    assert nothing.restore_modes_now() is None, "no terminal (redirected input, Windows): nothing to do"
+    if sys.platform == "win32":
+        return  # no termios modes on a Windows console: the case above is the whole contract
+    import pty
+    import termios
+
+    leader, follower = pty.openpty()
+    try:
+        guard = TerminalGuard.__new__(TerminalGuard)
+        guard._fd, guard._attrs = follower, termios.tcgetattr(follower)
+        raw = termios.tcgetattr(follower)
+        raw[3] &= ~(termios.ECHO | termios.ICANON)  # what the CLI runs with
+        termios.tcsetattr(follower, termios.TCSANOW, raw)
+        assert guard.restore_modes_now() is None
+        modes = termios.tcgetattr(follower)[3]
+        assert modes & termios.ECHO and modes & termios.ICANON
+    finally:
+        os.close(leader)
+        os.close(follower)
+    problem = guard.restore_modes_now()  # the terminal is gone: said, not raised
+    assert problem is not None and problem.startswith("error: ")

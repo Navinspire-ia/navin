@@ -854,6 +854,7 @@ export function ThreadShell({
     goalState,
     activityText,
     isCompacting,
+    relayModel,
     send,
     transcribeAudio,
     stop,
@@ -3036,6 +3037,7 @@ export function ThreadShell({
           isThinking={isThinking}
           waitingFor={turnWaitingFor}
           isCompacting={isCompacting}
+          relayModel={relayModel}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}
@@ -3103,6 +3105,7 @@ export function ThreadShell({
           isThinking={isThinking}
           waitingFor={turnWaitingFor}
           isCompacting={isCompacting}
+          relayModel={relayModel}
           onTranscribeAudio={transcribeAudio}
           liveVoice={welcomeVoiceToggle}
           goalState={goalState}

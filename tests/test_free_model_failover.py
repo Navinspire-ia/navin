@@ -188,7 +188,10 @@ class AutoFreeFallbackTest(unittest.TestCase):
         self.assertEqual(fallback.context_window_tokens, 200_000)
         self.assertEqual(fallback.max_tokens, 8192)
         self.assertEqual(fallback.temperature, 0.3)
-        self.assertEqual(fallback.reasoning_effort, primary.reasoning_effort)
+        # The substitute runs at the effort of the turn: the wrapper keeps the
+        # routed value when the preset names none. A preset default here ran
+        # every substitute at "low", whatever effort the turn ran at.
+        self.assertIsNone(fallback.reasoning_effort)
 
     def test_non_text_and_disabled_presets_never_enter_the_chain(self) -> None:
         config = _config_with_keys("navin")
@@ -318,6 +321,151 @@ class AutoFreeFallbackTest(unittest.TestCase):
         self.assertEqual(response.content, "hello")
         self.assertEqual(primary.calls, 1)
         self.assertEqual(fallback.calls, 1)
+
+
+def _plan_config() -> Config:
+    """The text models of the Navin plan, as its catalog lists them (2026-11)."""
+    config = _config_with_keys("navin")
+    for name, slug in (
+        ("claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"),
+        ("claude-opus-5-5", "anthropic/claude-opus-5.5"),
+        ("claude-opus-5", "anthropic/claude-opus-5"),
+        ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
+        ("gpt-6-astra", "openai/gpt-6-astra"),
+        ("gpt-6-1-sol", "openai/gpt-6.1-sol"),
+        ("gpt-6-sol", "openai/gpt-6-sol"),
+        ("gpt-6-luna", "openai/gpt-6-luna"),
+        ("claude-haiku-5-5", "anthropic/claude-haiku-5.5"),
+        ("gpt-5-6-sol", "openai/gpt-5.6-sol"),
+        ("kimi-k3", "moonshotai/kimi-k3"),
+        ("gpt-5-6-terra", "openai/gpt-5.6-terra"),
+        ("claude-fable-5-1", "anthropic/claude-fable-5.1"),
+        ("claude-fable-5", "anthropic/claude-fable-5"),
+    ):
+        config.model_presets[name] = _preset(slug, provider="navin")
+    config.agents.defaults.model_preset = "claude-sonnet-5-5"
+    config.model_routes = {"fast": "gpt-6-luna", "code": "gpt-5-6-terra", "plan": "gpt-6-1-sol"}
+    return config
+
+
+def _chain(config: Config, preset_name: str) -> list[tuple[str, str | None]]:
+    chain = _resolve_fallback_presets(config, config.model_presets[preset_name])
+    return [(preset.model, preset.reasoning_effort) for preset in chain]
+
+
+class RelayLadderTest(unittest.TestCase):
+    """A flagship that cannot answer hands the step to its peer, then down the ladder."""
+
+    def test_opus_hands_over_to_fable_then_sonnet_then_astra_and_sol_at_max(self) -> None:
+        chain = _chain(_plan_config(), "claude-opus-5-5")
+
+        self.assertEqual(
+            chain[:4],
+            [
+                ("anthropic/claude-fable-5.1", None),
+                ("anthropic/claude-sonnet-5.5", "max"),
+                ("openai/gpt-6-astra", "max"),
+                ("openai/gpt-6.1-sol", "max"),
+            ],
+        )
+        self.assertLessEqual(len(chain), _MAX_AUTO_PRESET_FALLBACKS)
+
+    def test_fable_hands_over_to_opus_the_same_way(self) -> None:
+        chain = _chain(_plan_config(), "claude-fable-5-1")
+
+        self.assertEqual(
+            chain[:4],
+            [
+                ("anthropic/claude-opus-5.5", None),
+                ("anthropic/claude-sonnet-5.5", "max"),
+                ("openai/gpt-6-astra", "max"),
+                ("openai/gpt-6.1-sol", "max"),
+            ],
+        )
+
+    def test_gpt_astra_stays_with_its_family_first(self) -> None:
+        chain = _chain(_plan_config(), "gpt-6-astra")
+
+        self.assertEqual(
+            chain[:4],
+            [
+                ("openai/gpt-6.1-sol", "max"),
+                ("anthropic/claude-opus-5.5", None),
+                ("anthropic/claude-fable-5.1", None),
+                ("anthropic/claude-sonnet-5.5", None),
+            ],
+        )
+
+    def test_a_newer_release_takes_the_place_of_its_family(self) -> None:
+        config = _plan_config()
+        config.model_presets["claude-opus-5-6"] = _preset("anthropic/claude-opus-5.6", provider="navin")
+
+        self.assertEqual(_chain(config, "claude-fable-5-1")[0], ("anthropic/claude-opus-5.6", None))
+
+    def test_a_flagship_without_credentials_gives_way_to_the_newest_usable_version(self) -> None:
+        config = _plan_config()
+        config.model_presets["claude-fable-5-1"] = _preset("claude-fable-5-1", provider="anthropic")
+
+        models = [model for model, _effort in _chain(config, "claude-opus-5-5")]
+
+        self.assertNotIn("claude-fable-5-1", models)
+        self.assertEqual(models[:2], ["anthropic/claude-fable-5", "anthropic/claude-sonnet-5.5"])
+
+    def test_a_model_off_the_ladder_keeps_the_generic_order_and_the_turns_effort(self) -> None:
+        chain = _chain(_plan_config(), "kimi-k3")
+
+        self.assertEqual(
+            [model for model, _effort in chain][:3],
+            ["anthropic/claude-sonnet-5.5", "openai/gpt-6-luna", "openai/gpt-5.6-terra"],
+        )
+        self.assertEqual({effort for _model, effort in chain}, {None})
+
+    def test_the_relay_runs_at_the_turns_effort_or_at_max_one_rung_down(self) -> None:
+        import asyncio
+
+        from navin.providers.base import LLMResponse
+
+        class _Recorder:
+            def __init__(self, response: LLMResponse):
+                self.response = response
+                self.efforts: list[str | None] = []
+
+            def get_default_model(self) -> str:
+                return "stub"
+
+            async def chat(self, **kwargs: object) -> LLMResponse:
+                self.efforts.append(kwargs.get("reasoning_effort"))
+                return self.response
+
+        spent = LLMResponse(content="quota used up", finish_reason="error", error_status_code=402)
+        config = _plan_config()
+        chain = _resolve_fallback_presets(config, config.model_presets["claude-opus-5-5"])
+        relays = {
+            "anthropic/claude-fable-5.1": _Recorder(spent),
+            "anthropic/claude-sonnet-5.5": _Recorder(LLMResponse(content="done")),
+        }
+        provider = FallbackProvider(
+            primary=_Recorder(spent),
+            fallback_presets=chain,
+            provider_factory=lambda preset: relays[preset.model],
+        )
+
+        response = asyncio.run(
+            provider.chat(model="anthropic/claude-opus-5.5", messages=[], reasoning_effort="high")
+        )
+
+        self.assertEqual(response.content, "done")
+        # The peer keeps the turn's effort; one rung down runs at the deepest.
+        self.assertEqual(relays["anthropic/claude-fable-5.1"].efforts, ["high"])
+        self.assertEqual(relays["anthropic/claude-sonnet-5.5"].efforts, ["max"])
+
+    def test_a_configured_list_never_names_the_chosen_model_as_its_own_relay(self) -> None:
+        config = _plan_config()
+        config.agents.defaults.fallback_models = ["claude-opus-5-5", "claude-fable-5-1"]
+
+        models = [model for model, _effort in _chain(config, "claude-opus-5-5")]
+
+        self.assertEqual(models, ["anthropic/claude-fable-5.1"])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from navin.agent import model_presets as preset_helpers
 from navin.config.schema import Config, ModelPresetConfig
+from navin.providers.base import LLMProvider
 from navin.providers.factory import ProviderSnapshot, build_provider_snapshot
 from navin.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
@@ -39,6 +40,27 @@ def _is_unconfigured_signature(signature: tuple[object, ...] | None) -> bool:
     return bool(signature) and signature[0] == "unconfigured"
 
 
+# Providers already built, by snapshot signature (newest first). A preset
+# pinned to a chat or a subagent is resolved again on every turn, and each
+# resolution built a new provider: a new OpenAI client, SSL context and TLS
+# connection, never reused nor closed. The desktop engine held 148
+# connections to its LLM gateway after three days (2026-11-03), and every
+# such turn paid a fresh handshake. A provider built from the config carries
+# factory.provider_signature, which names everything it is built from (model,
+# endpoint, key, headers, generation settings, fallbacks), so the first
+# provider serves every snapshot that carries the same one.
+_REUSED_PROVIDERS_MAX = 32
+# Signatures that name no provider of their own, never shared: the setup
+# placeholder, a preset riding on the default provider (resolved without a
+# preset loader: shared, it stayed on the default provider of its first turn
+# after the key or the endpoint changed) and a bare model override.
+_UNSHARED_SIGNATURES = ("unconfigured", "model_preset", "model_override")
+
+
+def _shareable(signature: tuple[object, ...] | None) -> bool:
+    return bool(signature) and signature[0] not in _UNSHARED_SIGNATURES
+
+
 class ModelRuntimeResolver:
     """Own model selection and resolve it to immutable execution values.
 
@@ -65,6 +87,25 @@ class ModelRuntimeResolver:
         self._default_selection_signature = preset_helpers.default_selection_signature(
             initial_runtime.snapshot_signature
         )
+        self._providers: list[tuple[tuple[object, ...], LLMProvider]] = []
+        self._remember_provider(initial_runtime.snapshot_signature, initial_runtime.provider)
+
+    def _remember_provider(self, signature: tuple[object, ...] | None, provider: LLMProvider) -> None:
+        if not _shareable(signature):
+            return
+        kept = [entry for entry in self._providers if entry[0] != signature]
+        self._providers = [(signature, provider), *kept][:_REUSED_PROVIDERS_MAX]
+
+    def _shared_snapshot(self, snapshot: ProviderSnapshot) -> ProviderSnapshot:
+        """*snapshot* on the provider already built for its signature, if any."""
+        signature = snapshot.signature
+        if not _shareable(signature):
+            return snapshot
+        for known, provider in self._providers:
+            if known == signature:
+                return snapshot if provider is snapshot.provider else replace(snapshot, provider=provider)
+        self._remember_provider(signature, snapshot.provider)
+        return snapshot
 
     @property
     def runtime(self) -> LLMRuntime:
@@ -96,8 +137,12 @@ class ModelRuntimeResolver:
         *,
         model_preset: str | None = None,
     ) -> LLMRuntime:
-        """Resolve a factory snapshot without changing the selected default."""
-        return runtime_from_provider_snapshot(snapshot, model_preset=model_preset)
+        """Resolve a factory snapshot without changing the selected default.
+
+        A signature resolved before runs on the provider built then, with its
+        open connections (see ``_REUSED_PROVIDERS_MAX``).
+        """
+        return runtime_from_provider_snapshot(self._shared_snapshot(snapshot), model_preset=model_preset)
 
     def adopt_snapshot(
         self,

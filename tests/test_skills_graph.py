@@ -131,6 +131,6 @@ class CatalogCacheTests(unittest.TestCase):
             folder2.mkdir()
             (folder2 / "SKILL.md").write_text("---\nname: beta-tool\ndescription: Beta quokka helper\n---\nbody\n")
             loader.invalidate_scan()
-            skills_module._SKILL_META_TTL.clear()
+            skills_module._SKILL_META_BY_SCAN.clear()
             self.assertEqual(set(build_skills_graph(loader).nodes), {"alpha-tool", "beta-tool"})
             self.assertEqual([row["name"] for row in loader.search_skills("quokka")], ["beta-tool"])

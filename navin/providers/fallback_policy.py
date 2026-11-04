@@ -30,6 +30,7 @@ matched only against specific phrases: tokens like ``empty``, ``balance`` and
 
 from __future__ import annotations
 
+import math
 import random
 import re
 from typing import Any, Callable
@@ -149,21 +150,34 @@ def text_indicates_availability_problem(text: str | None) -> bool:
 
 
 #: Substrings allowed against provider enum fields only.
-_EXHAUSTED_MARKERS = ("quota", "balance", "credit", "billing", "payment_required")
+_EXHAUSTED_MARKERS = (
+    "quota", "balance", "credit", "billing", "payment_required", "budget_exceeded", "usage_limit",
+)
 #: Phrases allowed against free-form text. "balance" alone matched "load
-#: balancer" in a 502 body, which is the opposite of an exhausted account.
+#: balancer" in a 502 body, which is the opposite of an exhausted account, and
+#: "billing" alone matched the link to the billing page that OpenAI appends to
+#: every per-minute rate limit. The ceilings of a plan or a key (usage limit,
+#: daily, weekly or monthly limit, tokens per day, a spent LiteLLM budget) are
+#: exhausted accounts too: none of them clears within a turn.
 _EXHAUSTED_TEXT_RE = re.compile(
     r"(?<![a-z0-9])(?:"
     r"quota|insufficient[ _]balance|credit balance|balance is too low|"
     r"insufficient[ _]credits?|out of credits?|payment required|"
-    r"billing[ _]hard[ _]limit|billing"
+    r"billing[ _]hard[ _]limit|(?<!/)billing(?![/a-z0-9])|"
+    r"usage[ _]limit|(?:daily|weekly|monthly)[ _](?:usage[ _]|token[ _]|request[ _])?limit|"
+    r"(?:tokens?|requests?)[ _]per[ _]day|"
+    r"budget[ _](?:has[ _]been[ _])?exceeded|exceeded[ _](?:the[ _]|your[ _])?budget|over[ _]budget"
     r")(?![a-z0-9])",
     re.IGNORECASE,
 )
 
 
 def is_exhausted_account(response: Any) -> bool:
-    """True for quota / balance / billing refusals, which do not clear in seconds."""
+    """True for quota, balance, billing and usage-ceiling refusals.
+
+    None of them clears in seconds: the chosen model is not asked again, and
+    it is left aside for :func:`quota_cooldown_s`.
+    """
     if getattr(response, "error_status_code", None) == 402:
         return True
     kind, error_type, code = _fields(response)
@@ -173,7 +187,12 @@ def is_exhausted_account(response: Any) -> bool:
         for marker in _EXHAUSTED_MARKERS
     ):
         return True
-    text = str(getattr(response, "content", "") or "")
+    # The provider's own words too: the content of an OpenAI-compatible error
+    # is the chat-safe rewrite ("The model is at capacity right now"), which
+    # says nothing of the daily limit the provider named.
+    text = " ".join(
+        str(getattr(response, name, "") or "") for name in ("content", "error_detail")
+    )
     return _EXHAUSTED_TEXT_RE.search(text) is not None
 
 
@@ -289,6 +308,57 @@ STICKY_MAX_DELAY_S = 10.0
 #: out of credit. Bounded so a stray hint cannot park the model for an hour.
 CIRCUIT_MAX_COOLDOWN_S = 60.0
 
+#: How long a model that reached a ceiling (plan or daily quota, spent budget,
+#: empty balance) is left aside when its provider names no wait. Asked again
+#: every minute, it cost a refused call on every step and the turn looked stuck.
+QUOTA_COOLDOWN_S = 900.0
+
+#: Longest wait a provider's own Retry-After imposes on a model at its ceiling.
+QUOTA_MAX_COOLDOWN_S = 3600.0
+
+#: ``error_kind`` of the answer a relay gives when every one of its models is
+#: at its ceiling: final for the turn, which is not replayed.
+QUOTA_CEILING_KIND = "quota_ceiling"
+
+#: A quota counted per minute or per second clears within the minute.
+_SHORT_WINDOW_RE = re.compile(
+    r"(?<![a-z0-9])(?:per[ _-]?(?:minute|min|second|sec)|[rt]pm|rps)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def _hinted_wait_s(response: Any) -> float | None:
+    """The wait the provider named (Retry-After), when it is a positive number."""
+    hinted = getattr(response, "error_retry_after_s", None) or getattr(
+        response, "retry_after", None
+    )
+    if not hinted:
+        return None
+    try:
+        seconds = float(hinted)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
+def quota_cooldown_s(response: Any) -> float:
+    """Seconds a model whose quota or credit is used up is left aside.
+
+    The provider's own wait wins when it names one, up to an hour. A quota
+    counted per minute is left aside for a minute; any other ceiling for a
+    quarter of an hour, after which one call tells whether it reset.
+    """
+    hinted = _hinted_wait_s(response)
+    if hinted is not None:
+        return min(hinted, QUOTA_MAX_COOLDOWN_S)
+    text = " ".join(
+        str(getattr(response, name, "") or "")
+        for name in ("content", "error_detail", "error_type", "error_code")
+    )
+    if _SHORT_WINDOW_RE.search(text):
+        return CIRCUIT_MAX_COOLDOWN_S
+    return QUOTA_COOLDOWN_S
+
 
 def sticky_retry_budget(response: Any, budget: int) -> int:
     """How many times the chosen model is asked again after *response*.
@@ -335,17 +405,10 @@ def circuit_cooldown_s(response: Any) -> float | None:
     if getattr(response, "error_status_code", None) in (401, 403, 404):
         return REFUSAL_COOLDOWN_S
     if is_exhausted_account(response):
-        return CIRCUIT_MAX_COOLDOWN_S
-    hinted = getattr(response, "error_retry_after_s", None) or getattr(
-        response, "retry_after", None
-    )
-    if hinted:
-        try:
-            seconds = float(hinted)
-        except (TypeError, ValueError):
-            return None
-        if seconds > STICKY_MAX_DELAY_S:
-            return min(seconds, CIRCUIT_MAX_COOLDOWN_S)
+        return quota_cooldown_s(response)
+    seconds = _hinted_wait_s(response)
+    if seconds is not None and seconds > STICKY_MAX_DELAY_S:
+        return min(seconds, CIRCUIT_MAX_COOLDOWN_S)
     return None
 
 

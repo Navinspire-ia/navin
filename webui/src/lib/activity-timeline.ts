@@ -323,7 +323,22 @@ function assistantHasInlineReasoning(message: UIMessage): boolean {
   );
 }
 
+// The split halves of an answer are pure functions of the source message.
+// Caching them by that message keeps their identity across rebuilds, so a
+// streamed delta elsewhere in the thread does not hand every finished row a
+// fresh object (which defeated the row memo and re-rendered the whole chat).
+const reasoningHalfCache = new WeakMap<UIMessage, UIMessage>();
+const answerHalfCache = new WeakMap<UIMessage, UIMessage>();
+
 function reasoningOnlyMessageFromAnswer(message: UIMessage): UIMessage {
+  const cached = reasoningHalfCache.get(message);
+  if (cached) return cached;
+  const half = buildReasoningOnlyMessage(message);
+  reasoningHalfCache.set(message, half);
+  return half;
+}
+
+function buildReasoningOnlyMessage(message: UIMessage): UIMessage {
   return {
     id: `${message.id}-reasoning`,
     role: "assistant",
@@ -338,9 +353,12 @@ function reasoningOnlyMessageFromAnswer(message: UIMessage): UIMessage {
 }
 
 function stripInlineReasoning(message: UIMessage): UIMessage {
+  const cached = answerHalfCache.get(message);
+  if (cached) return cached;
   const next = { ...message };
   delete next.reasoning;
   delete next.reasoningStreaming;
+  answerHalfCache.set(message, next);
   return next;
 }
 

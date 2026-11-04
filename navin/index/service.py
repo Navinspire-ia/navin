@@ -140,6 +140,8 @@ _BUILTIN_MEMBERS = _builtin_member_names()
 # index is refreshed less often, at a capped rate, and an agent edit re-stats
 # only the file it wrote.
 _BRIDGED_REVALIDATE_TTL_S = 120.0
+# A revalidation walk that took W seconds is not repeated within this many W.
+_WALK_TTL_FACTOR = 20.0
 _BRIDGED_STAT_BURST = 200
 _BRIDGED_STAT_PAUSE_S = 0.01
 
@@ -449,24 +451,40 @@ class CodeIndex:
         self._revalidated_at = 0.0
         self._dirty = False
         self.bridged = is_bridged_root(self.root)
-        # Files written since the last walk, on a bridged root only: they are
-        # re-stat'd one by one instead of walking the whole tree again.
+        # Files the agent wrote since the last walk: they are re-stat'd one by
+        # one instead of walking the whole tree again.
         self._dirty_paths: set[str] = set()
+        # Seconds the last revalidation walk (discovery and stats) took.
+        self._last_walk_s = 0.0
 
     # -- lifecycle ---------------------------------------------------------
 
     def _revalidate_ttl(self) -> float:
-        return _BRIDGED_REVALIDATE_TTL_S if self.bridged else self._REVALIDATE_TTL_S
+        """How long a walk is trusted: 2 s, or 20 times what the last one cost.
+
+        A 0.1 s walk of a Linux checkout keeps the 2 s throttle. A 6000-file
+        project on Windows NTFS took seconds per walk, and the repo map, the
+        Graph rebuild and the code tools walked it back to back during whole
+        turns (2026-11-04 probe: 7.8 s for a 9-step turn, 0.85 s on Linux).
+        Edits made by the agent are queued by :meth:`mark_dirty` and seen at
+        once; a lookup that finds nothing forces a walk.
+        """
+        if self.bridged:
+            return _BRIDGED_REVALIDATE_TTL_S
+        return min(
+            _BRIDGED_REVALIDATE_TTL_S,
+            max(self._REVALIDATE_TTL_S, _WALK_TTL_FACTOR * self._last_walk_s),
+        )
 
     def mark_dirty(self, path: Path | str | None = None) -> None:
-        """Force the next :meth:`ensure` to see a fresh tree (bypass the TTL).
+        """Make the next :meth:`ensure` see a file the agent just wrote.
 
-        Called after agent file edits so an immediately following lookup sees
-        the new code instead of a throttled snapshot. On a bridged WSL root a
-        known ``path`` is queued alone, so one edit costs one stat instead of a
-        walk of the whole project through the bridge.
+        A known ``path`` is queued and re-stat'd alone, on every root: one
+        edit costs one stat instead of a walk of the whole project, which took
+        seconds per edit on a native Windows project as on a WSL bridge.
+        Without a usable path, the next :meth:`ensure` walks the tree.
         """
-        if self.bridged and path is not None:
+        if path is not None:
             rel = self._relative(path)
             if rel is not None:
                 self._dirty_paths.add(rel)
@@ -524,6 +542,7 @@ class CodeIndex:
         self._dirty = False
         self._dirty_paths.clear()
         self._revalidated_at = now
+        walk_started = time.perf_counter()
         files, discovery, truncated = discover_files(self.root)
         self.all_files = files
 
@@ -542,6 +561,8 @@ class CodeIndex:
             ):
                 continue
             changed.append((rel, mtime_ns, size))
+        # Discovery and stats only: parsing what changed is not the walk.
+        self._last_walk_s = time.perf_counter() - walk_started
         for rel, entry in _extract_batch(self.root, changed).items():
             if entry is None:
                 continue
@@ -555,7 +576,7 @@ class CodeIndex:
         )
 
     def _revalidate_paths_locked(self) -> bool:
-        """Re-stat only the files written since the last walk (bridged roots).
+        """Re-stat only the files the agent wrote since the last walk.
 
         The next full walk, at most one TTL later, still reconciles anything
         this misses (a file the discovery would have ignored, a rename).

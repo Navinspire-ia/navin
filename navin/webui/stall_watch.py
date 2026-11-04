@@ -82,6 +82,7 @@ def thread_snapshot(
     skip_ident: int | None = None,
     max_frames: int = _MAX_FRAMES_PER_THREAD,
     max_threads: int = _MAX_THREADS,
+    skip_idents: tuple[int | None, ...] = (),
 ) -> str:
     """Condensed stacks of the threads doing (or waiting on) our work.
 
@@ -92,10 +93,11 @@ def thread_snapshot(
     """
     frames = sys._current_frames()
     names = {thread.ident: thread.name for thread in threading.enumerate()}
+    skipped = {skip_ident, *skip_idents}
     lines: list[str] = []
     shown = 0
     for ident, frame in frames.items():
-        if ident == skip_ident:
+        if ident in skipped:
             continue
         chain: list[tuple[str, int, str, str]] = []
         current = frame
@@ -196,8 +198,11 @@ class LoopLagMonitor:
         after_slow_full_gc: Callable[[], None] | None = None,
         slow_full_gc_s: float = SLOW_FULL_GC_S,
         context: Callable[[], str] | None = None,
+        interesting: Interesting = _navin_module,
     ) -> None:
         self._log = log
+        # Which other threads a report lists (ours by default).
+        self._interesting = interesting
         # Several CLIs append to one cli-freeze.log: each entry names its
         # process, and the caller may add more (the CLI adds its project).
         self._context = context
@@ -332,6 +337,15 @@ class LoopLagMonitor:
             gc_note = self._gc.describe()
             if gc_note:
                 where = f"{where}\n  {gc_note}"
+            # A main thread stopped inside a short C call (a socket accept, a
+            # recv) waits for the interpreter lock another thread holds: 325
+            # Windows freezes of 1 to 50 s showed no navin frame on the main
+            # thread (2026-10-31). The other threads inside our code name it.
+            others = thread_snapshot(
+                interesting=self._interesting,
+                skip_idents=(self._loop_ident, threading.get_ident()),
+            )
+            where = f"{where}\n  other threads inside navin:\n{others}"
             self._last_sample = (beat, where)
             if now - last_report < self._min_interval_s:
                 continue

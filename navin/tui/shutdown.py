@@ -77,6 +77,24 @@ class TerminalGuard:
                 # Keys typed during the exit never reach the shell prompt.
                 termios.tcflush(self._fd, termios.TCIFLUSH)
 
+    def restore_modes_now(self) -> str | None:
+        """Echo and line editing back at once; None when done or nothing to do.
+
+        For a forced exit (a second stop signal, the stop watchdog): restore()
+        writes to stdout and waits for the output to drain, and either can
+        block on a terminal that stopped reading. This only sets the saved
+        modes back, now. Returns what went wrong, for the caller to record.
+        """
+        if self._attrs is None or self._fd is None:
+            return None
+        import termios
+
+        try:
+            termios.tcsetattr(self._fd, termios.TCSANOW, self._attrs)
+        except (termios.error, OSError) as exc:
+            return f"{type(exc).__name__}: {exc}"
+        return None
+
 
 def release_input_thread(app) -> None:
     """Let the terminal input thread end now, in parallel with the engine's shutdown.

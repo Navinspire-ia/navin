@@ -38,7 +38,10 @@ _RESOLVED_PATH_CACHE: dict = {}
 _RESOLVED_ROOTS_CACHE: dict[tuple, tuple[float, frozenset[Path]]] = {}
 _RESOLVED_ROOTS_TTL_S = 30.0
 _RESOLVED_ROOTS_CACHE_MAX = 64
-_SKILL_META_TTL: dict = {}
+# Frontmatter of each skill per catalog scan: id(by_name) -> (by_name, {name: meta}).
+_SKILL_META_BY_SCAN: dict[int, tuple[dict, dict]] = {}
+# Stamps of the skill roots shipped inside a frozen app, read once per process.
+_FROZEN_ROOT_STAMPS: dict[str, tuple] = {}
 _SEARCH_ROWS: dict[tuple, tuple] = {}
 _SEARCH_ROWS_LOCK = threading.Lock()
 # The directory scan shared by every SkillsLoader built for the same roots.
@@ -357,7 +360,8 @@ def clear_skills_index_cache() -> None:
         _SCAN_GENERATION += 1
         _WHICH_CACHE.clear()
         _PATH_STAMP_CACHE.clear()
-    _SKILL_META_TTL.clear()
+    _SKILL_META_BY_SCAN.clear()
+    _FROZEN_ROOT_STAMPS.clear()
     _RESOLVED_PATH_CACHE.clear()
     _RESOLVED_ROOTS_CACHE.clear()
     with _SHARED_SCAN_LOCK:
@@ -627,7 +631,26 @@ class SkillsLoader:
         ]
         if self.builtin_skills:
             roots.append(self.builtin_skills)
-        return (workspace_harnesses, home_dirs, plugin_dirs, tuple(_dir_stamp(root) for root in roots))
+        return (workspace_harnesses, home_dirs, plugin_dirs, tuple(self._root_stamp(root) for root in roots))
+
+    def _root_stamp(self, root: Path) -> tuple:
+        """:func:`_dir_stamp` of *root*, read once per process inside a frozen app.
+
+        The skills an installed app ships only change with an update, which
+        restarts the engine. Stamping them stats each of their SKILL.md on
+        every catalog check: 9 s of a 3-turn run on Windows, on the path of
+        every prompt build (2026-11-04 probe). A source checkout keeps
+        checking them, since a developer edits them.
+        """
+        bundle = getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False) else None
+        if not bundle or not root.is_relative_to(bundle):
+            return _dir_stamp(root)
+        key = str(root)
+        stamp = _FROZEN_ROOT_STAMPS.get(key)
+        if stamp is None:
+            stamp = _dir_stamp(root)
+            _FROZEN_ROOT_STAMPS[key] = stamp
+        return stamp
 
     def _rescan(self, now: float) -> tuple[list[dict[str, str]], dict[str, Path]]:
         """An expired scan: kept when its roots are unchanged, else read again."""
@@ -763,7 +786,7 @@ class SkillsLoader:
         self._scan_stamp = None
         with _SHARED_SCAN_LOCK:
             _SHARED_SCAN_CACHE.pop(self._shared_scan_key(), None)
-        _SKILL_META_TTL.clear()
+        _SKILL_META_BY_SCAN.clear()
         _RESOLVED_PATH_CACHE.clear()
 
     def skill_source(self, name: str) -> str:
@@ -1430,25 +1453,26 @@ class SkillsLoader:
         Returns:
             Metadata dict or None.
         """
-        # Prompt building asks for every skill of every agent; each lookup
-        # costs a resolve() plus two stats. Within 2 s the answer is reused,
-        # which collapses a fan-out of hundreds of subagents to one disk pass.
-        # The roots key itself is a few hundred str() calls: computed once per
-        # scan, not per lookup (6 million of them in a 60-teammate launch).
-        scan = self._scan_cache
-        roots_memo = getattr(self, "_roots_key_memo", None)
-        if roots_memo is None or roots_memo[0] is not scan:
-            roots_memo = (scan, tuple(str(r) for r in self._skill_roots()))
-            self._roots_key_memo = roots_memo
-        memo_key = (roots_memo[1], name)
-        now = time.monotonic()
-        memo = _SKILL_META_TTL.get(memo_key)
-        if memo is not None and now - memo[0] < 2.0:
-            return memo[1]
+        # A skill's frontmatter and path cannot change within one scan of the
+        # catalog: the scan is kept only while the stamp of its roots, every
+        # SKILL.md mtime included, is unchanged (_revalidate_scan), and an
+        # edit, a new file or a retargeted link makes a new scan. The answer
+        # is kept for that scan, shared by the loaders that share it. The 2 s
+        # memo it replaces expired between two turns, so each turn resolved
+        # the path of every skill again: 2.5 s per prompt build on Windows,
+        # where realpath opens a handle per path (2026-11-04 probe).
+        _, by_name = self._scan()
+        memo = _SKILL_META_BY_SCAN.get(id(by_name))
+        if memo is None or memo[0] is not by_name:
+            if len(_SKILL_META_BY_SCAN) >= 64:
+                _SKILL_META_BY_SCAN.clear()
+            memo = (by_name, {})
+            _SKILL_META_BY_SCAN[id(by_name)] = memo
+        known = memo[1]
+        if name in known:
+            return known[name]
         result = self._get_skill_metadata_uncached(name)
-        if len(_SKILL_META_TTL) >= 4096:
-            _SKILL_META_TTL.clear()
-        _SKILL_META_TTL[memo_key] = (now, result)
+        known[name] = result
         return result
 
     def _get_skill_metadata_uncached(self, name: str) -> dict | None:

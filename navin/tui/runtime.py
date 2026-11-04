@@ -399,6 +399,8 @@ class RuntimeStatus:
     #: on-demand tools are withheld until a turn names them.
     tool_registry_count: int = 0
     turn_active: bool = False
+    #: Name of the model that took over the step; "" while the chosen one answers.
+    relay_model: str = ""
     last_latency_ms: int | None = None
     turns: int = 0
 
@@ -1094,6 +1096,10 @@ class TuiRuntime:
         """Turns and subagents still running in the projects working in the background."""
         return sum(_work_count(engine.agent_loop) for engine in self._parked.values())
 
+    def work_here(self) -> int:
+        """Turns and subagents running in the project on screen (quitting stops them)."""
+        return _work_count(self.agent_loop) if self.agent_loop is not None else 0
+
     def session_busy(self, path: str | Path, key: str) -> bool:
         """Whether one session of a project open in this CLI still works."""
         wanted = self._key_for(path)
@@ -1659,7 +1665,13 @@ class TuiRuntime:
         if not text:
             agent_ui = (msg.metadata or {}).get("_agent_ui")
             if isinstance(agent_ui, dict) and agent_ui.get("kind") == "task_progress":
-                label = str((agent_ui.get("data") or {}).get("label") or "").strip()
+                data = agent_ui.get("data")
+                data = data if isinstance(data, dict) else {}
+                if "relay_model" in data:
+                    # Another model took over the step: the working line names it.
+                    self.status.relay_model = str(data.get("relay_model") or "").strip()
+                    return
+                label = str(data.get("label") or "").strip()
                 if label.startswith("Compacting context"):
                     # Long model-backed summarization: say so instead of a
                     # silent "Working…" under a 100% context gauge.
@@ -1688,6 +1700,7 @@ class TuiRuntime:
         if latency is None and self._turn_started_at is not None:
             latency = int((time.monotonic() - self._turn_started_at) * 1000)
         self.status.turn_active = False
+        self.status.relay_model = ""
         self.worked_seconds += self.turn_elapsed_s
         self.status.last_latency_ms = latency
         self.status.turns += 1
@@ -1731,7 +1744,7 @@ class TuiRuntime:
                 return
             if isinstance(event, SessionTurnStarted):
                 if not self.status.turn_active:
-                    self.status.turn_active = True
+                    self.status.turn_active, self.status.relay_model = True, ""
                     self._streamed_this_turn = False
                     self._turn_started_at = time.monotonic()
                     await self._emit(UiTurnStarted(event.user_text))
@@ -2116,7 +2129,7 @@ class TuiRuntime:
 
             metadata[INBOUND_META_MODEL_PRESET] = model_preset
         if not followup or not self.status.turn_active:
-            self.status.turn_active = True
+            self.status.turn_active, self.status.relay_model = True, ""
             self._streamed_this_turn = False
             self._turn_started_at = time.monotonic()
             await self._emit(UiTurnStarted(text))

@@ -22,7 +22,7 @@ from typing import Any
 import json_repair
 from loguru import logger
 
-from navin.providers.fallback_policy import apply_jitter
+from navin.providers.fallback_policy import apply_jitter, is_exhausted_account
 
 STREAM_IDLE_TIMEOUT_ENV = "NAVIN_STREAM_IDLE_TIMEOUT_S"
 # Reasoning models regularly sit silent for more than a minute before the
@@ -334,6 +334,8 @@ class LLMProvider(ABC):
         "credit_balance_too_low",
         "billing_not_active",
         "payment_required",
+        # LiteLLM: the key's budget (the plan's, for the managed key) is spent.
+        "budget_exceeded",
     })
     _RETRYABLE_429_ERROR_TOKENS = frozenset({
         "rate_limit_exceeded",
@@ -508,7 +510,14 @@ class LLMProvider(ABC):
 
     @classmethod
     def _is_transient_response(cls, response: LLMResponse) -> bool:
-        """Prefer structured error metadata, fallback to text markers for legacy providers."""
+        """Prefer structured error metadata, fallback to text markers for legacy providers.
+
+        A usage ceiling (quota, spent budget, empty balance) is never transient,
+        whatever the retry header says: asked again in seconds, the model gives
+        the same refusal, and a turn replayed on it went round for hours.
+        """
+        if is_exhausted_account(response):
+            return False
         if response.error_should_retry is not None:
             return bool(response.error_should_retry)
 

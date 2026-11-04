@@ -14,6 +14,8 @@ import threading
 import time
 from typing import Any
 
+from loguru import logger
+
 from navin.bus.outbound_events import MetagraphUpdatedEvent, outbound_message_for_event
 
 _DEBOUNCE_S = 0.3
@@ -60,14 +62,23 @@ def publish_metagraph_update(
 
 
 def _rebuild(key: str) -> None:
+    """Rebuild and broadcast the graph of *key*, for an open Graph view only.
+
+    The Graph tab builds the graph when it opens. Rebuilding it (a tree walk
+    plus a layout) after every write of every agent, with nobody looking,
+    kept a core busy for whole turns on Windows (2026-11-04 probe).
+    """
+    from pathlib import Path
+
+    from navin.webui.metagraph import graph_watched, rebuild_and_notify
+
+    root = Path(key)
+    if not graph_watched(root):
+        return
     try:
-        from pathlib import Path
-
-        from navin.webui.metagraph import rebuild_and_notify
-
-        rebuild_and_notify(Path(key))
-    except Exception:
-        pass
+        rebuild_and_notify(root)
+    except Exception:  # worker boundary: one failed rebuild must not stop the next ones
+        logger.opt(exception=True).warning("Graph rebuild of {} failed", key)
 
 
 def _run_worker() -> None:

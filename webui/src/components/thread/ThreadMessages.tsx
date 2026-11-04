@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
@@ -251,7 +252,13 @@ export function ThreadMessages({
   revealPromptId = null,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
-  const units = useMemo(() => buildDisplayUnits(messages, isStreaming), [isStreaming, messages]);
+  const previousUnitsRef = useRef<Map<string, DisplayUnit>>(new Map());
+  const units = useMemo(() => {
+    const built = buildDisplayUnits(messages, isStreaming);
+    const stable = reuseUnchangedUnits(previousUnitsRef.current, built);
+    previousUnitsRef.current = stable.byKey;
+    return stable.units;
+  }, [isStreaming, messages]);
   const forkBoundaryAfterUnitIndex = useMemo(
     () => unitIndexAfterMessageCount(units, forkBoundaryMessageCount),
     [forkBoundaryMessageCount, units],
@@ -575,6 +582,49 @@ function currentActivityClusterIndices(units: DisplayUnit[]): Set<number> {
     if (unit.message.role === "user") break;
   }
   return indices;
+}
+
+function sameList<T>(left: readonly T[], right: readonly T[], same: (a: T, b: T) => boolean): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (!same(left[i], right[i])) return false;
+  }
+  return true;
+}
+
+function sameUnit(previous: DisplayUnit, next: DisplayUnit): boolean {
+  if (previous.type === "message" || next.type === "message") {
+    return previous.type === "message" && next.type === "message" && previous.message === next.message;
+  }
+  return (
+    previous.turnLatencyMs === next.turnLatencyMs
+    && previous.startedAtMs === next.startedAtMs
+    && previous.endedAtMs === next.endedAtMs
+    && sameList(previous.messages, next.messages, (a, b) => a === b)
+    && sameList(previous.items, next.items, (a, b) => a.type === b.type && a.message === b.message)
+  );
+}
+
+/**
+ * The timeline is rebuilt from the whole message list on every streamed
+ * delta, which hands every row a new unit object (and every activity cluster
+ * a new messages array) even when nothing in it changed. Give back the
+ * previous unit when its content is the same, so the memoized rows of a long
+ * chat skip the render and only the row receiving text re-renders.
+ */
+export function reuseUnchangedUnits(
+  previousByKey: ReadonlyMap<string, DisplayUnit>,
+  built: DisplayUnit[],
+): { units: DisplayUnit[]; byKey: Map<string, DisplayUnit> } {
+  const keys = unitKeysForDisplay(built);
+  const byKey = new Map<string, DisplayUnit>();
+  const units = built.map((unit, index) => {
+    const previous = previousByKey.get(keys[index]);
+    const kept = previous && sameUnit(previous, unit) ? previous : unit;
+    byKey.set(keys[index], kept);
+    return kept;
+  });
+  return { units, byKey };
 }
 
 export function unitKeysForDisplay(units: DisplayUnit[]): string[] {

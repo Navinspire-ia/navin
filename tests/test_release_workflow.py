@@ -70,6 +70,14 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertLess(script.index("Azure signing credentials are incomplete"), script.index("Building the sidecar"))
 
     def test_every_platform_keeps_a_cli_update_archive_in_its_release(self):
+        # The archive prefix became settable for Navin SM (navin-sm-cli); the
+        # public release keeps the navin-cli name that publish-os-to-s3.sh and
+        # `navin update` look for, by leaving the prefix to its default.
+        default_names = {
+            "linux": '"$output/${NAVIN_CLI_PREFIX:-navin-cli}-$sidecar_version-linux-$asset_arch.tar.gz"',
+            "macos": '"$output/${NAVIN_CLI_PREFIX:-navin-cli}-$sidecar_version-macos-$arch.tar.gz"',
+            "windows": '"$CliPrefix-$Version-windows-x64.zip"',
+        }
         for job_name, script in (
             ("linux", "packaging/linux/build-offline.sh"),
             ("macos", "packaging/macos/build-offline.sh"),
@@ -77,13 +85,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
         ):
             source = (REPO_ROOT / script).read_text(encoding="utf-8")
             self.assertIn("pack_cli_archive.py", source)
-            self.assertIn("navin-cli-", source)
+            self.assertIn(default_names[job_name], source)
+            if job_name == "windows":
+                self.assertIn(
+                    '$CliPrefix = if ($env:NAVIN_CLI_PREFIX) { $env:NAVIN_CLI_PREFIX } else { "navin-cli" }',
+                    source,
+                )
             uploads = "\n".join(
                 step.get("with", {}).get("path", "")
                 for step in self.jobs[job_name]["steps"]
                 if step.get("uses", "").startswith("actions/upload-artifact@")
             )
             self.assertIn("*.tar.gz" if job_name != "windows" else "os/windows/x64/", uploads)
+        self.assertNotIn("NAVIN_CLI_PREFIX", WORKFLOW.read_text(encoding="utf-8"))
+        publish = (REPO_ROOT / "scripts/publish-os-to-s3.sh").read_text(encoding="utf-8")
+        self.assertIn("navin-cli-${VERSION}-windows-x64.zip", publish)
 
     def test_the_linux_job_smoke_tests_its_sidecar(self):
         """--version only proves the binary links; this proves the engine boots."""

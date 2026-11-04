@@ -163,6 +163,10 @@ class AgentHook:
         """A short "what is happening right now" line while the model works."""
         pass
 
+    async def emit_model_relay(self, model_label: str) -> None:
+        """Another model took over the step ("" once the chosen one answers again)."""
+        pass
+
     async def emit_user_notice(self, text: str) -> None:
         """A message meant for the user only (for example a hook ``systemMessage``)."""
         pass
@@ -301,6 +305,16 @@ class CompositeHook(AgentHook):
                 await method(label)
             except Exception:
                 logger.debug("live status hook failed in {}", type(h).__name__, exc_info=True)
+
+    async def emit_model_relay(self, model_label: str) -> None:
+        for h in self._hooks:
+            method = getattr(h, "emit_model_relay", None)
+            if method is None:
+                continue
+            try:
+                await method(model_label)
+            except Exception:
+                logger.debug("model relay hook failed in {}", type(h).__name__, exc_info=True)
 
     async def emit_user_notice(self, text: str) -> None:
         for h in self._hooks:

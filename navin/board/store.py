@@ -402,7 +402,7 @@ class ProjectBoardStore:
 
     # -- Task mutations --------------------------------------------------------
 
-    def create_task(
+    def build_task(
         self,
         *,
         title: str,
@@ -422,6 +422,7 @@ class ProjectBoardStore:
         agent: str | None = None,
         evidence: str | None = None,
     ) -> dict[str, Any]:
+        """A new task, checked and cleaned, not on the board yet (see :meth:`add_tasks`)."""
         cleaned_title = _clean_str(title, max_len=_MAX_TITLE_LEN)
         if cleaned_title is None:
             raise BoardError("task title is required")
@@ -458,18 +459,69 @@ class ProjectBoardStore:
             set(),
         )
         assert task is not None
+        return task
+
+    def add_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        """Put tasks made by :meth:`build_task` on the board, all of them or none.
+
+        One read and one write for the batch: filed one by one, a plan of 46
+        steps read and rewrote a 1.5 MB board 46 times, 2 s of Python work
+        holding the interpreter lock the screen also needs (2026-11-03).
+        """
+        if not tasks:
+            return
         with self._lock:
-            tasks = self.read_tasks()
-            if len(tasks) >= _MAX_TASKS:
+            current = self.read_tasks()
+            if len(current) + len(tasks) > _MAX_TASKS:
                 raise BoardError("board is full", status=409)
-            tasks.append(task)
-            self._write_tasks(tasks)
-            self._append_activity(
-                kind="task_created",
-                actor=who,
-                task_id=task["id"],
-                detail=task["title"],
-            )
+            self._write_tasks([*current, *tasks])
+            for task in tasks:
+                self._append_activity(
+                    kind="task_created",
+                    actor=task["created_by"],
+                    task_id=task["id"],
+                    detail=task["title"],
+                )
+
+    def create_task(
+        self,
+        *,
+        title: str,
+        actor: str,
+        actor_type: str,
+        description: str | None = None,
+        status: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
+        assignee: dict[str, Any] | None = None,
+        milestone_id: str | None = None,
+        depends_on: list[str] | None = None,
+        acceptance: str | None = None,
+        validation: str | None = None,
+        retry_count: int | None = None,
+        max_retries: int | None = None,
+        agent: str | None = None,
+        evidence: str | None = None,
+    ) -> dict[str, Any]:
+        task = self.build_task(
+            title=title,
+            actor=actor,
+            actor_type=actor_type,
+            description=description,
+            status=status,
+            priority=priority,
+            labels=labels,
+            assignee=assignee,
+            milestone_id=milestone_id,
+            depends_on=depends_on,
+            acceptance=acceptance,
+            validation=validation,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            agent=agent,
+            evidence=evidence,
+        )
+        self.add_tasks([task])
         return task
 
     def update_task(

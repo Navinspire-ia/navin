@@ -141,6 +141,43 @@ class CriticalPathTest(unittest.TestCase):
         self.assertEqual(critical_path([]), [])
 
 
+class PlansWaitingOnEachOtherTest(unittest.TestCase):
+    """Plans whose steps wait on the steps of the plan before them.
+
+    The planning view used to walk every path again from each task: on a
+    board of 902 tasks, board calls computed for the whole hour of their
+    timeout in two CLI sessions (2026-11-03). Here 4^40 paths.
+    """
+
+    def test_a_board_of_plans_waiting_on_each_other_is_planned_at_once(self):
+        import threading
+        import time
+
+        layers, width = 40, 4
+        tasks = [
+            _task(f"L{layer}-{column}", depends_on=[f"L{layer - 1}-{c}" for c in range(width)] if layer else None)
+            for layer in range(layers)
+            for column in range(width)
+        ]
+        tasks.append(_task("loop-a", depends_on=["loop-b"]))
+        tasks.append(_task("loop-b", depends_on=["loop-a", "L39-0"]))
+        result: dict[str, Any] = {}
+        started = time.perf_counter()
+        worker = threading.Thread(target=lambda: result.update(plan_summary(tasks)), daemon=True)
+        worker.start()
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "the planning view did not finish within 10 s")
+        self.assertLess(time.perf_counter() - started, 2.0)
+
+        every_later_task = (layers - 1) * width + 2  # and the two of the loop
+        self.assertEqual(result["tasks"]["L0-0"]["dependents"], every_later_task)
+        self.assertEqual(result["tasks"]["L38-2"]["dependents"], width + 2)
+        self.assertEqual(result["tasks"]["loop-a"]["dependents"], 2, "a task in a loop waits on itself")
+        self.assertEqual(result["critical_path"], [*(f"L{layer}-0" for layer in range(layers)), "loop-b", "loop-a"])
+        self.assertEqual(result["ready_queue"], [f"L0-{column}" for column in range(width)])
+        self.assertEqual([set(ring) for ring in result["cycles"]], [{"loop-a", "loop-b"}])
+
+
 class CycleTest(unittest.TestCase):
     def test_two_task_cycle_is_detected(self):
         tasks = [_task("a", depends_on=["b"]), _task("b", depends_on=["a"])]

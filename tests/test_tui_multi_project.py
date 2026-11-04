@@ -193,6 +193,10 @@ def test_a_turn_finishes_in_its_own_project_while_another_one_is_used(tmp_path):
         # Beta works normally meanwhile.
         await app.submit_text("job-beta: quick question")
         await wait_for(lambda: any("beta answer" in text for text in answers(app)), "the beta answer")
+        # The answer shows while its turn still saves and responds: a project
+        # left before its turn ends keeps working in the background, so beta
+        # is idle (and closed when left below) only once that turn is over.
+        await wait_for(lambda: beta.resolve() not in {Path(p) for p in app.runtime.running_sessions()}, "beta to finish")
 
         # Alpha finishes in the background, saved in alpha only.
         gate.set()

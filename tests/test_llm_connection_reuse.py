@@ -130,6 +130,36 @@ class StaleSocketReplayTest(unittest.TestCase):
         self.assertIsNot(built_on[0], loop_thread)
         self.assertIsNotNone(provider._client)
 
+    def test_the_sdk_is_imported_off_the_event_loop(self) -> None:
+        # Importing openai loads hundreds of modules: done on the loop at the
+        # first model call, it froze a CLI 1.1 s and 3.3 s (cli-freeze.log,
+        # 2026-11-03 18:24).
+        import threading
+
+        from navin.providers import openai_compat_provider as module
+
+        provider = OpenAICompatProvider(
+            api_key="test",
+            api_base="https://example.invalid/v1",
+            default_model="vendor/model",
+        )
+        imported_on: list[threading.Thread] = []
+        resolve = module._openai_client_class
+
+        def tracked():
+            imported_on.append(threading.current_thread())
+            return resolve()
+
+        async def run() -> threading.Thread:
+            await provider._ensure_client()
+            return threading.current_thread()
+
+        with patch.object(module, "AsyncOpenAI", None), patch.object(module, "_openai_client_class", tracked):
+            loop_thread = asyncio.run(run())
+        self.assertEqual(len(imported_on), 1)
+        self.assertIsNot(imported_on[0], loop_thread)
+        self.assertIsNotNone(provider._client)
+
     def test_cloud_pool_keeps_sockets_briefly(self) -> None:
         provider = OpenAICompatProvider(
             api_key="test",

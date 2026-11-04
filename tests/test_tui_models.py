@@ -619,7 +619,7 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             asked: list[tuple] = []
             answer = {"value": False}
 
-            async def confirm(*args):
+            async def confirm(*args, **kwargs):
                 asked.append(args)
                 return answer["value"]
 

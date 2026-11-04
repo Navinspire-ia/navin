@@ -200,3 +200,46 @@ def test_project_folder_listing_matches_the_manifest_and_dotnet_rules(tmp_path):
     for folder in [*cases, "empty", "missing"]:
         path = tmp_path / folder
         assert rb._is_project_folder(path) == (rb._has_any(path, rb.MANIFESTS) or rb._dotnet_present(path)), folder
+
+
+def test_windows_lookup_asks_only_the_folders_holding_the_name(tmp_path, monkeypatch):
+    # shutil.which stats every PATHEXT spelling in every PATH folder: seconds
+    # of every turn on NTFS (2026-11-04). Same answer, fewer folders asked.
+    import os
+    import shutil
+    import stat
+
+    from navin.agent import project_runtime as runtime
+
+    unrelated, other, gone, holder, refused = (
+        tmp_path / name for name in ("unrelated", "other", "gone", "holder", "refused")
+    )
+    for folder in (unrelated, other, holder, refused):
+        folder.mkdir()
+    (unrelated / "nothing").write_text("")
+    (other / "tool.EXE").write_text("")  # a PATHEXT spelling: kept, shutil.which decides
+    tool = holder / "tool"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+    path_value = os.pathsep.join(str(folder) for folder in (unrelated, other, gone, holder, refused))
+    monkeypatch.setenv("PATHEXT", os.pathsep.join([".EXE", ".CMD"]))
+    runtime._PATH_INDEX.clear()
+    runtime._PATH_UNLISTED.clear()
+    real_listdir, real_which = os.listdir, shutil.which
+
+    def listdir(folder):
+        if str(folder) == str(refused):
+            raise PermissionError(folder)
+        return real_listdir(folder)
+
+    asked: list[str | None] = []
+
+    def which(cmd, mode=os.F_OK | os.X_OK, path=None):
+        asked.append(path)
+        return real_which(cmd, mode, path)
+
+    monkeypatch.setattr(runtime.os, "listdir", listdir)
+    monkeypatch.setattr(runtime.shutil, "which", which)
+    found = runtime._find_windows_program("tool", path_value)
+    assert found == real_which("tool", path=path_value) == str(tool)
+    assert asked == [os.pathsep.join([str(other), str(holder), str(refused)])]

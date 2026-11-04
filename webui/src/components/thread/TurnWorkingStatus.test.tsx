@@ -269,3 +269,41 @@ describe("switching chats while a turn runs", () => {
     },
   );
 });
+
+describe("model relay", () => {
+  it("names the model that took over in front of Working, for this turn only", () => {
+    const now = Date.now();
+    const { rerender } = render(
+      <TurnWorkingStatus
+        active
+        startedAt={now / 1000 - 30}
+        activityText="Running tests"
+        relayModel={{ label: "Claude Fable 5.1", at: now - 5_000 }}
+      />,
+    );
+    expect(screen.getByTestId("turn-relay-model").textContent).toBe("Claude Fable 5.1");
+    expect(screen.getByTestId("turn-activity-text").textContent).toBe("Running tests");
+
+    // A step line that already names the relay is enough.
+    rerender(
+      <TurnWorkingStatus
+        active
+        startedAt={now / 1000 - 30}
+        activityText="Claude Fable 5.1 is working…"
+        relayModel={{ label: "Claude Fable 5.1", at: now - 5_000 }}
+      />,
+    );
+    expect(screen.queryByTestId("turn-relay-model")).toBeNull();
+
+    // A relay of an earlier turn is not carried into the next one.
+    rerender(
+      <TurnWorkingStatus
+        active
+        startedAt={now / 1000}
+        activityText="Running tests"
+        relayModel={{ label: "Claude Fable 5.1", at: now - 60_000 }}
+      />,
+    );
+    expect(screen.queryByTestId("turn-relay-model")).toBeNull();
+  });
+});

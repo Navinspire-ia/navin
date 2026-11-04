@@ -3,7 +3,7 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Loader2, MessageCircleQuestion, ShieldQuestion } from "lucide-react";
+import { Loader2, MessageCircleQuestion, Repeat, ShieldQuestion } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -27,6 +27,7 @@ export const TurnWorkingStatus = memo(function TurnWorkingStatus({
   thinking = false,
   waiting = null,
   compacting = false,
+  relayModel = null,
   wide = false,
 }: {
   active: boolean;
@@ -40,6 +41,9 @@ export const TurnWorkingStatus = memo(function TurnWorkingStatus({
   waiting?: TurnWaitingReason | null;
   /** The context is being summarized: said in clear beside "Working". */
   compacting?: boolean;
+  /** The model that took over the step when the chosen one could not answer,
+   *  and when it did: a relay announced before this turn is not shown. */
+  relayModel?: { label: string; at: number } | null;
   wide?: boolean;
 }) {
   const { t } = useTranslation();
@@ -97,6 +101,12 @@ export const TurnWorkingStatus = memo(function TurnWorkingStatus({
     defaultValue: "Compacting context…",
   });
   const step = isCompacting ? "" : activityText?.trim() || "";
+  // The model that took over this turn's step, in front of Working. A step
+  // line that already names it ("Claude Fable 5.1 is working…") is enough.
+  const relayLabel = relayModel && !isWaiting && relayModel.at >= start - 1000
+    && !step.startsWith(relayModel.label)
+    ? relayModel.label
+    : "";
   const label = isWaiting
     ? waiting === "approval"
       ? t("thread.liveActivity.waitingForApproval", { defaultValue: "Waiting for your approval" })
@@ -131,6 +141,15 @@ export const TurnWorkingStatus = memo(function TurnWorkingStatus({
           className={cn("h-4 w-4 shrink-0 text-primary/70", reduced ? "" : "animate-spin")}
         />
       )}
+      {relayLabel ? (
+        <span
+          data-testid="turn-relay-model"
+          className="inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[12.5px] leading-4 text-primary"
+        >
+          <Repeat aria-hidden className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{relayLabel}</span>
+        </span>
+      ) : null}
       {!isWaiting && !thinking && step ? (
         <span
           data-testid="turn-activity-text"

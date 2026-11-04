@@ -65,38 +65,48 @@ def find_cycles(tasks: list[dict[str, Any]]) -> list[list[str]]:
     """Return dependency cycles as id chains, e.g. ``[["a", "b", "a"]]``.
 
     A cycle makes every task in it permanently unready, so callers surface it
-    as a planning error the humans must break.
+    as a planning error the humans must break. One depth-first walk with an
+    explicit stack: every task is finished once, and a chain of thousands of
+    tasks does not reach Python's recursion limit.
     """
+    known = {task["id"] for task in tasks}
     edges = {
-        task["id"]: [dep for dep in task.get("depends_on", []) if dep in {t["id"] for t in tasks}]
+        task["id"]: [dep for dep in task.get("depends_on") or [] if dep in known]
         for task in tasks
     }
     cycles: list[list[str]] = []
     seen_signatures: set[frozenset[str]] = set()
-    visiting: set[str] = set()
     done: set[str] = set()
 
-    def walk(node: str, trail: list[str]) -> None:
-        if node in visiting:
-            start = trail.index(node)
-            ring = trail[start:] + [node]
-            signature = frozenset(ring)
-            if signature not in seen_signatures:
-                seen_signatures.add(signature)
-                cycles.append(ring)
-            return
-        if node in done:
-            return
-        visiting.add(node)
-        trail.append(node)
-        for dep in edges.get(node, ()):
-            walk(dep, trail)
-        trail.pop()
-        visiting.discard(node)
-        done.add(node)
-
-    for task_id in edges:
-        walk(task_id, [])
+    for root in edges:
+        if root in done:
+            continue
+        trail = [root]
+        # Where each task of the current walk sits in ``trail``.
+        on_trail = {root: 0}
+        positions = [0]
+        while trail:
+            node = trail[-1]
+            deps = edges[node]
+            position = positions[-1]
+            if position < len(deps):
+                positions[-1] = position + 1
+                dep = deps[position]
+                if dep in on_trail:
+                    ring = trail[on_trail[dep]:] + [dep]
+                    signature = frozenset(ring)
+                    if signature not in seen_signatures:
+                        seen_signatures.add(signature)
+                        cycles.append(ring)
+                elif dep not in done:
+                    on_trail[dep] = len(trail)
+                    trail.append(dep)
+                    positions.append(0)
+                continue
+            trail.pop()
+            positions.pop()
+            del on_trail[node]
+            done.add(node)
     return cycles
 
 
@@ -122,43 +132,150 @@ def blocking_dependencies(tasks: list[dict[str, Any]]) -> dict[str, list[str]]:
     return blocking
 
 
+def _open_graph(tasks: list[dict[str, Any]]) -> tuple[list[str], list[list[int]]]:
+    """Open task ids in board order, and for each the open tasks it depends on.
+
+    Dependencies are positions in the first list, in declared order, each once.
+    """
+    order: list[str] = []
+    index: dict[str, int] = {}
+    for task in tasks:
+        if not _is_closed(task) and task["id"] not in index:
+            index[task["id"]] = len(order)
+            order.append(task["id"])
+    deps: list[list[int]] = [[] for _ in order]
+    for task in tasks:
+        if _is_closed(task):
+            continue
+        wanted = deps[index[task["id"]]]
+        for dep in task.get("depends_on") or []:
+            target = index.get(dep)
+            if target is not None and target not in wanted:
+                wanted.append(target)
+    return order, deps
+
+
+def _without_cycles(deps: list[list[int]]) -> tuple[list[list[int]], list[int]]:
+    """Cut the dependency edges that close a cycle; return the rest in a usable order.
+
+    A depth-first walk in board order drops each edge leading back to a task
+    still on the walk. What remains has no cycle, and the second value lists
+    every task after its dependencies. A board without a cycle keeps all its
+    edges.
+    """
+    state = [0] * len(deps)  # 0 not reached, 1 on the walk, 2 finished
+    kept: list[list[int]] = [[] for _ in deps]
+    finished: list[int] = []
+    for root in range(len(deps)):
+        if state[root]:
+            continue
+        state[root] = 1
+        walk = [(root, 0)]
+        while walk:
+            node, position = walk[-1]
+            if position < len(deps[node]):
+                walk[-1] = (node, position + 1)
+                dep = deps[node][position]
+                if state[dep] == 1:
+                    continue  # back to a task of this walk: the cycle is cut here
+                kept[node].append(dep)
+                if state[dep] == 0:
+                    state[dep] = 1
+                    walk.append((dep, 0))
+                continue
+            walk.pop()
+            state[node] = 2
+            finished.append(node)
+    return kept, finished
+
+
+def _components(edges: list[list[int]]) -> list[list[int]]:
+    """Strongly connected components (Tarjan), each after every one it reaches.
+
+    An explicit stack, so a chain of thousands of tasks needs no recursion.
+    """
+    count = len(edges)
+    index = [-1] * count
+    low = [0] * count
+    on_stack = [False] * count
+    stack: list[int] = []
+    components: list[list[int]] = []
+    counter = 0
+    for root in range(count):
+        if index[root] != -1:
+            continue
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack[root] = True
+        walk = [(root, 0)]
+        while walk:
+            node, position = walk[-1]
+            if position < len(edges[node]):
+                walk[-1] = (node, position + 1)
+                target = edges[node][position]
+                if index[target] == -1:
+                    index[target] = low[target] = counter
+                    counter += 1
+                    stack.append(target)
+                    on_stack[target] = True
+                    walk.append((target, 0))
+                elif on_stack[target]:
+                    low[node] = min(low[node], index[target])
+                continue
+            walk.pop()
+            if walk:
+                parent = walk[-1][0]
+                low[parent] = min(low[parent], low[node])
+            if low[node] == index[node]:
+                component: list[int] = []
+                while True:
+                    member = stack.pop()
+                    on_stack[member] = False
+                    component.append(member)
+                    if member == node:
+                        break
+                components.append(component)
+    return components
+
+
 def critical_path(tasks: list[dict[str, Any]]) -> list[str]:
     """Longest chain of open tasks along dependency edges, dependencies first.
 
     Returns ``[]`` when no chain reaches two tasks: a board of independent
     tasks has no critical path, because nothing constrains the order.
 
-    Cycles are cut rather than raised: a task already on the current trail is
-    skipped so the walk always terminates.
+    Cycles are cut rather than raised (see ``_without_cycles``), so the chain
+    never repeats a task. Each task's longest chain is computed once, after
+    its dependencies'. The walk this replaces kept only its top-level results,
+    so a task filed before its dependencies sent it down every path again, a
+    number that grows exponentially with the depth of the plan. Ties go to the
+    first dependency declared, then to board order.
     """
-    by_id = {task["id"]: task for task in tasks}
-    # Board order, not set order, so ties resolve identically on every call.
-    open_order = [task["id"] for task in tasks if not _is_closed(task)]
-    open_ids = set(open_order)
-    memo: dict[str, list[str]] = {}
-
-    def longest_from(task_id: str, trail: frozenset[str]) -> list[str]:
-        if task_id not in open_ids or task_id in trail:
-            return []
-        if task_id in memo:
-            return memo[task_id]
-        best: list[str] = []
-        for dep in by_id[task_id].get("depends_on", []):
-            chain = longest_from(dep, trail | {task_id})
-            if len(chain) > len(best):
-                best = chain
-        result = [*best, task_id]
-        # Only memoize trail-independent results to stay correct around cycles.
-        if not trail:
-            memo[task_id] = result
-        return result
-
-    longest: list[str] = []
-    for task_id in open_order:
-        chain = longest_from(task_id, frozenset())
-        if len(chain) > len(longest):
-            longest = chain
-    return longest if len(longest) > 1 else []
+    order, deps = _open_graph(tasks)
+    kept, finished = _without_cycles(deps)
+    length = [0] * len(order)
+    previous = [-1] * len(order)
+    # ``finished`` lists every task after the dependencies it kept.
+    for task in finished:
+        best = -1
+        for dep in kept[task]:
+            if best == -1 or length[dep] > length[best]:
+                best = dep
+        previous[task] = best
+        length[task] = (length[best] if best != -1 else 0) + 1
+    end = -1
+    for task in range(len(order)):
+        if end == -1 or length[task] > length[end]:
+            end = task
+    if end == -1 or length[end] < 2:
+        return []
+    chain: list[str] = []
+    while end != -1:
+        chain.append(order[end])
+        end = previous[end]
+    chain.reverse()
+    return chain
 
 
 def _sort_key(
@@ -181,30 +298,44 @@ def _sort_key(
 
 
 def _dependents_depth(tasks: list[dict[str, Any]]) -> dict[str, int]:
-    """How many open tasks transitively wait on each task."""
-    open_tasks = [task for task in tasks if not _is_closed(task)]
-    waiters: dict[str, set[str]] = {task["id"]: set() for task in open_tasks}
-    for task in open_tasks:
-        for dep in task.get("depends_on", []):
-            if dep in waiters:
-                waiters[dep].add(task["id"])
+    """How many open tasks transitively wait on each task.
 
-    resolved: dict[str, set[str]] = {}
-
-    def collect(task_id: str, trail: frozenset[str]) -> set[str]:
-        if task_id in resolved:
-            return resolved[task_id]
-        if task_id in trail:
-            return set()
-        total: set[str] = set()
-        for waiter in waiters.get(task_id, ()):
-            total.add(waiter)
-            total |= collect(waiter, trail | {task_id})
-        if not trail:
-            resolved[task_id] = total
-        return total
-
-    return {task_id: len(collect(task_id, frozenset())) for task_id in waiters}
+    A task in a cycle counts the tasks of its cycle, itself included. One
+    pass over the components of the open graph, each carrying the tasks it
+    reaches as one integer used as a bit set. Collecting the waiters again
+    along every path (memoized only per starting task) was exponential: on a
+    board of 902 tasks (266 open, 1036 links), board calls computed for the
+    whole hour of their timeout in two CLI sessions, and the worker thread,
+    which a timeout cannot stop, kept computing after it (2026-11-03).
+    """
+    order, deps = _open_graph(tasks)
+    waiters: list[list[int]] = [[] for _ in order]
+    for task, wanted in enumerate(deps):
+        for dep in wanted:
+            waiters[dep].append(task)
+    component_of = [-1] * len(order)
+    # Per component: its tasks and every task waiting on them.
+    below: list[int] = []
+    counts = [0] * len(order)
+    # Each component comes after every component it reaches.
+    for number, component in enumerate(_components(waiters)):
+        members = 0
+        for task in component:
+            component_of[task] = number
+            members |= 1 << task
+        waiting = 0
+        looped = False
+        for task in component:
+            for waiter in waiters[task]:
+                if component_of[waiter] == number:
+                    looped = True
+                else:
+                    waiting |= below[component_of[waiter]]
+        below.append(members | waiting)
+        count = (waiting | members).bit_count() if looped else waiting.bit_count()
+        for task in component:
+            counts[task] = count
+    return {task_id: counts[position] for position, task_id in enumerate(order)}
 
 
 # A plan filed in one create call, or in several calls of one request, has
@@ -302,11 +433,12 @@ def plan_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
         ready.append(task)
 
     ready.sort(key=lambda task: _sort_key(task, depth, on_path))
+    ready_ids = {task["id"] for task in ready}
 
     annotations = {
         task["id"]: {
             "blocked_by": blocking.get(task["id"], []),
-            "ready": any(candidate["id"] == task["id"] for candidate in ready),
+            "ready": task["id"] in ready_ids,
             "dependents": depth.get(task["id"], 0),
             "on_critical_path": task["id"] in on_path,
         }

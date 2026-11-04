@@ -20,6 +20,9 @@ import pytest
 from navin.providers.fallback_policy import (
     CIRCUIT_MAX_COOLDOWN_S,
     JITTER_RATIO,
+    QUOTA_CEILING_KIND,
+    QUOTA_COOLDOWN_S,
+    QUOTA_MAX_COOLDOWN_S,
     STICKY_MAX_DELAY_S,
     apply_jitter,
     circuit_cooldown_s,
@@ -46,6 +49,7 @@ class Err:
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
     retry_after: float | None = None
+    error_detail: str | None = None
 
 
 class TestTextMatchingIsSpecific:
@@ -240,11 +244,13 @@ class TestCircuitCooldown:
         assert circuit_cooldown_s(Err(error_status_code=404)) == REFUSAL_COOLDOWN_S
 
     def test_an_exhausted_account_is_skipped_for_the_full_cooldown(self):
-        assert circuit_cooldown_s(Err(error_status_code=402)) == CIRCUIT_MAX_COOLDOWN_S
-        assert circuit_cooldown_s(Err(error_code="insufficient_quota")) == CIRCUIT_MAX_COOLDOWN_S
+        # Asked again every minute, a model with no credit left cost a refused
+        # call on every step: it is left aside for a quarter of an hour.
+        assert circuit_cooldown_s(Err(error_status_code=402)) == QUOTA_COOLDOWN_S
+        assert circuit_cooldown_s(Err(error_code="insufficient_quota")) == QUOTA_COOLDOWN_S
         assert (
             circuit_cooldown_s(Err(content="Your credit balance is too low to access the API"))
-            == CIRCUIT_MAX_COOLDOWN_S
+            == QUOTA_COOLDOWN_S
         )
 
     def test_a_load_balancer_error_is_not_an_empty_wallet(self):
@@ -537,6 +543,11 @@ class TestStickyPrimary:
         asyncio.run(provider.chat(model="gemini-3.6"))
         assert provider._primary_tripped_at is not None
         provider._primary_tripped_at -= provider._primary_cooldown_s  # cooldown elapsed
+        # ... and so did its place on the list every chain skips.
+        from navin.providers import fallback_provider
+
+        until, reason = fallback_provider._REFUSED_UNTIL["gemini-3.6"]
+        fallback_provider._REFUSED_UNTIL["gemini-3.6"] = (until - provider._primary_cooldown_s, reason)
         result = asyncio.run(provider.chat(model="gemini-3.6"))
         assert result.content == "from gemini"
         assert provider._primary_tripped_at is None
@@ -920,9 +931,200 @@ class TestStreamedFailover:
         assert fallback.calls == 1
 
 
+class TestUsageCeiling:
+    """A model at its quota or budget ceiling is left aside, never asked in a loop.
+
+    A turn on a model that reached its limit was retried, then replayed by the
+    turn recovery for hours. The relay now moves on at once, every chain skips
+    the model until it comes back, and a relay entirely at its ceiling ends
+    the step with one plain answer.
+    """
+
+    @pytest.mark.parametrize(
+        "err",
+        [
+            # The OpenAI-compatible content is our rewrite; the limit is in the
+            # provider's own words.
+            Err(
+                error_status_code=429,
+                content="The model is at capacity right now.",
+                error_detail="Too many tokens per day, please wait before trying again.",
+            ),
+            Err(error_status_code=429, content="Weekly usage limit reached for claude-opus-5.5"),
+            Err(error_status_code=429, content="You have reached your daily limit"),
+            Err(error_status_code=400, error_type="budget_exceeded", content="Budget has been exceeded"),
+        ],
+    )
+    def test_a_ceiling_switches_at_once_and_is_left_aside_a_quarter_of_an_hour(self, err):
+        assert sticky_retry_budget(err, 3) == 0
+        assert circuit_cooldown_s(err) == QUOTA_COOLDOWN_S
+
+    def test_the_wait_the_provider_names_wins_up_to_an_hour(self):
+        hinted = Err(error_status_code=429, content="daily limit reached", error_retry_after_s=1200)
+        far = Err(error_status_code=429, content="daily limit reached", retry_after=86_400)
+        assert circuit_cooldown_s(hinted) == 1200
+        assert circuit_cooldown_s(far) == QUOTA_MAX_COOLDOWN_S
+
+    def test_a_quota_counted_per_minute_comes_back_within_the_minute(self):
+        err = Err(error_status_code=429, content="Quota exceeded for generate_content_requests_per_minute")
+        assert circuit_cooldown_s(err) == CIRCUIT_MAX_COOLDOWN_S
+
+    def test_a_rate_limit_with_a_billing_link_is_not_an_empty_account(self):
+        # OpenAI appends its billing page to per-minute rate limits.
+        err = Err(
+            error_status_code=429,
+            content="Rate limit reached for requests. Add a payment method at "
+            "https://platform.openai.com/account/billing",
+        )
+        assert circuit_cooldown_s(err) is None
+        assert is_worth_retrying(err) is True
+
+    def test_neither_the_retry_ladder_nor_the_turn_replay_waits_for_a_ceiling(self):
+        from navin.providers.base import LLMProvider, LLMResponse
+
+        ceiling = LLMResponse(
+            content="The model is at capacity right now.",
+            finish_reason="error",
+            error_status_code=429,
+            error_detail="Daily usage limit reached for this model.",
+            error_should_retry=True,
+        )
+        busy = LLMResponse(content="rate limit", finish_reason="error", error_status_code=429)
+        spent_plan = LLMResponse(
+            content="Budget has been exceeded", finish_reason="error",
+            error_status_code=400, error_type="budget_exceeded",
+        )
+        assert LLMProvider._is_transient_response(ceiling) is False
+        assert LLMProvider._is_transient_response(busy) is True
+        # A spent plan budget keeps the quota card of the plan.
+        assert LLMProvider.is_arrearage_response(spent_plan) is True
+
+    def test_a_model_at_its_ceiling_is_left_aside_by_the_next_chains(self, monkeypatch):
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        primary = FakeProvider([Err(error_status_code=429, content="weekly usage limit reached")])
+        fallback = FakeProvider([Err(finish_reason="stop", content="from deepseek")] * 2)
+        first = asyncio.run(_provider(primary, [Preset()], fallback).chat(model="gemini-3.6"))
+        # Another chain on the same model: the next turn, another chat, a subagent.
+        again = FakeProvider([])
+        second = asyncio.run(_provider(again, [Preset()], fallback).chat(model="gemini-3.6"))
+        assert first.content == second.content == "from deepseek"
+        assert primary.calls == 1
+        assert again.calls == 0
+
+    def test_a_relay_entirely_at_its_ceiling_ends_the_step_once_and_says_when(self, monkeypatch):
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        from navin.providers import fallback_provider
+        from navin.providers.base import LLMProvider
+
+        spent = Err(error_status_code=429, content="daily usage limit reached")
+        relays = {"deepseek-v4": FakeProvider([spent]), "kimi-k3": FakeProvider([spent])}
+        primary = FakeProvider([spent])
+        provider = fallback_provider.FallbackProvider(
+            primary,
+            [Preset(), Preset(model="kimi-k3")],
+            lambda preset: relays[preset.model],
+            model_labels={"gemini-3.6": "Gemini 3.6", "deepseek-v4": "DeepSeek V4", "kimi-k3": "Kimi K3"},
+        )
+
+        result = asyncio.run(provider.chat(model="gemini-3.6"))
+
+        assert result.error_kind == QUOTA_CEILING_KIND
+        assert result.content.startswith(
+            "Gemini 3.6, DeepSeek V4 and Kimi K3 reached their usage limit, so no model could take over"
+        )
+        assert "comes back in about 15 min" in result.content
+        # Final for the turn: the recovery does not replay it.
+        assert LLMProvider._is_transient_response(result) is False
+        assert [primary.calls, relays["deepseek-v4"].calls, relays["kimi-k3"].calls] == [1, 1, 1]
+
+        # Everyone aside: the chosen model is still asked, and once it answers
+        # every chain may ask it again.
+        recovered = asyncio.run(provider.chat(model="gemini-3.6"))
+        assert recovered.content == "ok"
+        assert [primary.calls, relays["deepseek-v4"].calls, relays["kimi-k3"].calls] == [2, 1, 1]
+        assert fallback_provider._aside("gemini-3.6") is None
+
+    def test_the_turn_ends_on_a_plain_message_never_on_resumes_by_itself(self):
+        from navin.agent.runner import _usage_ceiling_message
+        from navin.providers.base import LLMResponse
+
+        generic = _usage_ceiling_message(
+            LLMResponse(
+                content="The model is at capacity right now. Navin already retried "
+                "automatically and resumes by itself.",
+                finish_reason="error",
+                error_status_code=429,
+                error_detail="Daily usage limit reached.",
+            )
+        )
+        relay = LLMResponse(
+            content="Gemini 3.6 and Kimi K3 reached their usage limit, so no model could take over.",
+            finish_reason="error",
+            error_kind=QUOTA_CEILING_KIND,
+        )
+
+        assert "resumes by itself" not in generic
+        assert generic.startswith("This model reached its usage limit")
+        assert generic.endswith("\nProvider message: Daily usage limit reached.")
+        assert _usage_ceiling_message(relay) == relay.content
+
+
 async def _async_noop(_text=None):
     return None
 
 
 async def _no_sleep(_seconds):
     return None
+
+
+class TestTheRelayIsNamedWhileItWorks:
+    """The working line names the model that took over, until the chosen one is back."""
+
+    def test_the_request_hears_the_relay_then_the_return_of_the_chosen_model(self, monkeypatch):
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        from navin.providers import fallback_provider
+        from navin.providers.model_switch_notice import relay_listener
+
+        heard: list[str] = []
+        primary = FakeProvider(
+            [
+                Err(error_status_code=429, content="weekly usage limit reached"),
+                Err(finish_reason="stop", content="from gemini"),
+            ]
+        )
+        fallback = FakeProvider([Err(finish_reason="stop", content="from deepseek")])
+        provider = fallback_provider.FallbackProvider(
+            primary,
+            [Preset()],
+            lambda _preset: fallback,
+            model_labels={"deepseek-v4": "DeepSeek V4"},
+        )
+
+        async def scenario() -> tuple[str, str]:
+            with relay_listener(heard.append):
+                first = await provider.chat(model="gemini-3.6")
+                # The ceiling is over: the chosen model answers the next step.
+                fallback_provider._REFUSED_UNTIL.clear()
+                provider._primary_tripped_at = None
+                second = await provider.chat(model="gemini-3.6")
+            return first.content, second.content
+
+        assert asyncio.run(scenario()) == ("from deepseek", "from gemini")
+        assert heard == ["DeepSeek V4", ""]
+
+    def test_the_progress_hook_names_the_relay_for_the_cli_and_the_desktop(self):
+        from navin.agent.progress_hook import AgentProgressHook
+
+        seen: list[dict] = []
+
+        async def on_progress(content, *, tool_hint=False, agent_ui=None, **_kwargs):
+            seen.append(agent_ui)
+
+        hook = AgentProgressHook(on_progress=on_progress)
+        asyncio.run(hook.emit_model_relay("Claude Fable 5.1"))
+        asyncio.run(hook.emit_model_relay(""))
+
+        assert [blob["data"] for blob in seen] == [
+            {"label": "Claude Fable 5.1 · Working…", "indeterminate": True, "relay_model": "Claude Fable 5.1"},
+            {"label": "Working…", "indeterminate": True, "relay_model": ""},
+        ]

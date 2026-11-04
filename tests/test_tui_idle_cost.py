@@ -38,6 +38,7 @@ def _fresh_gc_bookkeeping(monkeypatch):
     monkeypatch.setattr(frames, "_freezes", 0)
     monkeypatch.setattr(frames, "_teardowns", 0)
     monkeypatch.setattr(frames, "_memory_at_freeze", None)
+    monkeypatch.setattr(frames, "_freeze_requested", False)
 
 
 class _Clock:
@@ -451,6 +452,29 @@ def test_a_torn_down_chat_brings_the_deep_pass_closer(monkeypatch):
         assert not collector.tick(), "half the growth is not enough on its own"
         frames.thaw_heap()
         assert collector.tick() and collector.deep_collections == 1
+    assert calls == [2]
+
+
+def test_a_painted_chat_is_frozen_at_the_next_quiet_moment_not_on_the_spot(monkeypatch):
+    """The history paint of a session switch collected every unfrozen
+    generation right as the chat appeared: 1.1 to 2.0 s under the user's first
+    scroll or key, 6 times in one CLI (cli-freeze.log, 2026-11-03)."""
+    clock = _Clock()
+    _Memory(monkeypatch)
+    collector = IdleCollector(clock)
+    calls = _collections(monkeypatch)
+    frozen = _frozen(monkeypatch)
+    with terminal_gc_policy():
+        _with_pending(monkeypatch, 0)
+        collector.note_input()
+        frames.request_heap_freeze()
+        assert calls == [] and frozen == [], "the paint itself collects nothing"
+        assert not collector.tick(), "the user is still at the keyboard"
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
+        assert collector.tick()
+        assert calls == [2] and frozen == ["freeze"], "the torn-down chat is given back, the new one kept"
+        clock.now += frames.FULL_GC_QUIET_INPUT_S
+        assert not collector.tick(), "one pass per request"
     assert calls == [2]
 
 

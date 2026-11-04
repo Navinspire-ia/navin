@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
@@ -211,7 +212,11 @@ def annotate_metadata(root: Path, entries: dict[str, Any]) -> dict[str, Any]:
 
     if written:
         _write_metadata(root, merged)
-        rebuild_and_notify(root)
+        from navin.webui.metagraph_notify import schedule_metagraph_refresh
+
+        # Debounced, and only for an open Graph view (see graph_watched): the
+        # agent's own reads see the new roles through the metadata stamp.
+        schedule_metagraph_refresh(str(root))
 
     return {
         "written": sorted(written),
@@ -247,7 +252,29 @@ def metagraph_payload(
     root = scope.project_path
     if not root.is_dir():
         raise MetagraphError(404, "project directory not found")
+    note_graph_watched(root)
     return build_metagraph(root, view=view, aspect=aspect)
+
+
+#: How long a Graph view counts as open after it last fetched the graph. The
+#: Graph tab fetches again every 20 s, so an open tab keeps its project watched.
+GRAPH_WATCH_S = 60.0
+_watched_until: dict[str, float] = {}
+
+
+def note_graph_watched(root: Path) -> None:
+    """A Graph view just fetched the graph of *root*."""
+    key = _cache_key(root, "files")[0]
+    with _cache_lock:
+        _watched_until[key] = time.monotonic() + GRAPH_WATCH_S
+
+
+def graph_watched(root: Path) -> bool:
+    """Whether a Graph view of *root* is open, so a rebuild after edits has a reader."""
+    key = _cache_key(root, "files")[0]
+    with _cache_lock:
+        until = _watched_until.get(key)
+    return until is not None and time.monotonic() < until
 
 
 def _bump_generation(root: Path) -> int:

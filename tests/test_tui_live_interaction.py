@@ -4,15 +4,27 @@
 """Exercise navigation and prompt controls while work and history are active."""
 
 import asyncio
+import os
+import signal
 import threading
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+from textual import on
+from textual.binding import Binding
+from textual.message import Message
+from textual.widget import Widget
+
+from navin.tui import resilience
+from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import UiFileEdit, UiStreamDelta, UiToolEvent
 from navin.tui.screens import PickerScreen, PickItem
 from navin.tui.virtual import RecordGap
 from navin.tui.widgets import AssistantMessage, QueuedPromptRow, ToolCall, UserMessage, WorkingLine
 from tests.test_tui_queue import make_app
+from tests.test_tui_working import _InteractionApp
 
 
 def test_status_click_and_repeated_copy_or_modal_escape_do_not_cancel(tmp_path):
@@ -357,3 +369,238 @@ def test_double_ctrl_c_on_an_empty_prompt_quits_and_a_single_press_does_not(tmp_
                 await pilot.pause()
                 assert app._quitting
     asyncio.run(run())
+
+
+@pytest.fixture
+def black_box(tmp_path, monkeypatch):
+    log = tmp_path / "black-box.log"
+    monkeypatch.setattr(resilience, "log_path", lambda: log)
+    return log
+
+
+class FlakyBox(Widget):
+    """A widget whose first ping fails: its message loop must outlive it."""
+
+    class Ping(Message):
+        pass
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pings = 0
+
+    @on(Ping)
+    def _ping(self, _message: Ping) -> None:
+        self.pings += 1
+        if self.pings == 1:
+            raise LookupError("first ping fails")
+
+
+class _BrokenActionApp(_InteractionApp):
+    BINDINGS = [Binding("f9", "boom", priority=True)]
+
+    def action_boom(self) -> None:
+        raise KeyError("app action failed")
+
+
+def _make(app_class, tmp_path):
+    prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+    prefs.save = lambda: None
+    app = app_class(SimpleNamespace(workspace_path=Path(tmp_path)), prefs=prefs)
+    app.theme = "navin"
+    return app
+
+
+def test_an_interface_error_leaves_the_cli_open_shown_and_in_the_black_box(tmp_path, black_box):
+    """Textual closed the app, and every turn and subagent with it, on the
+    first error a worker, timer or handler let through (2026-11-03)."""
+    async def run():
+        app = _make(_BrokenActionApp, tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            assert app._navin_ui_ready
+
+            async def broken_switch():
+                raise RuntimeError("session switch broke")
+
+            app.run_worker(broken_switch(), group="picker")  # exit_on_error, as _spawn
+            await pilot.pause()
+            await pilot.pause()
+
+            def broken_tick():
+                raise ZeroDivisionError("timer broke")
+
+            app.set_timer(0.01, broken_tick)
+            await pilot.pause(0.05)
+            await pilot.press("f9")  # an app handler: its loop is the app's
+            await pilot.pause()
+            flaky = FlakyBox()
+            await app.transcript.mount(flaky)
+            flaky.post_message(FlakyBox.Ping())
+            flaky.post_message(FlakyBox.Ping())
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.is_running and not app._exit and app.return_code is None
+            assert flaky.pings == 2, "the widget kept answering after its error"
+            shown = [note.message for note in app._notifications if "Internal error" in note.message]
+            assert len(shown) == 4 and all("The CLI stays open" in text for text in shown)
+            assert isinstance(app._exception, RuntimeError), "tests still see the first error"
+            app._exception = None  # expected here
+            await app.submit_text("still here")
+            assert (await app.runtime.bus.consume_inbound()).content == "still here"
+        text = black_box.read_text(encoding="utf-8")
+        assert f"[pid {os.getpid()} project " in text
+        for line in (
+            "ui error: RuntimeError: session switch broke; the CLI kept running",
+            "ui error: ZeroDivisionError: timer broke; the CLI kept running",
+            "ui error: KeyError: 'app action failed' in _BrokenActionApp; the CLI kept running",
+            "ui error: LookupError: first ping fails in FlakyBox; the CLI kept running",
+        ):
+            assert line in text
+        assert "in broken_switch" in text and "in action_boom" in text, "each with its stack"
+    asyncio.run(run())
+
+
+def test_a_repeated_interface_error_is_counted_not_repeated(tmp_path, black_box):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            try:
+                raise ValueError("every tick")
+            except ValueError as error:
+                failure = error
+            for _ in range(12):
+                app._report_ui_error(failure)
+            await pilot.pause()  # a toast is a message: shown once processed
+            assert len([note for note in app._notifications if "Internal error" in note.message]) == 1
+            app._exception = None
+        lines = black_box.read_text(encoding="utf-8").splitlines()
+        assert sum("ui error: ValueError: every tick; the CLI kept running" in line for line in lines) == 1
+        assert sum("ValueError: every tick (repeated 10 times)" in line for line in lines) == 1
+        assert not any("repeated 11" in line or "repeated 12" in line for line in lines)
+    asyncio.run(run())
+
+
+def test_a_cli_that_cannot_start_stays_fatal_and_says_why(tmp_path, black_box):
+    class BrokenStart(_InteractionApp):
+        async def on_mount(self, event):
+            raise RuntimeError("engine never started")
+
+    async def run():
+        app = _make(BrokenStart, tmp_path)
+        with pytest.raises(RuntimeError, match="engine never started"):
+            async with app.run_test(size=(100, 32)) as pilot:
+                await pilot.pause()
+        assert app._exit_reason.startswith("fatal error: RuntimeError: engine never started")
+    asyncio.run(run())
+    text = black_box.read_text(encoding="utf-8")
+    assert "fatal error: the CLI closes on it" in text and "engine never started" in text
+
+
+def test_quitting_with_work_running_here_asks_first_with_cancel_first(tmp_path, black_box):
+    """A double Ctrl+C meant as a copy, a Ctrl+Q or a typed exit stopped the
+    turn and the subagents on screen without a word."""
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            app.runtime.work_here = lambda: 2
+            screens: list[PickerScreen] = []
+            answers = ["no", "yes"]
+
+            async def answer(screen):
+                screens.append(screen)
+                return answers.pop(0)
+
+            app.push_screen_wait = answer
+            app.exit = Mock()
+            app.runtime.close = AsyncMock()
+            await app.submit_text("exit")  # typed: the same door as Ctrl+Q
+            await pilot.pause()
+            await pilot.pause()
+            assert len(screens) == 1
+            assert [item.id for item in screens[0]._items] == ["no", "yes"], "Enter keeps the work"
+            assert screens[0]._title == "Work is still running"
+            assert "2 tasks running here stop if you quit now." in screens[0]._hint
+            app.exit.assert_not_called()
+            assert not app._quitting
+            await pilot.press("ctrl+q")
+            for _ in range(10):
+                if app.exit.called:
+                    break
+                await pilot.pause()
+            app.exit.assert_called_once()
+            assert app._exit_reason == "quit (ctrl+q)"
+            if app._runtime_close_task is not None:
+                await app._runtime_close_task
+    asyncio.run(run())
+    assert "quit: ctrl+q; work stopped: 2 here, 0 in other projects" in black_box.read_text(encoding="utf-8")
+
+
+def test_a_stop_signal_is_recorded_and_quits_through_the_normal_path(tmp_path, black_box):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            app.runtime.work_here = lambda: 1
+            app.push_screen_wait = AsyncMock(side_effect=AssertionError("a closed terminal answers nothing"))
+            app.exit = Mock()
+            app.runtime.close = AsyncMock()
+            app._on_stop_signal("SIGHUP")
+            for _ in range(10):
+                if app.exit.called:
+                    break
+                await pilot.pause()
+            app.exit.assert_called_once()
+            if app._runtime_close_task is not None:
+                await app._runtime_close_task
+            app.runtime.close.assert_awaited()  # sessions flushed, as on Ctrl+Q
+    asyncio.run(run())
+    text = black_box.read_text(encoding="utf-8")
+    assert "signal: SIGHUP: the terminal was closed; work stopped: 1 here, 0 in other projects" in text
+    assert "quit: signal SIGHUP;" in text
+
+
+def test_a_stop_signal_ends_the_cli_even_when_its_clean_quit_never_comes(tmp_path, black_box, monkeypatch):
+    """Handled by the loop, SIGTERM waited for the loop to be back at its
+    selector: `kill` did nothing to a CLI whose loop was stuck, and a second
+    SIGTERM did nothing either."""
+    forced: list[int] = []
+    restores: list[object] = []
+
+    def fake_exit(signum, restore=None):
+        forced.append(signum)
+        restores.append(restore)
+
+    monkeypatch.setattr(resilience, "force_exit", fake_exit)
+
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            loop = asyncio.get_running_loop()
+            app.exit = Mock()  # the clean quit never closes this CLI
+            app.runtime.close = AsyncMock()
+            app._stop_watchdog = resilience.StopWatchdog(0.05, app._project_label, restore=app._restore_terminal_now)
+            app._stop_signal_received(loop, "SIGTERM", signal.SIGTERM)
+            assert forced == [], "first a clean quit, asked of the loop"
+            for _ in range(10):
+                if app.exit.called:
+                    break
+                await pilot.pause()
+            app.exit.assert_called_once()
+            app._stop_watchdog.thread.join(timeout=5)
+            assert forced == [signal.SIGTERM], "then the watchdog ends it"
+            app._stop_signal_received(loop, "SIGTERM", signal.SIGTERM)
+            assert forced == [signal.SIGTERM, signal.SIGTERM], "a second signal ends it at once"
+            closed = asyncio.new_event_loop()
+            closed.close()
+            app._stop_signal = None
+            app._stop_signal_received(closed, "SIGHUP", signal.SIGHUP)
+            assert forced[-1] == signal.SIGHUP, "after the loop: at once"
+            assert restores == [app._restore_terminal_now] * 3, "every forced exit gives the terminal back"
+            if app._runtime_close_task is not None:
+                await app._runtime_close_task
+    asyncio.run(run())
+    text = black_box.read_text(encoding="utf-8")
+    assert "signal: SIGTERM: navin-cli did not close within 0.05 s, forced exit" in text
+    assert "signal: SIGTERM again: exit now" in text
+    assert "signal: SIGHUP while closing: exit now" in text

@@ -398,23 +398,60 @@ def _auto_preset_fallback_presets(
 ) -> list[ModelPresetConfig]:
     """Failover chain from the other configured chat models when none is set.
 
-    The model list is the fallback list. When the chosen model blocks (rate
-    limit, outage, expired key, dropped slug, refusal), the step continues on
-    another configured text model whose provider holds credentials, and the
-    switch is announced. Order: the default preset, then the presets the
-    routes name (the operator's explicit picks), then the rest of the catalog
-    alternating vendors so a vendor-wide outage is not tried three times in a
-    row. Free-tier slugs come last. The chain is capped: a total outage should
-    cost a handful of calls, not a tour of thirty presets.
+    The model list is the fallback list. When the chosen model blocks (quota,
+    rate limit, outage, expired key, dropped slug, refusal), the step continues
+    on another configured text model whose provider holds credentials, and the
+    switch is announced. A flagship hands the step down the relay ladder
+    first (``relay_ladder``: Claude Opus and Fable relay each other, then
+    Claude Sonnet, then GPT-6 Astra and GPT-6.1 Sol). Then: the default
+    preset, the presets the routes name (the operator's explicit picks), and
+    the rest of the catalog alternating vendors so a vendor-wide outage is not
+    tried three times in a row. Free-tier slugs come last. The chain is
+    capped: a total outage should cost a handful of calls, not a tour of
+    thirty presets.
 
     Every entry carries the primary's generation settings and context window,
-    so the chain never shrinks the window the turn was planned against.
+    so the chain never shrinks the window the turn was planned against. Its
+    reasoning effort is the turn's own (``None``), except a substitute below
+    the chosen model on the ladder, which runs at its deepest effort. A preset
+    default here used to run every substitute at "low": a turn on Claude Opus
+    at "max" continued on Claude Sonnet at "low".
     """
     active = ((model or primary.model) or "").strip()
     if not active or active.endswith(":free"):
         return []
 
     from navin.providers.managed_catalog import FREE_VISION_MODEL
+    from navin.providers.relay_ladder import relay_candidates
+
+    def _substitute(preset: ModelPresetConfig, reasoning_effort: str | None) -> ModelPresetConfig:
+        return ModelPresetConfig(
+            model=(preset.model or "").strip(),
+            provider=preset.provider or primary.provider,
+            max_tokens=primary.max_tokens,
+            context_window_tokens=primary.effective_context_window_tokens,
+            temperature=primary.temperature,
+            reasoning_effort=reasoning_effort,
+        )
+
+    seen = {active, FREE_VISION_MODEL}
+    paid: list[ModelPresetConfig] = []
+    free: list[ModelPresetConfig] = []
+
+    usable = [
+        (name, preset.model)
+        for name, preset in config.model_presets.items()
+        if _is_chat_preset(preset)
+        and (preset.model or "").strip()
+        and _preset_is_usable(config, preset)
+    ]
+    for candidate in relay_candidates(active, usable):
+        if candidate.model in seen:
+            continue
+        seen.add(candidate.model)
+        paid.append(
+            _substitute(config.model_presets[candidate.preset_name], candidate.reasoning_effort)
+        )
 
     ordered: list[tuple[str, ModelPresetConfig]] = []
     taken: set[str] = set()
@@ -438,10 +475,9 @@ def _auto_preset_fallback_presets(
     ]
     ordered.extend(_interleave_by_vendor(rest))
 
-    seen = {active, FREE_VISION_MODEL}
-    paid: list[ModelPresetConfig] = []
-    free: list[ModelPresetConfig] = []
     for _name, preset in ordered:
+        if len(paid) >= _MAX_AUTO_PRESET_FALLBACKS:
+            break
         if not _is_chat_preset(preset):
             continue
         slug = (preset.model or "").strip()
@@ -450,19 +486,11 @@ def _auto_preset_fallback_presets(
         if not _preset_is_usable(config, preset):
             continue
         seen.add(slug)
-        candidate = ModelPresetConfig(
-            model=slug,
-            provider=preset.provider or primary.provider,
-            max_tokens=primary.max_tokens,
-            context_window_tokens=primary.effective_context_window_tokens,
-            temperature=primary.temperature,
-        )
+        candidate = _substitute(preset, None)
         if slug.endswith(":free") and _is_navin(candidate.provider):
             # OpenRouter free pool: not served by the Navin gateway.
             continue
         (free if slug.endswith(":free") else paid).append(candidate)
-        if len(paid) >= _MAX_AUTO_PRESET_FALLBACKS:
-            break
 
     # No bundled-catalog top-up for the subscription: those slugs are
     # OpenRouter's, and it fails over only across its own synced catalog.
@@ -474,14 +502,23 @@ def _is_navin(provider: str | None) -> bool:
 
 
 def _configured_fallback_presets(
-    config: Config, primary: ModelPresetConfig
+    config: Config, primary: ModelPresetConfig, *, model: str | None = None
 ) -> list[ModelPresetConfig]:
+    """The operator's ``fallback_models``, without the model the turn runs on.
+
+    One list serves every chosen model, so it usually names the chosen one
+    too: kept, a blocked model was asked again as its own substitute.
+    """
+    active = ((model or primary.model) or "").strip()
     presets: list[ModelPresetConfig] = []
     for fallback in config.agents.defaults.fallback_models:
         if isinstance(fallback, str):
-            presets.append(config.model_presets[fallback])
+            preset = config.model_presets[fallback]
         else:
-            presets.append(_inline_fallback_preset(primary, fallback))
+            preset = _inline_fallback_preset(primary, fallback)
+        if (preset.model or "").strip() == active:
+            continue
+        presets.append(preset)
     return presets
 
 
@@ -497,7 +534,7 @@ def _resolve_fallback_presets(
     presets is the fallback list: free primaries hop across the other free
     slugs, every other primary continues on the other usable text presets.
     """
-    presets = _configured_fallback_presets(config, primary)
+    presets = _configured_fallback_presets(config, primary, model=model)
     if not presets:
         presets = _auto_free_fallback_presets(config, primary, model=model)
     if not presets:
@@ -532,7 +569,7 @@ def make_provider(
         # picked (DeepSeek Flash, Gemini, ...) deserves a short retry first.
         active = ((model or resolved.model) or "").strip()
         is_auto_free_chain = (
-            not _configured_fallback_presets(config, resolved)
+            not _configured_fallback_presets(config, resolved, model=model)
             and active.endswith(":free")
         )
         provider = FallbackProvider(
@@ -543,9 +580,21 @@ def make_provider(
             ),
             on_model_switch=notify_model_switch,
             sticky_retries=0 if is_auto_free_chain else PRIMARY_STICKY_RETRIES,
+            model_labels=_model_labels(config),
         )
 
     return provider
+
+
+def _model_labels(config: Config) -> dict[str, str]:
+    """Display name of each configured model slug ("Claude Fable 5.1")."""
+    labels: dict[str, str] = {}
+    for preset in config.model_presets.values():
+        slug = (preset.model or "").strip()
+        label = (preset.label or "").strip()
+        if slug and label:
+            labels.setdefault(slug, label)
+    return labels
 
 
 def provider_signature(
@@ -579,6 +628,8 @@ def provider_signature(
             fallback.reasoning_effort,
             fallback.context_window_tokens,
             getattr(fp, "proxy", None) if fp else None,
+            # Like the primary's: the signature decides which provider is reused.
+            getattr(fp, "ca_bundle", None) if fp else None,
         )
 
     provider_name = config.get_provider_name(resolved.model, preset=resolved)

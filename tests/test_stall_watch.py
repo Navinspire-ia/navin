@@ -219,6 +219,41 @@ class TestLoopLagMonitor:
         assert all("main thread was last seen in" in w and "_still_gets_its_stack" in w for w in after)
 
     @pytest.mark.asyncio
+    async def test_a_freeze_names_the_other_threads_inside_our_code(self) -> None:
+        # 325 Windows freezes showed a main thread stopped in a socket call:
+        # the thread holding the interpreter lock was never named.
+        log = _Log()
+        parked = threading.Event()
+        release = threading.Event()
+
+        def worker_holding_the_interpreter() -> None:
+            parked.set()
+            release.wait(5)
+
+        worker = threading.Thread(target=worker_holding_the_interpreter, daemon=True)
+        worker.start()
+        assert parked.wait(2)
+        monitor = LoopLagMonitor(
+            log, warn_after_s=0.1, poll_s=0.02, min_interval_s=0,
+            interesting=lambda module: module == __name__,
+        )
+        monitor.start()
+        try:
+            await asyncio.sleep(0.05)
+            time.sleep(0.4)
+            await asyncio.sleep(0.05)
+        finally:
+            await monitor.stop()
+            release.set()
+            worker.join(2)
+        side = [w for w in log.warnings if "so far; main thread is in" in w]
+        after = [w for w in log.warnings if "event loop was blocked for" in w]
+        assert side and after
+        for report in (side[0], after[0]):
+            assert "other threads inside navin:" in report
+            assert "in worker_holding_the_interpreter" in report
+
+    @pytest.mark.asyncio
     async def test_the_main_thread_stack_keeps_twenty_frames(self) -> None:
         log = _Log()
         monitor = LoopLagMonitor(log, warn_after_s=0.1, poll_s=0.02, min_interval_s=0)

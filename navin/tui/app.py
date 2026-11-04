@@ -9,6 +9,8 @@ import asyncio
 import contextlib
 import os
 import re
+import signal
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -37,15 +39,16 @@ from textual.widgets import Input, Static, TextArea
 # ImportError on copy-on-select closed the CLI.
 import navin.tui.clipboard as tui_clipboard
 from navin.optional_live import live_modules_available
+from navin.tui import resilience
 from navin.tui.agi import AgiScreen
 from navin.tui.evolve import EvolveScreen
 from navin.tui.frames import (
     IdleCollector,
     background_lines,
-    freeze_heap,
     keep_batched_frame,
     release_offscreen_lines,
     repaint_batched_frames,
+    request_heap_freeze,
     terminal_gc_policy,
     thaw_heap,
     watch_app_focus_without_restyle,
@@ -167,6 +170,9 @@ from navin.utils.tool_hints import (
     extract_line_diff,
     tool_verb,
 )
+
+# A handler error once the chat is up is reported, not the end of the CLI.
+resilience.install_handler_guard()
 
 # ---------------------------------------------------------------------------
 # Command palette providers
@@ -639,6 +645,147 @@ class NavinApp(App[None]):
         with terminal_gc_policy():
             await super()._process_messages(*args, **kwargs)
 
+    # -- staying open -------------------------------------------------------
+    # Textual closes the app on any error a worker, a timer or a handler lets
+    # through, and the CLI's turns, subagents and commands go with it. Once
+    # the chat is up the error is recorded and shown instead (resilience.py).
+
+    async def _ready(self) -> None:
+        await super()._ready()
+        # Processed once the app's message loop runs, that is once the chat
+        # composed and mounted: a CLI that cannot start stays fatal.
+        self.call_later(self._ui_is_up)
+
+    def _ui_is_up(self) -> None:
+        self._navin_ui_ready = True
+        if not self.is_headless:
+            self._catch_stop_signals()
+
+    def _project_label(self) -> str:
+        return str(getattr(self.runtime, "workspace", "") or "")
+
+    def _handle_exception(self, error: Exception) -> None:
+        # _running: the app's message loop still turns (an error that ended it
+        # ends the app, whatever is done here).
+        if self._navin_ui_ready and self._running and not self._exit:
+            self._report_ui_error(error)
+            return
+        cause = resilience.unwrap(error)
+        closing = self._exit and self._exit_reason is not None
+        self._exit_reason = self._exit_reason or f"fatal error: {type(cause).__name__}: {cause}"[:300]
+        resilience.record(
+            "fatal error", "while closing" if closing else "the CLI closes on it",
+            project=self._project_label(), error=cause,
+        )
+        super()._handle_exception(error)
+
+    def _report_ui_error(self, error: BaseException, *, where: Any = None) -> None:
+        """An error of the interface once the chat is up: recorded, shown, survived."""
+        error = resilience.unwrap(error)
+        if self.is_headless and self._exception is None and isinstance(error, Exception):
+            # run_test raises it when the test ends: tests still fail on it.
+            self._exception = error
+        count = self._ui_errors.count(error)
+        if not resilience.worth_a_line(count):
+            return
+        origin = f" in {type(where).__name__}" if where is not None else ""
+        summary = f"{type(error).__name__}: {error}"[:300]
+        if count > 1:
+            resilience.record("ui error", f"{summary}{origin} (repeated {count} times)", project=self._project_label())
+            return
+        problem = resilience.record(
+            "ui error", f"{summary}{origin}; the CLI kept running", project=self._project_label(), error=error,
+        )
+        if self._reporting_ui_error:
+            return
+        self._reporting_ui_error = True
+        details = f"details in {resilience.log_path()}" if problem is None else f"not logged: {problem}"
+        try:
+            self.notify(
+                f"Internal error{origin}: {escape(summary)}. The CLI stays open and the work goes on; {escape(details)}.",
+                title="navin-cli", severity="error", timeout=15,
+            )
+        except Exception as notify_error:  # the toast itself failed: the log still says so
+            resilience.record(
+                "ui error", f"could not be shown: {type(notify_error).__name__}: {notify_error}",
+                project=self._project_label(),
+            )
+        finally:
+            self._reporting_ui_error = False
+
+    def panic(self, *renderables: Any) -> None:
+        # The terminal input thread died (or Textual gave up): fatal, recorded.
+        self._exit_reason = self._exit_reason or "panic"
+        resilience.record(
+            "panic", resilience.plain_text(renderables) or "the CLI closes on it", project=self._project_label(),
+        )
+        super().panic(*renderables)
+
+    def _build_driver(self, headless: bool, inline: bool, mouse: bool, size: tuple[int, int] | None) -> Any:
+        driver = super()._build_driver(headless, inline, mouse, size)
+        if not driver.is_headless:
+            # After the driver: its SIGTSTP handler would stop the whole CLI.
+            resilience.ignore_ctrl_z()
+        return driver
+
+    def _catch_stop_signals(self) -> None:
+        """SIGHUP (terminal closed) and SIGTERM quit through the normal path, recorded.
+
+        Left to the system they killed the CLI on the spot: no session flush,
+        no reason anywhere. A Python handler, not the loop's: the loop runs its
+        own only once back at its selector, and `kill` would do nothing to a
+        CLI whose loop is stuck. Python runs it between two bytecodes, so a
+        main thread held in C code (a long garbage collection) answers once it
+        is back; SIGKILL still ends any CLI. Windows has neither signal; its
+        default stays.
+        """
+        if sys.platform == "win32":
+            return
+        loop = asyncio.get_running_loop()
+        self._stop_watchdog = resilience.StopWatchdog(
+            resilience.STOP_SIGNAL_GRACE_S, self._project_label, restore=self._restore_terminal_now,
+        )
+        for name in ("SIGHUP", "SIGTERM"):
+            signal.signal(getattr(signal, name), partial(self._stop_signal_received, loop, name))
+
+    def _restore_terminal_now(self) -> str | None:
+        guard = self._terminal_guard
+        return guard.restore_modes_now() if guard is not None else None
+
+    def _stop_signal_received(
+        self, loop: asyncio.AbstractEventLoop, name: str, signum: int, _frame: Any = None,
+    ) -> None:
+        """A stop signal, run in the main thread between two bytecodes.
+
+        The loop is asked for a clean quit; the watchdog ends the process if
+        it has not closed within the grace period, a second signal at once.
+        """
+        if self._stop_signal is not None or loop.is_closed():
+            when = "again" if self._stop_signal is not None else "while closing"
+            resilience.record("signal", f"{name} {when}: exit now", project=self._project_label())
+            resilience.force_exit(signum, restore=self._restore_terminal_now)
+            return
+        self._stop_signal = name
+        if self._stop_watchdog is not None:
+            self._stop_watchdog.arm(name, signum)
+        loop.call_soon_threadsafe(self._on_stop_signal, name)
+
+    def _on_stop_signal(self, name: str) -> None:
+        here, elsewhere = self._work_counts()
+        why = "the terminal was closed" if name == "SIGHUP" else "asked to stop"
+        resilience.record(
+            "signal", f"{name}: {why}; work stopped: {here} here, {elsewhere} in other projects",
+            project=self._project_label(),
+        )
+        self._quit_confirmed = True
+        self.call_later(self.action_quit, f"signal {name}")
+
+    def _work_counts(self) -> tuple[int, int]:
+        """Turns and subagents running in the project on screen, and in the others."""
+        here = getattr(self.runtime, "work_here", None)
+        elsewhere = getattr(self.runtime, "background_work", None)
+        return (here() if callable(here) else 0, elsewhere() if callable(elsewhere) else 0)
+
     def _display(self, screen, renderable) -> None:
         # A frame composed inside batch_update() never reaches the terminal:
         # remember its rows so the end of the batch paints them (frames.py).
@@ -755,7 +902,7 @@ class NavinApp(App[None]):
         Binding("super+alt+v", "paste_composer", "Paste", show=False),
         # Windows Terminal swallows Ctrl+V when the clipboard holds only an image.
         Binding("alt+v", "paste_image", "Paste image", show=False, priority=True),
-        Binding("ctrl+q", "quit", "Quit", priority=True),
+        Binding("ctrl+q", "quit('ctrl+q')", "Quit", priority=True),
     ]
 
     def __init__(
@@ -815,8 +962,21 @@ class NavinApp(App[None]):
         self._history_draft = ""
         self._engine_ready = False
         self._quitting = False
-        # Quitting stops the projects working in the background: asked once.
+        # Quitting stops the work still running (here or in other projects): asked once.
         self._quit_confirmed = False
+        # Set once the app's message loop runs: from then on an error of the
+        # interface is reported and survived (navin.tui.resilience).
+        self._navin_ui_ready = False
+        self._ui_errors = resilience.ErrorTally()
+        self._reporting_ui_error = False
+        # Why the CLI is closing, written to the black box when it is gone.
+        self._exit_reason: str | None = None
+        # The first stop signal (SIGHUP, SIGTERM) and what ends the process if
+        # its clean quit does not come (see _stop_signal_received).
+        self._stop_signal: str | None = None
+        self._stop_watchdog: resilience.StopWatchdog | None = None
+        # Set by run_tui: gives the terminal its modes back on a forced exit.
+        self._terminal_guard: Any = None
         # Drafts and queued messages of the projects not on screen, by folder.
         self._unsent_by_project: dict[str, dict[str, Any]] = {}
         self._quit_armed_at = 0.0
@@ -1414,6 +1574,7 @@ class NavinApp(App[None]):
                 elapsed_s=self.runtime.turn_elapsed_s,
                 background=running_exec_count(),
                 activity=self._current_step(),
+                relay=self.runtime.status.relay_model,
             ),
             frame=self._spin,
         )
@@ -2087,8 +2248,9 @@ class NavinApp(App[None]):
                 transcript.loading_history = False
                 transcript.auto_follow = True
         if token == self._render_token:
-            # Engine and loaded chat live on: later full GCs skip them.
-            freeze_heap()
+            # Engine and loaded chat live on: later full GCs skip them. The
+            # collection waits for a quiet moment (request_heap_freeze).
+            request_heap_freeze()
 
     @on(Transcript.OlderRequested)
     def _history_older_requested(self, event: Transcript.OlderRequested) -> None:
@@ -2319,7 +2481,8 @@ class NavinApp(App[None]):
         self.prefs.remember(display_user_text(text))
         self._save_prefs_in_background()
         if text in {"exit", "quit", ":q"}:
-            self.exit()
+            # The same door as Ctrl+Q: it asks when work is still running.
+            await self.action_quit(f"typed {text}")
             return
         if text.startswith("/") and text.split(None, 1)[0].lower() in {"/help", "/?"}:
             await self.action_show_help()
@@ -2409,7 +2572,7 @@ class NavinApp(App[None]):
         raw_arg = arg.strip()
         arg = raw_arg.lower()
         if head in {"/quit", "/exit"}:
-            await self.action_quit()
+            await self.action_quit(head)
             return True
         if head == "/permission" and self._engine_ready:
             if not arg or arg in {"status", "help"}:
@@ -3009,7 +3172,7 @@ class NavinApp(App[None]):
             # Still cancels a paste in flight, so it cannot land afterwards.
             self.composer.clear_text()
             if now - self._quit_armed_at <= self.QUIT_PRESS_WINDOW_S:
-                await self.action_quit()
+                await self.action_quit("ctrl+c twice")
                 return
             self._quit_armed_at = now
             self.notify("Press Ctrl+C again to quit", timeout=self.QUIT_PRESS_WINDOW_S)
@@ -3188,11 +3351,15 @@ class NavinApp(App[None]):
         elif kind == "menu":
             self._spawn(self._session_menu(path, key))
 
-    async def _confirm(self, title: str, yes: str, hint: str = "") -> bool:
+    async def _confirm(self, title: str, yes: str, hint: str = "", *, cancel_first: bool = False) -> bool:
+        items = [PickItem("yes", yes), PickItem("no", "Cancel")]
+        if cancel_first:
+            # Enter on the highlighted first row must not be the one that stops work.
+            items.reverse()
         answer = await self.push_screen_wait(
             PickerScreen(
                 title,
-                [PickItem("yes", yes), PickItem("no", "Cancel")],
+                items,
                 hint=hint,
                 searchable=False,
             )
@@ -4792,16 +4959,22 @@ class NavinApp(App[None]):
             f"OAuth providers sign in from a terminal: [b]navin provider login {escape(name)}[/b]  (then restart navin-cli)"
         )
 
-    async def action_quit(self) -> None:
+    async def action_quit(self, reason: str = "quit command") -> None:
         if self._quitting:
             return
-        background = getattr(self.runtime, "background_work", None)
-        count = background() if callable(background) else 0
-        if count and not self._quit_confirmed:
-            # Invisible from here: say what quitting stops before it does.
-            self._spawn(self._confirm_quit(count))
+        here, elsewhere = self._work_counts()
+        if (here or elsewhere) and not self._quit_confirmed:
+            # Quitting stops every turn and subagent of this CLI, the ones on
+            # screen included: a double Ctrl+C meant as a copy did that
+            # silently. Say what quitting stops before it does.
+            self._spawn(self._confirm_quit(here, elsewhere, reason))
             return
         self._quitting = True
+        self._exit_reason = self._exit_reason or f"quit ({reason})"
+        resilience.record(
+            "quit", f"{reason}; work stopped: {here} here, {elsewhere} in other projects",
+            project=self._project_label(),
+        )
         from navin.tui.shutdown import release_input_thread
 
         # The terminal's input thread ends while the engine closes, not after.
@@ -4817,15 +4990,24 @@ class NavinApp(App[None]):
         self._runtime_close_task = asyncio.create_task(self.runtime.close())
         self.exit()
 
-    async def _confirm_quit(self, count: int) -> None:
-        names = ", ".join(Path(folder).name or folder for folder in self.runtime.background_projects())
+    async def _confirm_quit(self, here: int, elsewhere: int, reason: str = "quit command") -> None:
+        def tasks(count: int) -> str:
+            return f"{count} task{'s' if count != 1 else ''}"
+
+        parts = []
+        if here:
+            parts.append(f"{tasks(here)} running here")
+        if elsewhere:
+            names = ", ".join(Path(folder).name or folder for folder in self.runtime.background_projects())
+            parts.append(f"{tasks(elsewhere)} running in {names}")
         if await self._confirm(
-            "Other projects are still working",
+            "Work is still running" if here else "Other projects are still working",
             "Quit and stop them",
-            f"{count} task{'s' if count != 1 else ''} running in {names} stop if you quit now.",
+            " and ".join(parts) + " stop if you quit now.",
+            cancel_first=True,
         ):
             self._quit_confirmed = True
-            await self.action_quit()
+            await self.action_quit(reason)
 
     # -- jump to the latest messages ----------------------------------------
 
@@ -5254,8 +5436,12 @@ def run_tui(
     from navin.tui.shutdown import TerminalGuard, run_app_fast_exit
 
     guard = TerminalGuard()
+    app._terminal_guard = guard
     try:
         run_app_fast_exit(app)
+    except BaseException as error:
+        record_close(app, error=error)
+        raise
     finally:
         guard.restore()
         # Textual's driver puts this back when it joins its input thread; the
@@ -5269,7 +5455,12 @@ def run_tui(
                 signal.signal(signum, handler)
     from navin.tui.exit_summary import UsageTotals, print_exit_summary
 
+    reason = record_close(app)
     runtime = app.runtime
+    if reason.startswith(("fatal error", "panic")):
+        runtime.shutdown_warnings.append(
+            f"navin-cli closed after an internal error ({reason}). Details: {resilience.log_path()}"
+        )
     title = ""
     sessions = getattr(runtime.agent_loop, "sessions", None)
     if sessions is not None:
@@ -5277,11 +5468,37 @@ def run_tui(
         session = sessions._cache.get(runtime.session_key)
         if session is not None:
             title = str(session.metadata.get("title") or session.metadata.get("webui_title") or "")
-    print_exit_summary(
-        session_key=runtime.session_key, workspace=Path(runtime.config.workspace_path),
-        elapsed=runtime.worked_seconds, usage=runtime.usage.sessions.get(runtime.session_key, UsageTotals()),
-        title=title, config_path=config_path, warnings=runtime.shutdown_warnings, executable=cli_executable,
-    )
+    try:
+        print_exit_summary(
+            session_key=runtime.session_key, workspace=Path(runtime.config.workspace_path),
+            elapsed=runtime.worked_seconds, usage=runtime.usage.sessions.get(runtime.session_key, UsageTotals()),
+            title=title, config_path=config_path, warnings=runtime.shutdown_warnings, executable=cli_executable,
+        )
+    except OSError as exc:
+        # The terminal is gone (SIGHUP): nothing left to print on. Said in the log.
+        resilience.record("closed", f"exit summary not printed: {exc}", project=app._project_label())
     from navin.tui.shutdown import exit_if_threads_linger
 
     exit_if_threads_linger()
+
+
+def record_close(app: Any, *, error: BaseException | None = None) -> str:
+    """Write why the CLI closed to the black box; returns the reason.
+
+    Every way out sets one (quit, signal, fatal error, panic). A close
+    without any is written too: that it came from nowhere is the clue.
+    """
+    reason = getattr(app, "_exit_reason", None) or "no reason recorded"
+    if error is not None:
+        reason = f"{reason}; {type(error).__name__} escaped the app"
+    code = getattr(app, "return_code", None)
+    runtime = getattr(app, "runtime", None)
+    problem = resilience.record(
+        "closed", f"{reason} (return code {code})",
+        project=str(getattr(runtime, "workspace", "") or ""), error=error,
+    )
+    warnings = getattr(runtime, "shutdown_warnings", None)
+    if problem is not None and isinstance(warnings, list):
+        # Said where the user reads it: the exit summary.
+        warnings.append(f"Why navin-cli closed could not be written to {resilience.log_path()} ({problem}).")
+    return reason

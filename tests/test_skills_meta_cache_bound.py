@@ -71,3 +71,115 @@ class SkillMetaCacheBoundTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SkillMetaPerScanTest(unittest.TestCase):
+    """Metadata is kept for the scan it was read in, not for 2 s.
+
+    The 2 s memo expired between two turns: every turn resolved the path of
+    every skill again, 2.5 s per prompt build on Windows (2026-11-04 probe).
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+        skill = self.workspace / ".navin" / "skills" / "kept"
+        skill.mkdir(parents=True)
+        self.skill_file = skill / "SKILL.md"
+        self.skill_file.write_text("---\nname: kept\ndescription: v1\n---\nBody.", encoding="utf-8")
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self._tmp.name)
+        self.addCleanup(self._restore_home)
+        clear_home_skill_dir_cache()
+
+    def _restore_home(self) -> None:
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        clear_home_skill_dir_cache()
+
+    def test_an_unchanged_catalog_does_not_resolve_paths_again(self) -> None:
+        loader = SkillsLoader(self.workspace, builtin_skills_dir=None)
+        self.assertEqual(loader.get_skill_metadata("kept")["description"], "v1")
+        # Every TTL of the old memos is long past, the catalog is unchanged.
+        with mock.patch.object(skills_module.time, "monotonic", return_value=skills_module.time.monotonic() + 600):
+            with mock.patch.object(
+                loader, "_get_skill_metadata_uncached", side_effect=AssertionError("read again")
+            ):
+                self.assertEqual(loader.get_skill_metadata("kept")["description"], "v1")
+
+    def test_an_edited_skill_is_read_again_by_the_next_scan(self) -> None:
+        loader = SkillsLoader(self.workspace, builtin_skills_dir=None)
+        self.assertEqual(loader.get_skill_metadata("kept")["description"], "v1")
+        self.skill_file.write_text("---\nname: kept\ndescription: version two\n---\nBody.", encoding="utf-8")
+        stat = self.skill_file.stat()
+        os.utime(self.skill_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+        loader.invalidate_scan()
+        self.assertEqual(loader.get_skill_metadata("kept")["description"], "version two")
+
+
+class FrozenAppSkillsStampTest(unittest.TestCase):
+    """An installed app stamps the skills it ships once per process.
+
+    Stamping them stats each SKILL.md on every catalog check: 9 s of a 3-turn
+    run on Windows (2026-11-04 probe). A source checkout keeps checking them.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.bundle = root / "bundle"
+        self.shipped = self.bundle / "navin" / "skills"
+        (self.shipped / "shipped").mkdir(parents=True)
+        (self.shipped / "shipped" / "SKILL.md").write_text(
+            "---\nname: shipped\ndescription: d\n---\nBody.", encoding="utf-8"
+        )
+        self.workspace = root / "ws"
+        (self.workspace / ".navin" / "skills").mkdir(parents=True)
+        (root / "home").mkdir()
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(root / "home")
+
+        def restore() -> None:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+            clear_home_skill_dir_cache()
+
+        self.addCleanup(restore)
+        clear_home_skill_dir_cache()
+
+    def _stamps(self, *, frozen: bool) -> list[str]:
+        calls: list[str] = []
+        real = skills_module._dir_stamp
+
+        def spy(path):
+            calls.append(str(path))
+            return real(path)
+
+        with (
+            mock.patch.object(skills_module.sys, "frozen", frozen, create=True),
+            mock.patch.object(skills_module.sys, "_MEIPASS", str(self.bundle), create=True),
+            mock.patch.object(skills_module, "_dir_stamp", side_effect=spy),
+        ):
+            loader = SkillsLoader(self.workspace, builtin_skills_dir=self.shipped)
+            calls.clear()
+            skills_module._FROZEN_ROOT_STAMPS.clear()
+            loader._roots_stamp()
+            loader._roots_stamp()
+            skills_module.clear_skills_index_cache()
+            loader._roots_stamp()
+        return calls
+
+    def test_a_frozen_app_stamps_its_own_skills_once(self) -> None:
+        calls = self._stamps(frozen=True)
+        shipped = str(self.shipped)
+        self.assertEqual(calls.count(shipped), 2, "once, then again after the catalog was cleared")
+        self.assertTrue(any(calls.count(path) == 3 for path in set(calls) if path != shipped))
+
+    def test_a_source_checkout_stamps_them_every_time(self) -> None:
+        self.assertEqual(self._stamps(frozen=False).count(str(self.shipped)), 3)

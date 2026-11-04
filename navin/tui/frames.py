@@ -31,6 +31,9 @@ _freezes = 0  # gc.freeze() calls made here since start
 _teardowns = 0  # loaded chats torn down (``thaw_heap``) since start
 # Resident memory read at the last freeze (None: no reading on this system).
 _memory_at_freeze: int | None = None
+# A freeze the history paint asked for (session switch, reload), run by
+# ``IdleCollector`` at the next quiet moment (see request_heap_freeze).
+_freeze_requested = False
 
 
 def resident_bytes() -> int | None:
@@ -41,11 +44,15 @@ def resident_bytes() -> int | None:
 
 
 def _freeze(memory: int | None) -> None:
-    """``gc.freeze()`` (an O(1) list splice); *memory* is this pass's reading."""
-    global _freezes, _memory_at_freeze
+    """``gc.freeze()`` (an O(1) list splice); *memory* is this pass's reading.
+
+    Any freeze covers a pending :func:`request_heap_freeze`.
+    """
+    global _freezes, _memory_at_freeze, _freeze_requested
     gc.freeze()
     _freezes += 1
     _memory_at_freeze = memory
+    _freeze_requested = False
 
 
 @lru_cache(maxsize=64)
@@ -205,6 +212,11 @@ class IdleCollector:
             # The one long pass: it gives back what left the chat after a freeze.
             self._deep_pass(now)
             return True
+        if quiet and _freeze_requested:
+            # A chat was just painted: kept out of the next passes now that
+            # nobody waits on the screen.
+            self._freeze_painted_chat()
+            return True
         pending = gc.get_count()[2] - self._pending_base
         if pending < 0:
             # A full collection (here or elsewhere) reset Python's count.
@@ -306,6 +318,15 @@ class IdleCollector:
         self.last_pass_s = took
         self._log_slow("forced" if forced else "ordinary", memory)
 
+    def _freeze_painted_chat(self) -> None:
+        self._release()
+        started = time.perf_counter()
+        freeze_heap()
+        self.last_pass_s = time.perf_counter() - started
+        self.collections += 1
+        self._pending_base = gc.get_count()[2]
+        self._log_slow("chat freeze", _memory_at_freeze)
+
     def _deep_pass(self, now: float) -> None:
         self._release()
         started = time.perf_counter()
@@ -375,6 +396,19 @@ def freeze_heap() -> None:
             return
         gc.collect(2)
         _freeze(resident_bytes())
+
+
+def request_heap_freeze() -> None:
+    """Ask for :func:`freeze_heap` at the next quiet moment.
+
+    The history paint of a session switch or a reload ran it on the spot: a
+    collection of every unfrozen generation right as the chat appeared, so
+    the screen froze 1.1 to 2.0 s under the user's first scroll or key (6
+    times in one CLI, cli-freeze.log 2026-11-03). ``IdleCollector`` runs it
+    once nobody types and nothing streams, like its other passes.
+    """
+    global _freeze_requested
+    _freeze_requested = True
 
 
 def thaw_heap() -> None:
