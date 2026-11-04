@@ -114,8 +114,15 @@ export function useRealtimeVoiceSession(options: RealtimeVoiceOptions) {
     setState("starting");
     const opts = optionsRef.current;
     const player = new PcmPlayer(opts.outputDeviceId);
-    player.onPlayingChange = setTtsPlaying;
+    player.onPlayingChange = (playing) => {
+      setTtsPlaying(playing);
+      // The session holds the agent's messages until the voice is quiet.
+      sessionRef.current?.setVoicePlaying(playing);
+    };
     playerRef.current = player;
+    // Opened at the click: a speaker first opened when the reply arrives can
+    // be held silent by the browser.
+    player.prime();
     const session = new RealtimeLiveSession(
       {
         url: realtimeBridgeUrl(opts.client.socketUrl, opts.token),
@@ -223,6 +230,11 @@ export function useRealtimeVoiceSession(options: RealtimeVoiceOptions) {
     sessionRef.current?.greet(text);
   }, []);
 
+  /** Context for the voice (the agent's state), not to be answered. */
+  const note = useCallback((text: string) => {
+    sessionRef.current?.note(text);
+  }, []);
+
   const stopSpeaking = useCallback(() => {
     playerRef.current?.flush();
     sessionRef.current?.cancelResponse();
@@ -251,6 +263,7 @@ export function useRealtimeVoiceSession(options: RealtimeVoiceOptions) {
     start,
     stop,
     speak,
+    note,
     greet,
     stopSpeaking,
     speechLevel,

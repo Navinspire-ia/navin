@@ -163,15 +163,23 @@ export class PcmPlayer {
   private sources = new Set<AudioBufferSourceNode>();
   /** Loudness of each scheduled chunk, by start time: the avatar's mouth. */
   private envelopes: { start: number; frames: Float32Array }[] = [];
+  /** Stops waiting for a click once the browser lets the voice out. */
+  private releaseOnGesture: (() => void) | null = null;
   onPlayingChange: ((playing: boolean) => void) | null = null;
 
   constructor(private sinkId: string | null = null) {}
+
+  /** Open the speaker now, while the click that started the call still counts. */
+  prime(): void {
+    this.ensure();
+  }
 
   private ensure(): AudioContext {
     if (!this.context) {
       const Ctor = audioContextConstructor();
       if (!Ctor) throw new Error("audio_unsupported");
       this.context = new Ctor();
+      this.context.addEventListener("statechange", () => this.onStateChange());
       const withSink = this.context as AudioContext & { setSinkId?: (id: string) => Promise<void> };
       if (this.sinkId && typeof withSink.setSinkId === "function") {
         void withSink.setSinkId(this.sinkId).catch(() => undefined);
@@ -181,8 +189,9 @@ export class PcmPlayer {
     return this.context;
   }
 
+  /** True while the voice is heard: audio queued on a speaker the browser holds is not. */
   get playing(): boolean {
-    return this.sources.size > 0;
+    return this.sources.size > 0 && this.context?.state === "running";
   }
 
   play(base64: string): void {
@@ -201,11 +210,44 @@ export class PcmPlayer {
     this.envelopes.push({ start: startAt, frames: speechEnvelope(samples, REALTIME_SAMPLE_RATE) });
     const wasPlaying = this.playing;
     this.sources.add(node);
-    if (!wasPlaying) this.onPlayingChange?.(true);
+    if (context.state !== "running") this.holdUntilGesture(context);
+    else if (!wasPlaying) this.onPlayingChange?.(true);
     node.onended = () => {
       this.sources.delete(node);
       if (!this.playing) this.onPlayingChange?.(false);
     };
+  }
+
+  /**
+   * The browser keeps the page silent until it is clicked (autoplay policy:
+   * WebKit always, Chromium when the speaker opened without a click). Shown
+   * as speaking, the call looked like a voice nobody could hear. The voice
+   * stays queued, the call shows it is not heard, and the next click or key
+   * press anywhere on the page lets it out.
+   */
+  private holdUntilGesture(context: AudioContext): void {
+    if (this.releaseOnGesture || typeof window === "undefined") return;
+    console.warn("[navin live] the browser holds the voice until the page is clicked or a key is pressed");
+    const release = () => {
+      this.stopWaitingForGesture();
+      void context.resume().catch(() => undefined);
+    };
+    window.addEventListener("pointerdown", release, true);
+    window.addEventListener("keydown", release, true);
+    this.releaseOnGesture = () => {
+      window.removeEventListener("pointerdown", release, true);
+      window.removeEventListener("keydown", release, true);
+    };
+  }
+
+  private stopWaitingForGesture(): void {
+    this.releaseOnGesture?.();
+    this.releaseOnGesture = null;
+  }
+
+  private onStateChange(): void {
+    if (this.context?.state === "running") this.stopWaitingForGesture();
+    this.onPlayingChange?.(this.playing);
   }
 
   /** The user talks over the voice: stop now and drop what was queued. */
@@ -234,6 +276,7 @@ export class PcmPlayer {
   }
 
   close(): void {
+    this.stopWaitingForGesture();
     this.flush();
     void this.context?.close().catch(() => undefined);
     this.context = null;

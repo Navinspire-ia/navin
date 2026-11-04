@@ -13,7 +13,10 @@ from pydantic import ValidationError
 from navin.collab.team import (
     ALL_TOOLS,
     AVATAR_KEYS,
+    BUILTIN_MEMBER_PRESET_INFO,
+    BUILTIN_MEMBER_PRESETS,
     GENDER_KEYS,
+    MEMBER_EFFORTS,
     PATTERN_KEYS,
     ROLE_DEFAULT_EFFORT,
     ROLE_DEFAULT_SANDBOX,
@@ -60,6 +63,12 @@ def collab_payload() -> dict[str, Any]:
         if getattr(preset, "modality", "text") != "text" or not preset.enabled:
             continue
         presets.append({"name": name, "label": preset.label or name, "model": preset.model})
+    # The default teammates' models stay pickable on an install without them
+    # (the teammate then runs on the main model, see member_runtime).
+    listed = {row["name"] for row in presets}
+    for name, (label, model) in BUILTIN_MEMBER_PRESET_INFO.items():
+        if name not in listed and name not in config.model_presets:
+            presets.append({"name": name, "label": label, "model": model, "available": False})
     from navin.collab.mail import smtp_status
     from navin.collab.photos import photo_data_url
 
@@ -95,7 +104,7 @@ def collab_payload() -> dict[str, Any]:
             "genders": list(GENDER_KEYS),
             "sandboxes": list(SANDBOX_KEYS),
             "patterns": list(PATTERN_KEYS),
-            "efforts": ["", "low", "medium", "high"],
+            "efforts": list(MEMBER_EFFORTS),
         },
     }
 
@@ -221,7 +230,7 @@ def update_collab(values: dict[str, Any]) -> dict[str, Any]:
         _prune_photos(config.collab)
         return collab_payload()
     current = config.collab.model_dump()
-    presets = {"default", *config.model_presets.keys()}
+    presets = {"default", *config.model_presets.keys(), *BUILTIN_MEMBER_PRESETS}
     if "members" in values:
         raw_members = values.get("members")
         if not isinstance(raw_members, list) or len(raw_members) > _MAX_MEMBERS:

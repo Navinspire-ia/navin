@@ -7,6 +7,7 @@ import { Bot } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
+import { TeamBotAvatar } from "@/components/team/TeamBotAvatar";
 import {
   StatusIcon,
   SubagentActionButtons,
@@ -118,7 +119,9 @@ export function SubagentStatusBar({
       <div className="flex min-h-6 items-center gap-2">
         <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <span className="font-medium text-foreground/90">
-          {t("thread.subagents.barTitle", { defaultValue: "Subagents" })}
+          {cards.every((card) => card.member)
+            ? t("thread.team.barTitle", { defaultValue: "Team" })
+            : t("thread.subagents.barTitle", { defaultValue: "Subagents" })}
         </span>
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {chips.map(([key, label, tone]) => (
@@ -195,13 +198,33 @@ function StatusBarRow({
         <span className="grid h-4 w-4 shrink-0 place-items-center">
           <StatusIcon state={state} size="sm" />
         </span>
+        {card.member ? (
+          <TeamBotAvatar
+            avatar={card.member.avatar}
+            color={card.member.color}
+            photo={card.member.photo}
+            seed={card.member.id}
+            gender={card.member.gender}
+            size={18}
+            active={state === "running"}
+          />
+        ) : null}
         <button
           type="button"
           onClick={() => onFocus(card.taskId)}
           title={t("thread.subagents.showDetails", { defaultValue: "Show details" })}
           className="min-w-0 max-w-[40%] shrink truncate rounded text-start font-medium text-foreground/90 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
-          {card.label}
+          {card.member ? (
+            <>
+              <span className="font-semibold text-foreground">{card.member.name}</span>
+              {card.member.title ? (
+                <span className="ms-1 font-normal text-muted-foreground/80">{card.member.title}</span>
+              ) : null}
+            </>
+          ) : (
+            card.label
+          )}
         </button>
         <span
           className={cn(

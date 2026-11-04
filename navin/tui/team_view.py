@@ -27,6 +27,8 @@ from navin.tui.textmarkup import escape
 from navin.tui.virtual import BlockRecord
 
 TEAM_USAGE = "/team on | /team off | /team <team> | /team none"
+# /team settings: the desktop's Settings > Team, in the terminal settings hub.
+TEAM_EDIT_WORDS = frozenset({"settings", "setting", "edit", "config", "configure", "setup"})
 
 # Compact journal tags, by message kind.
 _TAGS = {"assign": "task", "user": "interrupts", "email": "email sent"}
@@ -186,6 +188,7 @@ def status_markup(state: dict[str, Any]) -> str:
             label = f"{member.get('name') or '?'} - {job}" if job else str(member.get("name") or "?")
             lines.append(f"  {_glyph(member)} {escape(label)}")
     lines.append(f"[dim]Change it: {escape(TEAM_USAGE)} (teams: {escape(team_ids(state))})[/dim]")
+    lines.append("[dim]Edit teammates, teams, rules and the manager: /team settings (or /settings team)[/dim]")
     return "\n".join(lines)
 
 
@@ -210,10 +213,13 @@ def _save_enabled(on: bool) -> None:
 
 
 async def run_team_command(app: Any, argument: str) -> None:
-    """``/team [on|off|<team>|none]``: show or change Collaboration Mode here."""
+    """``/team [on|off|<team>|none|settings]``: show or change Collaboration Mode here."""
     runtime = app.runtime
     choice = argument.strip()
     lowered = choice.lower()
+    if lowered in TEAM_EDIT_WORDS:
+        await app.action_open_settings("team")
+        return
     state = await asyncio.to_thread(runtime.team_state)
     try:
         if lowered in {"on", "off"}:

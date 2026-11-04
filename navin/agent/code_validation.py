@@ -603,7 +603,11 @@ def note_chat_writes(root: Path, paths: set[str], owner: object | None = None) -
 
 
 def written_by_other_chats(root: Path, paths: set[str], owner: object | None = None) -> set[str]:
-    """The ``paths`` (relative to ``root``) another chat last wrote with a file tool, recently."""
+    """The ``paths`` (relative to ``root``) another chat last wrote with a file tool, recently.
+
+    "Another" is anyone but ``owner`` and the agents it started: a sibling
+    subagent or the parent chat counts as another writer for a subagent.
+    """
     owner = owner if owner is not None else _chat_owner()
     if owner is None or not paths:
         return set()
@@ -612,9 +616,15 @@ def written_by_other_chats(root: Path, paths: set[str], owner: object | None = N
     with _CHAT_WRITES_LOCK:
         for path in paths:
             entry = _CHAT_WRITES.get(_write_key(Path(root) / path))
-            if entry is not None and entry[0] is not owner and now - entry[1] < _CHAT_WRITE_WINDOW_S:
+            if entry is not None and not _written_by(entry[0], owner) and now - entry[1] < _CHAT_WRITE_WINDOW_S:
                 foreign.add(path)
     return foreign
+
+
+def _written_by(writer: object, owner: object) -> bool:
+    """``owner`` wrote it, itself or through an agent it started."""
+    descends = getattr(writer, "descends_from", None)
+    return writer is owner or (callable(descends) and bool(descends(owner)))
 
 
 # Logic files a run must change before a test run is the proof. Below that (a

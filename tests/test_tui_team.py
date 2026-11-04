@@ -59,9 +59,10 @@ def test_team_face_names_the_teammate_and_its_job():
 def test_team_is_in_the_slash_menu_and_the_help():
     row = next(entry for entry in _TUI_SLASH if entry["command"] == "/team")
     assert row["accepts_args"] is True
-    assert row["arg_hint"] == "[on|off|<team>|none]"
+    assert row["arg_hint"] == "[on|off|<team>|none|settings]"
     assert "`/team`" in HELP_MARKDOWN
     assert "`/team none`" in HELP_MARKDOWN
+    assert "`/team settings`" in HELP_MARKDOWN
 
 
 def test_team_on_saves_the_desktop_switch_and_shows_the_team(tmp_path):
@@ -235,3 +236,157 @@ def test_live_reads_a_teammate_reply_with_its_own_voice():
     assert (sofia_text, sofia_voice) == (f"Sofia: {expected}", "")
     # No language from the CLI: the lead's own voice decides it (Lea speaks French).
     assert teammate_voice_for("aws/polly-neural", "Lea", chosen="", gender="male", language="", key="mark") in {"Remi", "Liam"}
+
+
+# -- Settings > Team in the terminal -----------------------------------------
+
+
+def _hub_rows(hub) -> dict[str, object]:
+    return {field.label: field for field in hub._rows}
+
+
+async def _settle(hub, pilot) -> None:
+    await pilot.pause()
+    await hub.workers.wait_for_complete()
+    await pilot.pause()
+
+
+def test_team_settings_opens_the_desktops_team_editor(tmp_path):
+    from navin.tui.settings import SettingsHub
+
+    async def run():
+        app, _sessions = _team_app(tmp_path)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await app.submit_text("/team settings")
+            await pilot.pause()
+            hub = app.screen
+            assert isinstance(hub, SettingsHub)
+            assert hub._section.id == "team"
+            # Nothing reached the engine.
+            assert app.runtime.bus.inbound_size == 0
+            rows = _hub_rows(hub)
+            for label in ("Collaboration Mode", "This chat's team", "Default team", "Collaboration pattern",
+                          "Maximum rounds", "Token budget per teammate", "Manager email", "Email contacts",
+                          "Dev", "Sales", "Mark", "Salma", "New teammate", "New team"):
+                assert label in rows, label
+            assert "Mark" in rows["Dev"].text and "Salma" in rows["Dev"].text
+            assert "Senior Developer" in rows["Mark"].text
+            hub.dismiss(False)
+            await pilot.pause()
+            # /settings team opens the same section.
+            await app.submit_text("/settings team")
+            await pilot.pause()
+            assert isinstance(app.screen, SettingsHub) and app.screen._section.id == "team"
+    asyncio.run(run())
+
+
+def test_team_settings_save_through_the_desktop_save_at_once(tmp_path):
+    async def run():
+        app, sessions = _team_app(tmp_path)
+        async with app.run_test(size=(140, 44)) as pilot:
+            await app.submit_text("/team settings")
+            await pilot.pause()
+            hub = app.screen
+            rows = _hub_rows(hub)
+            hub._activate(rows["Collaboration Mode"], hub._rows.index(rows["Collaboration Mode"]))
+            hub._write(rows["Maximum rounds"], 7)
+            hub._write(rows["Email contacts"], "Ana <ana@corp.io>, bob@corp.io")
+            await _settle(hub, pilot)
+            collab = load_config().collab
+            assert collab.enabled is True and current_collab().enabled is True
+            assert collab.max_rounds == 7
+            assert collab.email_contacts == [
+                {"name": "Ana", "email": "ana@corp.io"}, {"name": "bob@corp.io", "email": "bob@corp.io"},
+            ]
+            assert hub._format(_hub_rows(hub)["Collaboration Mode"]) == "[$success]● on[/]"
+            # A refused value says why and saves nothing.
+            hub._write(_hub_rows(hub)["Manager email"], "not-an-email")
+            await _settle(hub, pilot)
+            assert "Team not saved" in str(hub.query_one("#foot .status", Static).content)
+            assert load_config().collab.manager_email == ""
+            # Ctrl+S of the hub never writes an older team back.
+            hub.action_save()
+            assert load_config().collab.max_rounds == 7
+            # This chat's team, like the desktop's picker.
+            hub._write(_hub_rows(hub)["This chat's team"], "sales")
+            await _settle(hub, pilot)
+            assert sessions.get_or_create(app.runtime.session_key).metadata[SESSION_TEAM_KEY] == "sales"
+    asyncio.run(run())
+
+
+def test_team_settings_add_a_teammate_to_a_team_then_remove_it(tmp_path):
+    from textual.widgets import Input, Select
+
+    from navin.tui.screens import FormScreen, PickerScreen
+
+    async def run():
+        app, _sessions = _team_app(tmp_path)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await app.submit_text("/team settings")
+            await pilot.pause()
+            hub = app.screen
+            hub.run_worker(hub._team_action("member_new", ""), exclusive=False)
+            await pilot.pause()
+            form = app.screen
+            assert isinstance(form, FormScreen)
+            form.query_one("#f-name", Input).value = "Sofia"
+            form.query_one("#f-title", Input).value = "Backend Developer"
+            form.query_one("#f-team", Select).value = "sales"
+            form._submit()
+            await _settle(hub, pilot)
+            collab = load_config().collab
+            sofia = next(m for m in collab.members if m.name == "Sofia")
+            assert sofia.role == "developer" and sofia.title == "Backend Developer"
+            assert "write_file" in sofia.tools and sofia.prompt
+            assert sofia.id in next(t for t in collab.teams if t.id == "sales").members
+            assert "Sofia" in _hub_rows(hub)
+            hub.run_worker(hub._team_action("member_delete", sofia.id), exclusive=False)
+            await pilot.pause()
+            assert isinstance(app.screen, PickerScreen)
+            app.screen.dismiss("yes")
+            await _settle(hub, pilot)
+            collab = load_config().collab
+            assert all(m.name != "Sofia" for m in collab.members)
+            assert sofia.id not in next(t for t in collab.teams if t.id == "sales").members
+    asyncio.run(run())
+
+
+def test_team_forms_follow_the_role_and_keep_customisations():
+    from navin.collab.team import ROLE_PROMPTS, ROLE_TOOLS, default_member
+    from navin.tui.team_settings import (
+        apply_member_answer,
+        apply_team_answer,
+        format_contacts,
+        parse_contacts,
+        team_form_fields,
+    )
+
+    mark = default_member("developer", id="mark", name="Mark")
+    answer = {"name": "Mark", "role": "tester", "tools": ", ".join(mark["tools"]), "skills": "git, custom-skill",
+              "reasoning_effort": "medium", "enabled": "true"}
+    moved = apply_member_answer(mark, answer)
+    # Defaults follow the new role; a customised list stays.
+    assert moved["tools"] == list(ROLE_TOOLS["tester"])
+    assert moved["prompt"] == ROLE_PROMPTS["tester"]
+    assert moved["skills"] == ["git", "custom-skill"]
+    assert moved["id"] == "mark"
+    fields = team_form_fields({"id": "dev", "name": "Dev", "members": ["mark"]}, [mark])
+    assert [f.name for f in fields] == ["name", "m_mark"] and fields[1].value == "true"
+    assert apply_team_answer({"id": "dev"}, {"name": "Core", "m_mark": "false"}, [mark]) == {
+        "id": "dev", "name": "Core", "members": [],
+    }
+    contacts = parse_contacts("Ana <ana@corp.io>, bob@corp.io")
+    assert format_contacts(contacts) == "Ana <ana@corp.io>, bob@corp.io"
+
+
+def test_the_cli_teammate_card_offers_the_efforts_of_the_default_team():
+    """Mark runs at xhigh and Michel at max: the card must show and keep them."""
+    from navin.collab.team import MEMBER_EFFORTS, default_member
+    from navin.tui.team_settings import apply_member_answer, member_form_fields
+
+    mark = default_member("developer", id="mark", name="Mark", reasoning_effort="xhigh")
+    effort = next(f for f in member_form_fields(mark, {}) if f.name == "reasoning_effort")
+    assert [key for key, _ in effort.options] == list(MEMBER_EFFORTS)
+    assert effort.value == "xhigh" and "max" in dict(effort.options)
+    kept = apply_member_answer(mark, {"name": "Mark", "role": "developer", "reasoning_effort": "xhigh"})
+    assert kept["reasoning_effort"] == "xhigh"

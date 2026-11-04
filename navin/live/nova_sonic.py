@@ -38,8 +38,8 @@ from websockets.exceptions import ConnectionClosed
 
 from navin.live.gemini_live import resample_pcm16_24k_to_16k
 
-DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
-#: Nova 2 Sonic voices (all speak several languages).
+DEFAULT_MODEL = "amazon.nova-2-5-sonic"
+#: Nova Sonic voices, the same for 2 and 2.5 (all speak several languages).
 VOICES = (
     "tiffany", "matthew", "amy", "olivia", "kiara", "arjun", "ambre", "florian",
     "beatrice", "lorenzo", "tina", "lennart", "lupe", "carlos", "carolina", "leo",
@@ -274,19 +274,40 @@ async def _open_stream(model: str, region: str, profile: str | None) -> Any:
 
 
 async def bridge(browser: Any, *, model: str, region: str, profile: str | None,
-                 error_frame: Any, open_stream: Any = None) -> None:
-    """Relay one Live session between the page and Nova Sonic."""
+                 error_frame: Any, open_stream: Any = None,
+                 fallback_regions: tuple[str, ...] = ()) -> None:
+    """Relay one Live session between the page and Nova Sonic.
+
+    The stream opens in ``region``, else in each of ``fallback_regions`` in
+    turn: Nova Sonic is served In-Region only, and an account can be refused
+    or at its 20-session quota in one region and not in the next.
+    """
     from aws_sdk_bedrock_runtime.models import (
         BidirectionalInputPayloadPart,
         InvokeModelWithBidirectionalStreamInputChunk,
     )
 
-    try:
-        stream = await (open_stream or _open_stream)(model, region, profile)
-    except Exception as exc:  # noqa: BLE001 - surfaced to the page, which falls back
-        logger.info("live nova sonic: could not open the stream: {}", exc)
+    opener = open_stream or _open_stream
+    stream = None
+    failure: Exception | None = None
+    for where in (region, *fallback_regions):
+        try:
+            stream = await opener(model, where, profile)
+        except PermissionError as exc:
+            # No AWS credentials at all: every region would refuse the same way.
+            failure = exc
+            break
+        except Exception as exc:  # surfaced to the page (which falls back) once no region opens
+            failure = exc
+            logger.info("live nova sonic: could not open the stream in {}: {}", where, exc)
+            continue
+        if where != region:
+            logger.info("live nova sonic: stream opened in {} after {} refused", where, region)
+        break
+    if stream is None:
+        logger.info("live nova sonic: could not open the stream: {}", failure)
         with suppress(Exception):
-            await browser.send(error_frame("realtime_unreachable", str(exc)[:200]))
+            await browser.send(error_frame("realtime_unreachable", str(failure)[:200]))
             await browser.close(4502, "realtime_unreachable")
         return
 

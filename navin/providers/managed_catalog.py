@@ -1562,12 +1562,17 @@ def _follow_catalog_media(config: Config, catalog: Catalog) -> bool:
     if live is not None and live.default_model and (voice.live_realtime_provider or "").strip().lower() in {"", "navin"}:
         served = {model.slug for model in live.models} or {live.default_model}
         if voice.live_realtime_model not in served:
-            if voice.live_realtime_model and voice.live_realtime_model != live.default_model:
+            if voice.live_realtime_model and not _same_live_voices(voice.live_realtime_model, live.default_model):
                 voice.live_realtime_voice = ""  # a voice belongs to its model
             voice.live_realtime_model = live.default_model
             voice.live_realtime_provider = "navin"
             changed = True
     return changed
+
+
+def _same_live_voices(model: str, other: str) -> bool:
+    """Both Live models speak with the same voices: Nova 2 and 2.5 Sonic do."""
+    return model == other or ("sonic" in model.lower() and "sonic" in other.lower())
 
 
 def _apply_live_realtime_default(config: Config, catalog: Catalog) -> bool:
@@ -1585,9 +1590,10 @@ def _apply_live_realtime_default(config: Config, catalog: Catalog) -> bool:
         return remembered
     if voice.live_realtime_model == slug and provider == ("navin" if slug else provider):
         return remembered
-    if voice.live_realtime_model and voice.live_realtime_model != slug:
+    if voice.live_realtime_model and not _same_live_voices(voice.live_realtime_model, slug):
         # A voice belongs to its model: Nova Sonic's "tiffany" means nothing to
-        # Gemini Live. The new model starts on its own default voice.
+        # Gemini Live. The new model starts on its own default voice, unless it
+        # speaks with the same ones (Nova 2 Sonic -> Nova 2.5 Sonic).
         voice.live_realtime_voice = ""
     voice.live_realtime_model = slug
     if slug:

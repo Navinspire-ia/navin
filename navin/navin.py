@@ -109,9 +109,7 @@ class Navin:
 
         config: Config = resolve_config_env_vars(load_config(resolved))
         if workspace is not None:
-            config.agents.defaults.workspace = str(
-                Path(workspace).expanduser().resolve()
-            )
+            config.use_workspace(Path(workspace).expanduser().resolve())
         if model is not None:
             config.agents.defaults.model_preset = None
             config.agents.defaults.model = model

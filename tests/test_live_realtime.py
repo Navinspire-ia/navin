@@ -366,10 +366,13 @@ def test_managed_nova_that_never_acknowledges_the_session_makes_the_page_fall_ba
 
 
 def test_managed_nova_acknowledged_session_keeps_relaying(monkeypatch):
+    from loguru import logger
+
     import navin.live.realtime as realtime
 
     monkeypatch.setattr(realtime, "NOVA_READY_TIMEOUT_S", 0.05)
     update = json.dumps({"type": "session.update", "session": {"instructions": "Speak French"}})
+    voice = base64.b64encode(bytes(4800)).decode()  # 0.1 s of 24 kHz PCM16
 
     async def run():
         page = _OpenPage([update])
@@ -381,14 +384,26 @@ def test_managed_nova_acknowledged_session_keeps_relaying(monkeypatch):
         call = asyncio.create_task(bridge(page, _navin_config(), connect=connect))
         await asyncio.sleep(0.2)
         assert not call.done(), "an acknowledged session must stay open"
-        upstream.queue.put_nowait(json.dumps({"type": "response.audio.delta", "delta": "BBBB"}))
+        for frame in ({"type": "response.created"}, {"type": "response.audio.delta", "delta": voice},
+                      {"type": "response.done"}):
+            upstream.queue.put_nowait(json.dumps(frame))
         await asyncio.sleep(0.05)
         page.stop.set()
         await asyncio.wait_for(call, 5)
-        assert any("BBBB" in frame for frame in page.sent)
+        assert any(voice in frame for frame in page.sent)
         assert not any(json.loads(f).get("type") == "error" for f in page.sent)
 
-    asyncio.run(run())
+    # A call nobody heard must say in the log whether the page got the voice.
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(message.record["message"]), level="INFO")
+    try:
+        asyncio.run(run())
+    finally:
+        logger.remove(sink)
+    closed = [line for line in lines if line.startswith("live realtime: session closed (navin)")]
+    assert closed and closed[0].endswith(
+        ": 1 reply, 0.1s of voice sent to the page, the user spoke 0 times (0 over the voice)"
+    ), lines
 
 
 class _StreamingPage(_OpenPage):
@@ -605,6 +620,11 @@ def test_switching_the_gateways_live_model_drops_the_old_models_voice():
     cfg.voice.live_realtime_voice = "tiffany"
     assert _apply_live_realtime_default(cfg, catalog("amazon/nova-2-sonic")) is False
     assert cfg.voice.live_realtime_voice == "tiffany"  # same model: the user's voice stays
+    # Nova 2.5 Sonic speaks with Nova 2's voices: whoever was on the old default
+    # moves to the new one and keeps the voice they picked.
+    assert _apply_live_realtime_default(cfg, catalog("amazon/nova-2.5-sonic")) is True
+    assert (cfg.voice.live_realtime_provider, cfg.voice.live_realtime_model) == ("navin", "amazon/nova-2.5-sonic")
+    assert cfg.voice.live_realtime_voice == "tiffany"
     assert _apply_live_realtime_default(cfg, catalog("gemini/gemini-live-2.5-flash")) is True
     assert cfg.voice.live_realtime_model == "gemini/gemini-live-2.5-flash"
     assert cfg.voice.live_realtime_voice == ""  # the new model's own default voice

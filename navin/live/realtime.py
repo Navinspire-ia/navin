@@ -77,6 +77,56 @@ class UpstreamSilentError(RuntimeError):
     """The upstream accepted the socket but never acknowledged the session."""
 
 
+class _PageAudio:
+    """What one Live session sent the page, for the line that closes it.
+
+    A call where the user hears nothing leaves the gateway, the bridge and the
+    page looking healthy (2026-11-04, Nova 2.5 Sonic: 49 s, no error, no
+    sound). These counts tell a model that never answered from a voice the
+    page received and did not play.
+    """
+
+    _OUTPUT_RATE = 24_000  # pcm16 voice of the realtime protocol
+
+    def __init__(self) -> None:
+        self.replies = 0
+        self.voice_bytes = 0
+        self.user_turns = 0
+        self.talked_over = 0
+        self._answering = False
+
+    def note(self, frame: str) -> None:
+        try:
+            event = json.loads(frame)
+        except ValueError:
+            # Relayed as it came; a frame that is not JSON carries no event to count.
+            return
+        if isinstance(event, dict):
+            self.note_event(event)
+
+    def note_event(self, event: dict[str, Any]) -> None:
+        kind = event.get("type")
+        if kind == "response.created":
+            self.replies += 1
+            self._answering = True
+        elif kind == "response.done":
+            self._answering = False
+        elif kind in {"response.audio.delta", "response.output_audio.delta"}:
+            # Base64: three bytes of PCM for every four characters.
+            self.voice_bytes += len(str(event.get("delta") or "")) * 3 // 4
+        elif kind == "input_audio_buffer.speech_started":
+            self.user_turns += 1
+            if self._answering:
+                self.talked_over += 1
+
+    def summary(self) -> str:
+        seconds = self.voice_bytes / (2 * self._OUTPUT_RATE)
+        replies = f"{self.replies} {'reply' if self.replies == 1 else 'replies'}"
+        turns = f"{self.user_turns} {'time' if self.user_turns == 1 else 'times'}"
+        return (f"{replies}, {seconds:.1f}s of voice sent to the page, "
+                f"the user spoke {turns} ({self.talked_over} over the voice)")
+
+
 @dataclass(frozen=True)
 class RealtimeTarget:
     provider: str
@@ -374,12 +424,15 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
             await browser.close(4404, "realtime unavailable")
         return
     if target.provider == "bedrock":
-        # Bedrock's bidirectional stream is not a WebSocket: its own bridge.
+        # Bedrock's bidirectional stream is not a WebSocket: its own bridge,
+        # which moves to the model's next region when one refuses the stream.
         from navin.live import nova_sonic
-        from navin.providers.bedrock_media import decode_target
+        from navin.providers.bedrock_media import decode_target, model_regions
 
         region, profile = decode_target(target.url)
-        await nova_sonic.bridge(browser, model=target.model, region=region, profile=profile, error_frame=_error_frame)
+        regions = model_regions(target.model, region)
+        await nova_sonic.bridge(browser, model=target.model, region=regions[0], profile=profile,
+                                error_frame=_error_frame, fallback_regions=regions[1:])
         return
     try:
         upstream = await _connect_with_retry(connect or _connect, target)
@@ -402,6 +455,7 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
         return
     started = time.monotonic()
     logger.info("live realtime: session started ({}, {})", target.provider, target.model)
+    heard = _PageAudio()
 
     translator = None
     xai_transcripts = XaiTranscripts() if target.provider == "xai" else None
@@ -448,6 +502,7 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
                 if nova_frames and not session_acked.is_set() and _frame_type(frame) != "session.created":
                     session_acked.set()
                 for message in (xai_transcripts.events(frame) if xai_transcripts else [frame]):
+                    heard.note(message)
                     await browser.send(message)
                 continue
             # Gemini Live sends its JSON in binary frames as well.
@@ -456,6 +511,7 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
             except (ValueError, UnicodeDecodeError):
                 continue
             for event in translator.from_gemini(parsed if isinstance(parsed, dict) else {}):
+                heard.note_event(event)
                 await browser.send(json.dumps(event))
 
     async def nova_ready_watchdog() -> None:
@@ -507,14 +563,17 @@ async def bridge(browser: Any, config: Any, *, connect: Any = None) -> None:
             if reason is None:
                 continue
             logger.warning(
-                "live realtime: session ended ({}) after {:.0f}s: {}",
-                target.provider, time.monotonic() - started, reason,
+                "live realtime: session ended ({}) after {:.0f}s: {}; {}",
+                target.provider, time.monotonic() - started, reason, heard.summary(),
             )
             with suppress(Exception):
                 await browser.send(_error_frame("realtime_dropped", reason))
             reported = True
         if not reported:
-            logger.info("live realtime: session closed ({}) after {:.0f}s", target.provider, time.monotonic() - started)
+            logger.info(
+                "live realtime: session closed ({}) after {:.0f}s: {}",
+                target.provider, time.monotonic() - started, heard.summary(),
+            )
     finally:
         with suppress(Exception):
             await upstream.close()

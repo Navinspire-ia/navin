@@ -96,6 +96,15 @@ def test_another_chats_file_tool_edits_are_not_this_chats_to_validate(tmp_path):
     assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}) == set()
     assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}, this_chat) == {"src/theirs.ts"}
     assert cv.written_by_other_chats(tmp_path, {"src/theirs.ts"}, other_chat) == set()
+    # A subagent is its chat's child: what it writes is its chat's work, while
+    # what its chat or a sibling writes is not the subagent's to validate.
+    agent, sibling = FileStates(parent=this_chat), FileStates(parent=this_chat)
+    cv.note_chat_writes(tmp_path, {"src/agent.ts"}, agent)
+    assert cv.written_by_other_chats(tmp_path, {"src/agent.ts"}, this_chat) == set()
+    assert cv.written_by_other_chats(tmp_path, {"src/agent.ts"}, agent) == set()
+    assert cv.written_by_other_chats(tmp_path, {"src/agent.ts"}, sibling) == {"src/agent.ts"}
+    assert cv.written_by_other_chats(tmp_path, {"src/agent.ts"}, other_chat) == {"src/agent.ts"}
+    assert cv.written_by_other_chats(tmp_path, {"src/mine.ts"}, agent) == {"src/mine.ts"}
 
 
 def test_runner_watches_editing_calls_only():

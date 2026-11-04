@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
@@ -130,6 +131,7 @@ IMAGE_SIZES = tuple((v, v) for v in ("1K", "2K", "4K", "1024x1024", "1536x1024",
 VIDEO_ASPECTS = tuple((v, v) for v in ("16:9", "9:16", "1:1"))
 VIDEO_RESOLUTIONS = (("", "auto"), ("720p", "720p"), ("1080p", "1080p"))
 MIN_CPU = 4
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 MIN_RAM_GB = 8
 
 
@@ -300,6 +302,19 @@ def build_sections(
             "Skills available to the agent; install packs from git, npm or a folder.",
             kind="skills",
             keys=(("enter", "enable/disable"), ("i", "install skill")),
+        ),
+        Section(
+            "team",
+            "Team",
+            "Collaboration Mode, the same team as the desktop's Settings > Team: "
+            "teammates, named teams, how they work and who they report to. Every change is saved at once.",
+            kind="team",
+            keys=(
+                ("enter", "toggle / edit"),
+                ("n", "new teammate"),
+                ("t", "new team"),
+                ("d", "delete"),
+            ),
         ),
         Section(
             "image",
@@ -954,6 +969,8 @@ class SettingsHub(ModalScreen[bool]):
         self._dirty = False
         self._discard_armed = False
         self._editing: Field | None = None
+        # Settings > Team (collab_payload), read when the Team section opens.
+        self._collab: dict[str, Any] | None = None
 
     # -- layout -----------------------------------------------------------
 
@@ -997,6 +1014,7 @@ class SettingsHub(ModalScreen[bool]):
         except Exception:  # noqa: BLE001
             self._autonomy = {}
         self._dirty = False
+        self._collab = None
         self._sections = build_sections(
             self._data,
             project_root=self._project_root,
@@ -1072,6 +1090,15 @@ class SettingsHub(ModalScreen[bool]):
     def _current_value(self, field: Field) -> Any:
         if field.scope == "autonomy":
             return self._autonomy.get(field.path[0])
+        if field.scope == "collab":
+            value = _get(self._team_payload().get("collab") or {}, field.path)
+            if field.key == "contacts":
+                from navin.tui.team_settings import format_contacts
+
+                return format_contacts(value)
+            return value
+        if field.scope == "session":
+            return self._chat_team()
         return _get(self._data, field.path)
 
     def _format(self, field: Field) -> str:
@@ -1116,6 +1143,8 @@ class SettingsHub(ModalScreen[bool]):
         keep = rows.highlighted
         rows.clear_options()
         self._rows = list(section.fields)
+        if section.kind == "team":
+            self._rows = self._team_rows()
         if section.id == "git":
             tokens = _get(self._data, ("tools", "forge", "tokens"), {}) or {}
             hosts = _get(self._data, ("tools", "forge", "hosts"), {}) or {}
@@ -1136,7 +1165,7 @@ class SettingsHub(ModalScreen[bool]):
         for field in self._rows:
             if field.kind == "info":
                 line = f"[dim]{escape(field.label):<{width}}[/dim]{field.text}"
-            elif field.kind == "forge":
+            elif field.kind in {"forge", "team", "member"}:
                 line = f"  {escape(field.label):<{width - 2}}{field.text}"
             elif field.kind == "action":
                 line = self._format(field)
@@ -1161,6 +1190,8 @@ class SettingsHub(ModalScreen[bool]):
                 bits.append(field.help)
             if field.path and field.scope == "config":
                 bits.append(f"[dim]{escape(field.dotted)}[/dim]")
+            elif field.path and field.scope == "collab":
+                bits.append(f"[dim]collab.{escape(field.dotted)}[/dim]")
             if field.minimum is not None or field.maximum is not None:
                 bits.append(f"[dim]{field.minimum} to {field.maximum}[/dim]")
             if field.restart:
@@ -1176,7 +1207,7 @@ class SettingsHub(ModalScreen[bool]):
     def _activate(self, field: Field, index: int) -> None:
         if field.kind == "info":
             return
-        if field.kind in {"action", "forge"}:
+        if field.kind in {"action", "forge", "team", "member"}:
             self.run_worker(self._run_action(field), exclusive=False)
             return
         if field.kind == "toggle":
@@ -1290,6 +1321,10 @@ class SettingsHub(ModalScreen[bool]):
         rows.focus()
 
     def _write(self, field: Field, value: Any) -> None:
+        if field.scope in {"collab", "session"}:
+            # Saved at once, through the desktop's own Settings > Team save.
+            self.run_worker(self._team_field_write(field, value), exclusive=False)
+            return
         if field.scope == "autonomy":
             self._autonomy[field.path[0]] = value
         else:
@@ -1305,6 +1340,9 @@ class SettingsHub(ModalScreen[bool]):
     async def _run_action(self, field: Field) -> None:
         if field.action == "raw_config" and self._open_raw:
             self._open_raw()
+            return
+        if field.action.startswith("team_") or field.action.startswith("member_"):
+            await self._team_action(field.action, field.key)
             return
         if field.action in {"forge_add", "forge_edit"}:
             fields = [
@@ -1544,6 +1582,23 @@ class SettingsHub(ModalScreen[bool]):
         ):
             event.stop()
             self._remove_forge()
+        elif (
+            self._section.kind == "team"
+            and event.key in {"n", "t", "d"}
+            and self.query_one("#rows", OptionList).has_focus
+        ):
+            event.stop()
+            if event.key == "n":
+                self.run_worker(self._team_action("member_new", ""), exclusive=False)
+            elif event.key == "t":
+                self.run_worker(self._team_action("team_new", ""), exclusive=False)
+            else:
+                idx = self.query_one("#rows", OptionList).highlighted
+                row = self._rows[idx] if idx is not None and 0 <= idx < len(self._rows) else None
+                if row is not None and row.kind in {"team", "member"}:
+                    self.run_worker(self._team_action(f"{row.kind}_delete", row.key), exclusive=False)
+                else:
+                    self._status("select a team or a teammate row first")
 
     def _table_action(self, key: str) -> None:
         section = self._section
@@ -2283,6 +2338,272 @@ class SettingsHub(ModalScreen[bool]):
             self._status(f"[$error]{escape(str(exc))}[/]")
             return
         self._after_external_write(f"[$success]rule {escape(row.key)} saved[/]", row.key)
+
+    # team (Collaboration Mode) ---------------------------------------------
+
+    def _team_payload(self) -> dict[str, Any]:
+        """Settings > Team as the desktop reads it (collab_payload), cached."""
+        if self._collab is None:
+            from navin.webui.collab_api import collab_payload
+
+            try:
+                self._collab = collab_payload()
+            except (OSError, ValueError) as exc:
+                # Settings or a teammate photo unreadable (PhotoError is a ValueError).
+                self._status(f"[$error]team: {escape(str(exc))}[/]")
+                return {"collab": {}, "catalog": {}}
+        return self._collab
+
+    def _chat_team(self) -> str:
+        """The team of the chat on screen ("off" = none, "" = no chat engine).
+
+        team_state reads the settings and the session safely (an unreadable
+        file or session store gives the default team): nothing to catch here.
+        """
+        if self._runtime is None:
+            return ""
+        return str(self._runtime.team_state().get("team") or "off")
+
+    def _team_rows(self) -> list[Field]:
+        from navin.tui.team_settings import PATTERN_OPTIONS, member_line, preset_options
+
+        payload = self._team_payload()
+        collab = payload.get("collab") or {}
+        teams = [t for t in collab.get("teams") or [] if isinstance(t, dict)]
+        members = [m for m in collab.get("members") or [] if isinstance(m, dict)]
+        names = {str(m.get("id")): str(m.get("name") or m.get("id")) for m in members}
+        presets = dict(preset_options(payload.get("catalog") or {}))
+        team_options = tuple((str(t["id"]), str(t["name"])) for t in teams)
+        rows: list[Field] = [
+            Field(
+                "Collaboration Mode", ("enabled",), "toggle",
+                "Teammates work your chats with Navin. Same switch as /team on | off and the desktop.",
+                scope="collab",
+            ),
+        ]
+        if self._runtime is not None and hasattr(self._runtime, "team_state"):
+            rows.append(Field(
+                "This chat's team", ("chat_team",), "select",
+                "The team of the chat on screen, like the desktop's Team picker (/team <team>).",
+                options=(("off", "No team"), *team_options), scope="session",
+            ))
+        email = payload.get("email") or {}
+        email_hint = (
+            "Sends through Settings > Channels > Email."
+            if email.get("ready")
+            else "Email channel not ready: " + str(email.get("hint") or "Settings > Channels > Email.")
+        )
+        rows += [
+            Field("Default team", ("default_team",), "select", "The team a new chat starts with.",
+                  options=team_options, scope="collab"),
+            Field("Collaboration pattern", ("pattern",), "select", "How the teammates work together.",
+                  options=PATTERN_OPTIONS, scope="collab"),
+            Field("Maximum rounds", ("max_rounds",), "number",
+                  "Assignments per teammate per mission before Navin stops and asks you.",
+                  minimum=1, maximum=20, scope="collab"),
+            Field("Token budget per teammate", ("budget_tokens",), "number",
+                  "A teammate stops when one run exceeds it. 0 means no cap.",
+                  minimum=0, maximum=50_000_000, scope="collab"),
+            Field("Automatic feedback loop", ("auto_feedback",), "toggle",
+                  "Teammates send findings to each other and iterate without waiting for you.", scope="collab"),
+            Field("Human approval (critical ops)", ("human_approval_critical",), "toggle",
+                  "Deploy, push, data deletion, migrations and secrets are listed for you instead of run.",
+                  scope="collab"),
+            Field("Manager name", ("manager_name",), "text", "The human the team reports to.", scope="collab"),
+            Field("Manager email", ("manager_email",), "text",
+                  "Deliverables, decisions and blockers are emailed here.", placeholder="you@company.com",
+                  scope="collab"),
+            Field("Email contacts", ("email_contacts",), "text",
+                  "More people the team may email: Name <email>, comma separated.",
+                  placeholder="Ana <ana@company.com>, bob@company.com", scope="collab", key="contacts"),
+            Field("Allow any email address", ("email_allow_any",), "toggle",
+                  "Off: only the manager and the contacts above.", scope="collab"),
+            Field("Send a test email", kind="action", scope="action", action="team_test_email",
+                  help=f"Writes to the manager email once the team is saved. {email_hint}"),
+            Field("Teams", kind="info", scope="info",
+                  text=f"[dim]{len(teams)} · enter edits · t new team · d deletes[/dim]"),
+        ]
+        for team in teams:
+            ids = [str(i) for i in team.get("members") or []]
+            who = ", ".join(names.get(i, i) for i in ids) or "nobody yet"
+            default = "  [dim](default)[/dim]" if team.get("id") == collab.get("default_team") else ""
+            rows.append(Field(
+                str(team.get("name") or team.get("id")), kind="team", scope="action", action="team_edit",
+                key=str(team.get("id")), text=f"{escape(who)}{default}",
+                help="Enter: name and teammates. d: delete this team.",
+            ))
+        rows += [
+            Field("New team", kind="action", scope="action", action="team_new"),
+            Field("Teammates", kind="info", scope="info",
+                  text=f"[dim]{len(members)} · enter edits · n new teammate · d removes[/dim]"),
+        ]
+        for member in members:
+            color = str(member.get("color") or "")
+            mark = f"[{color}]●[/] " if _HEX_COLOR.fullmatch(color) else "● "
+            rows.append(Field(
+                str(member.get("name") or member.get("id")), kind="member", scope="action",
+                action="member_edit", key=str(member.get("id")),
+                text=mark + escape(member_line(member, presets)),
+                help="Enter: job, model, sandbox, tools, skills, prompt. d: remove this teammate.",
+            ))
+        rows += [
+            Field("New teammate", kind="action", scope="action", action="member_new"),
+            Field("Restore the default team", kind="action", scope="action", action="team_reset",
+                  help="Back to the default teammates and teams; the switch and the rules stay."),
+        ]
+        return rows
+
+    async def _team_save(self, values: dict[str, Any], message: str) -> bool:
+        """``update_collab`` (the desktop's save), then the rows and config cache follow."""
+        from navin.config.schema import CollabConfig
+        from navin.webui.collab_api import update_collab
+
+        try:
+            self._collab = await asyncio.to_thread(update_collab, values)
+        except (OSError, ValueError) as exc:
+            # Refused (WebUISettingsError is a ValueError), or the file could not be written.
+            self._status(f"[$error]Team not saved: {escape(str(getattr(exc, 'message', exc)))}[/]")
+            return False
+        # Keep the hub's copy current, or ctrl+s would write the old team back:
+        # the team just saved, in the shape the hub holds, without a second read.
+        self._data["collab"] = CollabConfig.model_validate(self._collab["collab"]).model_dump(
+            mode="json", by_alias=True
+        )
+        self._refresh_team_rows()
+        self._status(f"[$success]{escape(message)}[/]")
+        return True
+
+    def _refresh_team_rows(self) -> None:
+        if self._section is not None and self._section.kind == "team":
+            rows = self.query_one("#rows", OptionList)
+            keep = rows.highlighted
+            self._fill_rows(self._section)
+            if keep is not None and 0 <= keep < len(self._rows):
+                rows.highlighted = keep
+
+    async def _team_field_write(self, field: Field, value: Any) -> None:
+        if field.scope == "session":
+            if self._runtime is None:
+                self._status("[$error]Team not changed: no chat is open[/]")
+                return
+            try:
+                await asyncio.to_thread(self._runtime.set_session_team, str(value or "off"))
+            except (RuntimeError, OSError) as exc:
+                # The engine is still starting, or the session could not be written.
+                self._status(f"[$error]Team not changed: {escape(str(exc))}[/]")
+                return
+            self._refresh_team_rows()
+            self._status("[$success]This chat's team saved[/]")
+            return
+        if field.key == "contacts":
+            from navin.tui.team_settings import parse_contacts
+
+            value = parse_contacts(str(value or ""))
+        await self._team_save({field.path[0]: value}, f"{field.label} saved")
+
+    async def _confirm(self, question: str, yes: str) -> bool:
+        answer = await self.app.push_screen_wait(PickerScreen(
+            question, [PickItem("yes", yes), PickItem("no", "Cancel")], searchable=False,
+        ))
+        return answer == "yes"
+
+    async def _team_action(self, action: str, key: str) -> None:
+        from navin.tui import team_settings as ts
+
+        payload = self._team_payload()
+        collab = payload.get("collab") or {}
+        catalog = payload.get("catalog") or {}
+        members = [dict(m) for m in collab.get("members") or [] if isinstance(m, dict)]
+        teams = [dict(t) for t in collab.get("teams") or [] if isinstance(t, dict)]
+        if action == "team_test_email":
+            from navin.webui.collab_api import send_test_email
+
+            self._status("sending a test email…")
+            try:
+                result = await asyncio.to_thread(send_test_email)
+            except (OSError, ValueError) as exc:
+                # The mail server refused (WebUISettingsError), or the settings are unreadable.
+                self._status(f"[$error]{escape(str(getattr(exc, 'message', exc)))}[/]")
+                return
+            self._status(f"[$success]Test email sent to {escape(str(result.get('to') or ''))}[/]")
+            return
+        if action == "team_reset":
+            if await self._confirm("Restore the default team?", "Restore the default teammates and teams"):
+                await self._team_save({"reset": True}, "default team restored")
+            return
+        if action in {"team_edit", "team_new"}:
+            team = next((t for t in teams if t.get("id") == key), None) if action == "team_edit" else None
+            answer = await self.app.push_screen_wait(FormScreen(
+                f"Team: {escape(str(team['name']))}" if team else "New team",
+                ts.team_form_fields(team, members),
+                hint="Tick the teammates of this team (a teammate may be in several).",
+                submit_label="Save team",
+            ))
+            if answer is None:
+                return
+            updated = ts.apply_team_answer(team, answer, members)
+            if team is not None:
+                teams = [updated if t.get("id") == key else t for t in teams]
+            else:
+                teams.append(updated)
+            await self._team_save({"members": members, "teams": teams}, f"team {updated['name']} saved")
+            return
+        if action == "team_delete":
+            team = next((t for t in teams if t.get("id") == key), None)
+            if team and await self._confirm(f"Delete the {team['name']} team?", "Delete the team"):
+                teams = [t for t in teams if t.get("id") != key]
+                await self._team_save({"members": members, "teams": teams}, f"team {team['name']} deleted")
+            return
+        if action == "member_delete":
+            member = next((m for m in members if m.get("id") == key), None)
+            if member and await self._confirm(f"Remove {member['name']}?", f"Remove {member['name']}"):
+                members = [m for m in members if m.get("id") != key]
+                await self._team_save({"members": members, "teams": teams}, f"{member['name']} removed")
+            return
+        if action not in {"member_edit", "member_new"}:
+            return
+        member = next((m for m in members if m.get("id") == key), None) if action == "member_edit" else None
+        if action == "member_edit" and member is None:
+            return
+        answer = await self.app.push_screen_wait(FormScreen(
+            f"Teammate: {escape(str(member['name']))}" if member else "New teammate",
+            ts.member_form_fields(
+                member, catalog, teams=teams, default_team=str(collab.get("default_team") or ""),
+            ),
+            hint="Same fields as the desktop's Settings > Team (the photo stays a desktop choice).",
+            submit_label="Save teammate",
+        ))
+        if answer is None:
+            return
+        updated = ts.apply_member_answer(member, answer)
+        if answer.get("edit_prompt") == "true":
+            prompt = await self.app.push_screen_wait(
+                RuleEditor(f"Prompt: {escape(updated['name'])}", str(updated.get("prompt") or ""))
+            )
+            if prompt is not None:
+                updated["prompt"] = prompt
+        if member is not None:
+            members = [updated if m.get("id") == key else m for m in members]
+        else:
+            members.append(updated)
+        if not await self._team_save({"members": members, "teams": teams}, f"{updated['name']} saved"):
+            return
+        target = answer.get("team") if member is None else ""
+        if target:
+            saved = (self._collab or {}).get("collab") or {}
+            new = next(
+                (m for m in saved.get("members") or [] if str(m.get("name")).lower() == updated["name"].lower()),
+                None,
+            )
+            saved_teams = [dict(t) for t in saved.get("teams") or []]
+            for team in saved_teams:
+                if new and team.get("id") == target and new["id"] not in team["members"]:
+                    team["members"] = [*team["members"], new["id"]]
+            if new:
+                await self._team_save(
+                    {"members": saved.get("members") or [], "teams": saved_teams},
+                    f"{updated['name']} added to {target}",
+                )
 
     # -- save / close -----------------------------------------------------
 

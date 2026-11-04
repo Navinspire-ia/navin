@@ -21,7 +21,7 @@ vi.mock("@/lib/realtime-live", () => ({
 }));
 vi.mock("@/lib/realtime-audio", () => ({
   startPcmCapture: mocks.capture,
-  PcmPlayer: class { close() {} },
+  PcmPlayer: class { close() {} prime() {} },
 }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 

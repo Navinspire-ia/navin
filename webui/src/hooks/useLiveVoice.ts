@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { useRealtimeVoiceSession } from "@/hooks/useRealtimeVoiceSession";
 import { useVoiceSession, type VoiceSessionErrorKey } from "@/hooks/useVoiceSession";
-import { fetchLiveRealtimeStatus, searchNavinDocs } from "@/lib/api";
+import { fetchLiveProjectContext, fetchLiveRealtimeStatus, searchNavinDocs } from "@/lib/api";
 import { teamVoicesEnabled, useTeammateVoices } from "@/hooks/useTeammateVoices";
 import type { PendingApproval } from "@/lib/approvals";
 import type { PendingChoice } from "@/lib/choices";
@@ -28,7 +28,15 @@ import {
   type LiveVoiceState,
   type SpeechTextStrings,
 } from "@/lib/live-voice";
-import { type LiveDigest, liveDigest, offerAnswer } from "@/lib/live-digest";
+import { type LiveDigest, answerOpening, liveBriefing, liveDigest, offerAnswer } from "@/lib/live-digest";
+import {
+  IDLE_RUN,
+  agentStatusLine,
+  isStopReply,
+  lastUserRequest,
+  sameRequest,
+  type AgentRun,
+} from "@/lib/live-agent-status";
 import { playCompletionChime, playSentCue } from "@/lib/live-voice-chime";
 import type { NavinClient } from "@/lib/navin-client";
 import { notifyUser } from "@/lib/os-notification";
@@ -310,6 +318,7 @@ export function useLiveVoice({
           defaultValue: "Sum up the message above for me out loud, like a colleague would.",
         }),
       ok: t("thread.composer.liveVoice.digest.ok", { defaultValue: "Okay." }),
+      rest: t("thread.composer.liveVoice.digest.rest", { defaultValue: "The rest is in the chat. Shall I sum it up?" }),
     };
   }, [t]);
   const digestStringsRef = useRef(digestStrings);
@@ -443,6 +452,8 @@ export function useLiveVoice({
   const pipelineReadyRef = useRef<boolean | undefined>(undefined);
   const tokenRef = useRef(token);
   tokenRef.current = token;
+  const liveChatIdRef = useRef(chatId);
+  liveChatIdRef.current = chatId;
   const isStreamingRef = useRef(isStreaming);
   isStreamingRef.current = isStreaming;
   const choiceStringsRef = useRef(choiceStrings);
@@ -450,17 +461,26 @@ export function useLiveVoice({
   const approvalStringsRef = useRef(approvalStrings);
   approvalStringsRef.current = approvalStrings;
 
+  // What the agent is doing, as the realtime voice must know it (see tellVoice).
+  const agentRunRef = useRef<AgentRun>(IDLE_RUN);
+  // The last request the voice sent with ask_agent, to tell it from a typed one.
+  const liveAskRef = useRef<string | null>(null);
+  // The voice asked for the stop itself: it already said so.
+  const stopFromVoiceRef = useRef(false);
+
   const realtimeTool = useCallback(async (name: string, args: Record<string, unknown>): Promise<string> => {
     switch (name) {
       case "ask_agent": {
         const request = String(args.request ?? "").trim();
         if (!request) return "error: empty request";
+        liveAskRef.current = request;
         onUtteranceRef.current(request);
         setLastPrompt(request);
         void playSentCue();
         return "Sent to the agent, which is working on it. Its updates will arrive as [Navin agent] messages.";
       }
       case "stop_agent":
+        stopFromVoiceRef.current = true;
         onUtteranceRef.current("/stop");
         return "The agent was asked to stop.";
       case "answer_approval": {
@@ -486,11 +506,22 @@ export function useLiveVoice({
         const choice = pendingChoicesRef.current[0];
         return JSON.stringify({
           agentWorking: isStreamingRef.current,
+          // working, done or stopped (by the user), with the request it was about.
+          agentRun: agentRunRef.current,
           // Enough for the voice to sum up a plan or a report itself.
           lastAgentMessage: lastAssistantContext(messagesRef.current, speechStringsRef.current, 4000) ?? null,
           pendingApproval: approval ? speechForApproval(approval, approvalStringsRef.current) : null,
           pendingQuestion: choice ? speechForChoice(choice, choiceStringsRef.current) : null,
         });
+      }
+      case "project_context": {
+        if (!tokenRef.current) return "The project facts are not reachable right now: use ask_agent.";
+        try {
+          const context = await fetchLiveProjectContext(tokenRef.current, liveChatIdRef.current);
+          return JSON.stringify(context).slice(0, 12000);
+        } catch (error) {
+          return `The project facts are not reachable (${error instanceof Error ? error.message : String(error)}): use ask_agent.`;
+        }
       }
       case "navin_docs": {
         const query = String(args.query ?? "").trim();
@@ -577,6 +608,17 @@ export function useLiveVoice({
     },
     [realtime.speak, session.speak, teammates.leadSpoke],
   );
+  // The realtime model is a second mind next to the agent: it holds the
+  // agent's real state through these lines. The pipeline needs none, each
+  // utterance is a chat turn the agent itself answers.
+  const tellVoice = useCallback(
+    (line: string, speakNow: boolean) => {
+      if (engineRef.current !== "realtime") return;
+      if (speakNow) speak(line);
+      else realtime.note(line);
+    },
+    [realtime.note, speak],
+  );
   const stopSpeaking = useCallback(() => {
     teammates.stop();
     return engineRef.current === "realtime" ? realtime.stopSpeaking() : session.stopSpeaking();
@@ -628,6 +670,11 @@ export function useLiveVoice({
     conversationEpochRef.current += 1;
     announcedChoicesRef.current = new Set();
     runStartedAtRef.current = isStreaming ? Date.now() : null;
+    agentRunRef.current = isStreaming
+      ? { state: "working", request: lastUserRequest(messagesRef.current), from: null }
+      : IDLE_RUN;
+    liveAskRef.current = null;
+    stopFromVoiceRef.current = false;
     wasStreamingRef.current = isStreaming;
     enabledRef.current = true;
     offerRef.current = null;
@@ -693,12 +740,31 @@ export function useLiveVoice({
         speak(`${message.author.name}: ${said}`);
         continue;
       }
+      if (engineRef.current === "realtime" && isStopReply(message.content)) {
+        // A stop is a change of state, not words to read: the voice gets the
+        // state and says it in its own words, unless it asked for the stop.
+        const said = speechTextFromMarkdown(message.content, speechStrings);
+        onScreen ??= assistantSpeechCounts(messages, speechStrings);
+        if (!claimSpeechKey(spokenKeysRef.current, onScreen, speechDedupeKey(said))) continue;
+        agentRunRef.current = { ...agentRunRef.current, state: "stopped" };
+        tellVoice(agentStatusLine(agentRunRef.current), !stopFromVoiceRef.current);
+        stopFromVoiceRef.current = false;
+        continue;
+      }
       const digest = summaryAskedRef.current ? null : liveDigest(message.content);
       summaryAskedRef.current = false;
       if (digest) {
-        // A plan, review or long report: say what it is, offer the summary.
+        if (engineRef.current === "realtime") {
+          // The voice reads the answer and says its gist at once, like a colleague.
+          speak(liveBriefing(digest, message.content));
+          continue;
+        }
+        // A plan, review or long report: its own opening first, then the offer
+        // of the rest. "Done. It is a long answer" alone told nothing.
         offerRef.current = digest;
-        speak(digestStringsRef.current.fresh(digest));
+        const opening = speechTextFromMarkdown(answerOpening(message.content) ?? "", speechStrings);
+        const offer = digest.kind === "long" && opening ? digestStringsRef.current.rest : digestStringsRef.current.fresh(digest);
+        speak(opening ? `${opening} ${offer}` : offer);
         continue;
       }
       const text = speechTextFromMarkdown(message.content, speechStrings);
@@ -708,7 +774,7 @@ export function useLiveVoice({
       if (!claimSpeechKey(spokenKeysRef.current, onScreen, speechDedupeKey(text))) continue;
       speak(text);
     }
-  }, [activeState, enabled, messages, speak, speechStrings, teammates.busy, teammates.say]);
+  }, [activeState, enabled, messages, speak, speechStrings, teammates.busy, teammates.say, tellVoice]);
 
   // The transcript groups progress with tool traces. Hear the agent's actual
   // explanations as they arrive, while keeping raw tool output silent. A
@@ -775,9 +841,16 @@ export function useLiveVoice({
     if (!enabled) return;
     if (isStreaming && !was) {
       runStartedAtRef.current = Date.now();
+      // Every run is known to the voice, the ones typed in the chat included.
+      const request = lastUserRequest(messagesRef.current);
+      const fromVoice = sameRequest(request, liveAskRef.current);
+      agentRunRef.current = { state: "working", request, from: fromVoice ? "voice" : "chat" };
+      if (!fromVoice) tellVoice(agentStatusLine(agentRunRef.current), false);
       return;
     }
     if (!isStreaming && was) {
+      // A stop reply that lands after this keeps the last word (reader above).
+      if (agentRunRef.current.state === "working") agentRunRef.current = { ...agentRunRef.current, state: "done" };
       const startedAt = runStartedAtRef.current;
       runStartedAtRef.current = null;
       const duration = startedAt === null ? null : Date.now() - startedAt;
@@ -801,7 +874,7 @@ export function useLiveVoice({
         });
       }
     }
-  }, [callUser, enabled, isStreaming, t]);
+  }, [callUser, enabled, isStreaming, t, tellVoice]);
 
   // The session belongs to one chat: switching threads hangs up.
   const chatIdRef = useRef(chatId);

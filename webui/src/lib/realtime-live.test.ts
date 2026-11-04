@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { LIVE_TOOLS, REALTIME_OPEN_TIMEOUT_MS, REALTIME_UNRESPONSIVE_MS, RealtimeLiveSession, realtimeBridgeUrl } from "./realtime-live";
+import { LIVE_TOOLS, REALTIME_OPEN_TIMEOUT_MS, REALTIME_UNRESPONSIVE_MS, RealtimeLiveSession, VOICE_QUIET_MS, liveInstructions, realtimeBridgeUrl } from "./realtime-live";
 
 class FakeSocket {
   static OPEN = 1;
@@ -179,6 +179,67 @@ describe("RealtimeLiveSession", () => {
     vi.unstubAllGlobals();
   });
 
+  it("never cuts the voice: the agent's messages wait until nothing is said or heard, then go in one turn", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeSocket);
+    try {
+      const socket = new FakeSocket();
+      const session = new RealtimeLiveSession(
+        { url: "ws://x", socketFactory: () => socket as unknown as WebSocket, instructions: "" },
+        { onAudio: vi.fn(), onTool: vi.fn(), onError: vi.fn() },
+      );
+      const opened = session.open();
+      socket.emit({ type: "navin.ready", provider: "navin", model: "amazon/nova-2.5-sonic" });
+      await opened;
+      const texts = () => socket.sent.filter((frame) => frame.type === "conversation.item.create")
+        .map((frame) => ((frame.item as { content: { text: string }[] }).content[0].text));
+
+      // The model streams its answer far ahead: the page is still playing it.
+      socket.emit({ type: "response.created" });
+      socket.emit({ type: "response.audio.delta", delta: "AAAA" });
+      session.setVoicePlaying(true);
+      socket.emit({ type: "response.done" });
+      session.announce("Le build passe.");
+      session.note("status: the agent is working.");
+      session.announce("Les tests passent.");
+      vi.advanceTimersByTime(10_000);
+      expect(texts()).toEqual([]);
+
+      session.setVoicePlaying(false);
+      vi.advanceTimersByTime(VOICE_QUIET_MS - 300);
+      expect(texts()).toEqual([]);
+      vi.advanceTimersByTime(600);
+      // One turn, in order: the note goes with the messages that want an answer.
+      expect(texts()).toEqual([
+        "[Navin agent] Le build passe.\n[Navin agent] status: the agent is working.\n[Navin agent] Les tests passent.",
+      ]);
+
+      // While the user talks, the next message waits for the end of their turn.
+      vi.advanceTimersByTime(5_000);
+      socket.emit({ type: "input_audio_buffer.speech_started" });
+      session.announce("C'est fait.");
+      vi.advanceTimersByTime(5_000);
+      expect(texts()).toHaveLength(1);
+      socket.emit({ type: "input_audio_buffer.speech_stopped" });
+      vi.advanceTimersByTime(VOICE_QUIET_MS + 300);
+      expect(texts()).toHaveLength(2);
+
+      // The model answers it; a note alone never reaches Nova, which answers
+      // every text: it waits for the next message and goes with it.
+      socket.emit({ type: "response.created" });
+      socket.emit({ type: "response.done" });
+      session.note("status: the agent was stopped by the user.");
+      vi.advanceTimersByTime(10_000);
+      expect(texts()).toHaveLength(2);
+      session.announce("Je reprends.");
+      expect(texts()[2]).toBe("[Navin agent] status: the agent was stopped by the user.\n[Navin agent] Je reprends.");
+      session.close();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("sends a request repeated under a new call id only once, and steers project work to ask_agent", async () => {
     vi.stubGlobal("WebSocket", FakeSocket);
     try {
@@ -189,7 +250,8 @@ describe("RealtimeLiveSession", () => {
         { onAudio: vi.fn(), onTool, onError: vi.fn() },
       );
       const opened = session.open();
-      socket.emit({ type: "navin.ready", provider: "navin", model: "amazon/nova-2-sonic" });
+      // Nova 2.5 Sonic on the managed gateway: tool results go back as JSON too.
+      socket.emit({ type: "navin.ready", provider: "navin", model: "amazon/nova-2.5-sonic" });
       await opened;
       socket.emit({ type: "response.function_call_arguments.done", call_id: "a", name: "ask_agent", arguments: '{"request":"Lance les tests"}' });
       socket.emit({ type: "response.function_call_arguments.done", call_id: "b", name: "ask_agent", arguments: '{"request":"lance les tests "}' });
@@ -201,6 +263,8 @@ describe("RealtimeLiveSession", () => {
       const tools = Object.fromEntries(LIVE_TOOLS.map((t) => [t.name, t.description]));
       expect(tools.ask_agent).toMatch(/run a command, call tools/);
       expect(tools.navin_docs).toMatch(/Never for work on the user's project/);
+      expect(tools.project_context).toMatch(/contributors with commit counts/);
+      expect(liveInstructions("fr")).toMatch(/call project_context/);
       const ask = LIVE_TOOLS.find((t) => t.name === "ask_agent")!;
       expect(JSON.stringify(ask.parameters)).toMatch(/first person.*no 'The user wants/);
       session.close();

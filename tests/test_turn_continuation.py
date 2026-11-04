@@ -144,6 +144,16 @@ class CheckpointPromptTest(unittest.TestCase):
         self.assertNotIn("Checkpoint", tc._board_continuation_prompt())
         self.assertNotIn("Checkpoint", tc._turn_budget_continuation_prompt())
 
+    def test_resume_prompts_put_a_queued_user_message_first(self) -> None:
+        # A prompt queued during the previous slice lands in history with no
+        # reply; the resume prompt must not steer the agent past it.
+        for prompt in (
+            tc._board_continuation_prompt(),
+            tc._turn_budget_continuation_prompt(),
+            tc._goal_continuation_prompt(None),
+        ):
+            self.assertIn("user wrote a message after your last reply", prompt)
+
 
 class GoalContinuationInboundTest(unittest.TestCase):
     def test_only_goal_slices_are_gated_on_goal_state(self) -> None:

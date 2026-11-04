@@ -65,6 +65,30 @@ const SETUP_FRAMES = new Set(["session.created", "session.updated", "navin.ready
  * so the call never sits on "Starting" with nothing happening.
  */
 export const REALTIME_OPEN_TIMEOUT_MS = 40_000;
+/**
+ * How long the voice must have been quiet before the agent's messages are
+ * given to the model. Any text the model gets is a user turn to it: given while
+ * it spoke, Nova dropped the rest of its answer and the call stopped
+ * mid-sentence (measured 2026-11-04). Its clock also runs a little behind the
+ * speaker.
+ */
+export const VOICE_QUIET_MS = 1_200;
+/** A user turn still open after this is over (a lost speech_stopped). */
+const USER_TURN_MAX_MS = 20_000;
+/** Status notes kept while they wait for a message to go with. */
+const MAX_WAITING_NOTES = 3;
+/** Frames of the model's turn or of the user's: the voice is not quiet. */
+const VOICE_FRAMES = new Set([
+  "response.created",
+  "response.audio.delta",
+  "response.output_audio.delta",
+  "response.text.delta",
+  "response.output_text.delta",
+  "response.audio_transcript.delta",
+  "response.output_audio_transcript.delta",
+  "input_audio_buffer.speech_started",
+  "input_audio_buffer.speech_stopped",
+]);
 
 export const LIVE_TOOLS = [
   {
@@ -126,6 +150,17 @@ export const LIVE_TOOLS = [
   },
   {
     type: "function",
+    name: "project_context",
+    description:
+      "Instant facts about the user's project and team, without waiting for the agent: project folder and top-level files, " +
+      "git branch, contributors with commit counts, recent commits (author, when, subject), uncommitted files, " +
+      "the Collaboration team of this chat (names, roles, specialties), the task board (what is in progress and who holds it), " +
+      "and the README opening. Call it first for any question about who worked on the project, what it is, its state, " +
+      "the team, or recent changes; use ask_agent only when deeper reading of the code is needed.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
     name: "navin_docs",
     description:
       "Search Navin's documentation, only for questions about the Navin product itself (its features, settings, shortcuts, plans, providers). " +
@@ -180,9 +215,11 @@ export function liveInstructions(language: string): string {
     "Messages that start with [Navin agent] are updates from the agent: relay what matters (done, failed, needs a decision) briefly, with the real outcome (tests passed or failed, what changed). Never invent results, file contents or test outcomes; when unsure, call chat_status.",
     "When an update says an approval is waiting, explain in one sentence what it does and its risk, ask yes or no, and call answer_approval only after a clear answer. When the agent asks a question, read the options and call answer_question with the user's choice.",
     "If the user says stop, cancel or wait while the agent works, call stop_agent at once. If they change their mind mid-task, stop, then send the new request.",
-    "Never read a plan, a review, a security report or any long message out loud. Say what it is (a plan in 6 steps, a review with 4 findings) and offer to sum it up. When the user accepts, call chat_status and explain lastAgentMessage yourself like a colleague: the gist in a few sentences, what is critical or risky, and what the agent needs from the user. Then propose the next action (for example fixing the critical points); when the user agrees, call ask_agent with that action, precise and complete.",
+    "Messages that start with [Navin agent] status: give the agent's real state right now (working, finished, stopped by the user), including requests the user typed in the chat. The latest one overrides anything said before: after a stop, never say the agent is still working. When the user asks where the agent is or what it did, call chat_status and answer from it.",
+    "Never read a plan, a review, a security report or any long message out loud, and never only say that it is long or offer to sum it up: the agent's long messages come to you in full, so give their gist at once like a colleague (the outcome first, what is critical or risky, what the agent needs from the user, in a few sentences) and say the details are in the chat. If the user wants more, call chat_status and explain lastAgentMessage. Then propose the next action (for example fixing the critical points); when the user agrees, call ask_agent with that action, precise and complete.",
     "When the user asks to do something (launch, run, test, fix, create, check, open, install, commit...), act at once with ask_agent instead of explaining how; the user should not have to type prompts. Do not ask permission to send it.",
     "The ask_agent request is posted in the chat as the user's own message: write it as the user speaking in first person, in their language and words (\"Cree une application 3D de courses de chevaliers\"), never \"The user wants...\" and never your own reasoning or questions.",
+    "You know the project and the team: at the start of the call and whenever the user asks who worked on it, what it does, its state, recent changes, the team or the board, call project_context and answer at once from it like a colleague who knows the repo (names, numbers, what changed). For anything deeper (how a part of the code works, why, a review), call ask_agent with a precise request and explain the answer yourself. Challenge the user like a senior engineer: point out risks, uncommitted work, weak spots, and propose the next step.",
     "For questions about Navin itself (features, settings, how to), call navin_docs and answer from what it returns; if the docs do not say, say so.",
     "When the user wants to see how to do something in Navin, show it on their screen like a colleague sitting next to them: open_in_app to go to the right page, screen_controls to see what is there, then show_control to light up the button, with click true when pressing it only opens or shows something. Say in a few words what you are showing as you go, one step at a time.",
     "Never press anything that deletes, pays, subscribes, pushes code, changes keys or passwords, or signs out: light it up, explain what it does, and let the user press it.",
@@ -211,6 +248,15 @@ export class RealtimeLiveSession {
   private replyDeadline: number | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private failSession: ((code: string, message: string) => void) | null = null;
+  /** The page's player is still heard (setVoicePlaying). */
+  private voicePlaying = false;
+  /** When the user's turn in progress started, or null. */
+  private userTurnSince: number | null = null;
+  /** Last frame of the model's turn or of the user's (ms). */
+  private lastVoiceActivity = 0;
+  /** The agent's messages waiting for the voice to be quiet. */
+  private outbox: { text: string; reply: boolean }[] = [];
+  private outboxTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly options: RealtimeSessionOptions, private readonly cb: RealtimeLiveCallbacks) {}
 
@@ -348,15 +394,77 @@ export class RealtimeLiveSession {
     this.send({ type: "input_audio_buffer.append", audio: base64 });
   }
 
-  /** Something the agent said or needs: the voice relays it now. */
+  /** Something the agent said or needs: the voice relays it as soon as it is quiet. */
   announce(text: string): void {
+    this.post(text, true);
+  }
+
+  /**
+   * Context for the voice (the agent's state), no reply asked. Nova answers
+   * every text it is given ("Do not answer this line" came out as "Je lance
+   * les tests"): with Nova a note waits and goes with the next message that
+   * wants an answer, in the same turn.
+   */
+  note(text: string): void {
+    this.post(text, false);
+  }
+
+  /** The page's player started or stopped being heard. */
+  setVoicePlaying(playing: boolean): void {
+    this.voicePlaying = playing;
+    this.lastVoiceActivity = Date.now();
+    this.drainOutbox();
+  }
+
+  private post(text: string, reply: boolean): void {
     const clean = text.trim();
-    if (!clean) return;
+    if (!clean || this.closed) return;
+    this.outbox.push({ text: clean, reply });
+    // A newer state overrides an older one: only the last notes wait.
+    const notes = this.outbox.filter((message) => !message.reply);
+    if (notes.length > MAX_WAITING_NOTES) this.outbox.splice(this.outbox.indexOf(notes[0]), 1);
+    this.drainOutbox();
+  }
+
+  private quiet(): boolean {
+    const now = Date.now();
+    const userTalking = this.userTurnSince !== null && now - this.userTurnSince < USER_TURN_MAX_MS;
+    return !this.voicePlaying && !userTalking && now - this.lastVoiceActivity >= VOICE_QUIET_MS;
+  }
+
+  /** The waiting messages go in one turn, once nothing is said or heard. */
+  private drainOutbox(): void {
+    if (this.closed || !this.outbox.length) {
+      this.stopOutboxTimer();
+      return;
+    }
+    if (this.managedNova && !this.outbox.some((message) => message.reply)) {
+      // Notes alone would be answered: they wait for the next message.
+      this.stopOutboxTimer();
+      return;
+    }
+    if (!this.quiet()) {
+      this.outboxTimer ??= setInterval(() => this.drainOutbox(), 200);
+      return;
+    }
+    this.stopOutboxTimer();
+    const batch = this.outbox.splice(0);
     this.send({
       type: "conversation.item.create",
-      item: { type: "message", role: "user", content: [{ type: "input_text", text: `[Navin agent] ${clean}` }] },
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: batch.map((message) => `[Navin agent] ${message.text}`).join("\n") }],
+      },
     });
-    this.requestResponse();
+    // What comes next waits for the answer to this one.
+    this.lastVoiceActivity = Date.now();
+    if (batch.some((message) => message.reply)) this.requestResponse();
+  }
+
+  private stopOutboxTimer(): void {
+    if (this.outboxTimer !== null) clearInterval(this.outboxTimer);
+    this.outboxTimer = null;
   }
 
   /** The opening line of the call, said by the voice itself in the user's language. */
@@ -390,11 +498,14 @@ export class RealtimeLiveSession {
   }
 
   private handle(frame: Frame): void {
+    if (VOICE_FRAMES.has(String(frame.type ?? ""))) this.lastVoiceActivity = Date.now();
     switch (frame.type) {
       case "input_audio_buffer.speech_started":
+        this.userTurnSince = Date.now();
         this.cb.onUserSpeechStart?.();
         return;
       case "input_audio_buffer.speech_stopped":
+        this.userTurnSince = null;
         this.cb.onUserSpeechStop?.();
         return;
       case "conversation.item.input_audio_transcription.completed":
@@ -468,6 +579,8 @@ export class RealtimeLiveSession {
   close(): void {
     this.closed = true;
     this.stopWatchdog();
+    this.stopOutboxTimer();
+    this.outbox = [];
     const ws = this.ws;
     this.ws = null;
     try {

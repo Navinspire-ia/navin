@@ -4,9 +4,9 @@
 """AWS Bedrock for the media uses (listening, voice, Live) with the user's own key.
 
 Each media model lives in one AWS region, not always the one set for chat:
-Voxtral in Ireland, Nova 2 Sonic in Stockholm, Polly wherever the account
-uses it. The table below is the source of truth for the pickers and the
-adapters, so a model always runs in the region that serves it.
+Voxtral in Ireland, Nova Sonic in Stockholm or the US, Polly wherever the
+account uses it. The table below is the source of truth for the pickers and
+the adapters, so a model always runs in a region that serves it.
 
 Credentials are the Bedrock provider's (Settings > Providers > AWS Bedrock):
 a Bedrock API key, or an AWS profile / the standard AWS environment. The
@@ -37,14 +37,26 @@ class BedrockMediaModel:
     label: str
     #: Region that serves the model; None = the region set for the provider.
     region: str | None
+    #: Other regions that serve it too: one of them is used when it is the
+    #: region set for the provider (Nova Sonic is In-Region only).
+    other_regions: tuple[str, ...] = ()
 
+    @property
+    def regions(self) -> tuple[str, ...]:
+        return (self.region, *self.other_regions) if self.region else ()
+
+
+#: Nova Sonic (2 and 2.5) is served In-Region only, in these regions (AWS model
+#: cards; Tokyo too, left out): never Ohio, the provider's default region.
+_SONIC_REGIONS = ("eu-north-1", ("us-east-1", "us-west-2"))
 
 BEDROCK_MEDIA_MODELS: tuple[BedrockMediaModel, ...] = (
     BedrockMediaModel("stt", "mistral.voxtral-small-24b-2507", "Voxtral Small", "eu-west-1"),
     BedrockMediaModel("stt", "mistral.voxtral-mini-3b-2507", "Voxtral Mini", "eu-west-1"),
     BedrockMediaModel("tts", "polly-neural", "Polly Neural", None),
     BedrockMediaModel("tts", "polly-generative", "Polly Generative", "eu-central-1"),
-    BedrockMediaModel("live", "amazon.nova-2-sonic-v1:0", "Nova 2 Sonic", "eu-north-1"),
+    BedrockMediaModel("live", "amazon.nova-2-5-sonic", "Nova 2.5 Sonic", *_SONIC_REGIONS),
+    BedrockMediaModel("live", "amazon.nova-2-sonic-v1:0", "Nova 2 Sonic", *_SONIC_REGIONS),
 )
 
 _BY_ID = {model.id: model for model in BEDROCK_MEDIA_MODELS}
@@ -56,7 +68,7 @@ def media_rows(kind: str) -> list[dict[str, Any]]:
     for model in BEDROCK_MEDIA_MODELS:
         if model.kind != kind:
             continue
-        where = f" · {model.region}" if model.region else ""
+        where = f" · {', '.join(model.regions)}" if model.regions else ""
         rows.append({
             "id": model.id,
             "label": model.label,
@@ -68,8 +80,23 @@ def media_rows(kind: str) -> list[dict[str, Any]]:
 
 
 def model_region(model: str, fallback: str | None) -> str:
+    """The region a media model runs in, given the region set for the provider.
+
+    A model pinned to regions runs in the provider's region when it is one of
+    them (Nova Sonic in us-east-1 for an account set there), otherwise in its
+    first region; an unpinned model runs in the provider's region.
+    """
+    return model_regions(model, fallback)[0]
+
+
+def model_regions(model: str, fallback: str | None) -> tuple[str, ...]:
+    """Every region to try for a media model, the one it runs in first."""
     known = _BY_ID.get((model or "").strip())
-    return (known.region if known and known.region else None) or fallback or DEFAULT_REGION
+    if known and known.regions:
+        chosen = (fallback or "").strip()
+        first = chosen if chosen in known.regions else known.regions[0]
+        return (first, *(region for region in known.regions if region != first))
+    return (fallback or DEFAULT_REGION,)
 
 
 def encode_target(region: str | None, profile: str | None) -> str:

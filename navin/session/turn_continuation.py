@@ -736,6 +736,17 @@ def _internal_continuation_metadata(
     return metadata
 
 
+# A message the user queued while the previous slice ran is drained into the
+# history at the budget boundary, with no model call after it. The resume
+# prompt alone said "continue the build", so the agent carried on and never
+# answered it: the queued prompt looked ignored.
+_PENDING_USER_MESSAGE_RULE = (
+    "\n\nIf the user wrote a message after your last reply (for example a "
+    "prompt queued while you were working), it comes first: read it and act "
+    "on it before resuming, and adjust the plan to it."
+)
+
+
 def _goal_continuation_prompt(metadata: Mapping[str, Any] | None) -> str:
     lines = goal_state_runtime_lines(metadata)
     if lines:
@@ -747,13 +758,13 @@ def _goal_continuation_prompt(metadata: Mapping[str, Any] | None) -> str:
             "Continue from the saved context. Do not mention the continuation "
             "boundary to the user. Use tools as needed, and call update_goal "
             "with action='complete' when the objective is truly finished."
-        )
+        ) + _PENDING_USER_MESSAGE_RULE
     return (
         "Continue the active sustained goal after the previous turn reached "
         "its tool-call budget. Continue from the saved context. Do not mention "
         "the continuation boundary to the user. Use tools as needed, and call "
         "update_goal with action='complete' when the objective is truly finished."
-    )
+    ) + _PENDING_USER_MESSAGE_RULE
 
 
 # Every N auto-resumed rounds, force a coherence checkpoint: on very long
@@ -777,7 +788,7 @@ def _board_continuation_prompt(round_number: int = 0) -> str:
         "the accepted user request and continue the authorized work without "
         "asking for plan approval again. Keep going until the focused plan "
         "is complete."
-    )
+    ) + _PENDING_USER_MESSAGE_RULE
     if round_number and round_number % _BOARD_CHECKPOINT_EVERY == 0:
         prompt += (
             f"\n\nCheckpoint (auto-resume round {round_number}): before "
@@ -799,7 +810,7 @@ def _turn_budget_continuation_prompt(round_number: int = 0) -> str:
         "continuation boundary to the user. If the remaining work is done, "
         "verify it (tests, verify, preview when relevant) and deliver the "
         "final answer."
-    )
+    ) + _PENDING_USER_MESSAGE_RULE
     if round_number and round_number % _TURN_CHECKPOINT_EVERY == 0:
         prompt += (
             f"\n\nCheckpoint (auto-resume round {round_number}): this task "

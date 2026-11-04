@@ -6293,7 +6293,9 @@
         "auto": "Auto",
         "low": "Low",
         "medium": "Medium",
-        "high": "High"
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Max"
       },
       "sandboxes": {
         "workspace": {
@@ -10314,6 +10316,7 @@
             "recommendation": "I have {{count}} recommendations. Shall I tell you where to start?",
             "long": "Done. It is a long answer. Shall I sum it up?"
           },
+          "rest": "The rest is in the chat. Shall I sum it up?",
           "what": {
             "plan": "the plan",
             "review": "the review",

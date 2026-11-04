@@ -1204,8 +1204,26 @@ def run_tests(
             ".go": {"go"}, ".rs": {"rust"},
         }.get(suffix, set())
         matching = [name for name in selected if table.get(name, {}).get("language") in languages]
-        if matching:
+        # The runner whose own project holds the file, found the way verify
+        # finds it for a change. website/frontend/tests/a.test.ts sits two
+        # folders below the root, out of the root's detection, and was handed
+        # to pytest: its "not found" read as a failed test and kept the
+        # subagent from ever closing its task (2026-11-04).
+        picked = _runner_for_target(root, target) if languages else None
+        if picked is not None:
+            selected = [picked[0]]
+        elif matching:
             selected = matching
+        elif languages:
+            # A runner of another language can only fail on this file.
+            return [TestOutcome(
+                runner="none",
+                ran=False,
+                skipped_reason=(
+                    f"no installed test runner reaches {target}; "
+                    "run it with the project's own test command"
+                ),
+            )]
     outcomes: list[TestOutcome] = []
     for name in selected:
         spec = table.get(name)

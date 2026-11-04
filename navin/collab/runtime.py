@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from navin.collab.team import find_member, member_identity
+from navin.collab.team import BUILTIN_MEMBER_PRESETS, find_member, member_identity
 
 # Plan designs without mutating: a teammate assigned from a Plan turn reads
 # and reports, it never edits or runs commands.
@@ -75,10 +75,15 @@ def member_runtime(
         try:
             runtime = resolve_preset(preset)
         except (KeyError, ValueError) as exc:
-            raise CollabError(
-                f"{member.name}'s model preset {preset!r} is not available ({exc}). "
-                "Pick another model for this teammate in Settings > Team."
-            ) from exc
+            if preset in BUILTIN_MEMBER_PRESETS:
+                # A default teammate's model this install does not have
+                # (no Navin plan, another provider): the main model serves.
+                runtime = parent_runtime
+            else:
+                raise CollabError(
+                    f"{member.name}'s model preset {preset!r} is not available ({exc}). "
+                    "Pick another model for this teammate in Settings > Team."
+                ) from exc
     effort = (getattr(member, "reasoning_effort", None) or "").strip()
     if effort and hasattr(runtime, "with_generation_overrides"):
         runtime = runtime.with_generation_overrides(reasoning_effort=effort)

@@ -121,7 +121,7 @@ def test_a_saved_team_gets_the_new_tools_on_load():
         ],
     }
     collab = CollabConfig(**saved)
-    assert collab.tools_version == COLLAB_TOOLS_VERSION == 5
+    assert collab.tools_version == COLLAB_TOOLS_VERSION == 6
     by_name = {member.name: list(member.tools) for member in collab.members}
     assert {"read_file", "my_plugin_tool", "mobile", "appfactory"} <= set(by_name["Mark"])
     assert "infra" not in by_name["Mark"]
@@ -130,6 +130,56 @@ def test_a_saved_team_gets_the_new_tools_on_load():
     # An up-to-date team is left exactly as saved.
     kept = CollabConfig(tools_version=4, members=[{"id": "zed", "name": "Zed", "role": "custom", "tools": ["read_file"]}])
     assert list(kept.members[0].tools) == ["read_file"]
+
+
+def test_default_teammates_start_on_their_own_models():
+    """Opus 5.5 xhigh for Mark, Ethan, Grace; GPT-6 Astra max for Michel; Sol 6.1 / Sonnet 5.5 max for the rest."""
+    models = {member.name: (member.model_preset, member.reasoning_effort) for member in CollabConfig().members}
+    for name in ("Mark", "Ethan", "Grace"):
+        assert models[name] == ("claude-opus-5-5", "xhigh")
+    assert models["Michel"] == ("gpt-6-astra", "max")
+    others = {name: model for name, model in models.items() if name not in {"Mark", "Ethan", "Grace", "Michel"}}
+    assert len(others) == 10
+    assert set(others.values()) == {("gpt-6-1-sol", "max"), ("claude-sonnet-5-5", "max")}
+
+
+def test_a_saved_default_team_on_the_main_model_gets_the_new_models_once():
+    saved = CollabConfig.model_validate({
+        "toolsVersion": 5,
+        "members": [
+            {"id": "mark", "name": "Mark", "role": "developer", "modelPreset": "default", "reasoningEffort": "medium"},
+            {"id": "michel", "name": "Michel", "role": "architect"},
+            {"id": "grace", "name": "Grace", "role": "reviewer", "modelPreset": "kimi-k3"},  # picked by the user
+            {"id": "ethan", "name": "Ethan", "role": "security", "reasoningEffort": "low"},  # effort picked
+            {"id": "mark2", "name": "Sofia", "role": "developer"},  # not a default teammate
+        ],
+    })
+    by_id = {member.id: member for member in saved.members}
+    assert (by_id["mark"].model_preset, by_id["mark"].reasoning_effort) == ("claude-opus-5-5", "xhigh")
+    assert (by_id["michel"].model_preset, by_id["michel"].reasoning_effort) == ("gpt-6-astra", "max")
+    assert by_id["grace"].model_preset == "kimi-k3"
+    assert (by_id["ethan"].model_preset, by_id["ethan"].reasoning_effort) == ("claude-opus-5-5", "low")
+    assert by_id["mark2"].model_preset == "default"
+    # Back on the main model afterwards: the user's choice stays.
+    picked = saved.model_dump(by_alias=True)
+    picked["members"][0]["modelPreset"] = "default"
+    assert CollabConfig.model_validate(picked).members[0].model_preset == "default"
+
+
+def test_a_default_teammate_model_missing_here_falls_back_to_the_main_model():
+    parent = Mock()
+    parent.with_generation_overrides = Mock(return_value=parent)
+
+    def missing(name):
+        raise KeyError(name)
+
+    mark = find_member(CollabConfig().members, "Mark")
+    assert collab_runtime.member_runtime(mark, parent, missing) is parent
+    parent.with_generation_overrides.assert_called_with(reasoning_effort="xhigh")
+    # A preset the user picked and later removed still says so.
+    custom = mark.model_copy(update={"model_preset": "gone"})
+    with pytest.raises(collab_runtime.CollabError):
+        collab_runtime.member_runtime(custom, parent, missing)
 
 
 def test_member_prompt_and_roster_name_the_team():
@@ -157,7 +207,7 @@ def test_assign_runs_the_profile_and_posts_a_live_team_conversation(tmp_path, mo
                 parent_runtime=runtime, mission="auth",
             )
             assert "started" in detail
-            runtime.with_generation_overrides.assert_called_with(reasoning_effort="medium")
+            runtime.with_generation_overrides.assert_called_with(reasoning_effort="xhigh")
             await collab_runtime.assign_member(
                 manager=manager, collab=collab, member_name="Salma", task="Test it",
                 session_key="websocket:c1", origin_channel="websocket", origin_chat_id="c1",
@@ -412,11 +462,11 @@ def test_a_saved_default_team_gets_its_faces_and_genders_once():
     assert (by_id["ethan"].avatar, by_id["ethan"].gender) == ("dome", "male")
     assert (by_id["sofia"].avatar, by_id["sofia"].gender) == ("dome", "")
     assert by_id["mark"].tools == ["read_file"]  # a v4 team keeps the tools it chose
-    assert saved.tools_version == 5
+    assert saved.tools_version == 6
     # Saved back and read again: the upgrade does not run twice (a face the
     # user picks afterwards stays).
     again = CollabConfig.model_validate(saved.model_dump(by_alias=True))
-    assert again.tools_version == 5
+    assert again.tools_version == 6
     picked = saved.model_dump(by_alias=True)
     picked["members"][0]["avatar"] = "visor"
     assert CollabConfig.model_validate(picked).members[0].avatar == "visor"

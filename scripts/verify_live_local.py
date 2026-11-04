@@ -33,10 +33,10 @@ for line in sys.stdin:
         command = json.loads(line)
         if command['direction'] == 'request':
             output = [json.loads(frame) for frame in config.transform_realtime_request(
-                json.dumps(command['event']), model='amazon/nova-2-sonic')]
+                json.dumps(command['event']), model='amazon/nova-2.5-sonic')]
         else:
             state = config.transform_realtime_response(json.dumps({'event': command['event']}),
-                model='amazon/nova-2-sonic', logging_obj=None,
+                model='amazon/nova-2.5-sonic', logging_obj=None,
                 realtime_response_transform_input=state)
             output = state['response']
         print(json.dumps({'output': output}), flush=True)
@@ -149,7 +149,7 @@ async def main(args):
     config.license.managed_api_base = "https://local-verification.invalid/v1"
     config.providers.navin.api_key = "local-verification-only"
     config.voice.live_realtime_provider = "navin"
-    config.voice.live_realtime_model = "amazon/nova-2-sonic"
+    config.voice.live_realtime_model = "amazon/nova-2.5-sonic"
     try:
         async def connected(ws):
             upstream = Upstream(transformer, result)

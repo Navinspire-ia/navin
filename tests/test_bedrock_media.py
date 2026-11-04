@@ -15,11 +15,120 @@ from navin.providers.bedrock_media import (
 
 def test_media_rows_per_use_and_region():
     assert [r["id"] for r in media_rows("stt")] == ["mistral.voxtral-small-24b-2507", "mistral.voxtral-mini-3b-2507"]
-    assert media_rows("live")[0]["id"] == "amazon.nova-2-sonic-v1:0"
+    assert [r["id"] for r in media_rows("live")] == ["amazon.nova-2-5-sonic", "amazon.nova-2-sonic-v1:0"]
+    assert media_rows("live")[0]["owned_by"] == "AWS Bedrock · eu-north-1, us-east-1, us-west-2"
     assert media_rows("image") == [] and media_rows("video") == []
     assert model_region("mistral.voxtral-small-24b-2507", "eu-west-3") == "eu-west-1"
     assert model_region("amazon.nova-2-sonic-v1:0", "eu-west-3") == "eu-north-1"
     assert model_region("polly-neural", "eu-west-3") == "eu-west-3"
+
+
+def test_nova_sonic_runs_in_a_region_that_serves_it_never_in_ohio():
+    from navin.live.nova_sonic import DEFAULT_MODEL
+    from navin.providers.bedrock_media import model_regions
+
+    assert DEFAULT_MODEL == "amazon.nova-2-5-sonic"
+    # In-Region only: the provider's region when it serves Sonic, else Stockholm.
+    assert model_region(DEFAULT_MODEL, "us-east-1") == "us-east-1"
+    assert model_region(DEFAULT_MODEL, "us-east-2") == "eu-north-1"
+    assert model_region(DEFAULT_MODEL, None) == "eu-north-1"
+    assert model_regions(DEFAULT_MODEL, "us-west-2") == ("us-west-2", "eu-north-1", "us-east-1")
+    assert model_regions(DEFAULT_MODEL, "us-east-2") == ("eu-north-1", "us-east-1", "us-west-2")
+    assert model_regions("mistral.voxtral-mini-3b-2507", "eu-west-3") == ("eu-west-1",)
+    assert model_regions("polly-neural", None) == ("us-east-2",)
+
+
+class _Page:
+    """The browser side of a Live call: sends nothing, records what it gets."""
+
+    def __init__(self):
+        self.sent: list[str] = []
+        self.closed = False
+
+    async def send(self, frame):
+        self.sent.append(frame)
+
+    async def close(self, *_):
+        self.closed = True
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+class _Stream:
+    """A Nova Sonic stream that opened and ends at once."""
+
+    def __init__(self):
+        self.input_stream = self
+        self.sent: list = []
+
+    async def send(self, chunk):
+        self.sent.append(chunk)
+
+    async def close(self):
+        return None
+
+    async def await_output(self):
+        return None, self
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+def test_live_with_an_own_aws_key_moves_to_the_next_region_when_one_refuses(monkeypatch):
+    import asyncio
+
+    from navin.config.schema import Config
+    from navin.live import nova_sonic
+    from navin.live.realtime import bridge
+
+    cfg = Config()
+    cfg.voice.live_realtime_provider = "bedrock"
+    cfg.providers.bedrock.profile = "own"
+    cfg.providers.bedrock.region = "us-east-2"  # Ohio: no Nova Sonic there
+    tried: list[str] = []
+    refusing: set[str] = {"eu-north-1"}
+
+    async def open_stream(model, region, profile):
+        assert (model, profile) == ("amazon.nova-2-5-sonic", "own")
+        tried.append(region)
+        if region in refusing:
+            raise RuntimeError(f"AccessDeniedException in {region}")
+        return _Stream()
+
+    monkeypatch.setattr(nova_sonic, "_open_stream", open_stream)
+    page = _Page()
+    asyncio.run(bridge(page, cfg))
+    assert tried == ["eu-north-1", "us-east-1"]
+    assert json.loads(page.sent[0]) == {"type": "navin.ready", "provider": "bedrock", "model": "amazon.nova-2-5-sonic"}
+
+    # Every region refuses: the page is told once, with the last refusal, and falls back.
+    tried.clear()
+    refusing.update({"us-east-1", "us-west-2"})
+    page = _Page()
+    asyncio.run(bridge(page, cfg))
+    assert tried == ["eu-north-1", "us-east-1", "us-west-2"]
+    error = json.loads(page.sent[0])["error"]
+    assert error["code"] == "realtime_unreachable" and "us-west-2" in error["message"]
+    assert page.closed
+
+    # No AWS credentials: no other region would sign any better.
+    async def no_credentials(model, region, profile):
+        tried.append(region)
+        raise PermissionError("Live with Nova Sonic needs AWS access keys or an AWS profile")
+
+    tried.clear()
+    monkeypatch.setattr(nova_sonic, "_open_stream", no_credentials)
+    page = _Page()
+    asyncio.run(bridge(page, cfg))
+    assert tried == ["eu-north-1"]
+    assert json.loads(page.sent[0])["error"]["code"] == "realtime_unreachable"
 
 
 def test_credentials_and_target(monkeypatch):

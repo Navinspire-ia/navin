@@ -927,6 +927,42 @@ def test_only_a_target_in_another_repository_moves_the_run(tmp_path):
     assert _outside_project_root(app / "test", [str(test_file), str(stray)]) is None
 
 
+def test_a_nested_frontend_test_goes_to_its_own_runner_not_the_roots(tmp_path, monkeypatch):
+    # 2026-11-04: website/frontend/tests/design.test.ts sits two folders below
+    # the root, out of the root's detection. It was handed to the root's
+    # pytest, whose "not found" read as a failed run, and the subagent that had
+    # just passed it with vitest could never close its task.
+    from navin.quality import testing as testing_mod
+
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_api.py").write_text("def test_ok(): pass\n")
+    front = tmp_path / "website" / "frontend"
+    (front / "tests").mkdir(parents=True)
+    (front / "package.json").write_text('{"devDependencies": {"vitest": "^4"}}')
+    (front / "tests" / "design.test.ts").write_text("")
+    target = "website/frontend/tests/design.test.ts"
+    calls = []
+
+    def run(name, spec, root, selected, on_output=None):
+        calls.append((name, selected))
+        return testing_mod.TestOutcome(runner=name, ran=True, passed=4, total=4, exit_code=0)
+
+    monkeypatch.setattr(testing_mod, "_runner_argv", lambda *_: ["available-test-runner"])
+    monkeypatch.setattr(testing_mod, "_run_one", run)
+    outcomes = testing_mod.run_tests(tmp_path, target=target)
+    assert calls == [("vitest", target)]
+    assert all(outcome.ok for outcome in outcomes)
+
+    # No runner of the file's language anywhere: said so, nothing is run.
+    calls.clear()
+    (front / "package.json").unlink()
+    outcomes = testing_mod.run_tests(tmp_path, target=target)
+    assert calls == []
+    assert len(outcomes) == 1 and not outcomes[0].ran
+    assert "no installed test runner reaches" in outcomes[0].skipped_reason
+
+
 def test_python_backend_target_runs_from_the_backend(tmp_path):
     from navin.quality.testing import _target_for_workdir, _workdir_for
 

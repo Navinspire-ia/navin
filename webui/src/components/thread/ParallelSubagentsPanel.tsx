@@ -712,15 +712,35 @@ const SubagentCard = memo(function SubagentCard({
           <span className="flex items-baseline justify-between gap-2">
             <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13.5px] font-medium text-foreground/90">
               {card.member ? (
-                // A Collaboration Mode teammate: its face instead of "Subagent".
-                <TeamBotAvatar avatar={card.member.avatar} color={card.member.color} size={18} active={state === "running"} />
+                // A Collaboration Mode teammate: its face and name, never "Subagent".
+                <>
+                  <TeamBotAvatar
+                    avatar={card.member.avatar}
+                    color={card.member.color}
+                    photo={card.member.photo}
+                    seed={card.member.id}
+                    gender={card.member.gender}
+                    size={22}
+                    active={state === "running"}
+                  />
+                  <span data-testid={`subagent-member-name-${card.taskId}`} className="truncate font-semibold text-foreground">
+                    {card.member.name}
+                  </span>
+                  {card.member.title ? (
+                    <span className="truncate text-[12px] font-normal text-muted-foreground/80">
+                      {card.member.title}
+                    </span>
+                  ) : null}
+                </>
               ) : (
-                <span className="text-muted-foreground/75">
-                  {t("thread.subagents.prefix", { defaultValue: "Subagent" })}
-                  {" · "}
-                </span>
+                <>
+                  <span className="text-muted-foreground/75">
+                    {t("thread.subagents.prefix", { defaultValue: "Subagent" })}
+                    {" · "}
+                  </span>
+                  <span className="truncate">{card.label}</span>
+                </>
               )}
-              <span className="truncate">{card.label}</span>
             </span>
             {meta ? (
               <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground/75">

@@ -241,7 +241,14 @@ class RuntimeEventPublisher:
         self,
         msg: InboundMessage,
         session_key: str,
+        *,
+        user_text: str | None = None,
     ) -> None:
+        """Announce a turn; ``user_text`` overrides the text read from ``msg``.
+
+        A turn on a subagent result or a finished command passes ``""``: the
+        announcement is not something the user typed and must not title a chat.
+        """
         await self.bus.publish(
             SessionTurnStarted(
                 context=self._context(
@@ -250,7 +257,7 @@ class RuntimeEventPublisher:
                     session_key=session_key,
                     metadata=msg.metadata,
                 ),
-                user_text=_title_user_text(msg),
+                user_text=_title_user_text(msg) if user_text is None else user_text,
             )
         )
 

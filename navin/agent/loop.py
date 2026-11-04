@@ -3617,6 +3617,15 @@ class AgentLoop:
                 (msg.metadata or {}).get("subagent_task_id") or "(no id)", key,
             )
             return None
+        # A turn on subagent results or a finished command is a turn like any
+        # other for whoever shows the chat. Without this event the CLI said
+        # "main waiting for agents", with no clock, for the seven minutes the
+        # main agent spent on four results (2026-11-04), and every message
+        # typed meanwhile sat in the queue behind a reply nothing showed. No
+        # text: the announcement is not the user's words and titles nothing.
+        await self._runtime_events().session_turn_started(
+            dataclasses.replace(msg, channel=channel, chat_id=chat_id), key, user_text="",
+        )
         # The result replays as the last user turn (Session.get_history): a
         # trailing assistant turn is dropped by every provider, so the model
         # would never have seen it.

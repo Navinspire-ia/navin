@@ -391,8 +391,15 @@ def save_config(
 
     org = organization.load(path.parent)
 
+    runtime_workspace = config._runtime_workspace
+    if runtime_workspace is not None and config.agents.defaults.workspace != runtime_workspace:
+        # Set again since the run opened its folder: a choice of default,
+        # saved like any other setting.
+        config._runtime_workspace = runtime_workspace = None
+
     with FileLock(str(path) + ".lock", timeout=15, mode=0o600):
         current = config
+        latest: Config | None = None
         if (config._loaded_path == str(path.resolve()) and config._loaded_values is not None and path.is_file()):
             # Read directly: load_config may migrate plaintext secrets by saving,
             # which would try to acquire this same interprocess lock again.
@@ -408,6 +415,10 @@ def save_config(
                 merged = _merge_config_edits(config._loaded_values, edited_values, latest_values)
             current = Config.model_validate(merged)
         data = _configured_values(current)
+        if runtime_workspace is not None and current.agents.defaults.workspace == runtime_workspace:
+            # The folder this process opened is not the default of the next ones.
+            data["agents"]["defaults"]["workspace"] = _file_workspace(latest, path)
+        written_workspace = data["agents"]["defaults"]["workspace"]
         # What the organization provides never lands in the user's file.
         organization.strip_config_dump(data, current, org, overrides=config._organization_overrides)
         if current.providers.openai_codex.proxy is not None:
@@ -438,7 +449,26 @@ def save_config(
         # The merge took the file's values for untouched fields: the
         # organization's choices go back on the settings in memory.
         organization.apply_choices(config, org)
+        if runtime_workspace is not None:
+            # This process keeps working in its folder, whatever the file says.
+            config.agents.defaults.workspace = runtime_workspace
         _remember_config_source(config, path)
+        if runtime_workspace is not None and config._loaded_values is not None:
+            # Measured against the file, the folder of this run stays an edit:
+            # the next save keeps it out of the file again.
+            config._loaded_values["agents"]["defaults"]["workspace"] = written_workspace
+
+
+def _file_workspace(latest: Config | None, path: Path) -> str:
+    """The default folder the settings file names (the schema's when it names none)."""
+    if latest is not None:
+        return latest.agents.defaults.workspace
+    if path.is_file():
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        value = ((stored.get("agents") or {}).get("defaults") or {}).get("workspace")
+        if isinstance(value, str) and value.strip():
+            return value
+    return Config().agents.defaults.workspace
 
 
 def merge_missing_defaults(existing: Any, defaults: Any) -> Any:

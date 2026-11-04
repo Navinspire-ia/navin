@@ -1152,8 +1152,9 @@ def _default_collab_members() -> list[CollabMemberConfig]:
 # Bump when the default tool sets grow: saved teams get the new tools on load
 # (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing,
 # v4: mobile and appfactory for everyone, infra for DevOps, Infra, Architect
-# and Security; v5: drawn human faces and genders for the default teammates).
-COLLAB_TOOLS_VERSION = 5
+# and Security; v5: drawn human faces and genders for the default teammates;
+# v6: default teammates still on the main model get their own model preset).
+COLLAB_TOOLS_VERSION = 6
 
 
 class CollabTeamConfig(Base):
@@ -1224,7 +1225,13 @@ class CollabConfig(Base):
         if not isinstance(members, list):
             # Fresh team: the defaults are already the full toolboxes.
             return {**data, "tools_version": COLLAB_TOOLS_VERSION}
-        from navin.collab.team import LEGACY_DEFAULT_AVATARS, ROLE_TOOLS, default_spec
+        from navin.collab.team import (
+            DEFAULT_MEMBER_MODELS,
+            LEGACY_DEFAULT_AVATARS,
+            ROLE_DEFAULT_EFFORT,
+            ROLE_TOOLS,
+            default_spec,
+        )
 
         upgraded = []
         for member in members:
@@ -1243,6 +1250,19 @@ class CollabConfig(Base):
                     member["avatar"] = "person"
                 if not member.get("gender"):
                     member["gender"] = spec.get("gender", "")
+            if (
+                isinstance(member, dict) and version < 6 and (spec := default_spec(member)) is not None
+                and (model := DEFAULT_MEMBER_MODELS.get(str(spec["id"]))) is not None
+                and (member.get("model_preset") or member.get("modelPreset") or "default") == "default"
+            ):
+                # Still on the main model: the teammate gets its own default
+                # model, and its effort unless the user changed it.
+                member = {key: value for key, value in member.items() if key != "modelPreset"}
+                member["model_preset"] = model[0]
+                effort_key = "reasoningEffort" if "reasoningEffort" in member else "reasoning_effort"
+                role = str(member.get("role") or "custom")
+                if (member.get(effort_key) or "") in {"", ROLE_DEFAULT_EFFORT.get(role, "medium")}:
+                    member[effort_key] = model[1]
             upgraded.append(member)
         return {**data, "members": upgraded, "tools_version": COLLAB_TOOLS_VERSION}
 
@@ -1458,6 +1478,9 @@ class Config(BaseSettings):
     # and the choices it made, so saving puts the user's own values back.
     _organization: Any = PrivateAttr(default=None)
     _organization_overrides: list[tuple[str, str, Any, Any]] | None = PrivateAttr(default=None)
+    # The folder this process works in instead of the default (navin-cli
+    # <folder>, --workspace, the SDK): see use_workspace.
+    _runtime_workspace: str | None = PrivateAttr(default=None)
 
     # One-shot settings migrations already applied to this file (see
     # loader._migrate_config), so a value chosen afterwards is never reset again.
@@ -1558,6 +1581,20 @@ class Config(BaseSettings):
         # Lazy import: navin.config.paths must stay importable without schema.
         from navin.config.paths import resolve_workspace_setting
         return resolve_workspace_setting(self.agents.defaults.workspace)
+
+    def use_workspace(self, workspace: str | Path) -> None:
+        """Work in *workspace* for this process without making it the default folder.
+
+        ``navin-cli <folder>``, ``--workspace`` and the SDK open a project for
+        one run. Writing the field alone made it look like a settings change:
+        the next save of these settings wrote the folder into config.json as
+        the default of every later chat, cron job and window. Set here, the
+        folder stays in memory and ``save_config`` keeps the default the file
+        names.
+        """
+        value = str(workspace)
+        self.agents.defaults.workspace = value
+        self._runtime_workspace = value
 
     def _byok_match_for_hidden_navin(
         self, forced: str

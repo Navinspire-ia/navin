@@ -955,7 +955,7 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
         raise typer.Exit(1)
     _warn_deprecated_config_keys(config_path)
     if workspace:
-        loaded.agents.defaults.workspace = workspace
+        loaded.use_workspace(workspace)
     return loaded
 
 
@@ -1013,7 +1013,7 @@ def _load_inspection_config(
         raise typer.Exit(1) from exc
     _warn_deprecated_config_keys(display_path)
     if workspace:
-        loaded.agents.defaults.workspace = workspace
+        loaded.use_workspace(workspace)
     return display_path, loaded
 
 

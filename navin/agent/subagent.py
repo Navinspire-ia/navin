@@ -4,6 +4,7 @@
 """Subagent manager for background task execution."""
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -48,7 +49,7 @@ from navin.agent.tools.context import (
     bind_request_context,
     reset_request_context,
 )
-from navin.agent.tools.file_state import FileStates
+from navin.agent.tools.file_state import FileStates, bind_file_states, bound_file_states
 from navin.agent.tools.loader import ToolLoader
 from navin.agent.tools.registry import ToolRegistry
 from navin.bus.events import InboundMessage, OutboundMessage
@@ -227,6 +228,17 @@ def _append_feed_line(path: Path, line: str, window: list[dict[str, Any]], sessi
             )
     except OSError as exc:
         logger.debug("Team journal for {} could not be saved: {}", session_key, exc)
+
+
+def _cancel_reason(error: BaseException) -> str:
+    """A sentence naming what stopped a subagent, from its canceller's message.
+
+    Every place that cancels a running subagent gives its reason: on
+    2026-11-04 a Multitask agent read "Cancelled" five seconds after it
+    started, and nothing could tell what had stopped it.
+    """
+    reason = str(error.args[0]).strip() if error.args and error.args[0] else ""
+    return f" Reason: {reason}." if reason else ""
 
 
 def _outcomes_dir() -> Path:
@@ -471,6 +483,9 @@ class _QueuedSpawn:
     choice_broker: Any = None
     # Isolated checkout to continue in when a run is resumed ({path, origin, base}).
     resume_checkout: dict[str, Any] | None = None
+    # File states of the chat that asked (read when the spawn is accepted, as
+    # a queued spawn starts after that turn's context is gone).
+    parent_file_states: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1204,6 +1219,7 @@ class SubagentManager:
             member=dict(member) if member else None,
             approval_gate=current_approval_gate() or self._approval_gate,
             choice_broker=current_choice_broker() or self._choice_broker,
+            parent_file_states=bound_file_states(),
         )
 
         # Count this session's subagents, not every session's: the limit exists
@@ -1691,7 +1707,7 @@ class SubagentManager:
             return {"ok": False, "error": "Cannot cancel: this agent already finished."}
         status = self._task_statuses.get(task_id)
         label = status.label if status is not None else task_id
-        task.cancel()
+        task.cancel("stopped from the agents panel")
         # Bounded like /stop: an agent that will not finish must not hold the loop.
         timeout_s = getattr(self, "_cancel_wait_s", _CANCEL_WAIT_S)
         _, still = await asyncio.wait({task}, timeout=timeout_s)
@@ -1719,6 +1735,12 @@ class SubagentManager:
             # a queued wait would otherwise be reported as time spent working.
             pending.status.started_at = time.monotonic()
 
+        # Its own file states, a child of its chat's. Sharing the chat's made
+        # every sibling of a wave count the others' edits in the shared tree
+        # as its own (938 "changed files" to test, 2026-11-04), and the chat's
+        # earlier reads deduped the agent's first look at a file.
+        context = contextvars.copy_context()
+        context.run(bind_file_states, FileStates(parent=pending.parent_file_states))
         bg_task = asyncio.create_task(
             self._run_subagent(
                 task_id,
@@ -1740,7 +1762,8 @@ class SubagentManager:
                 **({"choice_broker": pending.choice_broker} if pending.choice_broker else {}),
                 **({"resume_checkout": pending.resume_checkout}
                    if pending.resume_checkout else {}),
-            )
+            ),
+            context=context,
         )
         self._task_statuses[task_id] = pending.status
         self._running_tasks[task_id] = bg_task
@@ -2782,7 +2805,7 @@ class SubagentManager:
                     origin, "ok", origin_message_id,
                 )
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancel_error:
             # Nothing git here on purpose. Every await would raise straight
             # away, leaking the checkout, and the blocking calls would hold up
             # the shutdown that asked for the cancellation. Keeping the tree is
@@ -2815,8 +2838,8 @@ class SubagentManager:
                             f"Stopped: this teammate used its token budget ({budget}) "
                             "before finishing. Partial work may be in the tree."
                             if over_budget else (
-                                "Cancelled before its final answer." if changed
-                                else "Cancelled before a result was produced."
+                                "Cancelled before its final answer." + _cancel_reason(cancel_error) if changed
+                                else "Cancelled before a result was produced." + _cancel_reason(cancel_error)
                             )
                         ) + changed,
                         origin,
@@ -3771,7 +3794,7 @@ class SubagentManager:
         tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
                  if tid in self._running_tasks and not self._running_tasks[tid].done()]
         for t in tasks:
-            t.cancel()
+            t.cancel("the conversation was stopped (Stop, /stop or /new)")
         if tasks:
             # Bounded: the caller may be the agent loop itself (/stop), and a
             # subagent that will not finish must not hold it forever.

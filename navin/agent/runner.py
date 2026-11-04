@@ -1129,9 +1129,16 @@ class AgentRunner:
         """
         injections: list[dict[str, Any]] = []
         real_injection = False
-        if injection_cycles < _MAX_INJECTION_CYCLES:
-            injections = await self._drain_injections(spec, wait=wait)
-            real_injection = bool(injections)
+        # The cycle cap bounds how often a turn may *block* waiting for
+        # background results, not whether queued prompts are read. Past it the
+        # drain only skipped: a busy turn (subagent results use cycles too)
+        # reached 5/5 in minutes, then ended without reading the prompts the
+        # user queued meanwhile. Keep draining, never waiting; the iteration
+        # budget still bounds the turn.
+        injections = await self._drain_injections(
+            spec, wait=wait and injection_cycles < _MAX_INJECTION_CYCLES,
+        )
+        real_injection = bool(injections)
         if not injections and allow_goal_continue and assistant_message is not None:
             predicate = spec.goal_active_predicate
             from navin.session.turn_continuation import ends_with_user_question

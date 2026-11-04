@@ -51,14 +51,26 @@ class FileStates:
     not leak across sessions sharing this process.
     """
 
-    __slots__ = ("_state", "_searches", "_search_hits")
+    __slots__ = ("_state", "_searches", "_search_hits", "parent")
 
-    def __init__(self) -> None:
+    def __init__(self, parent: FileStates | None = None) -> None:
         self._state: dict[str, ReadState] = {}
         # search key -> digest of the result it returned last time.
         self._searches: dict[str, str] = {}
         # normalized file path -> line numbers a search matched in it.
         self._search_hits: dict[str, list[int]] = {}
+        # The chat (or agent) that started this agent: its edits are that
+        # chat's work too, never the other way round (code_validation).
+        self.parent = parent
+
+    def descends_from(self, owner: object) -> bool:
+        """True when ``owner`` is this state or one of its ancestors."""
+        current: FileStates | None = self
+        while current is not None:
+            if current is owner:
+                return True
+            current = current.parent
+        return False
 
     def repeats_search(self, key: str, result: str) -> bool:
         """Record a search result; True when the same search already returned it.

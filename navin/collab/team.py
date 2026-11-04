@@ -255,6 +255,44 @@ ROLE_DEFAULT_EFFORT: dict[str, str] = {
     "custom": "medium",
 }
 
+# Model presets (names from the managed catalog, see slug_preset_key) and
+# efforts the default teammates start with: the hardest jobs (implementation,
+# security, adversarial review) on Opus 5.5 at xhigh, the architect on
+# GPT-6 Astra at max, the others split between GPT-6.1 Sol and Sonnet 5.5 at
+# max. A built-in default that is not configured on this install falls back
+# to the main model (see navin.collab.runtime.member_runtime).
+OPUS_PRESET = "claude-opus-5-5"
+ASTRA_PRESET = "gpt-6-astra"
+SOL_PRESET = "gpt-6-1-sol"
+SONNET_PRESET = "claude-sonnet-5-5"
+DEFAULT_MEMBER_MODELS: dict[str, tuple[str, str]] = {
+    "michel": (ASTRA_PRESET, "max"),
+    "mark": (OPUS_PRESET, "xhigh"),
+    "ethan": (OPUS_PRESET, "xhigh"),
+    "grace": (OPUS_PRESET, "xhigh"),
+    "salma": (SOL_PRESET, "max"),
+    "karim": (SOL_PRESET, "max"),
+    "jack": (SOL_PRESET, "max"),
+    "daniel": (SOL_PRESET, "max"),
+    "lucas": (SOL_PRESET, "max"),
+    "olivia": (SONNET_PRESET, "max"),
+    "lea": (SONNET_PRESET, "max"),
+    "ava": (SONNET_PRESET, "max"),
+    "nora": (SONNET_PRESET, "max"),
+    "ryan": (SONNET_PRESET, "max"),
+}
+BUILTIN_MEMBER_PRESETS: frozenset[str] = frozenset(preset for preset, _ in DEFAULT_MEMBER_MODELS.values())
+# Label and model of each built-in default, for the Settings > Team picker
+# when this install has no preset of that name.
+BUILTIN_MEMBER_PRESET_INFO: dict[str, tuple[str, str]] = {
+    OPUS_PRESET: ("Claude Opus 5.5", "anthropic/claude-opus-5.5"),
+    ASTRA_PRESET: ("GPT-6 Astra", "openai/gpt-6-astra"),
+    SOL_PRESET: ("GPT-6.1 Sol", "openai/gpt-6.1-sol"),
+    SONNET_PRESET: ("Claude Sonnet 5.5", "anthropic/claude-sonnet-5.5"),
+}
+# Efforts a teammate can be given ("" = the model's own default).
+MEMBER_EFFORTS: tuple[str, ...] = ("", "low", "medium", "high", "xhigh", "max")
+
 _DEFAULT_TEAM: tuple[dict[str, Any], ...] = (
     {
         "id": "michel", "name": "Michel", "role": "architect",
@@ -378,7 +416,12 @@ def default_team() -> list[dict[str, Any]]:
 
     Each default teammate has a drawn human face ("person").
     """
-    return [default_member(**{**spec, "avatar": "person"}) for spec in _DEFAULT_TEAM]
+    team = []
+    for spec in _DEFAULT_TEAM:
+        model = DEFAULT_MEMBER_MODELS.get(str(spec["id"]))
+        extra = {"model_preset": model[0], "reasoning_effort": model[1]} if model else {}
+        team.append(default_member(**{**spec, "avatar": "person", **extra}))
+    return team
 
 
 def default_spec(member: Any) -> dict[str, Any] | None:

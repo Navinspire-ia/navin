@@ -14,6 +14,9 @@ describe("avatarBodyForVoice", () => {
       expect(avatarBodyForVoice(voice)).toBe("F");
     }
     expect(realtimeSessionVoice("florian", "amazon/nova-2-sonic", "fr")).toBe("florian");
+    // Nova 2.5 Sonic, the Live default, speaks with the same voices.
+    expect(realtimeSessionVoice("", "amazon/nova-2.5-sonic", "fr-FR")).toBe("ambre");
+    expect(realtimeSessionVoice("auto", "amazon.nova-2-5-sonic", "de")).toBe("tina");
     expect(realtimeSessionVoice("Kore", "gemini-live", "fr")).toBe("Kore");
     expect(realtimeSessionVoice("", "gemini-live", "fr")).toBeUndefined();
   });

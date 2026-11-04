@@ -157,6 +157,36 @@ class PinnedPathTest(unittest.TestCase):
         """Only an operator's "yes" is recorded; the open default stays implicit."""
         self.assertNotIn("restrictToWorkspace", _written(Config()).get("tools", {}))
 
+    def test_a_folder_opened_for_one_run_never_becomes_the_default(self) -> None:
+        """The default folder changed by itself (2026-10, ~/NavinProjects to a project).
+
+        navin-cli <folder>, --workspace and the SDK put their folder on the
+        settings in memory; the next save of those settings (a catalog
+        refresh, a usage report, a model choice) wrote it as a change.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            save_config(Config(), path)
+            default = load_config(path).agents.defaults.workspace
+            project = str(Path(tmp) / "financeIa-v2")
+
+            config = load_config(path)
+            config.use_workspace(project)
+            config.agents.defaults.bot_name = "navin-prod"
+            save_config(config, path)
+            save_config(config, path, preserve_concurrent=True)
+
+            on_disk = load_config(path)
+            self.assertEqual(on_disk.agents.defaults.workspace, default)
+            self.assertEqual(on_disk.agents.defaults.bot_name, "navin-prod")
+            self.assertEqual(config.agents.defaults.workspace, project)
+
+            # A default chosen on purpose is still saved.
+            chosen = str(Path(tmp) / "projects")
+            config.agents.defaults.workspace = chosen
+            save_config(config, path)
+            self.assertEqual(load_config(path).agents.defaults.workspace, chosen)
+
     def test_a_declared_database_connection_is_written_in_full(self) -> None:
         """Its engine and write permission describe someone else's database."""
         config = Config()

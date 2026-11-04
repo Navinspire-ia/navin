@@ -64,7 +64,6 @@ import { ChoicePrompt } from "@/components/thread/ChoicePrompt";
 import { CredentialRequestCards } from "@/components/thread/CredentialRequestCard";
 import { WorktreeMergeCards } from "@/components/thread/WorktreeMergeCards";
 import { LiveAvatar } from "@/components/thread/LiveAvatar";
-import { useLiveAvatarDocked } from "@/lib/live-avatar-store";
 import { avatarBodyForVoice } from "@/lib/live-avatar";
 import { transcriptionFormFromPayload, voiceFormFromPayload } from "@/lib/live-voice-forms";
 import { realtimeSessionVoice, realtimeVoiceFor, speechVoiceFor } from "@/lib/live-voices";
@@ -1884,7 +1883,6 @@ export function ThreadShell({
   // Live voice conversation: microphone in, assistant voice out, question
   // cards answered by speaking. One session per chat, owned here so the bar
   // above the composer and the toolbar toggle share the same state.
-  const liveAvatarDocked = useLiveAvatarDocked();
   const liveVoice = useLiveVoice({
     client,
     chatId,
@@ -2971,9 +2969,10 @@ export function ThreadShell({
               : "relative mx-auto w-full max-w-[49.5rem]"
           }
         >
-          {/* Docked in the Code rail, the avatar carries the Live controls;
-              the bar stays for errors (retry, dismiss). */}
-          {!isViewer && !(liveAvatarDocked && liveVoice.state !== "off" && liveVoice.state !== "error")
+          {/* The Live bar always sits right above the prompt while a call is
+              on (status, mute, hang up), and for errors (retry, dismiss),
+              even when the avatar is docked in the Code rail. */}
+          {!isViewer
             ? <LiveVoiceBar control={liveVoice} onOpenSettings={onOpenVoiceSettings} agentBusy={isStreaming}
               voiceLabel={settings?.voice ? `${settings.voice.tts_model} · ${settings.voice.voice}` : undefined} />
             : null}

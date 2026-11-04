@@ -1233,7 +1233,7 @@ class TuiRuntime:
         self._hold(False)
 
     async def _start_on(self, workspace: str, session_id: str, preset: str | None) -> None:
-        self.config.agents.defaults.workspace = workspace
+        self.config.use_workspace(workspace)
         os.chdir(self.config.workspace_path)
         self.channel, self.chat_id = split_session_id(session_id)
         self.status.workspace = str(self.config.workspace_path)
@@ -2343,7 +2343,7 @@ class TuiRuntime:
         fresh = load_config(config_path) if config_path else load_config()
         current = getattr(getattr(getattr(self.config, "agents", None), "defaults", None), "workspace", None)
         if current:
-            fresh.agents.defaults.workspace = current
+            fresh.use_workspace(current)
         return fresh
 
     @property

@@ -4595,7 +4595,7 @@ class GatewayHTTPHandler:
             return await self._handle_commands(request)
         if got == "/api/workspaces":
             return self._handle_workspaces(connection, request)
-        if got in {"/api/live/realtime/status", "/api/live/docs"}:
+        if got in {"/api/live/realtime/status", "/api/live/docs", "/api/live/project"}:
             return await self._handle_live(request, got)
         if got == "/api/webui/app-templates":
             return self._handle_webui_app_templates(request)
@@ -5295,6 +5295,23 @@ class GatewayHTTPHandler:
 
             config = await asyncio.to_thread(load_config)
             return _http_json_response(realtime_status(config))
+        if got == "/api/live/project":
+            # What the voice knows about the chat's project: git, team, board, README.
+            from navin.live.project_context import project_context
+
+            chat_id = (_query_first(_parse_query(request.path), "chat_id") or "").strip()
+            if chat_id and not all(ch.isalnum() or ch in "-_" for ch in chat_id):
+                return _http_error(400, "invalid chat id")
+            key = f"websocket:{chat_id}" if chat_id else ""
+            project_path: Any = None
+            if key:
+                project_path = getattr(await self._session_scope(key), "project_path", None)
+            if not project_path:
+                project_path = getattr(self.config, "workspace", None) if getattr(self, "config", None) else None
+            payload = await asyncio.to_thread(
+                project_context, project_path, sessions=self.session_manager, session_key=key,
+            )
+            return _http_json_response(payload)
         query = (_query_first(_parse_query(request.path), "q") or "").strip()[:300]
         if not query:
             return _http_error(400, "q required")

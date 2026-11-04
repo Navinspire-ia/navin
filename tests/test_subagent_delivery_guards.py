@@ -286,3 +286,90 @@ def test_changed_files_note_lists_docs_and_command_made_files_once(tmp_path):
     assert "Files this subagent changed (3):" in note
     assert note.count("- api/stats.py") == 1
     assert "- audit/report.md" in note and "- gen/schema.py" in note
+
+
+def test_each_subagent_tracks_its_files_as_a_child_of_its_chat(tmp_path, monkeypatch):
+    # 2026-11-04: five siblings of one wave shared their chat's file states, so
+    # each counted the others' edits in the shared tree as its own (938
+    # changed files to test) and none could ever close its task.
+    from navin.agent.tools.file_state import (
+        FileStates,
+        bind_file_states,
+        bound_file_states,
+        reset_file_states,
+    )
+
+    seen = []
+
+    class Runner:
+        async def run(self, spec):
+            seen.append(bound_file_states())
+            return AgentRunResult(final_content="done", messages=[])
+
+    async def run():
+        manager = _manager(tmp_path, monkeypatch, runner=Runner())
+        chat = FileStates()
+        token = bind_file_states(chat)
+        try:
+            for _ in range(2):
+                await manager.spawn(task="Work", runtime=Mock(), session_key="cli:one")
+        finally:
+            reset_file_states(token)
+        for _ in range(200):
+            if len(seen) == 2:
+                break
+            await asyncio.sleep(0.01)
+        await _stop(manager, "cli:one")
+        return chat
+
+    chat = asyncio.run(run())
+    first, second = seen
+    assert first is not chat and second is not chat and first is not second
+    assert first.parent is chat and second.parent is chat
+    # Its writes are its chat's work; a sibling's are not its own.
+    assert first.descends_from(chat) and not first.descends_from(second)
+    assert not chat.descends_from(first)
+
+
+def test_a_cancelled_subagent_says_what_stopped_it(tmp_path, monkeypatch):
+    # 2026-11-04: a Multitask agent read "Cancelled before a result was
+    # produced" five seconds after it started, and nothing told what had
+    # stopped it. Each canceller now names itself in the result.
+    entered = []
+
+    class Runner:
+        async def run(self, spec):
+            entered.append(spec)
+            await asyncio.Event().wait()
+
+    async def run():
+        manager = _manager(tmp_path, monkeypatch, runner=Runner())
+        manager._cancel_wait_s = 2.0
+        for _ in range(2):
+            await manager.spawn(task="Work", runtime=Mock(), session_key="cli:one")
+        for _ in range(300):
+            if len(entered) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(entered) == 2
+        first = sorted(manager._running_tasks)[0]
+        assert (await manager.cancel_agent("cli:one", first))["ok"]
+        for _ in range(300):
+            if manager.bus.published and (
+                first not in manager._running_tasks or manager._running_tasks[first].done()
+            ):
+                break
+            await asyncio.sleep(0.01)
+        await manager.cancel_by_session("cli:one")
+        for _ in range(300):
+            if len(manager.bus.published) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        texts = [message.content for message in manager.bus.published]
+        await _stop(manager)
+        return texts
+
+    texts = asyncio.run(run())
+    assert len(texts) == 2
+    assert sum("Reason: stopped from the agents panel." in text for text in texts) == 1
+    assert sum("Reason: the conversation was stopped (Stop, /stop or /new)." in text for text in texts) == 1

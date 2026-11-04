@@ -6293,7 +6293,9 @@
         "auto": "Auto",
         "low": "Faible",
         "medium": "Moyen",
-        "high": "Élevé"
+        "high": "Élevé",
+        "xhigh": "Très élevé",
+        "max": "Max"
       },
       "sandboxes": {
         "workspace": {
@@ -10314,6 +10316,7 @@
             "recommendation": "J'ai {{count}} recommandations. Je te dis par où commencer ?",
             "long": "C'est fait. La réponse est assez longue, je te la résume ?"
           },
+          "rest": "La suite est dans le chat. Je te la résume ?",
           "what": {
             "plan": "le plan",
             "review": "la revue",

@@ -214,7 +214,7 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
     {
         "command": "/settings",
         "title": "Settings",
-        "description": "ctrl+g. Sections: providers, models, mcp, skills, image, video, voice, web, system, security, guardrails, git, browser, rules",
+        "description": "ctrl+g. Sections: providers, models, mcp, skills, team, image, video, voice, web, system, security, guardrails, git, browser, rules",
         "accepts_args": True,
         "arg_hint": "[section]",
     },
@@ -281,9 +281,9 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
     {
         "command": "/team",
         "title": "Team mode",
-        "description": "Collaboration Mode: on / off, this chat's team and its teammates (/team <team>, /team none)",
+        "description": "Collaboration Mode: on / off, this chat's team and its teammates (/team <team>, /team none, /team settings edits the team)",
         "accepts_args": True,
-        "arg_hint": "[on|off|<team>|none]",
+        "arg_hint": "[on|off|<team>|none|settings]",
     },
     *(
         {

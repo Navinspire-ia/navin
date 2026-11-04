@@ -523,6 +523,46 @@ def test_a_result_landing_after_its_turn_reaches_the_model(tmp_path):
     asyncio.run(run())
 
 
+def test_a_turn_on_a_late_result_is_announced_like_any_turn(tmp_path):
+    """2026-11-04: the CLI showed "main waiting for agents", with no clock, for
+    the seven minutes the main agent spent on four results, and the message
+    typed meanwhile waited for the end of a turn the CLI never saw start."""
+    from navin.bus.runtime_events import SessionTurnStarted, TurnCompleted
+
+    async def run() -> None:
+        provider = RoutingProvider()
+        loop = _make_loop(tmp_path, provider)
+        seen: list[tuple[str, str, str]] = []
+        bus = loop._runtime_events().bus
+        bus.subscribe(lambda e: seen.append(("started", e.context.session_key, e.user_text)), SessionTurnStarted)
+        bus.subscribe(lambda e: seen.append(("completed", e.context.session_key, "")), TurnCompleted)
+        outbound: list = []
+        task = asyncio.create_task(loop.run())
+        sink = asyncio.create_task(_collect_outbound(loop, outbound))
+        try:
+            await _late_turn(loop, outbound)
+            starts = [(key, text) for kind, key, text in seen if kind == "started"]
+            # The user's turn, then the turn on the result: announced without
+            # text, so the announcement never titles the chat.
+            assert starts == [("websocket:chat-a", "do JOB-FIRST"), ("websocket:chat-a", "")]
+            last_start = max(i for i, row in enumerate(seen) if row[0] == "started")
+            assert ("completed", "websocket:chat-a", "") in seen[last_start + 1:]
+
+            # A result already answered starts no turn at all.
+            seen.clear()
+            await loop.bus.publish_inbound(_late_result("chat-a", "late1", "result-JOB-LATE"))
+            await _user_turn(loop, outbound, "chat-a", "JOB-AFTER")
+            assert [text for kind, _, text in seen if kind == "started"] == ["do JOB-AFTER"]
+        finally:
+            loop.stop()
+            sink.cancel()
+            task.cancel()
+            await asyncio.gather(task, sink, return_exceptions=True)
+            await loop.close_mcp()
+
+    asyncio.run(run())
+
+
 def test_a_result_already_answered_does_not_start_a_turn(tmp_path):
     """A second announcement of an answered result changes nothing.
 

@@ -17,7 +17,7 @@ export type LiveVoiceOption = {
 
 const voice = (id: string, gender: VoiceGender, lang = ""): LiveVoiceOption => ({ id, gender, lang });
 
-/** Amazon Nova 2 Sonic (navin/live/nova_sonic.py VOICES). */
+/** Amazon Nova 2.5 Sonic and Nova 2 Sonic: the same voices (navin/live/nova_sonic.py VOICES). */
 export const NOVA_SONIC_VOICES: LiveVoiceOption[] = [
   voice("ambre", "F", "fr"), voice("florian", "M", "fr"),
   voice("tiffany", "F", "en"), voice("matthew", "M", "en"), voice("amy", "F", "en"), voice("olivia", "F", "en"),

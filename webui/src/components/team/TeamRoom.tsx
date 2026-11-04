@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Check, CircleSlash, Loader2, Send, UserPlus, X } from "lucide-react";
+import { ArrowRight, Check, CircleSlash, Loader2, Send, UserPlus, Users, X } from "lucide-react";
 
 import { TeamBotAvatar } from "@/components/team/TeamBotAvatar";
+import { TeamMeeting } from "@/components/team/TeamMeeting";
 import {
   subagentStatusLine,
   subagentStepLabel,
@@ -50,6 +51,7 @@ export function TeamRoom({
 }) {
   const { t } = useTranslation();
   const { cards } = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [meetingOpen, setMeetingOpen] = useState(false);
 
   // Finished cards leave the store after a moment; a lane keeps the last one
   // so the result stays readable next to the conversation.
@@ -105,6 +107,21 @@ export function TeamRoom({
               : t("thread.team.idle", { defaultValue: "Waiting for a task" })}
           </span>
         </span>
+        {canManage && team.members.length > 1 ? (
+          <button
+            type="button"
+            data-testid="team-meeting-toggle"
+            onClick={() => setMeetingOpen((open) => !open)}
+            aria-pressed={meetingOpen}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium transition-colors",
+              meetingOpen ? "bg-[#1d6af0]/12 text-[#1d6af0]" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+            )}
+          >
+            <Users className="h-3.5 w-3.5" aria-hidden />
+            {t("thread.team.meeting.open", { defaultValue: "Meeting" })}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -115,7 +132,16 @@ export function TeamRoom({
         </button>
       </header>
 
-      {visibleLanes.length ? (
+      {meetingOpen && canManage ? (
+        <TeamMeeting
+          members={team.members}
+          cards={cards}
+          feed={feed}
+          onAssign={onAssign}
+          onClose={() => setMeetingOpen(false)}
+        />
+      ) : null}
+      {!meetingOpen && visibleLanes.length ? (
         <div
           className={cn(
             "grid shrink-0 gap-2 border-b border-border/50 p-2",
@@ -127,7 +153,7 @@ export function TeamRoom({
           ))}
         </div>
       ) : null}
-      {idle.length ? (
+      {!meetingOpen && idle.length ? (
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/50 px-3 py-1.5">
           <span className="text-[11px] text-muted-foreground">
             {t("thread.team.available", { defaultValue: "Available:" })}
@@ -141,9 +167,9 @@ export function TeamRoom({
         </div>
       ) : null}
 
-      <TeamConversation feed={feed} />
+      {!meetingOpen ? <TeamConversation feed={feed} /> : null}
 
-      {canManage ? (
+      {canManage && !meetingOpen ? (
         <TeamComposer team={team} running={running} onSend={onSend} onAssign={onAssign} />
       ) : null}
     </aside>
@@ -388,7 +414,7 @@ function TeamComposer({
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
             )}
           >
-            <TeamBotAvatar avatar={member.avatar} color={member.color} size={18} active={running.includes(member.name)} />
+            <TeamBotAvatar avatar={member.avatar} color={member.color} photo={member.photo} seed={member.id} gender={member.gender} size={18} active={running.includes(member.name)} />
             {member.name}
           </button>
         ))}

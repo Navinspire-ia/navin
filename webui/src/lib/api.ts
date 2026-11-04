@@ -8336,6 +8336,19 @@ export async function searchNavinDocs(token: string, query: string, base: string
   return body.results ?? [];
 }
 
+/**
+ * What the Live voice knows about the chat's project: git contributors and
+ * recent commits, uncommitted work, the chat's team, the board, the README.
+ */
+export async function fetchLiveProjectContext(
+  token: string,
+  chatId: string | null,
+  base: string = "",
+): Promise<Record<string, unknown>> {
+  const query = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : "";
+  return request<Record<string, unknown>>(`${base}/api/live/project${query}`, token);
+}
+
 // ---------------------------------------------------------------------------
 // Infra engine (Universal Command & API Registry, policy, resource graph).
 // ---------------------------------------------------------------------------

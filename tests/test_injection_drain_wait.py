@@ -127,6 +127,50 @@ class DrainWaitFlagTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("wait", received[0])
 
 
+class QueuedPromptsPastTheCycleCapTest(unittest.IsolatedAsyncioTestCase):
+    """Prompts queued late in a busy turn are still read before it ends.
+
+    After five injection cycles the drain used to stop entirely: the turn
+    then ended without reading what the user queued, which looked ignored.
+    """
+
+    async def test_every_queued_prompt_reaches_the_model(self) -> None:
+        from navin.agent import runner as runner_mod
+
+        total = runner_mod._MAX_INJECTION_CYCLES + 3
+        queued = [f"queued prompt {i}" for i in range(total)]
+        waits: list[bool] = []
+        seen_by_model: list[str] = []
+
+        class _Recording(_ScriptedProvider):
+            async def chat(self, messages, **kwargs):
+                seen_by_model.extend(
+                    str(m.get("content")) for m in messages if m.get("role") == "user"
+                )
+                return LLMResponse(content="done")
+
+        async def callback(*, limit: int = 10, wait: bool = True) -> list[dict[str, Any]]:
+            waits.append(wait)
+            return [{"role": "user", "content": queued.pop(0)}] if queued else []
+
+        await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "go"}],
+            tools=ToolRegistry(),
+            runtime=_runtime(_Recording([])),
+            max_iterations=total + 4,
+            max_tool_result_chars=10_000,
+            injection_callback=callback,
+        ))
+        self.assertEqual(queued, [])
+        for i in range(total):
+            self.assertTrue(
+                any(f"queued prompt {i}" in text for text in seen_by_model),
+                f"queued prompt {i} never reached the model",
+            )
+        # Past the cap the drain still runs, it just never blocks.
+        self.assertFalse(any(waits[runner_mod._MAX_INJECTION_CYCLES + 1:]))
+
+
 class OwedResultWaitTest(unittest.IsolatedAsyncioTestCase):
     """The end-of-turn wait ends once no subagent result is owed any more.
 
