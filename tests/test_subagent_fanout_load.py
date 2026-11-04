@@ -61,8 +61,20 @@ class _SlowProvider:
         return await self._answer()
 
 
-class SubagentFanoutLoadTest(unittest.IsolatedAsyncioTestCase):
-    async def test_two_hundred_subagents_queue_run_and_finish(self) -> None:
+class SubagentFanoutLoadTest(unittest.TestCase):
+    """The loop runs as the gateway runs it, debug mode off.
+
+    IsolatedAsyncioTestCase runs its loop in debug mode, which captures a
+    stack (one stat per frame) for every callback the loop schedules. On this
+    fan-out it tripled the worst stall measured locally (0.24 to 0.29 s,
+    against 0.06 to 0.11 s without it) and pushed a CI runner past the limit
+    (2.22 s, release build of 2026-11-04): a cost the gateway never pays.
+    """
+
+    def test_two_hundred_subagents_queue_run_and_finish(self) -> None:
+        asyncio.run(self._fan_out(), debug=False)
+
+    async def _fan_out(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         bus = _Bus()
