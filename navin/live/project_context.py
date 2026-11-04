@@ -20,6 +20,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from navin.utils.proc import no_window_kwargs
+
 GIT_TIMEOUT_S = 4.0
 MAX_CONTRIBUTORS = 25
 MAX_COMMITS = 15
@@ -36,6 +38,8 @@ def _git(project: Path, *args: str) -> str | None:
             ["git", "-C", str(project), *args],
             capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False,
             encoding="utf-8", errors="replace",
+            # On Windows each git call would flash a console during the call.
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
