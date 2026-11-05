@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -113,3 +114,31 @@ def test_default_cap_is_80_percent_of_the_machine(monkeypatch) -> None:
     monkeypatch.delenv("NAVIN_EXEC_MEMORY_LIMIT_MB", raising=False)
     monkeypatch.setattr(memory_guard, "_meminfo", lambda: (100, 50))
     assert memory_guard.default_limit() == 80
+
+
+def _oom_score_adj(pid: int) -> str:
+    with open(f"/proc/{pid}/oom_score_adj", encoding="ascii") as handle:
+        return handle.read().strip()
+
+
+def test_agent_commands_are_the_oom_killer_s_first_pick(monkeypatch) -> None:
+    """A full machine loses the agent's command before the CLI that started it."""
+    monkeypatch.delenv("NAVIN_EXEC_OOM_SCORE_ADJ", raising=False)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert memory_guard.raise_oom_priority(child.pid) is True
+        assert _oom_score_adj(child.pid) == "200"
+        # Only ever raised: a smaller value leaves it where it is.
+        monkeypatch.setenv("NAVIN_EXEC_OOM_SCORE_ADJ", "100")
+        assert memory_guard.raise_oom_priority(child.pid) is False
+        assert _oom_score_adj(child.pid) == "200"
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_oom_priority_can_be_turned_off(monkeypatch) -> None:
+    monkeypatch.setenv("NAVIN_EXEC_OOM_SCORE_ADJ", "0")
+    before = _oom_score_adj(os.getpid())
+    assert memory_guard.raise_oom_priority(os.getpid()) is False
+    assert _oom_score_adj(os.getpid()) == before

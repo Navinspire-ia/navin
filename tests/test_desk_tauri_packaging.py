@@ -277,6 +277,35 @@ class DeskTauriPackagingTest(unittest.TestCase):
         # The sidecar family kill is the actual lock-breaker; keep it honest.
         self.assertIn("taskkill /IM navin.exe /F /T", preinstall)
 
+    def test_deb_and_rpm_run_the_wsl_oom_guard(self) -> None:
+        """postinst/prerm (deb) and %post/%preun (rpm) are the WSL OOM guard.
+
+        The Tauri CLI resolves bundle paths from desktop/src-tauri, like
+        frontendDist and the NSIS template. The guard runs as root at every
+        install and every in-app update (pkexec + the package manager).
+        """
+        tauri_dir = ROOT / "desktop/src-tauri"
+        conf = json.loads((tauri_dir / "tauri.conf.json").read_text(encoding="utf-8"))
+        guard = (ROOT / "navin/utils/wsl_oom_guard.sh").resolve()
+        self.assertTrue(guard.is_file(), guard)
+        self.assertTrue(
+            guard.read_text(encoding="utf-8").startswith("#!/bin/sh\n"), guard
+        )
+        for fmt in ("deb", "rpm"):
+            section = conf["bundle"]["linux"][fmt]
+            for key in ("postInstallScript", "preRemoveScript"):
+                self.assertEqual(
+                    section[key], "../../navin/utils/wsl_oom_guard.sh", f"{fmt}.{key}"
+                )
+                self.assertEqual((tauri_dir / section[key]).resolve(), guard, f"{fmt}.{key}")
+        self.assertIn("gnome-keyring", conf["bundle"]["linux"]["deb"]["depends"])
+        self.assertEqual(
+            conf["bundle"]["linux"]["rpm"]["compression"], {"type": "zstd", "level": 3}
+        )
+        build = (ROOT / "packaging/linux/build-appimage.sh").read_text(encoding="utf-8")
+        self.assertIn("assert_maintainer_scripts_in_deb() {", build)
+        self.assertIn('assert_maintainer_scripts_in_deb "$deb_src"', build)
+
 
 if __name__ == "__main__":
     unittest.main()

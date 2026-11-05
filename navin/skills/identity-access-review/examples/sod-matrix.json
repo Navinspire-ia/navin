@@ -1,0 +1,11 @@
+{
+  "pairs": [
+    {"a": "AP_CREATE_VENDOR", "b": "AP_APPROVE_PAYMENT", "severity": "high", "domain": "finance", "rationale": "Create a fictitious vendor and pay it"},
+    {"a": "AP_CREATE_VENDOR", "b": "AP_POST_INVOICE", "severity": "medium", "domain": "finance", "rationale": "Create a vendor and post its invoices"},
+    {"a": "IAM_REQUEST_ACCESS", "b": "IAM_APPROVE_ACCESS", "severity": "high", "domain": "it", "rationale": "Self-approval of access requests"},
+    {"a": "GITHUB_WRITE_MAIN", "b": "ARGOCD_SYNC_PROD", "severity": "high", "domain": "dev", "rationale": "Develop and release to production without review"},
+    {"a": "CHANGE_APPROVER", "b": "aws:AdministratorAccess*", "severity": "high", "domain": "cloud", "rationale": "Approve the change and deploy it with admin rights"},
+    {"a": "HR_CREATE_EMPLOYEE", "b": "PAYROLL_RUN", "severity": "high", "domain": "hr", "rationale": "Create a ghost employee and pay it"},
+    {"a": "GITHUB_WRITE_MAIN", "b": "GITHUB_ORG_OWNER", "severity": "low", "domain": "dev", "rationale": "Owner can bypass branch protection"}
+  ]
+}

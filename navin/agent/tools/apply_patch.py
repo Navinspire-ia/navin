@@ -385,6 +385,11 @@ class ApplyPatchTool(_FsTool):
                 if not isinstance(action, str):
                     raise _PatchError(f"action required for edit: {path}")
                 source = await self._bound_path(path, write=True)
+                # Nothing is written when one file belongs to a live agent of
+                # another session: the patch is all or nothing.
+                peer_refused = await self._peer_refusal(source)
+                if peer_refused:
+                    raise _PatchError(peer_refused)
                 # One stat for the whole edit, in a worker (9P round trips on a
                 # WSL project seen from Windows).
                 source_exists, _, source_is_file = await self._path_kind(source)

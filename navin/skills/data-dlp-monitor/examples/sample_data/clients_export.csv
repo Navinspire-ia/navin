@@ -1,0 +1,4 @@
+id,nom,prenom,email,telephone,iban,nir,commentaire
+1,Martin,Julie,julie.martin@exemple-client.fr,06 12 34 56 78,FR76 3000 6000 0112 3456 7890 189,1 85 05 78 006 084 91,client depuis 2019
+2,Durand,Paul,paul.durand@exemple-client.fr,+33 7 98 76 54 32,DE89 3704 0044 0532 0130 00,2 20 03 2B 520 123 25,arret maladie en cours
+3,Bernard,Lea,lea.bernard@exemple-client.fr,01 44 55 66 77,FR14 2004 1010 0505 0001 3M02 606,,syndiquee CGT

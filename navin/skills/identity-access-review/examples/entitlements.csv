@@ -1,0 +1,13 @@
+user,entitlement,source
+alice.martin,AP_CREATE_VENDOR,sap
+alice.martin,AP_APPROVE_PAYMENT,sap
+bob.durand,IAM_REQUEST_ACCESS,sailpoint
+bob.durand,IAM_APPROVE_ACCESS,sailpoint
+claire.petit,GITHUB_WRITE_MAIN,github
+claire.petit,ARGOCD_SYNC_PROD,argocd
+david.roux,CHANGE_APPROVER,servicenow
+david.roux,aws:AdministratorAccess-prod,aws
+emma.leroy,HR_CREATE_EMPLOYEE,workday
+emma.leroy,PAYROLL_RUN,workday
+farid.benali,GITHUB_WRITE_MAIN,github
+farid.benali,AP_CREATE_VENDOR,sap

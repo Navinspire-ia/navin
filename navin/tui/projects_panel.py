@@ -28,6 +28,7 @@ from navin.tui.projects import (
     next_visible,
     same_path,
 )
+from navin.tui.session_labels import compact_session_age
 from navin.tui.textmarkup import escape
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -147,6 +148,14 @@ class ProjectsPanel(VerticalScroll):
     }
     ProjectsPanel .proj-session-label:hover { background: $boost; }
     ProjectsPanel .proj-session-label.-current { background: $boost 55%; }
+    ProjectsPanel .proj-age {
+        width: auto;
+        min-width: 3;
+        height: 1;
+        padding: 0 0 0 1;
+        text-align: right;
+        color: $text-muted 70%;
+    }
     ProjectsPanel .proj-menu {
         width: 3;
         height: 1;
@@ -176,11 +185,20 @@ class ProjectsPanel(VerticalScroll):
         self._busy: dict[str, frozenset[str]] = {}
         self._labels: dict[tuple[str, str], _SessionLabel] = {}
         self._folders: dict[str, _FolderLabel] = {}
+        self._ages: list[tuple[Static, str]] = []
         self._spin = 0
         self._generation = 0
         self._seeded = False
 
     # -- data -----------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        # "5m" must become "6m" without a reload of the list.
+        self.set_interval(60, self._paint_ages)
+
+    def _paint_ages(self) -> None:
+        for widget, raw in self._ages:
+            widget.update(compact_session_age(raw))
 
     def set_data(self, projects: list[ProjectEntry], current_path: str, current_key: str) -> None:
         """New list from disk. The project open here starts unfolded, once."""
@@ -277,6 +295,7 @@ class ProjectsPanel(VerticalScroll):
             return
         self._labels = {}
         self._folders = {}
+        self._ages = []
         widgets = self._build()
         await self.mount(*widgets)
         self._paint_labels()
@@ -314,9 +333,12 @@ class ProjectsPanel(VerticalScroll):
             current = same_path(project.path, self._current_path) and entry.key == self._current_key
             label = _SessionLabel(project.path, entry.key, entry.title, entry.pinned, current)
             self._labels[(self._pid(project.path), entry.key)] = label
+            age = Static(compact_session_age(entry.updated_at), classes="proj-age")
+            self._ages.append((age, entry.updated_at))
             rows.append(
                 Horizontal(
                     label,
+                    age,
                     _Hit("⋯", "menu", project.path, entry.key, classes="proj-menu"),
                     classes="proj-row proj-session",
                 )

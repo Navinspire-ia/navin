@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -260,16 +261,66 @@ def test_generated_scripts_match_sources() -> None:
     assert json.loads(windows_lit) == WINDOWS.read_text(encoding="utf-8")
 
 
-def _run_installer_functions(tmp_path: Path, script: str) -> subprocess.CompletedProcess:
+def _run_installer_functions(
+    tmp_path: Path, script: str, extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     functions = POSIX.read_text(encoding="utf-8").split('\nOS="$(os_name)"', 1)[0]
     env = os.environ | {"NAVIN_PREFIX": str(tmp_path / "prefix"), "TMPDIR": str(tmp_path)}
+    env |= extra_env or {}
+    # New session: no controlling terminal, so /dev/tty cannot be opened.
     return subprocess.run(
         ["bash", "-c", functions + "\n" + script], env=env,
-        text=True, capture_output=True, timeout=30,
+        text=True, capture_output=True, timeout=30, start_new_session=True,
     )
 
 
-def _cli_archive(tmp_path: Path, name: str, *, broken: bool = False) -> Path:
+GUARD_LINES = {
+    "needed": "navin-wsl-oom-guard: needed: init.scope OOMPolicy=stop",
+    "protected": "navin-wsl-oom-guard: protected: init.scope OOMPolicy=continue",
+    "not-needed": "navin-wsl-oom-guard: not-needed: not WSL",
+}
+APPLIED = "navin-wsl-oom-guard: applied: init.scope OOMPolicy=continue"
+
+
+def _fake_guard(tree: Path, status: str, log: Path) -> Path:
+    """Stand-in for navin/utils/wsl_oom_guard.sh: records argv, prints a state."""
+    guard = tree / "_internal/navin/utils/wsl_oom_guard.sh"
+    guard.parent.mkdir(parents=True)
+    guard.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(log))}\n'
+        'case "$1" in\n'
+        f"  status) echo {shlex.quote(GUARD_LINES[status])} ;;\n"
+        f"  install) echo {shlex.quote(APPLIED)} ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    return guard
+
+
+def _fake_sudo(tmp_path: Path, *, allow: bool) -> tuple[Path, Path]:
+    """sudo on PATH that records argv; `sudo -n` fails unless allowed."""
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    log = tmp_path / "sudo.log"
+    sudo = fakebin / "sudo"
+    sudo.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(log))}\n'
+        'if [ "$1" = -n ]; then\n'
+        f"  {'shift' if allow else 'exit 1'}\n"
+        "fi\n"
+        'exec "$@"\n',
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+    return fakebin, log
+
+
+def _cli_archive(
+    tmp_path: Path, name: str, *, broken: bool = False,
+    guard: str | None = None, guard_log: Path | None = None,
+) -> Path:
     tree = tmp_path / name / "navin-dist"
     tree.mkdir(parents=True)
     engine = tree / "navin"
@@ -279,6 +330,9 @@ def _cli_archive(tmp_path: Path, name: str, *, broken: bool = False) -> Path:
         encoding="utf-8",
     )
     engine.chmod(0o755)
+    if guard is not None:
+        assert guard_log is not None
+        _fake_guard(tree, guard, guard_log)
     archive = tmp_path / f"{name}.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle:
         bundle.add(tree, arcname="navin-dist")
@@ -397,12 +451,13 @@ pick_linux_file 2.0.7 {shlex.quote(str(manifest))}
     assert proc.stdout == expected
 
 
-def test_full_piped_install_checks_download_and_launches_both_commands(tmp_path: Path) -> None:
+def _piped_install(
+    tmp_path: Path, archive: Path, extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess, dict[str, str], Path]:
     depot = tmp_path / "depot"
     release = depot / "v2.0.7"
     release.mkdir(parents=True)
     name = "navin-cli-2.0.7-linux-x64.tar.gz"
-    archive = _cli_archive(tmp_path, "official")
     shutil.copyfile(archive, release / name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (release / "SHA256SUMS.txt").write_text(f"{digest}  {name}\n", encoding="utf-8")
@@ -415,12 +470,19 @@ def test_full_piped_install_checks_download_and_launches_both_commands(tmp_path:
         "HOME": str(home), "NAVIN_PREFIX": str(home / ".local"),
         "NAVIN_DOWNLOAD_BASE": depot.as_uri(), "TMPDIR": str(tmp_path),
         "SHELL": "/bin/bash",
-    }
+    } | (extra_env or {})
     proc = subprocess.run(
         ["bash"], input=POSIX.read_text(), env=env,
-        text=True, capture_output=True, timeout=30,
+        text=True, capture_output=True, timeout=30, start_new_session=True,
     )
+    return proc, env, home
+
+
+def test_full_piped_install_checks_download_and_launches_both_commands(tmp_path: Path) -> None:
+    proc, env, home = _piped_install(tmp_path, _cli_archive(tmp_path, "official"))
     assert proc.returncode == 0, proc.stderr
+    assert "WSL" not in proc.stderr
+    assert "navin-wsl-oom-guard" not in proc.stderr
     assert "checking the installed engine" in proc.stderr
     assert "installed:" in proc.stderr
     for command, args, expected in (
@@ -430,3 +492,206 @@ def test_full_piped_install_checks_download_and_launches_both_commands(tmp_path:
         assert subprocess.check_output(
             [str(home / ".local/bin" / command), *args], env=env, text=True,
         ) == expected
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def _guard_case(
+    tmp_path: Path, status: str, *, sudo_allowed: bool = False, with_guard: bool = True,
+    system: str = "Linux", extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess, Path, list[str], list[str]]:
+    """protect_wsl as a non-root user on an engine tree with a fake guard."""
+    tree = tmp_path / "engine/navin-dist"
+    tree.mkdir(parents=True)
+    guard_log = tmp_path / "guard.log"
+    guard = _fake_guard(tree, status, guard_log) if with_guard else tree / "absent"
+    fakebin, sudo_log = _fake_sudo(tmp_path, allow=sudo_allowed)
+    proc = _run_installer_functions(tmp_path, f'''
+uname() {{ echo {system}; }}
+id() {{ echo 1000; }}
+INSTALLED_ENGINE={shlex.quote(str(tree / "navin"))}
+protect_wsl
+echo "rc=$?"
+''', {"PATH": f"{fakebin}:{os.environ['PATH']}"} | (extra_env or {}))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "rc=0\n"
+    return proc, guard, _lines(guard_log), _lines(sudo_log)
+
+
+def _protect_wsl_at_a_terminal(tmp_path: Path, answer: bytes) -> tuple[str, Path, list[str], list[str]]:
+    """protect_wsl with a pseudo-terminal as the controlling terminal, the way
+    `curl ... | bash` runs it: the script on a pipe, the question on /dev/tty."""
+    import errno
+    import fcntl
+    import select
+    import termios
+
+    tree = tmp_path / "engine/navin-dist"
+    tree.mkdir(parents=True)
+    guard_log = tmp_path / "guard.log"
+    guard = _fake_guard(tree, "needed", guard_log)
+    fakebin, sudo_log = _fake_sudo(tmp_path, allow=False)
+    functions = POSIX.read_text(encoding="utf-8").split('\nOS="$(os_name)"', 1)[0]
+    script = functions + f'''
+uname() {{ echo Linux; }}
+id() {{ echo 1000; }}
+INSTALLED_ENGINE={shlex.quote(str(tree / "navin"))}
+protect_wsl
+echo "rc=$?"
+'''
+    env = os.environ | {
+        "PATH": f"{fakebin}:{os.environ['PATH']}",
+        "NAVIN_PREFIX": str(tmp_path / "prefix"),
+        "TMPDIR": str(tmp_path),
+    }
+    master, slave = os.openpty()
+
+    def take_the_terminal() -> None:
+        # After setsid (start_new_session) the pty on stdout becomes /dev/tty.
+        # stdin stays a dead pipe, like the script curl feeds to bash.
+        fcntl.ioctl(1, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        ["bash", "-c", script], stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, env=env,
+        start_new_session=True, preexec_fn=take_the_terminal,
+    )
+    os.close(slave)
+    output = b""
+    answered = False
+    deadline = time.monotonic() + 30
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if not ready:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                chunk = os.read(master, 4096)
+            except OSError as exc:
+                # Linux ends a pty whose last writer exited with EIO.
+                if exc.errno != errno.EIO:
+                    raise
+                break
+            if not chunk:
+                break
+            output += chunk
+            if not answered and b"[Y/n] " in output:
+                os.write(master, answer)
+                answered = True
+        assert proc.wait(timeout=10) == 0
+    finally:
+        os.close(master)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert answered, output
+    return output.decode().replace("\r\n", "\n"), guard, _lines(guard_log), _lines(sudo_log)
+
+
+@pytest.mark.parametrize("answer", [b"y\n", b"\n"])
+def test_wsl_guard_asks_at_the_terminal_and_applies_on_yes(tmp_path: Path, answer: bytes) -> None:
+    output, guard, guard_calls, sudo_calls = _protect_wsl_at_a_terminal(tmp_path, answer)
+    assert "navin-install: under WSL one out-of-memory kill stops every open terminal.\n" in output
+    assert "navin-install: apply it now? [Y/n] " in output
+    assert guard_calls == ["status", "install"]
+    # sudo -n failed (a password is needed), then sudo asked at the terminal.
+    assert sudo_calls == ["-n true", f"sh {guard} install"]
+    assert f"navin-install: {APPLIED}\n" in output
+    assert "run: sudo" not in output
+    assert output.endswith("rc=0\n")
+
+
+def test_wsl_guard_at_the_terminal_leaves_it_on_no(tmp_path: Path) -> None:
+    output, guard, guard_calls, sudo_calls = _protect_wsl_at_a_terminal(tmp_path, b"n\n")
+    assert guard_calls == ["status"]
+    assert sudo_calls == ["-n true"]
+    assert f"navin-install: to protect the terminals later, run: sudo sh {guard} install\n" in output
+    assert output.endswith("rc=0\n")
+
+
+def test_wsl_guard_runs_as_root_on_the_installed_engine(tmp_path: Path) -> None:
+    guard_log = tmp_path / "guard.log"
+    archive = _cli_archive(tmp_path, "guarded", guard="needed", guard_log=guard_log)
+    fakebin, sudo_log = _fake_sudo(tmp_path, allow=True)
+    proc = _run_installer_functions(tmp_path, f'''
+uname() {{ echo Linux; }}
+id() {{ echo 0; }}
+install_from_tarball {shlex.quote(str(archive))}
+protect_wsl
+''', {"PATH": f"{fakebin}:{os.environ['PATH']}"})
+    assert proc.returncode == 0, proc.stderr
+    assert _lines(guard_log) == ["status", "install"]
+    assert _lines(sudo_log) == []
+    assert f"navin-install: {APPLIED}\n" in proc.stderr
+    assert "run: sudo" not in proc.stderr
+    guards = list((tmp_path / "prefix/share/navin/installs").glob(
+        "*/navin-dist/_internal/navin/utils/wsl_oom_guard.sh"))
+    assert len(guards) == 1
+
+
+def test_wsl_guard_uses_passwordless_sudo(tmp_path: Path) -> None:
+    proc, guard, guard_calls, sudo_calls = _guard_case(tmp_path, "needed", sudo_allowed=True)
+    assert guard_calls == ["status", "install"]
+    assert sudo_calls == ["-n true", f"-n sh {guard} install"]
+    assert proc.stderr == f"navin-install: {APPLIED}\n"
+
+
+def test_wsl_guard_without_sudo_or_tty_prints_the_command(tmp_path: Path) -> None:
+    guard_log = tmp_path / "guard.log"
+    archive = _cli_archive(tmp_path, "official", guard="needed", guard_log=guard_log)
+    fakebin, sudo_log = _fake_sudo(tmp_path, allow=False)
+    fake_id = fakebin / "id"
+    fake_id.write_text("#!/bin/sh\necho 1000\n", encoding="utf-8")
+    fake_id.chmod(0o755)
+    proc, env, home = _piped_install(
+        tmp_path, archive, {"PATH": f"{fakebin}:{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert _lines(guard_log) == ["status"]
+    assert _lines(sudo_log) == ["-n true"]
+    guards = list((home / ".local/share/navin/installs").glob(
+        "*/navin-dist/_internal/navin/utils/wsl_oom_guard.sh"))
+    assert len(guards) == 1
+    assert (
+        "navin-install: under WSL one out-of-memory kill stops every open terminal.\n"
+        f"navin-install: to protect the terminals later, run: sudo sh {guards[0]} install\n"
+    ) in proc.stderr
+    assert "[Y/n]" not in proc.stderr
+    assert proc.stderr.index("run: sudo sh") < proc.stderr.index("navin v2.0.7")
+    assert subprocess.check_output(
+        [str(home / ".local/bin/navin"), "--version"], env=env, text=True,
+    ) == "official:--version\n"
+
+
+def test_wsl_guard_opt_out_runs_nothing(tmp_path: Path) -> None:
+    proc, _, guard_calls, sudo_calls = _guard_case(
+        tmp_path, "needed", sudo_allowed=True, extra_env={"NAVIN_WSL_OOM_GUARD": "0"},
+    )
+    assert guard_calls == []
+    assert sudo_calls == []
+    assert proc.stderr == "navin-install: WSL memory guard skipped (NAVIN_WSL_OOM_GUARD=0)\n"
+
+
+@pytest.mark.parametrize("case", ["no-guard", "not-linux"])
+def test_wsl_guard_absent_or_not_linux_runs_nothing(tmp_path: Path, case: str) -> None:
+    proc, _, guard_calls, sudo_calls = _guard_case(
+        tmp_path, "needed", sudo_allowed=True, with_guard=case != "no-guard",
+        system="Darwin" if case == "not-linux" else "Linux",
+    )
+    assert guard_calls == []
+    assert sudo_calls == []
+    assert proc.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("status", "stderr"),
+    [("protected", f"navin-install: {GUARD_LINES['protected']}\n"), ("not-needed", "")],
+)
+def test_wsl_guard_not_needed_changes_nothing(tmp_path: Path, status: str, stderr: str) -> None:
+    proc, _, guard_calls, sudo_calls = _guard_case(tmp_path, status, sudo_allowed=True)
+    assert guard_calls == ["status"]
+    assert sudo_calls == []
+    assert proc.stderr == stderr

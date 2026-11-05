@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from navin.agent import worktree
+from navin.agent import peer_activity, worktree
 from navin.agent.approval import (
     SubagentApprovalGate,
     bind_approval_gate,
@@ -2639,7 +2639,29 @@ class SubagentManager:
             # Same route for a real fork: the ask_user card lands on the parent's
             # chat, named after this subagent, and waits for the user there.
             choice_token = bind_choice_broker(SubagentChoiceBroker(choice_broker, label=label))
+            # Its own entry in the cross-session registry, in its chat's family:
+            # the chat and its subagents never block each other, and other
+            # sessions see this agent and leave its files alone.
+            peer_family = sess_key or f"{origin['channel']}:{origin['chat_id']}"
+            peer_turn: peer_activity.PeerTurn | None = None
+            peer_token = None
             try:
+                if root:
+                    # Resolving stats every component: a worker, not the loop.
+                    peer_project = await asyncio.to_thread(peer_activity.resolve_project, root)
+                    peer_turn = peer_activity.begin_turn(
+                        project=peer_project,
+                        resolved=True,
+                        session_key=f"{peer_family}:subagent:{task_id}",
+                        family=peer_family,
+                        title=f"{label} (subagent)",
+                        surface=peer_activity.surface_for(origin.get("channel")),
+                        task=task,
+                        publish=False,
+                    )
+                    peer_token = peer_activity.bind_turn(peer_turn)
+                    await asyncio.to_thread(peer_activity.publish_turn, peer_turn)
+
                 async def _team_injections(*, limit: int = 64, wait: bool = False) -> list[dict[str, Any]]:
                     session = sess_key or f"{origin['channel']}:{origin['chat_id']}"
                     received = self.drain_team_messages(session, task_id, limit, record_delivery=False)
@@ -2716,6 +2738,9 @@ class SubagentManager:
                     allowed_tools=agent_allowed,
                 ))
             finally:
+                if peer_token is not None:
+                    peer_activity.reset_turn(peer_token)
+                peer_activity.end_turn(peer_turn)
                 reset_choice_broker(choice_token)
                 reset_approval_gate(approval_token)
                 reset_checkpoint_recorder(recorder_token)

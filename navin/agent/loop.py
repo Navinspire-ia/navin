@@ -23,6 +23,7 @@ from loguru import logger
 
 from navin.agent import context as agent_context
 from navin.agent import model_presets as preset_helpers
+from navin.agent import peer_activity
 from navin.agent.appfactory_hint import appfactory_hint_context_provider
 from navin.agent.approval import (
     ApprovalBroker,
@@ -1045,6 +1046,8 @@ class AgentLoop:
             request_checklist_context_provider,
             likely_locations_context_provider,
             git_state_context_provider,
+            # Agents of the other sessions of this project, when there are any.
+            peer_activity.peer_activity_context_provider,
             agent_context_pack_provider,
             board_context_provider,
             continuity_context_provider,
@@ -2559,7 +2562,27 @@ class AgentLoop:
             self._loop_guards.setdefault(active_session_key, AgentLoopGuard())
             if active_session_key and not ephemeral else None
         )
+        # Cross-session registry: other sessions of this project see this turn
+        # and leave the files it edits alone. The project path is resolved and
+        # the entry written in workers; the finally below always ends the turn.
+        peer_turn: peer_activity.PeerTurn | None = None
+        peer_token = None
         try:
+            if not ephemeral and active_session_key and effective_scope.project_path:
+                peer_project = await asyncio.to_thread(
+                    peer_activity.resolve_project, effective_scope.project_path
+                )
+                peer_turn = peer_activity.begin_turn(
+                    project=peer_project,
+                    resolved=True,
+                    session_key=active_session_key,
+                    title=str((session_metadata or {}).get("title") or ""),
+                    surface=peer_activity.surface_for(channel),
+                    task=original_user_text,
+                    publish=False,
+                )
+                peer_token = peer_activity.bind_turn(peer_turn)
+                await asyncio.to_thread(peer_activity.publish_turn, peer_turn)
             for scope in turn_scopes or ():
                 turn_scope_stack.enter_context(scope)
             if turn_loop_guard is not None:
@@ -2694,6 +2717,9 @@ class AgentLoop:
                 loop_guard=turn_loop_guard,
             ))
         finally:
+            if peer_token is not None:
+                peer_activity.reset_turn(peer_token)
+            peer_activity.end_turn(peer_turn)
             turn_scope_stack.close()
             if live_hook_token is not None:
                 reset_live_edit_hook(live_hook_token)

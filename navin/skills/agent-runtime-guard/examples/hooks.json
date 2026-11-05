@@ -1,0 +1,25 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "exec|write_file|edit_file|apply_patch|manage_files|infra|mcp_.*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ${NAVIN_PROJECT_DIR}/.navin/guard/guard_pretooluse.py --policy ${NAVIN_PROJECT_DIR}/.navin/guard/policy.json --log ${NAVIN_PROJECT_DIR}/.navin/guard/tool-calls.jsonl",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ${NAVIN_PROJECT_DIR}/.navin/guard/audit_tool_log.py ${NAVIN_PROJECT_DIR}/.navin/guard/tool-calls.jsonl --loop-threshold 5 >/dev/null || echo '{\"systemMessage\": \"agent-runtime-guard: denied calls or loops in this session, run audit_tool_log.py for the detail\"}'",
+          "timeout": 20
+        }
+      ]
+    }
+  ]
+}

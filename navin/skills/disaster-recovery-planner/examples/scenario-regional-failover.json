@@ -1,0 +1,47 @@
+{
+  "name": "Loss of the eu-west-1 primary region",
+  "type": "full_failover",
+  "date": "2026-04-18",
+  "start_time": "09:00",
+  "duration_minutes": 240,
+  "environment": "production",
+  "scope": "Customer-facing order and payment path (orders-db, payments-api, public DNS). Out of scope: data warehouse, internal back-office, third-party PSP connectivity (simulated).",
+  "objectives": [
+    "Prove that the eu-central-1 standby takes production traffic within the tier 1 RTO of 60 minutes",
+    "Measure the data loss on orders-db against the 5 minute RPO using Aurora global database replica lag",
+    "Exercise the decision chain from incident declaration to the regional failover decision",
+    "Produce evidence for DORA article 25 and the annual ISO 22301 exercise programme"
+  ],
+  "scenario": "At 09:00 UTC, monitoring reports a complete loss of connectivity to eu-west-1: EKS control plane unreachable, Aurora writer endpoint timing out, Route 53 health checks failing. The cloud provider status page confirms a regional event with no ETA. The incident commander must decide whether to fail over to eu-central-1.",
+  "systems": [
+    {"name": "orders-db", "tier": "1", "strategy": "warm standby (Aurora global database)", "target_rto_minutes": 60, "target_rpo_minutes": 5, "owner": "DBA on call"},
+    {"name": "payments-api", "tier": "1", "strategy": "warm standby (EKS, scaled to 20 %)", "target_rto_minutes": 60, "target_rpo_minutes": 15, "owner": "Platform on call"},
+    {"name": "public DNS and edge", "tier": "1", "strategy": "Route 53 failover records + ARC routing control", "target_rto_minutes": 15, "target_rpo_minutes": 0, "owner": "Network lead"}
+  ],
+  "injects": [
+    {"offset_minutes": 0, "title": "Regional outage alert", "description": "PagerDuty alert: Route 53 health checks failing for eu-west-1 endpoints; synthetic checkout failing", "expected_response": "On-call acknowledges, opens incident channel, declares SEV1 within 10 min", "owner": "Exercise director"},
+    {"offset_minutes": 10, "title": "Provider status page", "description": "Simulated AWS Health event: eu-west-1 multi-AZ power event, no ETA", "expected_response": "Incident commander convenes the failover decision call", "owner": "Exercise director"},
+    {"offset_minutes": 20, "title": "Failover decision", "description": "Decision point: fail over or wait", "expected_response": "Decision recorded with time, rationale and approver; replica lag read and logged before the switch", "owner": "Incident commander"},
+    {"offset_minutes": 25, "title": "Database promotion", "description": "Promote eu-central-1 Aurora cluster (managed failover unavailable, use detach and promote)", "expected_response": "Writer endpoint available in eu-central-1; application secrets updated", "owner": "DBA on call"},
+    {"offset_minutes": 35, "title": "Compute scale-up", "description": "Scale payments-api in eu-central-1 to 100 %", "expected_response": "Pods ready, readiness probes green, dependency checks pass", "owner": "Platform on call"},
+    {"offset_minutes": 45, "title": "Traffic switch", "description": "Rotate ARC routing control to eu-central-1", "expected_response": "Synthetic checkout succeeds from three regions; error rate under 1 %", "owner": "Network lead"},
+    {"offset_minutes": 60, "title": "Stakeholder update", "description": "Communications lead drafts customer status page update and regulator notification", "expected_response": "Drafts ready and reviewed; not published (exercise)", "owner": "Communications lead"},
+    {"offset_minutes": 90, "title": "Business validation", "description": "Business validator runs the checkout and refund checklist", "expected_response": "Checklist signed; service_validated timestamp recorded", "owner": "Business validator"},
+    {"offset_minutes": 150, "title": "Rollback", "description": "Primary region restored: re-establish replication, fail back during low traffic", "expected_response": "Replication lag zero, data reconciled, traffic back on eu-west-1", "owner": "DBA on call"}
+  ],
+  "roles": [
+    {"role": "Exercise director", "name": "M. Haddad", "contact": "+33 6 00 00 00 01"},
+    {"role": "Incident commander", "name": "S. Laurent", "contact": "#inc-exercise"},
+    {"role": "Observer / scribe", "name": "A. Benali", "contact": "#inc-exercise"}
+  ],
+  "success_criteria": [
+    "Failover decision taken within 20 minutes of the SEV1 declaration",
+    "No manual edit of application configuration outside the documented runbook"
+  ],
+  "communication": [
+    "Service desk and on-call teams notified 48 h before; exercise channel #inc-exercise; all messages prefixed EXERCISE.",
+    "Customer status page: draft only, publication requires CTO approval during the exercise.",
+    "DORA major incident notification template completed as a drill and archived as evidence."
+  ],
+  "regulatory_drivers": ["DORA art. 11(6) and art. 25", "ISO 22301 clause 8.5", "NIS2 art. 21(2)(c)"]
+}

@@ -254,6 +254,9 @@ class ManageFilesTool(_FsTool):
                 doomed.append(target)
 
         await asyncio.to_thread(self._refuse_oversized, doomed, "delete")
+        peer_refused = await self._peer_refusal(*doomed)
+        if peer_refused:
+            raise _ManageError(peer_refused)
         warnings = await asyncio.to_thread(self._warn_about, doomed)
         await self._ask_before_losing(
             "delete",
@@ -341,6 +344,11 @@ class ManageFilesTool(_FsTool):
         arriving = await asyncio.to_thread(_files_under, source)
         tracked = [*replaced, *([] if action == "copy" else arriving)]
         await asyncio.to_thread(self._refuse_oversized, tracked, action)
+        # A move takes the files away from their path and an overwrite replaces
+        # the ones it lands on: both change a live peer's files.
+        peer_refused = await self._peer_refusal(*tracked)
+        if peer_refused:
+            raise _ManageError(peer_refused)
         warnings = await asyncio.to_thread(self._warn_about, tracked)
         await self._ask_before_losing(
             action,

@@ -1,0 +1,84 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-03-02T09:14:00Z",
+    "tools": {
+      "components": [
+        {"type": "application", "name": "syft", "version": "1.20.0"}
+      ]
+    },
+    "authors": [{"name": "Platform Security Team", "email": "appsec@example.com"}],
+    "component": {
+      "type": "container",
+      "bom-ref": "pkg:oci/payments-api@sha256%3A9f2b1c",
+      "name": "registry.example.com/payments-api",
+      "version": "sha256:9f2b1c0e4d8a7b6c5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/requests@2.31.0",
+      "name": "requests",
+      "version": "2.31.0",
+      "purl": "pkg:pypi/requests@2.31.0",
+      "supplier": {"name": "Python Software Foundation"},
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/urllib3@1.26.18",
+      "name": "urllib3",
+      "version": "1.26.18",
+      "purl": "pkg:pypi/urllib3@1.26.18",
+      "supplier": {"name": "urllib3 maintainers"},
+      "licenses": [{"license": {"id": "MIT"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/certifi@2023.11.17",
+      "name": "certifi",
+      "version": "2023.11.17",
+      "purl": "pkg:pypi/certifi@2023.11.17",
+      "licenses": [{"license": {"id": "MPL-2.0"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:deb/debian/openssl@3.0.11-1~deb12u2?arch=amd64",
+      "name": "openssl",
+      "version": "3.0.11-1~deb12u2",
+      "purl": "pkg:deb/debian/openssl@3.0.11-1~deb12u2?arch=amd64",
+      "cpe": "cpe:2.3:a:openssl:openssl:3.0.11:*:*:*:*:*:*:*",
+      "supplier": {"name": "Debian"},
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {
+      "type": "library",
+      "bom-ref": "internal-auth-lib",
+      "name": "internal-auth-lib",
+      "version": "",
+      "supplier": {"name": "Example Corp"}
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/requests@2.31.0#dup",
+      "name": "requests",
+      "version": "2.31.0",
+      "purl": "pkg:pypi/requests@2.31.0",
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:oci/payments-api@sha256%3A9f2b1c",
+      "dependsOn": ["pkg:pypi/requests@2.31.0", "internal-auth-lib", "pkg:deb/debian/openssl@3.0.11-1~deb12u2?arch=amd64"]
+    },
+    {
+      "ref": "pkg:pypi/requests@2.31.0",
+      "dependsOn": ["pkg:pypi/urllib3@1.26.18", "pkg:pypi/certifi@2023.11.17"]
+    }
+  ]
+}

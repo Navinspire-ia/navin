@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import AliasChoices, Field
 
+from navin.agent import peer_activity
 from navin.agent.checkpoints import record_file_before
 from navin.agent.project_instructions import scoped_project_instructions
 from navin.agent.tools.atomic_write import encode_for
@@ -434,6 +435,18 @@ class _FsTool(Tool):
             remember_approved_path(remembered)
             resolve = self._resolve_write if write else self._resolve_read
             return await asyncio.to_thread(resolve, path)
+
+    @staticmethod
+    async def _peer_refusal(*paths: Path) -> str | None:
+        """Refusal when a live agent of another session is editing one of these.
+
+        The same chat and its own subagents are never refused; the claim of a
+        peer ends with its turn or its process (navin/agent/peer_activity.py).
+        """
+        if peer_activity.current_turn() is None:
+            return None
+        # One small directory listing plus a process lookup per entry.
+        return await asyncio.to_thread(peer_activity.first_refusal, list(paths))
 
     async def _ask_outside_workspace(self, path: str, *, write: bool) -> bool:
         from navin.agent.approval import ApprovalRequest, request_approval
@@ -1209,6 +1222,9 @@ class WriteFileTool(_FsTool):
             if content is None:
                 raise ValueError("Unknown content")
             fp = await self._bound_path(path, write=True)
+            peer_refused = await self._peer_refusal(fp)
+            if peer_refused:
+                return ToolResult.error(peer_refused)
             # Compares a hash of the file on disk: a whole read, in a worker.
             refused = await asyncio.to_thread(self._stale_overwrite_refusal, fp)
             if refused:
@@ -1256,7 +1272,9 @@ class WriteFileTool(_FsTool):
                 continue
             try:
                 fp = await self._bound_path(str(item["path"]), write=True)
-                refused = await asyncio.to_thread(self._stale_overwrite_refusal, fp)
+                refused = await self._peer_refusal(fp)
+                if refused is None:
+                    refused = await asyncio.to_thread(self._stale_overwrite_refusal, fp)
                 if refused:
                     errors.append(refused)
                     continue
@@ -1741,6 +1759,11 @@ class EditFileTool(_FsTool):
             exists, _, _ = await self._path_kind(fp)
             if not exists:
                 return self._file_not_found_msg(path, fp)
+            # Before the first edit: a refused edit restores the original
+            # bytes, which would still be a write into the peer's file.
+            peer_refused = await self._peer_refusal(fp)
+            if peer_refused:
+                return ToolResult.error(peer_refused)
             original = (await asyncio.to_thread(fp.read_bytes))
             before = text_decode.decode(original)
             if before is None:
@@ -1803,6 +1826,9 @@ class EditFileTool(_FsTool):
                 return ToolResult.error("Error: expected_replacements must be >= 1.")
 
             fp = await self._bound_path(path, write=True)
+            peer_refused = await self._peer_refusal(fp)
+            if peer_refused:
+                return ToolResult.error(peer_refused)
             if fp.suffix.lower() == ".ipynb" and (await self._path_kind(fp))[0]:
                 # read_file shows cells, not the JSON the anchor would have to
                 # match; the cell tool is the only edit that lines up with it.

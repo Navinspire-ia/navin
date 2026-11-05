@@ -1,0 +1,689 @@
+{
+ "content": [
+  {
+   "id": "span-1-00",
+   "trace_id": "trace-1",
+   "parent_span_id": "span-1-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.893000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-1-01",
+   "trace_id": "trace-1",
+   "parent_span_id": "span-1-root",
+   "project_name": "support-agent",
+   "name": "send_email",
+   "type": "tool",
+   "input": {
+    "to": "ops@example.com"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.393000Z",
+   "end_time": "2026-03-05T09:00:01.918000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-1-02",
+   "trace_id": "trace-1",
+   "parent_span_id": "span-1-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:02.418000Z",
+   "end_time": "2026-03-05T09:00:03.151000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-2-00",
+   "trace_id": "trace-2",
+   "parent_span_id": "span-2-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.477000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-2-01",
+   "trace_id": "trace-2",
+   "parent_span_id": "span-2-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00.977000Z",
+   "end_time": "2026-03-05T09:00:01.465000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-2-02",
+   "trace_id": "trace-2",
+   "parent_span_id": "span-2-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.965000Z",
+   "end_time": "2026-03-05T09:00:02.755000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-2-03",
+   "trace_id": "trace-2",
+   "parent_span_id": "span-2-root",
+   "project_name": "support-agent",
+   "name": "send_email",
+   "type": "tool",
+   "input": {
+    "to": "ops@example.com"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:03.255000Z",
+   "end_time": "2026-03-05T09:00:03.809000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "timeout"
+   }
+  },
+  {
+   "id": "span-3-00",
+   "trace_id": "trace-3",
+   "parent_span_id": "span-3-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.085000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-3-01",
+   "trace_id": "trace-3",
+   "parent_span_id": "span-3-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00.585000Z",
+   "end_time": "2026-03-05T09:00:01.382000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-3-02",
+   "trace_id": "trace-3",
+   "parent_span_id": "span-3-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.882000Z",
+   "end_time": "2026-03-05T09:00:02.196000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-3-03",
+   "trace_id": "trace-3",
+   "parent_span_id": "span-3-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:02.696000Z",
+   "end_time": "2026-03-05T09:00:03.471000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-4-00",
+   "trace_id": "trace-4",
+   "parent_span_id": "span-4-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.522000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-4-01",
+   "trace_id": "trace-4",
+   "parent_span_id": "span-4-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.022000Z",
+   "end_time": "2026-03-05T09:00:01.531000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-5-00",
+   "trace_id": "trace-5",
+   "parent_span_id": "span-5-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.336000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-5-01",
+   "trace_id": "trace-5",
+   "parent_span_id": "span-5-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:00.836000Z",
+   "end_time": "2026-03-05T09:00:01.382000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "timeout"
+   }
+  },
+  {
+   "id": "span-5-02",
+   "trace_id": "trace-5",
+   "parent_span_id": "span-5-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.882000Z",
+   "end_time": "2026-03-05T09:00:02.492000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-5-03",
+   "trace_id": "trace-5",
+   "parent_span_id": "span-5-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:02.992000Z",
+   "end_time": "2026-03-05T09:00:03.742000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-5-04",
+   "trace_id": "trace-5",
+   "parent_span_id": "span-5-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:04.242000Z",
+   "end_time": "2026-03-05T09:00:04.720000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-6-00",
+   "trace_id": "trace-6",
+   "parent_span_id": "span-6-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.337000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-6-01",
+   "trace_id": "trace-6",
+   "parent_span_id": "span-6-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00.837000Z",
+   "end_time": "2026-03-05T09:00:01.650000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-7-00",
+   "trace_id": "trace-7",
+   "parent_span_id": "span-7-root",
+   "project_name": "support-agent",
+   "name": "send_email",
+   "type": "tool",
+   "input": {
+    "to": "ops@example.com"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.183000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-7-01",
+   "trace_id": "trace-7",
+   "parent_span_id": "span-7-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00.683000Z",
+   "end_time": "2026-03-05T09:00:01.317000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-7-02",
+   "trace_id": "trace-7",
+   "parent_span_id": "span-7-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:01.817000Z",
+   "end_time": "2026-03-05T09:00:02.421000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "timeout"
+   }
+  },
+  {
+   "id": "span-8-00",
+   "trace_id": "trace-8",
+   "parent_span_id": "span-8-root",
+   "project_name": "support-agent",
+   "name": "send_email",
+   "type": "tool",
+   "input": {
+    "to": "ops@example.com"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.500000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-8-01",
+   "trace_id": "trace-8",
+   "parent_span_id": "span-8-root",
+   "project_name": "support-agent",
+   "name": "sql_query",
+   "type": "tool",
+   "input": {
+    "sql": "select count(*) from orders"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01Z",
+   "end_time": "2026-03-05T09:00:01.295000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-8-02",
+   "trace_id": "trace-8",
+   "parent_span_id": "span-8-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "A-1001"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:01.795000Z",
+   "end_time": "2026-03-05T09:00:02.276000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-8-03",
+   "trace_id": "trace-8",
+   "parent_span_id": "span-8-root",
+   "project_name": "support-agent",
+   "name": "search_kb",
+   "type": "tool",
+   "input": {
+    "query": "refund policy"
+   },
+   "output": {
+    "ok": true
+   },
+   "start_time": "2026-03-05T09:00:02.776000Z",
+   "end_time": "2026-03-05T09:00:03.602000Z",
+   "tags": [
+    "prod"
+   ]
+  },
+  {
+   "id": "span-9-00",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:00.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-9-01",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:02Z",
+   "end_time": "2026-03-05T09:00:02.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-9-02",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:04Z",
+   "end_time": "2026-03-05T09:00:04.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-9-03",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:06Z",
+   "end_time": "2026-03-05T09:00:06.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-9-04",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:08Z",
+   "end_time": "2026-03-05T09:00:08.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-9-05",
+   "trace_id": "trace-9",
+   "parent_span_id": "span-9-root",
+   "project_name": "support-agent",
+   "name": "get_order",
+   "type": "tool",
+   "input": {
+    "order_id": "B-404"
+   },
+   "output": {
+    "ok": false
+   },
+   "start_time": "2026-03-05T09:00:10Z",
+   "end_time": "2026-03-05T09:00:10.650000Z",
+   "tags": [
+    "prod"
+   ],
+   "error_info": {
+    "exception_type": "ToolError",
+    "message": "order not found"
+   }
+  },
+  {
+   "id": "span-1-root",
+   "trace_id": "trace-1",
+   "type": "llm",
+   "name": "chat gpt-4o",
+   "input": {
+    "messages": "[redacted]"
+   },
+   "output": {
+    "choices": 1
+   },
+   "usage": {
+    "prompt_tokens": 812,
+    "completion_tokens": 133,
+    "total_tokens": 945
+   },
+   "start_time": "2026-03-05T09:00:00Z",
+   "end_time": "2026-03-05T09:00:03Z"
+  }
+ ],
+ "page": 1,
+ "size": 34,
+ "total": 34
+}

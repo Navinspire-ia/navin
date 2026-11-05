@@ -1,0 +1,12 @@
+user,type,privileged,mfa,last_login,manager,status,key_age_days,hr_status,source
+alice.martin,human,false,true,2026-03-28,pierre.dupont,active,,active,entra
+bob.durand,human,true,false,2026-03-30,pierre.dupont,active,,active,entra
+claire.petit,human,true,true,2025-11-02,sophie.bernard,active,,active,okta
+david.roux,human,true,true,2026-03-29,,active,,active,aws
+emma.leroy,human,false,true,2026-01-15,sophie.bernard,active,,leaver,entra
+farid.benali,human,false,true,2026-02-10,sophie.bernard,disabled,,leaver,entra
+svc-ci-deployer,service,true,false,2026-03-31,platform-team,active,412,,aws
+svc-backup,service,false,false,2026-03-31,,active,30,,gcp
+svc-reporting,service,false,false,,data-team,active,45,,aws
+breakglass-admin-01,break-glass,true,true,2026-03-12,ciso-office,active,,,entra
+breakglass-admin-02,break-glass,true,true,,ciso-office,active,,,entra

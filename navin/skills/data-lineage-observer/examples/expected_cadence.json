@@ -1,0 +1,21 @@
+{
+  "postgres://warehouse.internal:5432/raw.orders": {
+    "cadence_minutes": 60,
+    "grace_minutes": 15,
+    "owner": "data-platform"
+  },
+  "postgres://warehouse.internal:5432/analytics.fct_orders": {
+    "cadence_minutes": 1440,
+    "grace_minutes": 120,
+    "owner": "analytics-eng"
+  },
+  "postgres://warehouse.internal:5432/analytics.daily_revenue": {
+    "cadence_minutes": 1440,
+    "grace_minutes": 60,
+    "owner": "finance-bi"
+  },
+  "postgres://warehouse.internal:5432/ml.customer_features": {
+    "cadence_minutes": 1440,
+    "owner": "ml-platform"
+  }
+}

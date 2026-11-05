@@ -1,0 +1,19 @@
+{
+  "vendor": "legacy-ids",
+  "timestamp": "ts",
+  "fields": {
+    "event.id": "alert_id",
+    "host.name": "sensor.hostname",
+    "user.name": "actor",
+    "source.ip": "src",
+    "destination.ip": "dst",
+    "destination.port": "dport",
+    "rule.name": "sig",
+    "threat.tactic.name": "mitre_tactic",
+    "threat.technique.id": "mitre_tech"
+  },
+  "severity": {
+    "field": "prio",
+    "scale": {"1": "critical", "2": "high", "3": "medium", "4": "low"}
+  }
+}

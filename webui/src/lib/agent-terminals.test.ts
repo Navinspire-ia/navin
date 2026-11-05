@@ -35,9 +35,16 @@ describe("terminals per project", () => {
   it("shows only this chat's agent commands and this project's shells", () => {
     expect(terminalBelongsHere({ kind: "agent", chatId: "shop" }, "shop", "/p/shop")).toBe(true);
     expect(terminalBelongsHere({ kind: "agent", chatId: "crm" }, "shop", "/p/shop")).toBe(false);
-    expect(terminalBelongsHere({ kind: "agent", chatId: "*" }, "shop", "/p/shop")).toBe(true);
+    // Strict isolation: no broadcast or unscoped agent tab leaks into a chat.
+    expect(terminalBelongsHere({ kind: "agent", chatId: "*" }, "shop", "/p/shop")).toBe(false);
+    expect(terminalBelongsHere({ kind: "agent", chatId: "" }, "shop", "/p/shop")).toBe(false);
+    expect(terminalBelongsHere({ kind: "agent" }, "shop", "/p/shop")).toBe(false);
+    expect(terminalBelongsHere({ kind: "agent", chatId: "shop" }, null, null)).toBe(false);
     expect(terminalBelongsHere({ kind: "pty", root: "/p/shop" }, "shop", "/p/shop/")).toBe(true);
     expect(terminalBelongsHere({ kind: "pty", root: "/p/crm" }, "shop", "/p/shop")).toBe(false);
-    expect(terminalBelongsHere({ kind: "pty" }, "shop", "/p/shop")).toBe(true);
+    // A shell opened with no project stays with "no project", and vice versa.
+    expect(terminalBelongsHere({ kind: "pty" }, "shop", "/p/shop")).toBe(false);
+    expect(terminalBelongsHere({ kind: "pty", root: null }, null, null)).toBe(true);
+    expect(terminalBelongsHere({ kind: "pty", root: "/p/shop" }, null, null)).toBe(false);
   });
 });

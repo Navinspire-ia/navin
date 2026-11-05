@@ -185,6 +185,27 @@ def _install_hyperframes() -> InstallOutcome:
     return InstallOutcome("hyperframes", "failed", str(result.get("fix") or result.get("error") or ""))
 
 
+def _install_wsl_guard(
+    section: Section, *, interactive: bool, log: Callable[[str], None] | None,
+) -> list[InstallOutcome]:
+    """The Memory line ``wsl oom policy``: give init.scope OOMPolicy=continue.
+
+    As root it is applied at once; otherwise through sudo, which asks for the
+    password at this terminal (``sudo -n`` without one, so it never hangs).
+    """
+    if not any(check.name == "wsl oom policy" and not check.ok for check in section.checks):
+        return []
+    from navin.utils import wsl_guard
+    from navin.utils.process_isolation import WSL_OOM_FIX
+
+    if log:
+        log("wsl oom policy: giving init.scope OOMPolicy=continue (sudo may ask for your password)")
+    result = wsl_guard.install_here(interactive=interactive)
+    if result.state in ("applied", "present"):
+        return [InstallOutcome("wsl oom policy", "installed", result.detail)]
+    return [InstallOutcome("wsl oom policy", "manual", f"{result.state}: {result.detail}", WSL_OOM_FIX)]
+
+
 def install_missing_tools(
     sections: list[Section],
     *,
@@ -205,6 +226,9 @@ def install_missing_tools(
         interactive = sys.stdin is not None and sys.stdin.isatty()
     outcomes: list[InstallOutcome] = []
     for section in sections:
+        if section.title == "Memory":
+            outcomes += _install_wsl_guard(section, interactive=interactive, log=log)
+            continue
         if section.title != "External tools":
             continue
         for check in section.checks:
@@ -323,6 +347,68 @@ def runtime_checks() -> list[Check]:
                 hint="" if extras else "this build cannot report which features it ships",
             )
         )
+    return checks
+
+
+def memory_checks() -> list[Check]:
+    """Memory headroom, and under WSL whether one OOM kill stops every terminal.
+
+    On 2026-11-05 the kernel killed one 68 MB browser process in a full WSL
+    VM; systemd's ``init.scope``, where WSL puts every terminal, has
+    ``OOMPolicy=stop``, so it stopped all of them with eight navin-cli.
+    """
+    import psutil
+
+    from navin.utils.process_isolation import (
+        LINGER_FIX,
+        WSL_OOM_FIX,
+        user_manager_persists,
+        wsl_oom_policy,
+    )
+
+    gib = 1024**3
+    memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    free_share = memory.available / memory.total if memory.total else 1.0
+    roomy = free_share >= 0.10
+    checks = [
+        Check(
+            name="memory",
+            ok=roomy,
+            detail=(
+                f"{memory.available / gib:.1f} GB free of {memory.total / gib:.1f} GB, "
+                f"swap {swap.used / gib:.1f} of {swap.total / gib:.1f} GB used"
+            ),
+            hint="" if roomy else "close idle navin-cli windows and browsers, or give the machine more memory",
+        )
+    ]
+    policy = wsl_oom_policy()
+    if policy is None:
+        return checks
+    safe = policy == "continue"
+    checks.append(
+        Check(
+            name="wsl oom policy",
+            ok=safe,
+            detail=f"init.scope OOMPolicy={policy}"
+            + ("" if safe else ": one out-of-memory kill stops every terminal and every Navin"),
+            hint="" if safe else f"navin doctor --install applies it, or run: {WSL_OOM_FIX}",
+        )
+    )
+    # Lingering only adds a scope per navin-cli: information, never a MISS.
+    persists = user_manager_persists()
+    checks.append(
+        Check(
+            name="process isolation",
+            ok=True,
+            detail=(
+                "each navin-cli and gateway gets a systemd scope of its own"
+                if persists
+                else f"optional: {LINGER_FIX} gives each navin-cli a systemd scope of its own"
+            ),
+            hint="",
+        )
+    )
     return checks
 
 
@@ -699,6 +785,7 @@ def doctor_report(
             connectivity_checks(config, workspace=workspace),
         ),
         Section("Python runtime", runtime_checks()),
+        Section("Memory", memory_checks()),
         Section("Code quality tools", quality_checks()),
         Section(
             "External tools",

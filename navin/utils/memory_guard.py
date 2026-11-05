@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
+
+from navin.utils.process_isolation import raise_oom_score
 
 _GIB = 1024 * 1024 * 1024
 _MIB = 1024 * 1024
@@ -126,6 +129,12 @@ def _kill_tree(root_pid: int, pids: list[int]) -> None:
 
 
 _NICENESS = 10
+# +200 puts an agent command (and what it starts) ahead of the CLI or the
+# gateway, which hold the user's sessions, when the kernel must kill one, but
+# after a browser (+300): that one sits in a systemd scope of its own, where a
+# kill stops nothing else, and the next browser action relaunches it.
+_OOM_SCORE_ADJ = 200
+_OOM_SCORE_RE = re.compile(r"-?\d{1,4}")
 
 
 def lower_priority(pid: int) -> None:
@@ -146,6 +155,19 @@ def lower_priority(pid: int) -> None:
         return
     with suppress(OSError):
         os.setpriority(os.PRIO_PROCESS, pid, niceness)
+
+
+def raise_oom_priority(pid: int) -> bool:
+    """Make the kernel's out-of-memory killer pick this command first.
+
+    When the whole machine runs out, the kernel kills the process with the
+    highest score; a runaway build should go before the navin-cli that
+    started it. Set right after the spawn, so the command's children inherit
+    it. ``NAVIN_EXEC_OOM_SCORE_ADJ=0`` leaves the score alone.
+    """
+    raw = os.environ.get("NAVIN_EXEC_OOM_SCORE_ADJ", "").strip()
+    value = int(raw) if _OOM_SCORE_RE.fullmatch(raw) else _OOM_SCORE_ADJ
+    return raise_oom_score(pid, value)
 
 
 @dataclass
@@ -204,6 +226,7 @@ class MemoryGuard:
         """Guard a just-spawned process for its whole life, foreground or not."""
         pid = int(getattr(process, "pid"))
         lower_priority(pid)
+        raise_oom_priority(pid)
         guard = cls(pid).start()
         with suppress(AttributeError):
             setattr(process, _ATTRIBUTE, guard)

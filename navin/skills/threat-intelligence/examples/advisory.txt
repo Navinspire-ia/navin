@@ -1,0 +1,31 @@
+# CERT advisory excerpt (sanitised sample for ioc_extract.py)
+
+The loader was delivered by a phishing e-mail from billing[@]invoice-portal-secure[.]com
+with the attachment Facture_2026-03.docm (SHA256
+9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08). The macro
+fetched hxxps://cdn-update-service[.]net/assets/loader.ps1 and dropped
+C:\Users\Public\svchost32.exe (MD5 d41d8cd98f00b204e9800998ecf8427e, SHA1
+da39a3ee5e6b4b0d3255bfef95601890afd80709).
+
+Command and control was observed towards 185[.]220[.]101[.]45:443 and
+45.153.160(.)2, with a fallback to the domain api.telemetry-sync[.]org. Internal
+pivoting used 10.20.1.10 and 192.168.1.1 (RFC 1918, not indicators). The
+malware created the mutex Global\MsWinZonesCacheCounterMutexA0 and exploited
+CVE-2023-36884 for initial execution. Updates were downloaded from
+https://www.microsoft.com/download and the sample called
+https://dl.google.com/update2 (benign noise). A second stage URL
+http://cdn-update-service.net/assets/stage2.zip was seen once. IPv6 beacon:
+2a0b:f4c2:2::45.
+
+Ransom note demanded payment to bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq.
+Contact e-mail in the note: recover-files[@]proton[.]me.
+
+Detection:
+
+rule Loader_Facture_2026 : loader
+{
+    strings:
+        $a = "cdn-update-service" ascii
+    condition:
+        $a
+}

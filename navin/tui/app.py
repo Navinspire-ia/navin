@@ -778,6 +778,27 @@ class NavinApp(App[None]):
             project=self._project_label(),
         )
         self._quit_confirmed = True
+        # The turns are told before the quit cancels them: a stop from
+        # outside must not use up their replay (TurnRecovery.note_external_stop).
+        self._stop_signal_task = asyncio.create_task(self._quit_after_stop_signal(name), name=f"navin-stop-{name}")
+
+    async def _quit_after_stop_signal(self, name: str) -> None:
+        note = getattr(self.runtime, "note_external_stop", None)
+        if callable(note):
+            try:
+                kept = await note(name)
+            except Exception as exc:
+                resilience.record(
+                    "signal", f"{name}: could not keep the resume of the running turns: {exc!r}",
+                    project=self._project_label(),
+                )
+            else:
+                if kept:
+                    turns = "turn will" if kept == 1 else "turns will"
+                    resilience.record(
+                        "signal", f"{name}: {kept} {turns} resume at the next start",
+                        project=self._project_label(),
+                    )
         self.call_later(self.action_quit, f"signal {name}")
 
     def _work_counts(self) -> tuple[int, int]:
@@ -974,6 +995,7 @@ class NavinApp(App[None]):
         # The first stop signal (SIGHUP, SIGTERM) and what ends the process if
         # its clean quit does not come (see _stop_signal_received).
         self._stop_signal: str | None = None
+        self._stop_signal_task: asyncio.Task | None = None
         self._stop_watchdog: resilience.StopWatchdog | None = None
         # Set by run_tui: gives the terminal its modes back on a forced exit.
         self._terminal_guard: Any = None
@@ -1101,12 +1123,26 @@ class NavinApp(App[None]):
         self.run_worker(
             asyncio.to_thread(warm_code_lexers), group="warm-lexers", exit_on_error=False,
         )
+        # Under WSL without root: once per version, how to keep one
+        # out-of-memory kill from stopping every terminal.
+        self.run_worker(self._wsl_guard_notice(), group="wsl-guard", exit_on_error=False)
         self.set_interval(0.12, self._tick_spinner)
         self.set_interval(2, self._refresh_context_status)
         if live_modules_available():
             self._load_account(refresh=True)
             self.set_interval(60, self._load_account)
         self.run_worker(self._boot(), exclusive=True, name="boot")
+
+    async def _wsl_guard_notice(self) -> None:
+        if self.is_headless:
+            # Nobody reads a headless screen: marking the reminder as shown
+            # there would hide it from the person who needs it.
+            return
+        from navin.utils import wsl_guard
+
+        text = await asyncio.to_thread(wsl_guard.reminder_once)
+        if text:
+            self.notify(text, title="navin-cli", severity="warning", timeout=30)
 
     def _place_composer(self) -> None:
         """No conversation yet: the prompt waits halfway down the screen.

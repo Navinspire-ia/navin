@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "/home/me/project",
+  "session_id": "cli:direct",
+  "tool_name": "mcp_crm_search_contacts",
+  "tool_input": {"query": "invoices 2026", "limit": 50}
+}

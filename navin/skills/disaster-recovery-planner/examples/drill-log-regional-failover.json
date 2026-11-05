@@ -1,0 +1,48 @@
+{
+  "exercise": "Q1 2026 regional failover drill (eu-west-1 to eu-central-1)",
+  "date": "2026-03-14",
+  "systems": [
+    {
+      "name": "orders-db (Aurora PostgreSQL global database)",
+      "tier": "1",
+      "target_rto_minutes": 60,
+      "target_rpo_minutes": 5,
+      "timestamps": {
+        "incident_declared": "2026-03-14T09:00:00Z",
+        "failover_decided": "2026-03-14T09:08:00Z",
+        "restore_started": "2026-03-14T09:10:00Z",
+        "service_restored": "2026-03-14T09:24:00Z",
+        "service_validated": "2026-03-14T09:31:00Z"
+      },
+      "replica_lag_seconds": 42
+    },
+    {
+      "name": "payments-api (EKS, warm standby)",
+      "tier": "1",
+      "target_rto_minutes": 60,
+      "target_rpo_minutes": 15,
+      "timestamps": {
+        "incident_declared": "2026-03-14T09:00:00Z",
+        "failover_decided": "2026-03-14T09:08:00Z",
+        "restore_started": "2026-03-14T09:12:00Z",
+        "service_restored": "2026-03-14T09:47:00Z",
+        "service_validated": "2026-03-14T09:58:00Z"
+      },
+      "last_consistent_backup": "2026-03-14T08:55:00Z"
+    },
+    {
+      "name": "reporting-warehouse (backup and restore)",
+      "tier": "3",
+      "target_rto_minutes": 240,
+      "target_rpo_minutes": 60,
+      "timestamps": {
+        "incident_declared": "2026-03-14T09:00:00Z",
+        "failover_decided": "2026-03-14T09:30:00Z",
+        "restore_started": "2026-03-14T09:45:00Z",
+        "service_restored": "2026-03-14T13:35:00Z",
+        "service_validated": "2026-03-14T13:50:00Z"
+      },
+      "last_consistent_backup": "2026-03-14T06:00:00Z"
+    }
+  ]
+}

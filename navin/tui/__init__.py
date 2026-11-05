@@ -17,8 +17,14 @@ __all__ = ["run_tui"]
 def run_tui(**kwargs):  # type: ignore[no-untyped-def]
     """Lazy entry point so importing ``navin.tui`` stays cheap."""
     from navin.tui.terminal import prepare_terminal_env
+    from navin.utils.process_isolation import prepare_process
 
     prepare_terminal_env()  # before Textual reads TEXTUAL_COLOR_SYSTEM
+    from navin.tui import resilience
+
+    # Before the UI starts its threads: glibc arenas, and a systemd scope of
+    # its own so one out-of-memory kill elsewhere does not stop this CLI.
+    prepare_process("cli", report=lambda text: resilience.record("process", text))
     from navin.tui.app import run_tui as _run
 
     return _run(**kwargs)

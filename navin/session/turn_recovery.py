@@ -11,6 +11,8 @@ import time
 import uuid
 from typing import Any
 
+from loguru import logger
+
 from navin.bus.events import InboundMessage
 from navin.session import turn_continuation as continuation
 from navin.session.manager import Session, SessionManager
@@ -23,6 +25,13 @@ MAX_RECOVERY_ATTEMPTS = 6
 # machine, a runaway command under WSL) down would otherwise do it at every
 # start. The user resumes it with a message.
 REPLAYED_AFTER_RESTART = "replayed_after_restart"
+# Graceful stops from outside the turn (SIGTERM, SIGHUP) that may each spare
+# its replay (see ``TurnRecovery.note_external_stop``). Past this, a turn cut
+# again after a replay waits for the user, whatever stopped the process.
+MAX_EXTERNAL_STOPS = 3
+# Below this share of available memory, a stop is not trusted to be external:
+# the turn itself may be what filled the memory.
+MEMORY_PRESSURE_AVAILABLE_RATIO = 0.10
 RECOVERY_ID_META = "_turn_recovery_id"
 TRACKED_REQUEST_META = "_turn_recovery_request"
 _CHANNELS = frozenset({"websocket", "cli"})
@@ -64,6 +73,20 @@ def portable_request(msg: InboundMessage) -> dict[str, Any]:
 
 def _replayable_channel(channel: Any) -> bool:
     return isinstance(channel, str) and bool(channel) and channel != "system"
+
+
+def memory_pressure() -> bool | None:
+    """True when less than 10% of the memory is available; None when unreadable."""
+    import psutil
+
+    try:
+        memory = psutil.virtual_memory()
+    except (OSError, RuntimeError) as exc:
+        logger.warning("Could not read the memory pressure: {}", exc)
+        return None
+    if not memory.total:
+        return None
+    return memory.available < MEMORY_PRESSURE_AVAILABLE_RATIO * memory.total
 
 
 class TurnRecovery:
@@ -162,6 +185,69 @@ class TurnRecovery:
         if changed:
             self.sessions.save(session, fsync=True)
 
+    def note_external_stop(self, keys: Any, reason: str) -> list[str]:
+        """A stop signal from outside ends the process: keep the replay of these turns.
+
+        Why: on 2026-11-05 a kernel OOM kill under WSL made systemd stop every
+        terminal. Each navin-cli got SIGTERM and quit cleanly; its turn was
+        replayed at the next start, then systemd killed the restarted CLIs
+        again. At the start after that, every turn was abandoned as "stopped
+        twice in a row": the crash-loop guard (``REPLAYED_AFTER_RESTART``)
+        took the second stop for a turn that brings the process down. A
+        SIGTERM or SIGHUP (systemd, terminal closed, WSL or OS shutdown) did
+        not come from the turn, so it must not use up its replay.
+
+        For each session with a record still running or waiting, the stop is
+        written in ``last_stop``. Without memory pressure and below
+        ``MAX_EXTERNAL_STOPS``, it counts in ``external_stops`` and the replay
+        mark is dropped: this cut is explained. Under memory pressure (or
+        unreadable memory, or past the bound) the mark stays and the normal
+        rule applies: the turn may be what filled the memory. Each record is
+        written with fsync. Returns the keys whose replay was kept.
+        """
+        kept, changed = self._note_external_stop_records(keys, reason)
+        for session in changed:
+            self.sessions.save(session, fsync=True)
+        return kept
+
+    async def note_external_stop_async(self, keys: Any, reason: str) -> list[str]:
+        """``note_external_stop`` with its fsync writes in a worker thread, awaited.
+
+        The records are updated on the loop, as in ``begin_async``.
+        """
+        kept, changed = self._note_external_stop_records(keys, reason)
+        for session in changed:
+            await self.sessions.save_async(session, fsync=True)
+        return kept
+
+    def _note_external_stop_records(self, keys: Any, reason: str) -> tuple[list[str], list[Session]]:
+        kept: list[str] = []
+        changed: list[Session] = []
+        pressure: bool | None = False
+        pressure_read = False
+        for key in dict.fromkeys(keys):
+            session = self.sessions.peek(key)
+            if session is None or not recovery_pending(session.metadata):
+                continue
+            if not pressure_read:
+                pressure, pressure_read = memory_pressure(), True
+            record = session.metadata[RECOVERY_KEY]
+            stop: dict[str, Any] = {"reason": str(reason), "at": time.time()}
+            stops = max(0, int(record.get("external_stops") or 0))
+            if pressure is None:
+                stop["memory_unknown"] = True
+            elif pressure:
+                stop["memory_pressure"] = True
+            elif stops >= MAX_EXTERNAL_STOPS:
+                stop["limit"] = True
+            else:
+                record["external_stops"] = stops + 1
+                record.pop(REPLAYED_AFTER_RESTART, None)
+                kept.append(key)
+            record["last_stop"] = stop
+            changed.append(session)
+        return kept, changed
+
     def schedule(self, session: Session, *, retry_after: float | None = None) -> float | None:
         record = session.metadata.get(RECOVERY_KEY)
         if not isinstance(record, dict):
@@ -226,7 +312,8 @@ class TurnRecovery:
         ``external`` also resumes requests from non-interactive channels (chat
         apps), which only the gateway serves. A request is replayed after one
         restart only: cut again after that replay, it may be what brings the
-        process down, so it waits for the user (``cut_twice``). One idle for
+        process down, so it waits for the user (``cut_twice``), unless an
+        outside stop signal explained the cut (``note_external_stop``). One idle for
         over ``MAX_RECOVERY_AGE_S`` is dropped. Both end up in ``abandoned``.
         """
         keys = [session_key] if session_key else [row["key"] for row in self.sessions.list_sessions()]

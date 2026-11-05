@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "/home/me/project",
+  "session_id": "cli:direct",
+  "tool_name": "write_file",
+  "tool_input": {"path": ".env", "content": "OPENAI_API_KEY=sk-live-0123456789abcdefghijklmnop"}
+}

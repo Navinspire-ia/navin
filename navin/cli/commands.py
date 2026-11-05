@@ -152,13 +152,39 @@ def _ensure_interactive_tty_mode() -> None:
         logger.debug("Restored foreground gateway TTY mode")
 
 
+async def _note_gateway_external_stop(agent: Any, signal_name: str) -> list[str]:
+    """Before a signal stop cancels them, keep the replay of the gateway's turns.
+
+    The stop came from outside (systemd, Ctrl+C, OS shutdown), not from the
+    turns: see ``TurnRecovery.note_external_stop``. Returns the kept keys.
+    """
+    recovery = getattr(agent, "turn_recovery", None)
+    if recovery is None:
+        return []
+    keys = {
+        key for key, running in (getattr(agent, "_active_tasks", None) or {}).items()
+        if any(not task.done() for task in running)
+    }
+    # A turn waiting out a provider backoff is cut by the stop as well.
+    keys.update(key for key in list(recovery.due) if recovery.waiting(key))
+    if not keys:
+        return []
+    kept = await recovery.note_external_stop_async(sorted(keys), signal_name)
+    logger.info("Shutdown by {}: {} of {} turn(s) will resume at the next start", signal_name, len(kept), len(keys))
+    return kept
+
+
 def _install_gateway_shutdown_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     tasks: list[asyncio.Task],
     print_status: Callable[[str], None],
+    stop_signals: list[str] | None = None,
 ) -> Callable[[], None]:
-    """Install foreground gateway signal handlers and return a restore callback."""
+    """Install foreground gateway signal handlers and return a restore callback.
+
+    ``stop_signals`` receives the name of the signal that asked for the stop.
+    """
     loop_signals: list[int] = []
     previous_handlers: list[tuple[int, Any]] = []
     shutdown_requested = False
@@ -173,6 +199,8 @@ def _install_gateway_shutdown_handlers(
                     task.cancel()
             return
         shutdown_requested = True
+        if stop_signals is not None:
+            stop_signals.append(sig_name)
         logger.info("Gateway shutdown requested by {}", sig_name)
         print_status("\nShutting down... Press Ctrl+C again to force.")
         shutdown_event.set()
@@ -2130,6 +2158,11 @@ def _run_gateway(
     ensure_ripgrep()
     # Windows: same for Git for Windows (git tool, Git panel, clones).
     ensure_git()
+    from navin.utils.process_isolation import prepare_process
+
+    # Before the gateway starts its threads: glibc arenas, and a systemd scope
+    # of its own so one out-of-memory kill elsewhere does not stop it.
+    prepare_process("gateway")
 
     from navin.agent.tools.cron import CronTool
     from navin.agent.tools.message import MessageTool
@@ -2751,12 +2784,14 @@ def _run_gateway(
         runtime_tasks: asyncio.Future | None = None
         runtime_tasks_drained = False
         shutdown_event = asyncio.Event()
+        stop_signals: list[str] = []
         _ensure_interactive_tty_mode()
         restore_shutdown_handlers = _install_gateway_shutdown_handlers(
             asyncio.get_running_loop(),
             shutdown_event,
             tasks,
             console.print,
+            stop_signals,
         )
         try:
             # Pre-import the provider SDKs off the event loop: they are loaded
@@ -3072,6 +3107,13 @@ def _run_gateway(
                     with suppress(asyncio.CancelledError):
                         await shutdown_task
                 cron.stop()
+                if stop_signals:
+                    # Before the turns are cancelled: a stop from outside
+                    # must not use up their replay at the next start.
+                    try:
+                        await _note_gateway_external_stop(agent, stop_signals[0])
+                    except OSError as exc:
+                        logger.warning("Could not keep the resume of the running turns: {}", exc)
                 agent.stop()
                 # Some SDKs swallow task cancellation while attempting to reconnect.
                 # Close channel transports before waiting for their runners to exit.

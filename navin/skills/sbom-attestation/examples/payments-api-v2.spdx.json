@@ -1,0 +1,91 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "payments-api-v2",
+  "documentNamespace": "https://sbom.example.com/payments-api/v2-4c1d",
+  "creationInfo": {
+    "created": "2026-03-09T10:02:00Z",
+    "creators": ["Tool: syft-1.20.0", "Organization: Example Corp"]
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-requests",
+      "name": "requests",
+      "versionInfo": "2.32.3",
+      "supplier": "Organization: Python Software Foundation",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:pypi/requests@2.32.3"}
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-urllib3",
+      "name": "urllib3",
+      "versionInfo": "2.2.1",
+      "supplier": "Organization: urllib3 maintainers",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:pypi/urllib3@2.2.1"}
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-certifi",
+      "name": "certifi",
+      "versionInfo": "2024.2.2",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MPL-2.0",
+      "licenseDeclared": "MPL-2.0",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:pypi/certifi@2024.2.2"}
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-openssl",
+      "name": "openssl",
+      "versionInfo": "3.0.13-1~deb12u1",
+      "supplier": "Organization: Debian",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:deb/debian/openssl@3.0.13-1~deb12u1?arch=amd64"},
+        {"referenceCategory": "SECURITY", "referenceType": "cpe23Type", "referenceLocator": "cpe:2.3:a:openssl:openssl:3.0.13:*:*:*:*:*:*:*"}
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pyjwt",
+      "name": "PyJWT",
+      "versionInfo": "2.8.0",
+      "supplier": "Person: Jose Padilla",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:pypi/pyjwt@2.8.0"}
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pillow",
+      "name": "pillow",
+      "versionInfo": "10.3.0",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "HPND",
+      "licenseDeclared": "NOASSERTION",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:pypi/pillow@10.3.0"}
+      ]
+    }
+  ],
+  "relationships": [
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Package-requests"},
+    {"spdxElementId": "SPDXRef-Package-requests", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-urllib3"},
+    {"spdxElementId": "SPDXRef-Package-requests", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-certifi"}
+  ]
+}

@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import itertools
 import json
 import math
+import os
 import re
 import shutil
 import time
@@ -35,6 +37,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+import psutil
 from loguru import logger
 from pydantic import Field
 
@@ -57,6 +60,7 @@ from navin.config_base import Base
 from navin.utils.artifacts import ArtifactError, artifact_directory
 from navin.utils.helpers import build_image_content_blocks
 from navin.utils.proc import no_window_kwargs
+from navin.utils.process_isolation import ScopeResult, raise_oom_score, start_scope
 
 _INSTALL_HINT = (
     "Error: playwright is not installed. Install it with: "
@@ -405,6 +409,16 @@ class BrowserToolConfig(Base):
     # Blur / dot out password fields and [data-sensitive] elements in every
     # screenshot, live frame and recording.
     mask_sensitive: bool = True
+    # Resource limits for the local Chromium (incident 2026-11-05: an
+    # unbounded headless browser filled the WSL VM and the OOM kill took every
+    # terminal down with it). max_live_browsers: live local browsers per Navin
+    # process, the least recently used idle one is closed to make room (0 = no
+    # limit). idle_close_minutes: an idle browser is closed after this long,
+    # logins kept (0 = never). memory_limit_mb: memory one browser may use
+    # (0 = automatic, 25% of the RAM and at most 4096 MB; negative = no cap).
+    max_live_browsers: int = Field(default=3, ge=0, le=64)
+    idle_close_minutes: float = Field(default=15.0, ge=0.0, le=10_080.0)
+    memory_limit_mb: int = Field(default=0, le=1_048_576)
 
 
 def _merge_storage_state(base: dict[str, Any] | None, extra: dict[str, Any] | None) -> dict[str, Any]:
@@ -564,6 +578,126 @@ class _BrowserSession:
         self._secrets: set[str] = set()
         # True while connected to an AWS AgentCore browser instead of a local one.
         self._cloud_browser = False
+        # Resource limits: when the agent last used this browser (monotonic),
+        # the local Chromium main process, and why Navin closed it (told to
+        # the agent once, on its next call).
+        self.last_used = _now()
+        self.browser_pid: int | None = None
+        self.closed_reason = ""
+        # True when the watchdog had to kill the browser in the middle of an
+        # action: its pages and logins are gone, the next call cleans up.
+        self._killed_by_navin = False
+
+    # -- resource limits -----------------------------------------------------
+
+    def local_browser_live(self) -> bool:
+        """True while this session holds a connected local (not cloud) Chromium."""
+        browser = self._browser
+        if browser is None or self._cloud_browser:
+            return False
+        try:
+            return bool(browser.is_connected())
+        except Exception as exc:
+            logger.debug("browser {}: connection state unknown: {}", self.live_id, exc)
+            return False
+
+    def idle_besides_lock(self) -> bool:
+        """Nobody is driving it (the lock is checked separately).
+
+        A started live view does not count: the WebUI keeps it on until the
+        browser closes, so it would keep every chat's browser open for good.
+        Closing ends the view ("exit"), and the next action opens a new one.
+        """
+        return not self.closed and not self.user_control and not self._recording
+
+    def is_idle(self) -> bool:
+        """Safe to close now: no action running, no user in control, no recording."""
+        return not self.lock.locked() and self.idle_besides_lock()
+
+    def mark_used(self) -> None:
+        self.last_used = _now()
+
+    async def release(self, reason: str) -> None:
+        """Close the browser to free memory but keep cookies and localStorage.
+
+        The next ``ensure_page`` opens a new context from the captured state,
+        so a logged-in app stays logged in. The caller holds ``self.lock``.
+        """
+        state = self._storage_state
+        if self._context is not None:
+            try:
+                captured = await asyncio.wait_for(self._context.storage_state(), _STORAGE_STATE_TIMEOUT_S)
+            except Exception as exc:
+                logger.warning("browser {}: logins not kept when closing it: {}", self.live_id, exc)
+            else:
+                state = _merge_storage_state(state, captured) if state else captured
+        await self.close()
+        if state:
+            self._storage_state = state
+        self.closed_reason = reason
+        self._killed_by_navin = False
+        logger.info("browser {}: closed by Navin ({}), logins kept: {}", self.live_id, reason, bool(state))
+
+    def take_closed_notice(self) -> str:
+        """The one line telling the agent Navin closed its browser, then forget it."""
+        reason, self.closed_reason = self.closed_reason, ""
+        if not reason:
+            return ""
+        if self._killed_by_navin:
+            return (
+                f"Note: Navin stopped this chat's browser during an earlier action ({reason}); "
+                "its pages and logins were lost and a fresh browser opens on demand. Open the "
+                "page you need again."
+            )
+        return (
+            f"Note: Navin closed this chat's browser earlier ({reason}); a fresh browser "
+            "opens on demand with the cookies and logins kept. Open the page you need again."
+        )
+
+    async def _launch_local(self, launch_kwargs: dict[str, Any]) -> None:
+        """Launch a local Chromium inside the limits: concurrency, OOM score, memory scope."""
+        deadline = _now() + _LIMIT_WAIT_S
+        limit = int(self.config.max_live_browsers)
+        self.browser_pid = None
+        while True:
+            async with _LAUNCH_LOCK:
+                if await _make_room(self, limit):
+                    before = await asyncio.to_thread(_chromium_main_pids)
+                    self._browser = await self._launch_chromium(launch_kwargs)
+                    after = await asyncio.to_thread(_chromium_main_pids)
+                    self.browser_pid = _new_browser_pid(before, after)
+                    if self.browser_pid is not None:
+                        await asyncio.to_thread(_isolate_browser, self.browser_pid, _memory_cap_bytes(self.config))
+                    _ensure_watchdog()
+                    return
+            if _now() >= deadline:
+                raise _BrowserLimitError(
+                    f"Error: {limit} browsers are already open in Navin and all of them are "
+                    f"in use (limit: tools.browser.maxLiveBrowsers = {limit}). Wait for one "
+                    "to finish, or close one with action=close, then try again."
+                )
+            await asyncio.sleep(_LIMIT_POLL_S)
+
+    async def _launch_chromium(self, launch_kwargs: dict[str, Any]) -> Any:
+        try:
+            return await self._pw.chromium.launch(**launch_kwargs)
+        except Exception as exc:
+            message = str(exc)
+            if self.config.executable_path or (
+                "Executable doesn't exist" not in message and "playwright install" not in message
+            ):
+                raise
+        fallback = await asyncio.to_thread(_installed_chromium)
+        if fallback is None:
+            from navin.browser_runtime import ensure_chromium
+
+            try:
+                fallback = await ensure_chromium()
+            except Exception as preparation_error:
+                raise RuntimeError(f"{preparation_error}\n{_no_chromium_hint()}") from preparation_error
+        logger.info("Playwright has no browser of its own; using {}", fallback)
+        launch_kwargs["executable_path"] = await asyncio.to_thread(native_browser_executable, fallback)
+        return await self._pw.chromium.launch(**launch_kwargs)
 
     # -- secrets -------------------------------------------------------------
 
@@ -705,25 +839,7 @@ class _BrowserSession:
             launch_kwargs: dict[str, Any] = {"headless": self.config.headless}
             if self.config.executable_path:
                 launch_kwargs["executable_path"] = self.config.executable_path
-            try:
-                self._browser = await self._pw.chromium.launch(**launch_kwargs)
-            except Exception as exc:
-                message = str(exc)
-                if self.config.executable_path or (
-                    "Executable doesn't exist" not in message and "playwright install" not in message
-                ):
-                    raise
-                fallback = await asyncio.to_thread(_installed_chromium)
-                if fallback is None:
-                    from navin.browser_runtime import ensure_chromium
-
-                    try:
-                        fallback = await ensure_chromium()
-                    except Exception as preparation_error:
-                        raise RuntimeError(f"{preparation_error}\n{_no_chromium_hint()}") from preparation_error
-                logger.info("Playwright has no browser of its own; using {}", fallback)
-                launch_kwargs["executable_path"] = await asyncio.to_thread(native_browser_executable, fallback)
-                self._browser = await self._pw.chromium.launch(**launch_kwargs)
+            await self._launch_local(launch_kwargs)
             self._context = None
         if self._context is None:
             if self._recording:
@@ -1466,14 +1582,15 @@ class _BrowserSession:
             try:
                 if closer is not None:
                     await asyncio.wait_for(closer.close(), _CLOSE_TIMEOUT_S)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("browser {}: close step failed: {}", self.live_id, exc)
         try:
             if self._pw is not None:
                 await asyncio.wait_for(self._pw.stop(), _CLOSE_TIMEOUT_S)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("browser {}: Playwright driver stop failed: {}", self.live_id, exc)
         self._pw = self._browser = self._context = self.page = None
+        self.browser_pid = None
         self.pages = []
         if self._cloud_browser:
             # Closes the AgentCore session and bills its time on the AI budget.
@@ -1494,6 +1611,289 @@ _EVALUATE_TIMEOUT_S = 60.0
 _SESSIONS: dict[str, _BrowserSession] = {}
 _SESSIONS_LOCK = asyncio.Lock()
 
+# -- resource limits (incident 2026-11-05) -----------------------------------
+# Local launches run one at a time so the limit check and the pid snapshot
+# around ``chromium.launch`` see a single new browser.
+_LAUNCH_LOCK = asyncio.Lock()
+# How long a launch waits for a slot when every live browser is busy.
+_LIMIT_WAIT_S = 60.0
+_LIMIT_POLL_S = 0.5
+# Watchdog pass interval (memory and idle checks).
+_WATCH_INTERVAL_S = 5.0
+# Below this share of free memory idle browsers are closed (logins kept).
+_LOW_MEMORY_FREE_SHARE = 0.10
+_STORAGE_STATE_TIMEOUT_S = 10.0
+_AUTO_MEMORY_SHARE = 0.25
+_AUTO_MEMORY_MAX_MB = 4096
+_BROWSER_OOM_SCORE = 300
+_MB = 1024 * 1024
+_DEBUG_FLAGS = ("--remote-debugging-pipe", "--remote-debugging-port")
+_SCOPE_SEQUENCE = itertools.count(1)
+_WATCHDOG_TASK: asyncio.Task | None = None
+
+
+def _now() -> float:
+    """Monotonic clock of the limits (a seam tests replace)."""
+    return time.monotonic()
+
+
+class _BrowserLimitError(RuntimeError):
+    """Every live browser is busy and none freed up in time."""
+
+
+def _memory_cap_bytes(config: BrowserToolConfig) -> int:
+    """Memory one local browser may use, in bytes; 0 for no cap."""
+    value = int(config.memory_limit_mb)
+    if value < 0:
+        return 0
+    if value > 0:
+        return value * _MB
+    try:
+        total = int(psutil.virtual_memory().total)
+    except (psutil.Error, OSError) as exc:
+        logger.debug("browser memory cap: RAM size unknown, using {} MB: {}", _AUTO_MEMORY_MAX_MB, exc)
+        return _AUTO_MEMORY_MAX_MB * _MB
+    return min(int(total * _AUTO_MEMORY_SHARE), _AUTO_MEMORY_MAX_MB * _MB)
+
+
+def _is_debug_browser(proc: psutil.Process) -> bool:
+    return any(arg.startswith(_DEBUG_FLAGS) for arg in proc.cmdline())
+
+
+def _chromium_main_pids() -> set[int]:
+    """Main processes of the Chromium browsers started under this process.
+
+    A main process carries ``--remote-debugging-pipe`` (Playwright) or
+    ``--remote-debugging-port``; its own children may carry them too, so a
+    flagged process whose parent is flagged is not a main one.
+    """
+    try:
+        descendants = psutil.Process().children(recursive=True)
+    except psutil.Error as exc:
+        logger.debug("browser pids: children of this process unreadable: {}", exc)
+        return set()
+    flagged: dict[int, psutil.Process] = {}
+    for proc in descendants:
+        try:
+            if _is_debug_browser(proc):
+                flagged[proc.pid] = proc
+        except psutil.Error as exc:
+            logger.debug("browser pids: process {} skipped: {}", proc.pid, exc)
+    mains: set[int] = set()
+    for pid, proc in flagged.items():
+        try:
+            parent = proc.ppid()
+        except psutil.Error as exc:
+            logger.debug("browser pids: parent of {} unknown: {}", pid, exc)
+            continue
+        if parent not in flagged:
+            mains.add(pid)
+    return mains
+
+
+def _new_browser_pid(before: set[int], after: set[int]) -> int | None:
+    new = after - before
+    if len(new) == 1:
+        return next(iter(new))
+    logger.info(
+        "browser launched but its main process is {}: memory watchdog off for it",
+        "unknown" if not new else f"ambiguous ({sorted(new)})",
+    )
+    return None
+
+
+def _tree_processes(pid: int) -> list[psutil.Process]:
+    """``pid`` and its descendants; empty when it is gone."""
+    try:
+        root = psutil.Process(pid)
+        return [root, *root.children(recursive=True)]
+    except psutil.Error as exc:
+        logger.debug("browser tree of {} unreadable: {}", pid, exc)
+        return []
+
+
+def _tree_pids(pid: int) -> list[int]:
+    return [proc.pid for proc in _tree_processes(pid)]
+
+
+def _tree_rss_bytes(pid: int) -> int:
+    """Resident memory of a browser and every process it started."""
+    total = 0
+    for proc in _tree_processes(pid):
+        try:
+            total += int(proc.memory_info().rss)
+        except psutil.Error as exc:
+            logger.debug("browser memory: process {} skipped: {}", proc.pid, exc)
+    return total
+
+
+def _kill_tree(pid: int) -> int:
+    """Kill a browser and its children. Returns how many were signalled."""
+    procs = _tree_processes(pid)
+    killed: list[psutil.Process] = []
+    for proc in reversed(procs):
+        try:
+            proc.kill()
+        except psutil.Error as exc:
+            logger.debug("browser kill: process {} skipped: {}", proc.pid, exc)
+        else:
+            killed.append(proc)
+    if killed:
+        psutil.wait_procs(killed, timeout=3)
+    return len(killed)
+
+
+def _isolate_browser(pid: int, cap_bytes: int) -> ScopeResult | None:
+    """Make the OOM killer pick the browser first and cap it in a scope of its own."""
+    tree = _tree_pids(pid) or [pid]
+    for member in tree:
+        raise_oom_score(member, _BROWSER_OOM_SCORE)
+    if cap_bytes <= 0:
+        return None
+    unit = f"navin-browser-{os.getpid()}-{next(_SCOPE_SEQUENCE)}"
+    try:
+        result = start_scope(
+            unit,
+            tree,
+            description=f"Navin headless browser (pid {pid}, {cap_bytes // _MB} MB cap)",
+            memory_max=cap_bytes,
+            memory_swap_max=cap_bytes // 2,
+        )
+    except Exception as exc:
+        logger.warning("browser {}: memory scope not created: {}", pid, exc)
+        return None
+    if result.moved:
+        logger.info("browser {}: in {} (MemoryMax {} MB)", pid, result.unit, cap_bytes // _MB)
+    else:
+        logger.debug("browser {}: no memory scope: {}", pid, result.reason)
+    return result
+
+
+async def _try_release(session: _BrowserSession, reason: str) -> bool:
+    """Release ``session`` when it is idle. Never waits on its lock."""
+    if not session.is_idle():
+        return False
+    async with session.lock:
+        if not session.idle_besides_lock() or not session.local_browser_live():
+            return False
+        await session.release(reason)
+    return True
+
+
+async def _make_room(session: _BrowserSession, limit: int) -> bool:
+    """True when ``session`` may launch: under the limit, or an idle browser was closed."""
+    if limit <= 0:
+        return True
+    others = [s for s in list(_SESSIONS.values()) if s is not session and s.local_browser_live()]
+    excess = len(others) - limit + 1
+    if excess <= 0:
+        return True
+    for victim in sorted(others, key=lambda s: s.last_used):
+        minutes = max(0, round((_now() - victim.last_used) / 60))
+        reason = f"closed to make room for another browser (limit {limit}), unused for {minutes} min"
+        if await _try_release(victim, reason):
+            excess -= 1
+            if excess <= 0:
+                return True
+    return False
+
+
+async def _enforce_memory(session: _BrowserSession, used: int, cap: int) -> None:
+    reason = f"used {used // _MB} MB, over the {cap // _MB} MB limit for one browser"
+    if not session.lock.locked():
+        async with session.lock:
+            if session.local_browser_live():
+                await session.release(reason)
+        return
+    pid = session.browser_pid
+    if pid is None:
+        return
+    # An action is running: it fails, the next one relaunches.
+    session.closed_reason = reason
+    session._killed_by_navin = True
+    killed = await asyncio.to_thread(_kill_tree, pid)
+    logger.warning("browser {}: {}; killed {} processes during an action", session.live_id, reason, killed)
+
+
+def _free_memory_share() -> float:
+    """Share of the machine's memory still available, 1.0 when unknown."""
+    memory = psutil.virtual_memory()
+    return memory.available / memory.total if memory.total else 1.0
+
+
+async def _relieve_machine(sessions: list[_BrowserSession]) -> None:
+    """Close idle browsers, oldest first, while the machine is short of memory.
+
+    Past this point the kernel's out-of-memory killer picks a victim, and
+    under WSL systemd then stops every terminal with it (2026-11-05): Navin
+    frees what it can first, in user space, where a kill stops nothing else.
+    """
+    for session in sorted(sessions, key=lambda s: s.last_used):
+        share = await asyncio.to_thread(_free_memory_share)
+        if share >= _LOW_MEMORY_FREE_SHARE:
+            return
+        await _try_release(
+            session, f"closed because the machine had only {share:.0%} of its memory free",
+        )
+
+
+async def _watch_pass() -> bool:
+    """One memory + idle check of every live local browser. False when none is left."""
+    sessions = [s for s in list(_SESSIONS.values()) if not s.closed and s.local_browser_live()]
+    if not sessions:
+        return False
+    if await asyncio.to_thread(_free_memory_share) < _LOW_MEMORY_FREE_SHARE:
+        await _relieve_machine(sessions)
+        sessions = [s for s in sessions if s.local_browser_live()]
+    for session in sessions:
+        cap = _memory_cap_bytes(session.config)
+        pid = session.browser_pid
+        if cap > 0 and pid is not None:
+            used = await asyncio.to_thread(_tree_rss_bytes, pid)
+            if used > cap:
+                await _enforce_memory(session, used, cap)
+                continue
+        idle_minutes = float(session.config.idle_close_minutes)
+        unused = _now() - session.last_used
+        if idle_minutes > 0 and unused >= idle_minutes * 60:
+            await _try_release(session, f"closed after {round(unused / 60)} minutes without use")
+    return any(s.local_browser_live() for s in sessions)
+
+
+async def _watch_browsers() -> None:
+    global _WATCHDOG_TASK
+    try:
+        while True:
+            await asyncio.sleep(_WATCH_INTERVAL_S)
+            try:
+                if not await _watch_pass():
+                    break
+            except Exception as exc:
+                logger.warning("browser watchdog pass failed: {}", exc)
+    finally:
+        if _WATCHDOG_TASK is asyncio.current_task():
+            _WATCHDOG_TASK = None
+
+
+def _ensure_watchdog() -> None:
+    """Start the memory/idle watchdog of this event loop once."""
+    global _WATCHDOG_TASK
+    loop = asyncio.get_running_loop()
+    task = _WATCHDOG_TASK
+    if task is not None and not task.done() and task.get_loop() is loop:
+        return
+    _WATCHDOG_TASK = loop.create_task(_watch_browsers(), name="navin-browser-watchdog")
+
+
+async def _stop_watchdog() -> None:
+    global _WATCHDOG_TASK
+    task, _WATCHDOG_TASK = _WATCHDOG_TASK, None
+    if task is None or task.done():
+        return
+    task.cancel()
+    if task.get_loop() is asyncio.get_running_loop() and task is not asyncio.current_task():
+        await asyncio.wait({task}, timeout=_CLOSE_TIMEOUT_S)
+
 
 def browser_session_active(session_key: str | None) -> bool:
     session = _SESSIONS.get(session_key) if session_key else None
@@ -1508,11 +1908,15 @@ async def shutdown_browser_sessions() -> int:
     closed" traceback after the agent's last word.
     """
     async with _SESSIONS_LOCK:
-        sessions = list(_SESSIONS.values())
+        sessions = list(_SESSIONS.items())
         _SESSIONS.clear()
-    for session in sessions:
-        with suppress(Exception):
+    await _stop_watchdog()
+    for key, session in sessions:
+        # One browser that fails to close must not keep the others open.
+        try:
             await session.close()
+        except Exception as exc:
+            logger.warning("browser of {}: close at shutdown failed: {}", key, exc)
     return len(sessions)
 
 
@@ -1744,6 +2148,25 @@ def _live_action_line(action: str, kwargs: dict[str, Any]) -> str:
             rendered = rendered[:57] + "..."
         parts.append(f"{key}={rendered}")
     return " ".join(parts)
+
+
+def _with_notice(result: Any, notice: str) -> Any:
+    """``result`` with Navin's closed-browser notice appended, type kept."""
+    if not notice:
+        return result
+    if isinstance(result, ToolResult):
+        return ToolResult(
+            f"{result}\n\n{notice}",
+            is_error=result.is_error,
+            recovery_hint=result.recovery_hint,
+            verification=result.verification,
+            made_progress=result.made_progress,
+        )
+    if isinstance(result, str):
+        return f"{result}\n\n{notice}"
+    if isinstance(result, list):
+        return [*result, {"type": "text", "text": notice}]
+    return result
 
 
 async def _get_session(config: BrowserToolConfig) -> _BrowserSession:
@@ -2079,6 +2502,7 @@ class BrowserTool(Tool):
         if action == "sequence":
             return await self._run_sequence(kwargs.get("steps") or [])
         session: _BrowserSession | None = None
+        notice = ""
         try:
             if self._config_loader is not None:
                 self.config = await asyncio.to_thread(self._config_loader)
@@ -2086,6 +2510,7 @@ class BrowserTool(Tool):
                 return ToolResult.error("Error: browser control is disabled in Settings.")
             session = await _get_session(self.config)
             async with session.lock:
+                session.mark_used()
                 session.config = self.config
                 if not self.config.live_view:
                     await session.sync_live_view()
@@ -2101,27 +2526,36 @@ class BrowserTool(Tool):
                 if key is not None and session.failures.get(key, 0) >= self._MAX_SAME_FAILURES:
                     return ToolResult.error(self._repeat_refusal(key))
                 session.emit_live_action(session.redact(_live_action_line(action, kwargs)))
+                if session.closed_reason:
+                    killed = session._killed_by_navin
+                    notice = session.take_closed_notice()
+                    if killed:
+                        # The watchdog killed it mid-action: drop the dead
+                        # browser's objects so ensure_page starts clean.
+                        await session.close()
+                        session._killed_by_navin = False
                 try:
                     result = await self._dispatch(session, action, kwargs)
                     self._record_attempt(session, key, result)
                     # Last line of defence: no value resolved from a secret_ref
                     # (or typed into a password field) ever leaves the tool.
-                    return session.redact_result(result)
+                    return session.redact_result(_with_notice(result, notice))
                 except Exception:
                     self._record_attempt(session, key, None)
                     raise
                 finally:
+                    session.mark_used()
                     with suppress(Exception):
                         await session.sync_live_view()
                     with suppress(Exception):
                         await session.sync_recorder()
         except RuntimeError as exc:
             message = session.redact(str(exc)) if session is not None else str(exc)
-            return ToolResult.error(message)
+            return ToolResult.error(_with_notice(message, notice))
         except Exception as exc:
             message = session.redact(str(exc)) if session is not None else str(exc)
             logger.warning("browser tool failed: {}", message)
-            return ToolResult.error(f"Error: browser {action} failed: {message}")
+            return ToolResult.error(_with_notice(f"Error: browser {action} failed: {message}", notice))
 
     async def _run_sequence(self, steps: list[Any]) -> Any:
         """Run known actions back to back: one tool call, not one model turn per click."""

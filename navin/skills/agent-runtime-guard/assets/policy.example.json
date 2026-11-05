@@ -1,0 +1,76 @@
+{
+  "name": "default-workspace-guard",
+  "tools": {
+    "deny": [],
+    "allow": []
+  },
+  "commands": {
+    "deny_sudo": true,
+    "deny_remote_scripts": true,
+    "deny_binaries": ["mkfs", "dd", "shutdown", "reboot", "nc", "ncat", "socat", "telnet"],
+    "allow_binaries": [],
+    "deny_patterns": [
+      "rm\\s+-[a-zA-Z]*r[a-zA-Z]*f?\\s+(/|~|\\$HOME|\\.\\.)(\\s|$)",
+      "git\\s+push\\s+[^|;&]*(--force|-f)\\b",
+      "git\\s+reset\\s+--hard",
+      "(terraform|tofu)\\s+(apply|destroy)[^|;&]*-auto-approve",
+      "kubectl\\s+delete\\s+(ns|namespace)\\b",
+      "aws\\s+s3\\s+rb\\b|aws\\s+s3\\s+rm\\s+[^|;&]*--recursive",
+      "(chmod|chown)\\s+-R\\s+[^|;&]*\\s/(\\s|$)",
+      "base64\\s+(-d|--decode)[^|;&]*\\|\\s*(ba|z)?sh",
+      "(cat|type)\\s+[^|;&]*(\\.ssh/id_|\\.aws/credentials|\\.npmrc|\\.pypirc)"
+    ]
+  },
+  "paths": {
+    "deny": [
+      "~/.ssh",
+      "~/.aws/credentials",
+      "~/.gnupg",
+      "~/.kube/config",
+      "~/.navin/secrets.enc",
+      "/etc/passwd",
+      "/etc/shadow",
+      "/etc/sudoers*",
+      "**/.env",
+      "**/.env.*",
+      "**/*.pem",
+      "**/*.key",
+      "**/id_rsa*",
+      "**/id_ed25519*"
+    ],
+    "allow_write": [],
+    "write_tools": ["write_file", "edit_file", "apply_patch", "manage_files"]
+  },
+  "network": {
+    "allow_hosts": null
+  },
+  "mcp": {
+    "allow_servers": [],
+    "deny_servers": [],
+    "deny_tools": ["mcp_*_delete_*", "mcp_*_drop_*", "mcp_*_execute_sql", "mcp_*_run_shell*"],
+    "max_arg_chars": 20000
+  },
+  "secrets": {
+    "deny_in_arguments": true
+  },
+  "warn": [
+    {
+      "name": "production-mention",
+      "tools": ["exec", "infra", "mcp_*"],
+      "pattern": "(?i)\\b(prod|production|--profile\\s+prod)\\b",
+      "reason": "the call names a production target; confirm the environment before it runs"
+    },
+    {
+      "name": "bulk-delete",
+      "tools": ["manage_files"],
+      "pattern": "\"recursive\":\\s*true",
+      "reason": "recursive delete requested"
+    },
+    {
+      "name": "outbound-upload",
+      "tools": ["exec"],
+      "pattern": "curl[^|;&]*(-F|--form|--data-binary|-T|--upload-file)",
+      "reason": "a file is being uploaded to a remote host"
+    }
+  ]
+}

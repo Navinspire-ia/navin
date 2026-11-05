@@ -1,0 +1,3728 @@
+{
+ "data": [
+  {
+   "request_id": "chatcmpl-ed2929de3162",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2533,
+   "prompt_tokens": 1817,
+   "completion_tokens": 716,
+   "startTime": "2026-03-01T16:06:11.000Z",
+   "endTime": "2026-03-01T16:06:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-040a66c8e743",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.002263,
+   "total_tokens": 491,
+   "prompt_tokens": 353,
+   "completion_tokens": 138,
+   "startTime": "2026-03-01T09:15:11.000Z",
+   "endTime": "2026-03-01T09:15:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-28205fb6ef8a",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.006291,
+   "total_tokens": 985,
+   "prompt_tokens": 707,
+   "completion_tokens": 278,
+   "startTime": "2026-03-01T17:03:11.000Z",
+   "endTime": "2026-03-01T17:03:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ab93d4b664cf",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.007175,
+   "total_tokens": 1010,
+   "prompt_tokens": 390,
+   "completion_tokens": 620,
+   "startTime": "2026-03-01T12:26:11.000Z",
+   "endTime": "2026-03-01T12:26:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-dddc04b6663f",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000905,
+   "total_tokens": 3379,
+   "prompt_tokens": 2494,
+   "completion_tokens": 885,
+   "startTime": "2026-03-01T09:37:11.000Z",
+   "endTime": "2026-03-01T09:37:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-74e8881d0bc1",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 3222,
+   "prompt_tokens": 2443,
+   "completion_tokens": 779,
+   "startTime": "2026-03-01T08:39:11.000Z",
+   "endTime": "2026-03-01T08:39:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-b59f2d373eab",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.018528,
+   "total_tokens": 2796,
+   "prompt_tokens": 1951,
+   "completion_tokens": 845,
+   "startTime": "2026-03-01T17:59:11.000Z",
+   "endTime": "2026-03-01T17:59:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-66eece91854f",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.00999,
+   "total_tokens": 1701,
+   "prompt_tokens": 936,
+   "completion_tokens": 765,
+   "startTime": "2026-03-01T09:36:11.000Z",
+   "endTime": "2026-03-01T09:36:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-55bc141d5776",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.011274,
+   "total_tokens": 2382,
+   "prompt_tokens": 2038,
+   "completion_tokens": 344,
+   "startTime": "2026-03-01T09:07:11.000Z",
+   "endTime": "2026-03-01T09:07:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9041e12e23f3",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000453,
+   "total_tokens": 1372,
+   "prompt_tokens": 822,
+   "completion_tokens": 550,
+   "startTime": "2026-03-01T18:04:11.000Z",
+   "endTime": "2026-03-01T18:04:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-69f7004f413f",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.014772,
+   "total_tokens": 2292,
+   "prompt_tokens": 1634,
+   "completion_tokens": 658,
+   "startTime": "2026-03-01T15:04:11.000Z",
+   "endTime": "2026-03-01T15:04:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-32901e85f663",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 3036,
+   "prompt_tokens": 2920,
+   "completion_tokens": 116,
+   "startTime": "2026-03-01T12:41:11.000Z",
+   "endTime": "2026-03-01T12:41:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-3014dc10703b",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.01635,
+   "total_tokens": 2514,
+   "prompt_tokens": 1780,
+   "completion_tokens": 734,
+   "startTime": "2026-03-01T15:22:11.000Z",
+   "endTime": "2026-03-01T15:22:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-4a5ad6352f6e",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.011093,
+   "total_tokens": 1929,
+   "prompt_tokens": 1093,
+   "completion_tokens": 836,
+   "startTime": "2026-03-01T11:25:11.000Z",
+   "endTime": "2026-03-01T11:25:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-df1c17c41a34",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.009708,
+   "total_tokens": 2500,
+   "prompt_tokens": 2039,
+   "completion_tokens": 461,
+   "startTime": "2026-03-01T10:52:11.000Z",
+   "endTime": "2026-03-01T10:52:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-323f98a13aa4",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0007,
+   "total_tokens": 2418,
+   "prompt_tokens": 1669,
+   "completion_tokens": 749,
+   "startTime": "2026-03-01T11:09:11.000Z",
+   "endTime": "2026-03-01T11:09:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f204f3f625db",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 3185,
+   "prompt_tokens": 2897,
+   "completion_tokens": 288,
+   "startTime": "2026-03-01T17:11:11.000Z",
+   "endTime": "2026-03-01T17:11:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-137c0a357e36",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.01076,
+   "total_tokens": 2513,
+   "prompt_tokens": 1916,
+   "completion_tokens": 597,
+   "startTime": "2026-03-01T17:20:11.000Z",
+   "endTime": "2026-03-01T17:20:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-aa6376dc02cf",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.014235,
+   "total_tokens": 2941,
+   "prompt_tokens": 2490,
+   "completion_tokens": 451,
+   "startTime": "2026-03-01T14:06:11.000Z",
+   "endTime": "2026-03-01T14:06:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-bb0e78de3183",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.003818,
+   "total_tokens": 738,
+   "prompt_tokens": 475,
+   "completion_tokens": 263,
+   "startTime": "2026-03-01T09:21:11.000Z",
+   "endTime": "2026-03-01T09:21:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-31a04aa74c28",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.008343,
+   "total_tokens": 2725,
+   "prompt_tokens": 2521,
+   "completion_tokens": 204,
+   "startTime": "2026-03-01T13:39:11.000Z",
+   "endTime": "2026-03-01T13:39:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-0cd25198b6a4",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.008253,
+   "total_tokens": 1943,
+   "prompt_tokens": 1741,
+   "completion_tokens": 202,
+   "startTime": "2026-03-01T13:38:11.000Z",
+   "endTime": "2026-03-01T13:38:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-210e2c04ff88",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.010768,
+   "total_tokens": 2726,
+   "prompt_tokens": 2199,
+   "completion_tokens": 527,
+   "startTime": "2026-03-01T12:05:11.000Z",
+   "endTime": "2026-03-01T12:05:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-948f3b5371e4",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.011952,
+   "total_tokens": 1824,
+   "prompt_tokens": 1284,
+   "completion_tokens": 540,
+   "startTime": "2026-03-02T10:33:11.000Z",
+   "endTime": "2026-03-02T10:33:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d4a7d30ce3d4",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000574,
+   "total_tokens": 1556,
+   "prompt_tokens": 800,
+   "completion_tokens": 756,
+   "startTime": "2026-03-02T08:48:11.000Z",
+   "endTime": "2026-03-02T08:48:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9c1c7dfa97cb",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.008973,
+   "total_tokens": 1849,
+   "prompt_tokens": 1269,
+   "completion_tokens": 580,
+   "startTime": "2026-03-02T10:22:11.000Z",
+   "endTime": "2026-03-02T10:22:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-fb4e31130fc5",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.015578,
+   "total_tokens": 3591,
+   "prompt_tokens": 2711,
+   "completion_tokens": 880,
+   "startTime": "2026-03-02T11:51:11.000Z",
+   "endTime": "2026-03-02T11:51:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c91693e0bd43",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.008345,
+   "total_tokens": 1598,
+   "prompt_tokens": 1018,
+   "completion_tokens": 580,
+   "startTime": "2026-03-02T08:01:11.000Z",
+   "endTime": "2026-03-02T08:01:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-4c5913e96793",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.010715,
+   "total_tokens": 3080,
+   "prompt_tokens": 2678,
+   "completion_tokens": 402,
+   "startTime": "2026-03-02T13:23:11.000Z",
+   "endTime": "2026-03-02T13:23:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-2011fc7fd580",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.007822,
+   "total_tokens": 2376,
+   "prompt_tokens": 2125,
+   "completion_tokens": 251,
+   "startTime": "2026-03-02T15:39:11.000Z",
+   "endTime": "2026-03-02T15:39:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a92ea7afe66a",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.017847,
+   "total_tokens": 2477,
+   "prompt_tokens": 1609,
+   "completion_tokens": 868,
+   "startTime": "2026-03-02T18:07:11.000Z",
+   "endTime": "2026-03-02T18:07:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f3af053ae1eb",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.013523,
+   "total_tokens": 2835,
+   "prompt_tokens": 1977,
+   "completion_tokens": 858,
+   "startTime": "2026-03-02T09:51:11.000Z",
+   "endTime": "2026-03-02T09:51:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-090a875dc977",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000557,
+   "total_tokens": 1339,
+   "prompt_tokens": 547,
+   "completion_tokens": 792,
+   "startTime": "2026-03-02T10:01:11.000Z",
+   "endTime": "2026-03-02T10:01:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b41790fb524c",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.015723,
+   "total_tokens": 3601,
+   "prompt_tokens": 2705,
+   "completion_tokens": 896,
+   "startTime": "2026-03-02T15:42:11.000Z",
+   "endTime": "2026-03-02T15:42:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-63f8c16c1e95",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 807,
+   "prompt_tokens": 736,
+   "completion_tokens": 71,
+   "startTime": "2026-03-02T18:06:11.000Z",
+   "endTime": "2026-03-02T18:06:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-b0510f69a3e7",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00344,
+   "total_tokens": 1142,
+   "prompt_tokens": 1064,
+   "completion_tokens": 78,
+   "startTime": "2026-03-02T12:32:11.000Z",
+   "endTime": "2026-03-02T12:32:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-71f3d98b345f",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2100,
+   "prompt_tokens": 1916,
+   "completion_tokens": 184,
+   "startTime": "2026-03-02T13:57:11.000Z",
+   "endTime": "2026-03-02T13:57:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-0e9e6858694f",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.007995,
+   "total_tokens": 2583,
+   "prompt_tokens": 2378,
+   "completion_tokens": 205,
+   "startTime": "2026-03-02T08:55:11.000Z",
+   "endTime": "2026-03-02T08:55:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e354fb74c1c5",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 1039,
+   "prompt_tokens": 813,
+   "completion_tokens": 226,
+   "startTime": "2026-03-02T17:46:11.000Z",
+   "endTime": "2026-03-02T17:46:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-006b42178276",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.015864,
+   "total_tokens": 2916,
+   "prompt_tokens": 2323,
+   "completion_tokens": 593,
+   "startTime": "2026-03-02T09:56:11.000Z",
+   "endTime": "2026-03-02T09:56:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-12b971c5ca6d",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.004265,
+   "total_tokens": 1427,
+   "prompt_tokens": 1334,
+   "completion_tokens": 93,
+   "startTime": "2026-03-02T16:28:11.000Z",
+   "endTime": "2026-03-02T16:28:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8970fa06d59e",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000636,
+   "total_tokens": 2210,
+   "prompt_tokens": 1533,
+   "completion_tokens": 677,
+   "startTime": "2026-03-02T17:32:11.000Z",
+   "endTime": "2026-03-02T17:32:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-4eb713bbb538",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.020292,
+   "total_tokens": 3260,
+   "prompt_tokens": 2384,
+   "completion_tokens": 876,
+   "startTime": "2026-03-02T11:44:11.000Z",
+   "endTime": "2026-03-02T11:44:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ed0b9c2f13f7",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.006983,
+   "total_tokens": 2223,
+   "prompt_tokens": 2033,
+   "completion_tokens": 190,
+   "startTime": "2026-03-02T14:28:11.000Z",
+   "endTime": "2026-03-02T14:28:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-3744a514bf6e",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.006125,
+   "total_tokens": 2078,
+   "prompt_tokens": 1954,
+   "completion_tokens": 124,
+   "startTime": "2026-03-02T12:50:11.000Z",
+   "endTime": "2026-03-02T12:50:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e872753e9f53",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 3328,
+   "prompt_tokens": 2904,
+   "completion_tokens": 424,
+   "startTime": "2026-03-02T10:29:11.000Z",
+   "endTime": "2026-03-02T10:29:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-3c8e253d7e34",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.010128,
+   "total_tokens": 3214,
+   "prompt_tokens": 2935,
+   "completion_tokens": 279,
+   "startTime": "2026-03-03T14:32:11.000Z",
+   "endTime": "2026-03-03T14:32:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ead627986e15",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2036,
+   "prompt_tokens": 1660,
+   "completion_tokens": 376,
+   "startTime": "2026-03-03T13:01:11.000Z",
+   "endTime": "2026-03-03T13:01:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-4b041223fdb9",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.007467,
+   "total_tokens": 717,
+   "prompt_tokens": 274,
+   "completion_tokens": 443,
+   "startTime": "2026-03-03T17:18:11.000Z",
+   "endTime": "2026-03-03T17:18:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f4b0ef1bcb0b",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.002933,
+   "total_tokens": 765,
+   "prompt_tokens": 629,
+   "completion_tokens": 136,
+   "startTime": "2026-03-03T08:57:11.000Z",
+   "endTime": "2026-03-03T08:57:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b77437721c6b",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000978,
+   "total_tokens": 3856,
+   "prompt_tokens": 2968,
+   "completion_tokens": 888,
+   "startTime": "2026-03-03T14:09:11.000Z",
+   "endTime": "2026-03-03T14:09:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-66ca9c1c3675",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 901,
+   "prompt_tokens": 566,
+   "completion_tokens": 335,
+   "startTime": "2026-03-03T10:27:11.000Z",
+   "endTime": "2026-03-03T10:27:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-2abcb1118ff7",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.014736,
+   "total_tokens": 1432,
+   "prompt_tokens": 562,
+   "completion_tokens": 870,
+   "startTime": "2026-03-03T17:54:11.000Z",
+   "endTime": "2026-03-03T17:54:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d197a76ef7dd",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.005755,
+   "total_tokens": 2119,
+   "prompt_tokens": 2058,
+   "completion_tokens": 61,
+   "startTime": "2026-03-03T16:26:11.000Z",
+   "endTime": "2026-03-03T16:26:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-fa0c17ee7614",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.005958,
+   "total_tokens": 1338,
+   "prompt_tokens": 1176,
+   "completion_tokens": 162,
+   "startTime": "2026-03-03T12:03:11.000Z",
+   "endTime": "2026-03-03T12:03:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-45a67e3a5797",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.013242,
+   "total_tokens": 2042,
+   "prompt_tokens": 1449,
+   "completion_tokens": 593,
+   "startTime": "2026-03-03T12:28:11.000Z",
+   "endTime": "2026-03-03T12:28:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f1fe3905c8fe",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 580,
+   "prompt_tokens": 274,
+   "completion_tokens": 306,
+   "startTime": "2026-03-03T08:46:11.000Z",
+   "endTime": "2026-03-03T08:46:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-6d03f0b00a2c",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 1713,
+   "prompt_tokens": 1206,
+   "completion_tokens": 507,
+   "startTime": "2026-03-03T18:27:11.000Z",
+   "endTime": "2026-03-03T18:27:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-e639c6c28779",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00056,
+   "total_tokens": 2640,
+   "prompt_tokens": 2275,
+   "completion_tokens": 365,
+   "startTime": "2026-03-03T11:21:11.000Z",
+   "endTime": "2026-03-03T11:21:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-5dd75c2f0840",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 604,
+   "prompt_tokens": 422,
+   "completion_tokens": 182,
+   "startTime": "2026-03-03T18:47:11.000Z",
+   "endTime": "2026-03-03T18:47:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-5c143ff8b9d7",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.008675,
+   "total_tokens": 1277,
+   "prompt_tokens": 546,
+   "completion_tokens": 731,
+   "startTime": "2026-03-03T16:42:11.000Z",
+   "endTime": "2026-03-03T16:42:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-1220d1925caf",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00037,
+   "total_tokens": 905,
+   "prompt_tokens": 385,
+   "completion_tokens": 520,
+   "startTime": "2026-03-03T12:28:11.000Z",
+   "endTime": "2026-03-03T12:28:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c447952a01f4",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000595,
+   "total_tokens": 2821,
+   "prompt_tokens": 2440,
+   "completion_tokens": 381,
+   "startTime": "2026-03-03T12:13:11.000Z",
+   "endTime": "2026-03-03T12:13:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f9029f9a68f7",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000345,
+   "total_tokens": 1898,
+   "prompt_tokens": 1763,
+   "completion_tokens": 135,
+   "startTime": "2026-03-03T16:41:11.000Z",
+   "endTime": "2026-03-03T16:41:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b6b2660adf72",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.00463,
+   "total_tokens": 892,
+   "prompt_tokens": 572,
+   "completion_tokens": 320,
+   "startTime": "2026-03-03T10:25:11.000Z",
+   "endTime": "2026-03-03T10:25:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-3bc274003ee1",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.007178,
+   "total_tokens": 1788,
+   "prompt_tokens": 1427,
+   "completion_tokens": 361,
+   "startTime": "2026-03-03T09:37:11.000Z",
+   "endTime": "2026-03-03T09:37:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-db533a9c3c9e",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.014649,
+   "total_tokens": 3091,
+   "prompt_tokens": 2643,
+   "completion_tokens": 448,
+   "startTime": "2026-03-03T15:09:11.000Z",
+   "endTime": "2026-03-03T15:09:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9aadde519690",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.017283,
+   "total_tokens": 2993,
+   "prompt_tokens": 2301,
+   "completion_tokens": 692,
+   "startTime": "2026-03-03T16:08:11.000Z",
+   "endTime": "2026-03-03T16:08:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-31368f5877b8",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.020376,
+   "total_tokens": 3756,
+   "prompt_tokens": 2997,
+   "completion_tokens": 759,
+   "startTime": "2026-03-03T09:01:11.000Z",
+   "endTime": "2026-03-03T09:01:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-6b2b7ec3dd10",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000355,
+   "total_tokens": 1064,
+   "prompt_tokens": 629,
+   "completion_tokens": 435,
+   "startTime": "2026-03-03T16:03:11.000Z",
+   "endTime": "2026-03-03T16:03:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d8953cd9f93d",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.013464,
+   "total_tokens": 3288,
+   "prompt_tokens": 2988,
+   "completion_tokens": 300,
+   "startTime": "2026-03-03T08:29:11.000Z",
+   "endTime": "2026-03-03T08:29:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f28363b955d5",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.00843,
+   "total_tokens": 2448,
+   "prompt_tokens": 2140,
+   "completion_tokens": 308,
+   "startTime": "2026-03-04T12:15:11.000Z",
+   "endTime": "2026-03-04T12:15:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-cab40aec1a53",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.016401,
+   "total_tokens": 3383,
+   "prompt_tokens": 2862,
+   "completion_tokens": 521,
+   "startTime": "2026-03-04T14:04:11.000Z",
+   "endTime": "2026-03-04T14:04:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8ccc0ddd912a",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.018993,
+   "total_tokens": 3499,
+   "prompt_tokens": 2791,
+   "completion_tokens": 708,
+   "startTime": "2026-03-04T17:09:11.000Z",
+   "endTime": "2026-03-04T17:09:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-92ebe2a79adf",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.014628,
+   "total_tokens": 2132,
+   "prompt_tokens": 1446,
+   "completion_tokens": 686,
+   "startTime": "2026-03-04T08:30:11.000Z",
+   "endTime": "2026-03-04T08:30:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-287862d79ba1",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.013191,
+   "total_tokens": 1365,
+   "prompt_tokens": 607,
+   "completion_tokens": 758,
+   "startTime": "2026-03-04T15:18:11.000Z",
+   "endTime": "2026-03-04T15:18:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a901207c62b3",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2945,
+   "prompt_tokens": 2110,
+   "completion_tokens": 835,
+   "startTime": "2026-03-04T16:12:11.000Z",
+   "endTime": "2026-03-04T16:12:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-9c92689771b2",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 1905,
+   "prompt_tokens": 1386,
+   "completion_tokens": 519,
+   "startTime": "2026-03-04T16:28:11.000Z",
+   "endTime": "2026-03-04T16:28:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-85ef9806c014",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 1150,
+   "prompt_tokens": 505,
+   "completion_tokens": 645,
+   "startTime": "2026-03-04T16:16:11.000Z",
+   "endTime": "2026-03-04T16:16:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-a8f9ed6bbf39",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.011889,
+   "total_tokens": 2619,
+   "prompt_tokens": 2283,
+   "completion_tokens": 336,
+   "startTime": "2026-03-04T13:14:11.000Z",
+   "endTime": "2026-03-04T13:14:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-32090e5af628",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.002658,
+   "total_tokens": 904,
+   "prompt_tokens": 851,
+   "completion_tokens": 53,
+   "startTime": "2026-03-04T18:28:11.000Z",
+   "endTime": "2026-03-04T18:28:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d8e79815259c",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.00878,
+   "total_tokens": 2306,
+   "prompt_tokens": 1904,
+   "completion_tokens": 402,
+   "startTime": "2026-03-04T09:53:11.000Z",
+   "endTime": "2026-03-04T09:53:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c65c6a950e73",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000378,
+   "total_tokens": 2003,
+   "prompt_tokens": 1831,
+   "completion_tokens": 172,
+   "startTime": "2026-03-04T11:45:11.000Z",
+   "endTime": "2026-03-04T11:45:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e6f642bac094",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000341,
+   "total_tokens": 918,
+   "prompt_tokens": 466,
+   "completion_tokens": 452,
+   "startTime": "2026-03-04T17:04:11.000Z",
+   "endTime": "2026-03-04T17:04:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ba484950e809",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 1503,
+   "prompt_tokens": 1349,
+   "completion_tokens": 154,
+   "startTime": "2026-03-04T18:18:11.000Z",
+   "endTime": "2026-03-04T18:18:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-87a495509d6a",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000642,
+   "total_tokens": 2559,
+   "prompt_tokens": 1986,
+   "completion_tokens": 573,
+   "startTime": "2026-03-04T13:50:11.000Z",
+   "endTime": "2026-03-04T13:50:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-1a1e0cd11a9e",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000738,
+   "total_tokens": 3081,
+   "prompt_tokens": 2469,
+   "completion_tokens": 612,
+   "startTime": "2026-03-04T09:03:11.000Z",
+   "endTime": "2026-03-04T09:03:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d1f239ac46f2",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.012936,
+   "total_tokens": 1476,
+   "prompt_tokens": 767,
+   "completion_tokens": 709,
+   "startTime": "2026-03-04T15:03:11.000Z",
+   "endTime": "2026-03-04T15:03:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-13a353e70bf3",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000525,
+   "total_tokens": 2300,
+   "prompt_tokens": 1899,
+   "completion_tokens": 401,
+   "startTime": "2026-03-04T12:47:11.000Z",
+   "endTime": "2026-03-04T12:47:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8fadd48d68c6",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.008901,
+   "total_tokens": 1535,
+   "prompt_tokens": 1177,
+   "completion_tokens": 358,
+   "startTime": "2026-03-04T18:25:11.000Z",
+   "endTime": "2026-03-04T18:25:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-160e4ec9c58c",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.003888,
+   "total_tokens": 769,
+   "prompt_tokens": 507,
+   "completion_tokens": 262,
+   "startTime": "2026-03-04T15:35:11.000Z",
+   "endTime": "2026-03-04T15:35:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-fedb2cdf7add",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000408,
+   "total_tokens": 2142,
+   "prompt_tokens": 1950,
+   "completion_tokens": 192,
+   "startTime": "2026-03-04T11:05:11.000Z",
+   "endTime": "2026-03-04T11:05:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b1a9e9bf5268",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.006708,
+   "total_tokens": 1801,
+   "prompt_tokens": 1507,
+   "completion_tokens": 294,
+   "startTime": "2026-03-04T17:12:11.000Z",
+   "endTime": "2026-03-04T17:12:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-7e51356cfef3",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000511,
+   "total_tokens": 2611,
+   "prompt_tokens": 2346,
+   "completion_tokens": 265,
+   "startTime": "2026-03-04T13:48:11.000Z",
+   "endTime": "2026-03-04T13:48:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-0c2b986ff6b8",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.007695,
+   "total_tokens": 1853,
+   "prompt_tokens": 1675,
+   "completion_tokens": 178,
+   "startTime": "2026-03-04T16:40:11.000Z",
+   "endTime": "2026-03-04T16:40:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-18e98b7d5ff2",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.009028,
+   "total_tokens": 2234,
+   "prompt_tokens": 1775,
+   "completion_tokens": 459,
+   "startTime": "2026-03-04T14:19:11.000Z",
+   "endTime": "2026-03-04T14:19:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b0835454bf24",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000711,
+   "total_tokens": 2789,
+   "prompt_tokens": 2138,
+   "completion_tokens": 651,
+   "startTime": "2026-03-04T09:25:11.000Z",
+   "endTime": "2026-03-04T09:25:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-533f5fa82bc9",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.00487,
+   "total_tokens": 1324,
+   "prompt_tokens": 1116,
+   "completion_tokens": 208,
+   "startTime": "2026-03-05T18:06:11.000Z",
+   "endTime": "2026-03-05T18:06:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-1fbea416ab84",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.001848,
+   "total_tokens": 412,
+   "prompt_tokens": 361,
+   "completion_tokens": 51,
+   "startTime": "2026-03-05T11:36:11.000Z",
+   "endTime": "2026-03-05T11:36:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ce863e573d10",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.012543,
+   "total_tokens": 1821,
+   "prompt_tokens": 1231,
+   "completion_tokens": 590,
+   "startTime": "2026-03-05T09:06:11.000Z",
+   "endTime": "2026-03-05T09:06:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d856c71ea608",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00966,
+   "total_tokens": 1432,
+   "prompt_tokens": 985,
+   "completion_tokens": 447,
+   "startTime": "2026-03-05T17:00:11.000Z",
+   "endTime": "2026-03-05T17:00:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-de9d9e9ea504",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.00065,
+   "total_tokens": 2205,
+   "prompt_tokens": 1495,
+   "completion_tokens": 710,
+   "startTime": "2026-03-05T11:30:11.000Z",
+   "endTime": "2026-03-05T11:30:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9e6cb5f5d18a",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.005508,
+   "total_tokens": 790,
+   "prompt_tokens": 319,
+   "completion_tokens": 471,
+   "startTime": "2026-03-05T12:03:11.000Z",
+   "endTime": "2026-03-05T12:03:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-aa41caa0a50b",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 3330,
+   "prompt_tokens": 2850,
+   "completion_tokens": 480,
+   "startTime": "2026-03-05T11:42:11.000Z",
+   "endTime": "2026-03-05T11:42:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-348067b81cc6",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000508,
+   "total_tokens": 1101,
+   "prompt_tokens": 339,
+   "completion_tokens": 762,
+   "startTime": "2026-03-05T14:23:11.000Z",
+   "endTime": "2026-03-05T14:23:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9309f397def8",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.01155,
+   "total_tokens": 2202,
+   "prompt_tokens": 1396,
+   "completion_tokens": 806,
+   "startTime": "2026-03-05T09:13:11.000Z",
+   "endTime": "2026-03-05T09:13:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-2a6b36015b5c",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.008123,
+   "total_tokens": 1671,
+   "prompt_tokens": 1145,
+   "completion_tokens": 526,
+   "startTime": "2026-03-05T12:06:11.000Z",
+   "endTime": "2026-03-05T12:06:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-042829db5a86",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.008245,
+   "total_tokens": 1660,
+   "prompt_tokens": 1114,
+   "completion_tokens": 546,
+   "startTime": "2026-03-05T18:03:11.000Z",
+   "endTime": "2026-03-05T18:03:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e72da95be780",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00342,
+   "total_tokens": 1146,
+   "prompt_tokens": 1072,
+   "completion_tokens": 74,
+   "startTime": "2026-03-05T10:26:11.000Z",
+   "endTime": "2026-03-05T10:26:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-072efbf7e48d",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000774,
+   "total_tokens": 2820,
+   "prompt_tokens": 2041,
+   "completion_tokens": 779,
+   "startTime": "2026-03-05T09:05:11.000Z",
+   "endTime": "2026-03-05T09:05:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ae91c13da166",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.01305,
+   "total_tokens": 3459,
+   "prompt_tokens": 2872,
+   "completion_tokens": 587,
+   "startTime": "2026-03-05T08:19:11.000Z",
+   "endTime": "2026-03-05T08:19:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8f824c871ecb",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 2235,
+   "prompt_tokens": 2012,
+   "completion_tokens": 223,
+   "startTime": "2026-03-05T09:17:11.000Z",
+   "endTime": "2026-03-05T09:17:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-b139ffa253bc",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.014515,
+   "total_tokens": 3325,
+   "prompt_tokens": 2498,
+   "completion_tokens": 827,
+   "startTime": "2026-03-05T13:49:11.000Z",
+   "endTime": "2026-03-05T13:49:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a8db4078bbd9",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.007848,
+   "total_tokens": 2389,
+   "prompt_tokens": 2139,
+   "completion_tokens": 250,
+   "startTime": "2026-03-05T15:12:11.000Z",
+   "endTime": "2026-03-05T15:12:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b4f0107c5920",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000466,
+   "total_tokens": 1020,
+   "prompt_tokens": 324,
+   "completion_tokens": 696,
+   "startTime": "2026-03-05T18:49:11.000Z",
+   "endTime": "2026-03-05T18:49:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a00bcb8a0fb9",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00639,
+   "total_tokens": 2214,
+   "prompt_tokens": 2100,
+   "completion_tokens": 114,
+   "startTime": "2026-03-05T08:16:11.000Z",
+   "endTime": "2026-03-05T08:16:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ac0f413742b6",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.00045,
+   "total_tokens": 2014,
+   "prompt_tokens": 1686,
+   "completion_tokens": 328,
+   "startTime": "2026-03-05T17:02:11.000Z",
+   "endTime": "2026-03-05T17:02:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-81fca94cf25b",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000505,
+   "total_tokens": 1003,
+   "prompt_tokens": 215,
+   "completion_tokens": 788,
+   "startTime": "2026-03-05T18:04:11.000Z",
+   "endTime": "2026-03-05T18:04:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-40c18954f277",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.15225,
+   "total_tokens": 36282,
+   "prompt_tokens": 32665,
+   "completion_tokens": 3617,
+   "startTime": "2026-03-06T14:52:11.000Z",
+   "endTime": "2026-03-06T14:52:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-666dc72e07a9",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.111698,
+   "total_tokens": 33624,
+   "prompt_tokens": 29939,
+   "completion_tokens": 3685,
+   "startTime": "2026-03-06T10:38:11.000Z",
+   "endTime": "2026-03-06T10:38:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-04eed8389e66",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.007225,
+   "total_tokens": 41681,
+   "prompt_tokens": 39520,
+   "completion_tokens": 2161,
+   "startTime": "2026-03-06T14:48:11.000Z",
+   "endTime": "2026-03-06T14:48:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-78e15ee8d428",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.12077,
+   "total_tokens": 38915,
+   "prompt_tokens": 35784,
+   "completion_tokens": 3131,
+   "startTime": "2026-03-06T10:27:11.000Z",
+   "endTime": "2026-03-06T10:27:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-34331900a872",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.112407,
+   "total_tokens": 26021,
+   "prompt_tokens": 23159,
+   "completion_tokens": 2862,
+   "startTime": "2026-03-06T15:11:11.000Z",
+   "endTime": "2026-03-06T15:11:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c22c8bd5f59e",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.006273,
+   "total_tokens": 31229,
+   "prompt_tokens": 27698,
+   "completion_tokens": 3531,
+   "startTime": "2026-03-06T18:48:11.000Z",
+   "endTime": "2026-03-06T18:48:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-61aa372088d0",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.006345,
+   "total_tokens": 34741,
+   "prompt_tokens": 32221,
+   "completion_tokens": 2520,
+   "startTime": "2026-03-06T11:28:11.000Z",
+   "endTime": "2026-03-06T11:28:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d33bd58dd1b1",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.121223,
+   "total_tokens": 41334,
+   "prompt_tokens": 38949,
+   "completion_tokens": 2385,
+   "startTime": "2026-03-06T14:16:11.000Z",
+   "endTime": "2026-03-06T14:16:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c470545f447c",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 23422,
+   "prompt_tokens": 21213,
+   "completion_tokens": 2209,
+   "startTime": "2026-03-06T11:53:11.000Z",
+   "endTime": "2026-03-06T11:53:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-352bcdb62709",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00468,
+   "total_tokens": 24039,
+   "prompt_tokens": 21651,
+   "completion_tokens": 2388,
+   "startTime": "2026-03-06T17:12:11.000Z",
+   "endTime": "2026-03-06T17:12:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-760dd716fca8",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.011768,
+   "total_tokens": 2706,
+   "prompt_tokens": 2039,
+   "completion_tokens": 667,
+   "startTime": "2026-03-06T18:00:11.000Z",
+   "endTime": "2026-03-06T18:00:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-6d31d85c996b",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 2108,
+   "prompt_tokens": 1710,
+   "completion_tokens": 398,
+   "startTime": "2026-03-06T11:16:11.000Z",
+   "endTime": "2026-03-06T11:16:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-4837d8f7f17b",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000728,
+   "total_tokens": 2619,
+   "prompt_tokens": 1875,
+   "completion_tokens": 744,
+   "startTime": "2026-03-06T17:19:11.000Z",
+   "endTime": "2026-03-06T17:19:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-76912c1e6faa",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2989,
+   "prompt_tokens": 2444,
+   "completion_tokens": 545,
+   "startTime": "2026-03-06T09:50:11.000Z",
+   "endTime": "2026-03-06T09:50:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-b32e812a0c68",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.012489,
+   "total_tokens": 1291,
+   "prompt_tokens": 573,
+   "completion_tokens": 718,
+   "startTime": "2026-03-06T12:26:11.000Z",
+   "endTime": "2026-03-06T12:26:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8fc700b5f42c",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.011828,
+   "total_tokens": 2292,
+   "prompt_tokens": 1479,
+   "completion_tokens": 813,
+   "startTime": "2026-03-06T13:26:11.000Z",
+   "endTime": "2026-03-06T13:26:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-884fff1503ee",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.009771,
+   "total_tokens": 1457,
+   "prompt_tokens": 1007,
+   "completion_tokens": 450,
+   "startTime": "2026-03-06T11:00:11.000Z",
+   "endTime": "2026-03-06T11:00:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-2974dfda1ccc",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.006075,
+   "total_tokens": 1035,
+   "prompt_tokens": 570,
+   "completion_tokens": 465,
+   "startTime": "2026-03-06T13:29:11.000Z",
+   "endTime": "2026-03-06T13:29:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-2569042ecd85",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.008098,
+   "total_tokens": 2654,
+   "prompt_tokens": 2459,
+   "completion_tokens": 195,
+   "startTime": "2026-03-06T14:05:11.000Z",
+   "endTime": "2026-03-06T14:05:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-9133015711d6",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.005694,
+   "total_tokens": 1102,
+   "prompt_tokens": 903,
+   "completion_tokens": 199,
+   "startTime": "2026-03-06T10:33:11.000Z",
+   "endTime": "2026-03-06T10:33:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a27e6c82c2c7",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000824,
+   "total_tokens": 3030,
+   "prompt_tokens": 2209,
+   "completion_tokens": 821,
+   "startTime": "2026-03-06T11:19:11.000Z",
+   "endTime": "2026-03-06T11:19:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-d839d738a2ac",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000466,
+   "total_tokens": 1090,
+   "prompt_tokens": 418,
+   "completion_tokens": 672,
+   "startTime": "2026-03-06T14:05:11.000Z",
+   "endTime": "2026-03-06T14:05:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-3b64e61f9e2f",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.011498,
+   "total_tokens": 3207,
+   "prompt_tokens": 2743,
+   "completion_tokens": 464,
+   "startTime": "2026-03-06T11:53:11.000Z",
+   "endTime": "2026-03-06T11:53:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-12e2b3f7d890",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.005515,
+   "total_tokens": 829,
+   "prompt_tokens": 370,
+   "completion_tokens": 459,
+   "startTime": "2026-03-06T10:24:11.000Z",
+   "endTime": "2026-03-06T10:24:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-5946cec5aa2c",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.00339,
+   "total_tokens": 1080,
+   "prompt_tokens": 988,
+   "completion_tokens": 92,
+   "startTime": "2026-03-06T18:02:11.000Z",
+   "endTime": "2026-03-06T18:02:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-6ad5d62aa355",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000708,
+   "total_tokens": 3171,
+   "prompt_tokens": 2655,
+   "completion_tokens": 516,
+   "startTime": "2026-03-06T18:49:11.000Z",
+   "endTime": "2026-03-06T18:49:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "dave",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-69811c3890ac",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.010935,
+   "total_tokens": 1705,
+   "prompt_tokens": 1220,
+   "completion_tokens": 485,
+   "startTime": "2026-03-06T13:28:11.000Z",
+   "endTime": "2026-03-06T13:28:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-986f1352f2b3",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.007365,
+   "total_tokens": 897,
+   "prompt_tokens": 214,
+   "completion_tokens": 683,
+   "startTime": "2026-03-06T15:15:11.000Z",
+   "endTime": "2026-03-06T15:15:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-cc35869b5f5a",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 1998,
+   "prompt_tokens": 1839,
+   "completion_tokens": 159,
+   "startTime": "2026-03-06T13:27:11.000Z",
+   "endTime": "2026-03-06T13:27:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-df24c6edf1c8",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 3011,
+   "prompt_tokens": 2289,
+   "completion_tokens": 722,
+   "startTime": "2026-03-06T18:08:11.000Z",
+   "endTime": "2026-03-06T18:08:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-8b2be9023219",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.003156,
+   "total_tokens": 632,
+   "prompt_tokens": 527,
+   "completion_tokens": 105,
+   "startTime": "2026-03-06T14:41:11.000Z",
+   "endTime": "2026-03-06T14:41:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-5717d80d4ccb",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 896,
+   "prompt_tokens": 648,
+   "completion_tokens": 248,
+   "startTime": "2026-03-06T15:18:11.000Z",
+   "endTime": "2026-03-06T15:18:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-bc57069d8b92",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000899,
+   "total_tokens": 3524,
+   "prompt_tokens": 2700,
+   "completion_tokens": 824,
+   "startTime": "2026-03-06T13:57:11.000Z",
+   "endTime": "2026-03-06T13:57:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-b0b394d8cb10",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.008743,
+   "total_tokens": 1805,
+   "prompt_tokens": 1241,
+   "completion_tokens": 564,
+   "startTime": "2026-03-06T15:13:11.000Z",
+   "endTime": "2026-03-06T15:13:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e76b7f33b958",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.009156,
+   "total_tokens": 1548,
+   "prompt_tokens": 1172,
+   "completion_tokens": 376,
+   "startTime": "2026-03-06T11:11:11.000Z",
+   "endTime": "2026-03-06T11:11:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-673a72bf5dc4",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000678,
+   "total_tokens": 3368,
+   "prompt_tokens": 2983,
+   "completion_tokens": 385,
+   "startTime": "2026-03-06T10:50:11.000Z",
+   "endTime": "2026-03-06T10:50:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-60fbaaf56998",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.011195,
+   "total_tokens": 3224,
+   "prompt_tokens": 2806,
+   "completion_tokens": 418,
+   "startTime": "2026-03-06T15:35:11.000Z",
+   "endTime": "2026-03-06T15:35:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-c5f97713f293",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.015132,
+   "total_tokens": 3232,
+   "prompt_tokens": 2779,
+   "completion_tokens": 453,
+   "startTime": "2026-03-06T13:16:11.000Z",
+   "endTime": "2026-03-06T13:16:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-90e454689162",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.008068,
+   "total_tokens": 2063,
+   "prompt_tokens": 1675,
+   "completion_tokens": 388,
+   "startTime": "2026-03-06T15:14:11.000Z",
+   "endTime": "2026-03-06T15:14:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-73e580890852",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.009219,
+   "total_tokens": 1605,
+   "prompt_tokens": 1238,
+   "completion_tokens": 367,
+   "startTime": "2026-03-06T17:59:11.000Z",
+   "endTime": "2026-03-06T17:59:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-4a7996f49256",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 614,
+   "prompt_tokens": 338,
+   "completion_tokens": 276,
+   "startTime": "2026-03-06T17:40:11.000Z",
+   "endTime": "2026-03-06T17:40:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-ddfb05e03034",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00017,
+   "total_tokens": 580,
+   "prompt_tokens": 395,
+   "completion_tokens": 185,
+   "startTime": "2026-03-06T17:41:11.000Z",
+   "endTime": "2026-03-06T17:41:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-5d82b2a4cf96",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.010435,
+   "total_tokens": 2935,
+   "prompt_tokens": 2522,
+   "completion_tokens": 413,
+   "startTime": "2026-03-06T16:22:11.000Z",
+   "endTime": "2026-03-06T16:22:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-2c4fc73a6ff9",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.0,
+   "total_tokens": 2086,
+   "prompt_tokens": 1433,
+   "completion_tokens": 653,
+   "startTime": "2026-03-06T13:39:11.000Z",
+   "endTime": "2026-03-06T13:39:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-6bce016a118f",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 1971,
+   "prompt_tokens": 1197,
+   "completion_tokens": 774,
+   "startTime": "2026-03-06T09:04:11.000Z",
+   "endTime": "2026-03-06T09:04:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-84842da48a0d",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000806,
+   "total_tokens": 2727,
+   "prompt_tokens": 1846,
+   "completion_tokens": 881,
+   "startTime": "2026-03-06T08:03:11.000Z",
+   "endTime": "2026-03-06T08:03:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-984a3051880e",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.015267,
+   "total_tokens": 3073,
+   "prompt_tokens": 2569,
+   "completion_tokens": 504,
+   "startTime": "2026-03-06T16:46:11.000Z",
+   "endTime": "2026-03-06T16:46:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-3bb1f085ba16",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00208,
+   "total_tokens": 493,
+   "prompt_tokens": 380,
+   "completion_tokens": 113,
+   "startTime": "2026-03-06T14:11:11.000Z",
+   "endTime": "2026-03-06T14:11:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ef704b76d8b2",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.007395,
+   "total_tokens": 927,
+   "prompt_tokens": 250,
+   "completion_tokens": 677,
+   "startTime": "2026-03-06T11:09:11.000Z",
+   "endTime": "2026-03-06T11:09:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-4c624c0c368d",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.017031,
+   "total_tokens": 3401,
+   "prompt_tokens": 2832,
+   "completion_tokens": 569,
+   "startTime": "2026-03-06T14:52:11.000Z",
+   "endTime": "2026-03-06T14:52:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-5cfe07421afc",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000283,
+   "total_tokens": 818,
+   "prompt_tokens": 461,
+   "completion_tokens": 357,
+   "startTime": "2026-03-06T15:45:11.000Z",
+   "endTime": "2026-03-06T15:45:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-6cf10e0e2c30",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000395,
+   "total_tokens": 2237,
+   "prompt_tokens": 2105,
+   "completion_tokens": 132,
+   "startTime": "2026-03-06T15:11:11.000Z",
+   "endTime": "2026-03-06T15:11:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-3a9d35a6ad9d",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 2926,
+   "prompt_tokens": 2837,
+   "completion_tokens": 89,
+   "startTime": "2026-03-06T12:45:11.000Z",
+   "endTime": "2026-03-06T12:45:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-a17c52f5bc87",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.016386,
+   "total_tokens": 3478,
+   "prompt_tokens": 2982,
+   "completion_tokens": 496,
+   "startTime": "2026-03-06T16:16:11.000Z",
+   "endTime": "2026-03-06T16:16:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-569d720a5bb8",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.004131,
+   "total_tokens": 485,
+   "prompt_tokens": 262,
+   "completion_tokens": 223,
+   "startTime": "2026-03-06T11:53:11.000Z",
+   "endTime": "2026-03-06T11:53:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-234e022562fc",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.008304,
+   "total_tokens": 1784,
+   "prompt_tokens": 1538,
+   "completion_tokens": 246,
+   "startTime": "2026-03-06T13:38:11.000Z",
+   "endTime": "2026-03-06T13:38:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a21d863f4316",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.017757,
+   "total_tokens": 3523,
+   "prompt_tokens": 2924,
+   "completion_tokens": 599,
+   "startTime": "2026-03-06T16:44:11.000Z",
+   "endTime": "2026-03-06T16:44:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-84324bda3166",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.012981,
+   "total_tokens": 1791,
+   "prompt_tokens": 1157,
+   "completion_tokens": 634,
+   "startTime": "2026-03-06T11:25:11.000Z",
+   "endTime": "2026-03-06T11:25:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e550a5a3a549",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 875,
+   "prompt_tokens": 792,
+   "completion_tokens": 83,
+   "startTime": "2026-03-06T09:39:11.000Z",
+   "endTime": "2026-03-06T09:39:14.000Z",
+   "model": "gpt-4o",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-e604f24e18ab",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.0,
+   "total_tokens": 398,
+   "prompt_tokens": 317,
+   "completion_tokens": 81,
+   "startTime": "2026-03-06T18:40:11.000Z",
+   "endTime": "2026-03-06T18:40:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-aed50b012038",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.014845,
+   "total_tokens": 3448,
+   "prompt_tokens": 2618,
+   "completion_tokens": 830,
+   "startTime": "2026-03-07T16:57:11.000Z",
+   "endTime": "2026-03-07T16:57:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-0d8bb97e2f1e",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000277,
+   "total_tokens": 940,
+   "prompt_tokens": 638,
+   "completion_tokens": 302,
+   "startTime": "2026-03-07T09:02:11.000Z",
+   "endTime": "2026-03-07T09:02:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-8604abfc8b66",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 1915,
+   "prompt_tokens": 1377,
+   "completion_tokens": 538,
+   "startTime": "2026-03-07T09:50:11.000Z",
+   "endTime": "2026-03-07T09:50:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-b68815c3e2ff",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000526,
+   "total_tokens": 2061,
+   "prompt_tokens": 1578,
+   "completion_tokens": 483,
+   "startTime": "2026-03-07T13:16:11.000Z",
+   "endTime": "2026-03-07T13:16:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-71ab435bfcd9",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.000729,
+   "total_tokens": 2351,
+   "prompt_tokens": 1514,
+   "completion_tokens": 837,
+   "startTime": "2026-03-07T16:30:11.000Z",
+   "endTime": "2026-03-07T16:30:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-75935e3fb9e8",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.010778,
+   "total_tokens": 2568,
+   "prompt_tokens": 1987,
+   "completion_tokens": 581,
+   "startTime": "2026-03-07T13:30:11.000Z",
+   "endTime": "2026-03-07T13:30:14.000Z",
+   "model": "gpt-4o",
+   "user": "alice",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-ddfa15ad5b07",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.014976,
+   "total_tokens": 1868,
+   "prompt_tokens": 1087,
+   "completion_tokens": 781,
+   "startTime": "2026-03-07T09:36:11.000Z",
+   "endTime": "2026-03-07T09:36:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-19a4eba4e8c2",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.00842,
+   "total_tokens": 2600,
+   "prompt_tokens": 2344,
+   "completion_tokens": 256,
+   "startTime": "2026-03-07T08:00:11.000Z",
+   "endTime": "2026-03-07T08:00:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-0621a51a6fae",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.000477,
+   "total_tokens": 1511,
+   "prompt_tokens": 955,
+   "completion_tokens": 556,
+   "startTime": "2026-03-07T16:16:11.000Z",
+   "endTime": "2026-03-07T16:16:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-03db68df5b5a",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.00847,
+   "total_tokens": 1708,
+   "prompt_tokens": 1148,
+   "completion_tokens": 560,
+   "startTime": "2026-03-07T18:49:11.000Z",
+   "endTime": "2026-03-07T18:49:14.000Z",
+   "model": "gpt-4o",
+   "user": "dave",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-a5efa83cfd92",
+   "call_type": "acompletion",
+   "api_key": "25a74b6dca20219e32f4bddd",
+   "spend": 0.012279,
+   "total_tokens": 1321,
+   "prompt_tokens": 628,
+   "completion_tokens": 693,
+   "startTime": "2026-03-07T09:25:11.000Z",
+   "endTime": "2026-03-07T09:25:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-877285e3fe9e",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.007359,
+   "total_tokens": 733,
+   "prompt_tokens": 303,
+   "completion_tokens": 430,
+   "startTime": "2026-03-07T12:27:11.000Z",
+   "endTime": "2026-03-07T12:27:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-f0fd490baf06",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.0,
+   "total_tokens": 1677,
+   "prompt_tokens": 1156,
+   "completion_tokens": 521,
+   "startTime": "2026-03-07T17:48:11.000Z",
+   "endTime": "2026-03-07T17:48:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "alice",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": true
+  },
+  {
+   "request_id": "chatcmpl-40138eecb9b6",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.013374,
+   "total_tokens": 2122,
+   "prompt_tokens": 1538,
+   "completion_tokens": 584,
+   "startTime": "2026-03-07T15:42:11.000Z",
+   "endTime": "2026-03-07T15:42:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "carol",
+   "team_id": "team-support",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-644370b60b77",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.000753,
+   "total_tokens": 2752,
+   "prompt_tokens": 1997,
+   "completion_tokens": 755,
+   "startTime": "2026-03-07T17:14:11.000Z",
+   "endTime": "2026-03-07T17:14:14.000Z",
+   "model": "gpt-4o-mini",
+   "user": "carol",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-72d1cab080de",
+   "call_type": "acompletion",
+   "api_key": "bc9e31f01e1c5a02b177fda3",
+   "spend": 0.012057,
+   "total_tokens": 1743,
+   "prompt_tokens": 1174,
+   "completion_tokens": 569,
+   "startTime": "2026-03-07T12:48:11.000Z",
+   "endTime": "2026-03-07T12:48:14.000Z",
+   "model": "claude-3-5-sonnet",
+   "user": "bob",
+   "team_id": "team-growth",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-e247e1d860dc",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.010935,
+   "total_tokens": 2004,
+   "prompt_tokens": 1214,
+   "completion_tokens": 790,
+   "startTime": "2026-03-07T16:22:11.000Z",
+   "endTime": "2026-03-07T16:22:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  },
+  {
+   "request_id": "chatcmpl-15f5f365f93c",
+   "call_type": "acompletion",
+   "api_key": "14cc8ce97e78257dfaecd0e8",
+   "spend": 0.011107,
+   "total_tokens": 2055,
+   "prompt_tokens": 1259,
+   "completion_tokens": 796,
+   "startTime": "2026-03-07T10:42:11.000Z",
+   "endTime": "2026-03-07T10:42:14.000Z",
+   "model": "gpt-4o",
+   "user": "bob",
+   "team_id": "team-research",
+   "end_user": "",
+   "metadata": {
+    "user_api_key_alias": "svc-key"
+   },
+   "cache_hit": false
+  }
+ ]
+}

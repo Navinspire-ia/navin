@@ -51,6 +51,9 @@ WEBUI_SESSION_METADATA_KEY = "webui"
 WEBUI_TITLE_METADATA_KEY = "title"
 WEBUI_TITLE_USER_EDITED_METADATA_KEY = "title_user_edited"
 WEBUI_TITLE_PROVISIONAL_METADATA_KEY = "title_provisional"
+# Set once the chat has its name for good: the first one it showed. From then
+# on no model call renames the chat.
+WEBUI_TITLE_FINAL_METADATA_KEY = "title_final"
 TITLE_MAX_CHARS = 60
 # A chat name is a label, not a sentence: at most this many words everywhere
 # (sidebar, CLI and desktop), whatever produced it.
@@ -352,7 +355,6 @@ def apply_provisional_title(session: Session, user_text: str | None) -> bool:
     if session.metadata.get(WEBUI_TITLE_USER_EDITED_METADATA_KEY) is True:
         return False
     current = session.metadata.get(WEBUI_TITLE_METADATA_KEY)
-    provisional = session.metadata.get(WEBUI_TITLE_PROVISIONAL_METADATA_KEY) is True
     changed = False
     if isinstance(current, str) and current.strip():
         # A title that leaked the expanded workflow brief is not a real title -
@@ -360,16 +362,15 @@ def apply_provisional_title(session: Session, user_text: str | None) -> bool:
         if _WORKFLOW_BRIEF_HEADER_RE.match(current.strip()):
             session.metadata.pop(WEBUI_TITLE_METADATA_KEY, None)
             session.metadata.pop(WEBUI_TITLE_PROVISIONAL_METADATA_KEY, None)
-            current = None
-            provisional = False
             changed = True
-        elif not provisional:
+        else:
+            # Already titled (provisional or generated): never rename on later
+            # messages. The provisional label stays until the LLM upgrades it
+            # from the *first* exchange, so the sidebar name stays stable.
             return False
     title = provisional_title_from_user_text(user_text)
     if not title:
         return changed
-    if current == title and provisional:
-        return False
     session.metadata[WEBUI_TITLE_METADATA_KEY] = title
     session.metadata[WEBUI_TITLE_PROVISIONAL_METADATA_KEY] = True
     return True
@@ -420,8 +421,18 @@ async def maybe_generate_webui_title(
         return False
     if session.metadata.get(WEBUI_TITLE_USER_EDITED_METADATA_KEY) is True:
         return False
+    if session.metadata.get(WEBUI_TITLE_FINAL_METADATA_KEY) is True:
+        return False
     provisional = session.metadata.get(WEBUI_TITLE_PROVISIONAL_METADATA_KEY) is True
     current_title = session.metadata.get(WEBUI_TITLE_METADATA_KEY)
+    if provisional and isinstance(current_title, str) and current_title.strip():
+        # The chat already shows the name taken from its first message: it
+        # stays. Replacing it once the model answered looked like the chat
+        # renaming itself under the user.
+        session.metadata.pop(WEBUI_TITLE_PROVISIONAL_METADATA_KEY, None)
+        session.metadata[WEBUI_TITLE_FINAL_METADATA_KEY] = True
+        sessions.save(session)
+        return False
     if isinstance(current_title, str) and current_title.strip() and not provisional:
         cleaned_current_title = clean_generated_title(current_title)
         if cleaned_current_title and is_usable_generated_title(cleaned_current_title):
@@ -494,6 +505,7 @@ async def maybe_generate_webui_title(
         title = fallback
     session.metadata[WEBUI_TITLE_METADATA_KEY] = title
     session.metadata.pop(WEBUI_TITLE_PROVISIONAL_METADATA_KEY, None)
+    session.metadata[WEBUI_TITLE_FINAL_METADATA_KEY] = True
     sessions.save(session)
     return True
 

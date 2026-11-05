@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
+
+from loguru import logger
 
 from navin.tui.modes import display_user_text
 from navin.tui.runtime import split_session_id
@@ -37,6 +40,46 @@ def format_session_when(raw: str) -> str:
     clock = text[11:16] if len(text) >= 16 and text[11:16] != "00:00" else ""
     label = f"{day} {_MONTHS[month - 1]}"
     return f"{label} {clock}".strip()
+
+
+def compact_session_age(raw: str, now: datetime | None = None) -> str:
+    """``updated_at`` -> ``now``, ``5m``, ``2h``, ``3d``, ``2w``, ``4mo``, ``1y``.
+
+    Same steps as the desktop sidebar (``compactRelativeTime``): hours under a
+    day, then days. Empty when the date cannot be read.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        # An unreadable date shows no age rather than a wrong one.
+        logger.debug("session date {!r} unreadable: {}", text, exc)
+        return ""
+    if now is None:
+        now = datetime.now(when.tzinfo) if when.tzinfo else datetime.now()
+    elif (now.tzinfo is None) != (when.tzinfo is None):
+        when = when.replace(tzinfo=now.tzinfo)
+    seconds = max(0, round((now - when).total_seconds()))
+    if seconds < 60:
+        return "now"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = round(minutes / 60)
+    if hours < 24:
+        return f"{hours}h"
+    days = round(hours / 24)
+    if days < 14:
+        return f"{days}d"
+    weeks = round(days / 7)
+    if weeks < 8:
+        return f"{weeks}w"
+    months = round(days / 30)
+    if months < 24:
+        return f"{months}mo"
+    return f"{round(days / 365)}y"
 
 
 def session_origin(key: str) -> str:

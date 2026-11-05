@@ -1100,6 +1100,31 @@ class TuiRuntime:
         """Turns and subagents running in the project on screen (quitting stops them)."""
         return _work_count(self.agent_loop) if self.agent_loop is not None else 0
 
+    async def note_external_stop(self, reason: str) -> int:
+        """A stop signal from outside (SIGTERM, SIGHUP): keep the resume of the running turns.
+
+        Called before the quit cancels them, for the engine on screen and the
+        projects working in the background. Returns how many turns keep
+        their resume; see ``TurnRecovery.note_external_stop``.
+        """
+        engines = [self.agent_loop, *(engine.agent_loop for engine in self._parked.values())]
+        kept = 0
+        for loop in engines:
+            recovery = getattr(loop, "turn_recovery", None) if loop is not None else None
+            if recovery is None:
+                continue
+            keys = active_turn_keys(loop)
+            # A turn waiting out a provider backoff is cut by the stop as well.
+            waiting = getattr(recovery, "waiting", None)
+            keys.update(key for key in list(getattr(recovery, "due", {})) if callable(waiting) and waiting(key))
+            if not keys:
+                continue
+            try:
+                kept += len(await recovery.note_external_stop_async(sorted(keys), reason))
+            except OSError as exc:
+                self.shutdown_warnings.append(f"Could not save the resume of the running turns: {exc}")
+        return kept
+
     def session_busy(self, path: str | Path, key: str) -> bool:
         """Whether one session of a project open in this CLI still works."""
         wanted = self._key_for(path)

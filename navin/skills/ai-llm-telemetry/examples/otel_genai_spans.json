@@ -1,0 +1,890 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "research-agent"
+      }
+     }
+    ]
+   },
+   "scopeSpans": [
+    {
+     "scope": {
+      "name": "opentelemetry.instrumentation.openai_agents"
+     },
+     "spans": [
+      {
+       "traceId": "00000000000000000000000000000001",
+       "spanId": "0000000000000064",
+       "parentSpanId": "0000000000000064",
+       "name": "execute_tool summarize",
+       "kind": 3,
+       "startTimeUnixNano": "1772700100000000000",
+       "endTimeUnixNano": "1772700100617000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "summarize"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_10"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 1\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000001",
+       "spanId": "0000000000000065",
+       "parentSpanId": "0000000000000064",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700102000000000",
+       "endTimeUnixNano": "1772700102127000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_11"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 1\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000001",
+       "spanId": "0000000000000066",
+       "parentSpanId": "0000000000000064",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700104000000000",
+       "endTimeUnixNano": "1772700105288000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_12"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000001",
+       "spanId": "0000000000000067",
+       "parentSpanId": "0000000000000064",
+       "name": "execute_tool web_search",
+       "kind": 3,
+       "startTimeUnixNano": "1772700106000000000",
+       "endTimeUnixNano": "1772700106920000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "web_search"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_13"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000002",
+       "spanId": "00000000000000c8",
+       "parentSpanId": "00000000000000c8",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700200000000000",
+       "endTimeUnixNano": "1772700200534000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_20"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 4\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000002",
+       "spanId": "00000000000000c9",
+       "parentSpanId": "00000000000000c8",
+       "name": "execute_tool web_search",
+       "kind": 3,
+       "startTimeUnixNano": "1772700202000000000",
+       "endTimeUnixNano": "1772700203060000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "web_search"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_21"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 2\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000002",
+       "spanId": "00000000000000ca",
+       "parentSpanId": "00000000000000c8",
+       "name": "execute_tool summarize",
+       "kind": 3,
+       "startTimeUnixNano": "1772700204000000000",
+       "endTimeUnixNano": "1772700204399000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "summarize"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_22"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 2\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000003",
+       "spanId": "000000000000012c",
+       "parentSpanId": "000000000000012c",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700300000000000",
+       "endTimeUnixNano": "1772700301222000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_30"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000003",
+       "spanId": "000000000000012d",
+       "parentSpanId": "000000000000012c",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700302000000000",
+       "endTimeUnixNano": "1772700302571000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_31"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000003",
+       "spanId": "000000000000012e",
+       "parentSpanId": "000000000000012c",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700304000000000",
+       "endTimeUnixNano": "1772700304972000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_32"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000003",
+       "spanId": "000000000000012f",
+       "parentSpanId": "000000000000012c",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700306000000000",
+       "endTimeUnixNano": "1772700306675000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_33"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 1\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000003",
+       "spanId": "0000000000000130",
+       "parentSpanId": "000000000000012c",
+       "name": "execute_tool summarize",
+       "kind": 3,
+       "startTimeUnixNano": "1772700308000000000",
+       "endTimeUnixNano": "1772700308756000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "summarize"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_34"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000004",
+       "spanId": "0000000000000190",
+       "parentSpanId": "0000000000000190",
+       "name": "execute_tool summarize",
+       "kind": 3,
+       "startTimeUnixNano": "1772700400000000000",
+       "endTimeUnixNano": "1772700401450000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "summarize"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_40"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 1\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000004",
+       "spanId": "0000000000000191",
+       "parentSpanId": "0000000000000190",
+       "name": "execute_tool web_search",
+       "kind": 3,
+       "startTimeUnixNano": "1772700402000000000",
+       "endTimeUnixNano": "1772700402888000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "web_search"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_41"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000004",
+       "spanId": "0000000000000192",
+       "parentSpanId": "0000000000000190",
+       "name": "execute_tool summarize",
+       "kind": 3,
+       "startTimeUnixNano": "1772700404000000000",
+       "endTimeUnixNano": "1772700404387000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "summarize"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_42"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 3\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000004",
+       "spanId": "0000000000000193",
+       "parentSpanId": "0000000000000190",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700406000000000",
+       "endTimeUnixNano": "1772700406130000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_43"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 5\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000004",
+       "spanId": "0000000000000194",
+       "parentSpanId": "0000000000000190",
+       "name": "execute_tool web_search",
+       "kind": 3,
+       "startTimeUnixNano": "1772700408000000000",
+       "endTimeUnixNano": "1772700409443000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "web_search"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_44"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"q\": \"topic 1\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000005",
+       "spanId": "00000000000001f4",
+       "parentSpanId": "00000000000001f4",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700500000000000",
+       "endTimeUnixNano": "1772700500900000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_50"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"url\": \"https://example.com/paywalled\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000005",
+       "spanId": "00000000000001f5",
+       "parentSpanId": "00000000000001f4",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700502000000000",
+       "endTimeUnixNano": "1772700502900000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_51"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"url\": \"https://example.com/paywalled\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000005",
+       "spanId": "00000000000001f6",
+       "parentSpanId": "00000000000001f4",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700504000000000",
+       "endTimeUnixNano": "1772700504900000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_52"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"url\": \"https://example.com/paywalled\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000005",
+       "spanId": "00000000000001f7",
+       "parentSpanId": "00000000000001f4",
+       "name": "execute_tool fetch_page",
+       "kind": 3,
+       "startTimeUnixNano": "1772700506000000000",
+       "endTimeUnixNano": "1772700506900000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "fetch_page"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_53"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"url\": \"https://example.com/paywalled\"}"
+         }
+        }
+       ],
+       "status": {
+        "code": 2,
+        "message": "tool failed"
+       }
+      },
+      {
+       "traceId": "00000000000000000000000000000001",
+       "spanId": "0000000000000064",
+       "name": "chat gpt-4o",
+       "kind": 3,
+       "startTimeUnixNano": "1772700000000000000",
+       "endTimeUnixNano": "1772700003000000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "chat"
+         }
+        },
+        {
+         "key": "gen_ai.system",
+         "value": {
+          "stringValue": "openai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gpt-4o"
+         }
+        },
+        {
+         "key": "gen_ai.response.model",
+         "value": {
+          "stringValue": "gpt-4o-2024-08-06"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "812"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "133"
+         }
+        },
+        {
+         "key": "gen_ai.response.finish_reasons",
+         "value": {
+          "arrayValue": {
+           "values": [
+            {
+             "stringValue": "tool_calls"
+            }
+           ]
+          }
+         }
+        }
+       ],
+       "status": {
+        "code": 0
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

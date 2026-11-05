@@ -22,14 +22,19 @@ export function retainAgentTerminals<T extends TerminalRecord>(tabs: T[], select
   return kept.length === tabs.length ? tabs : kept;
 }
 
-/** True when a terminal tab belongs to the project on screen: the agent's
- *  commands of this chat (or a broadcast to every chat), the shells opened
- *  in this project. The others keep running and come back with their project. */
+/** True when a terminal tab belongs to the chat/project on screen. Strict:
+ *  an agent tab shows only in the chat that ran it (no unscoped tab, no "*"
+ *  broadcast leaking into every chat), a shell only in the project it was
+ *  opened in (a shell opened with no project shows only while none is open).
+ *  The others keep running and come back with their chat or project. */
 export function terminalBelongsHere(
   tab: { kind?: "pty" | "agent"; chatId?: string; root?: string | null },
   chatId: string | null,
   root: string | null | undefined,
 ): boolean {
-  if (tab.kind === "agent") return !tab.chatId || tab.chatId === "*" || tab.chatId === chatId;
-  return !tab.root || !root || sameWorkspacePath(tab.root, root);
+  if (tab.kind === "agent") return Boolean(chatId) && tab.chatId === chatId;
+  const tabRoot = tab.root || null;
+  const here = root || null;
+  if (!tabRoot || !here) return !tabRoot && !here;
+  return sameWorkspacePath(tabRoot, here);
 }

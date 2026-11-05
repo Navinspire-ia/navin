@@ -61,6 +61,13 @@ same name and are included in the agent skills summary automatically.
 | `debug-live` | Live debug: DebugMCP, repro, isolated branch (`/debug`) |
 | `studio-html-report` | Expert HTML reports (Review / Security / Debug + studio) |
 | `vulnerability-scanner` | Flaw & CVE hunting (`/probe`) |
+| `siem-edr-connector` | SIEM/EDR collection and correlation: Splunk, Elastic, Sentinel, Wazuh, CrowdStrike, SentinelOne, Defender; ECS/OCSF normalization, Sigma |
+| `identity-access-review` | IAM/PAM reviews and separation of duties: dormant, orphan, privileged without MFA, SoD conflicts, evidence pack |
+| `agent-runtime-guard` | Real-time control of agent and MCP tool calls: PreToolUse policy, redacted call log, session audit (loops, denials) |
+| `data-dlp-monitor` | Data classification and exfiltration watch: PII detectors with validators, egress baselines, Purview and Cloud DLP |
+| `threat-intelligence` | IOC and TTP handling with MISP and OpenCTI: STIX 2.1, TAXII, ATT&CK mapping, enrichment, TLP sharing |
+| `sbom-attestation` | SBOM quality and diff (CycloneDX, SPDX), Cosign signatures, in-toto/SLSA provenance, Rekor, admission policies |
+| `third-party-risk-register` | ICT third-party risk register: DORA register of information, tiering, due diligence evidence, exit plans, concentration |
 
 ### Navigation & research
 | Skill | Description |
@@ -105,6 +112,9 @@ same name and are included in the agent skills summary automatically.
 | `performance-auditor` | Profiling & optimization (`/turbo`) |
 | `quality-gate` | Release go/no-go gate |
 | `pack-builder` | Create & manage plugin packs (`/pack`) |
+| `ai-llm-telemetry` | LLM observability: Opik traces, LiteLLM spend logs, OTel GenAI spans; tokens, costs, tool calls, loops |
+| `slo-error-budget` | SLI/SLO and error budgets: burn-rate alerts, OpenSLO, Sloth, Prometheus rules, SLO reviews |
+| `disaster-recovery-planner` | DR/BC exercises (PRA/PCA): BIA, exercise plans, achieved RPO/RTO, after-action reports, DORA and ISO 22301 |
 
 ### Data
 | Skill | Description |
@@ -119,6 +129,7 @@ same name and are included in the agent skills summary automatically.
 | `data-migration-agent` | Migration playbooks |
 | `kpi-reporter` | Recurring KPI reports |
 | `metrics-analyst` | Project health dashboard (`/pulse`) |
+| `data-lineage-observer` | OpenLineage and Marquez: dependency graph, impact and upstream analysis, orphans, freshness checks |
 
 ### SEO
 | Skill | Description |

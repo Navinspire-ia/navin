@@ -11,6 +11,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
 
+from navin.agent.peer_activity import note_file_edit
+
 
 @dataclass(slots=True)
 class ReadState:
@@ -119,7 +121,13 @@ class FileStates:
         )
 
     def record_write(self, path: str | Path) -> None:
-        """Record that a file was written (updates mtime in state)."""
+        """Record that a file was written (updates mtime in state).
+
+        Every agent write, edit, patch, delete and move ends here, so this is
+        also where the running turn claims the file in the cross-session
+        registry (navin/agent/peer_activity.py) that other sessions read.
+        """
+        note_file_edit(path)
         p = str(Path(path).resolve())
         try:
             mtime = os.path.getmtime(p)

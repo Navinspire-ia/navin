@@ -1,0 +1,4 @@
+[
+  {"alert_id": "ids-1", "ts": 1773302400, "sensor": {"hostname": "fw-edge-01"}, "actor": "", "src": "10.20.30.42", "dst": "185.220.101.45", "dport": 443, "sig": "ET MALWARE Cobalt Strike Beacon Observed", "prio": 1, "mitre_tactic": "Command and Control", "mitre_tech": "T1071.001"},
+  {"alert_id": "ids-2", "ts": 1773302460, "sensor": {"hostname": "fw-edge-01"}, "actor": "", "src": "10.20.30.42", "dst": "10.20.1.10", "dport": 445, "sig": "ET POLICY SMB2 NT Create AndX Request For an Executable File", "prio": 3, "mitre_tactic": "Lateral Movement", "mitre_tech": "T1021.002"}
+]

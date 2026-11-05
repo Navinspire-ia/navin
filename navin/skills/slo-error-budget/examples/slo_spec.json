@@ -1,0 +1,12 @@
+{
+  "name": "checkout-availability",
+  "service": "checkout-api",
+  "target": 99.9,
+  "window_days": 30,
+  "good": "http_requests_total{job=\"checkout-api\",code!~\"5..\"}",
+  "total": "http_requests_total{job=\"checkout-api\"}",
+  "labels": {
+    "team": "payments",
+    "tier": "1"
+  }
+}

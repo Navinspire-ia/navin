@@ -462,3 +462,207 @@ def test_new_message_supersedes_a_queued_chat_app_replay(tmp_path):
     assert queued.metadata["_skip_user_persist"] is True
     recovery.begin(sessions.get_or_create(session.key), request("Another question", channel="telegram", chat="42"))
     assert not recovery.matches(queued, session.key)
+
+
+# -- A stop from outside (SIGTERM, SIGHUP) does not use up the replay. --
+# Incident of 2026-11-05: under WSL systemd stopped every terminal twice in a
+# row; every turn was abandoned as "stopped twice" though none had caused it.
+
+def _replayed_once(tmp_path):
+    """A turn interrupted, replayed after one restart, now running again."""
+    _, session, _ = setup_record(tmp_path)
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == [session.key]
+    assert len(reborn.take_due(active_keys=set())) == 1
+    return session.key, reborn
+
+
+def _no_pressure(monkeypatch, value=False):
+    from navin.session import turn_recovery as module
+
+    monkeypatch.setattr(module, "memory_pressure", lambda: value)
+
+
+def _record(tmp_path, key):
+    return SessionManager(tmp_path).get_or_create(key).metadata.get(RECOVERY_KEY)
+
+
+def test_external_stop_without_memory_pressure_keeps_the_replay(tmp_path, monkeypatch):
+    from navin.session.turn_recovery import REPLAYED_AFTER_RESTART
+
+    _no_pressure(monkeypatch)
+    key, live = _replayed_once(tmp_path)
+    assert live.note_external_stop([key], "SIGTERM") == [key]
+    record = _record(tmp_path, key)
+    assert REPLAYED_AFTER_RESTART not in record, "durable before the quit cancels the turn"
+    assert record["external_stops"] == 1
+    assert record["last_stop"]["reason"] == "SIGTERM"
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == [key]
+    assert reborn.abandoned == [] and reborn.cut_twice == set()
+
+
+def test_external_stop_under_memory_pressure_follows_the_crash_loop_rule(tmp_path, monkeypatch):
+    from navin.session.turn_recovery import REPLAYED_AFTER_RESTART
+
+    _no_pressure(monkeypatch, True)
+    key, live = _replayed_once(tmp_path)
+    assert live.note_external_stop([key], "SIGTERM") == []
+    record = _record(tmp_path, key)
+    assert record[REPLAYED_AFTER_RESTART] is True
+    assert record["last_stop"]["memory_pressure"] is True
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == []
+    assert reborn.abandoned == [key]
+    assert reborn.cut_twice == {key}
+
+
+def test_unreadable_memory_keeps_the_crash_loop_rule(tmp_path, monkeypatch):
+    _no_pressure(monkeypatch, None)
+    key, live = _replayed_once(tmp_path)
+    assert live.note_external_stop([key], "SIGHUP") == []
+    assert _record(tmp_path, key)["last_stop"]["memory_unknown"] is True
+    assert TurnRecovery(SessionManager(tmp_path)).discover(channel="websocket") == []
+
+
+def test_external_stops_are_bounded(tmp_path, monkeypatch):
+    from navin.session.turn_recovery import MAX_EXTERNAL_STOPS
+
+    _no_pressure(monkeypatch)
+    key, live = _replayed_once(tmp_path)
+    for _ in range(MAX_EXTERNAL_STOPS):
+        assert live.note_external_stop([key], "SIGTERM") == [key]
+        live = TurnRecovery(SessionManager(tmp_path))
+        assert live.discover(channel="websocket") == [key]
+        assert len(live.take_due(active_keys=set())) == 1
+    # One stop too many: the normal rule applies again.
+    assert live.note_external_stop([key], "SIGTERM") == []
+    assert _record(tmp_path, key)["last_stop"]["limit"] is True
+    reborn = TurnRecovery(SessionManager(tmp_path))
+    assert reborn.discover(channel="websocket") == []
+    assert reborn.cut_twice == {key}
+
+
+def test_external_stop_ignores_sessions_without_a_pending_record(tmp_path, monkeypatch):
+    _no_pressure(monkeypatch)
+    sessions = SessionManager(tmp_path)
+    sessions.get_or_create("cli:idle")
+    assert TurnRecovery(sessions).note_external_stop(["cli:idle", "cli:unknown"], "SIGTERM") == []
+
+
+class _RunningTask:
+    def done(self):
+        return False
+
+
+class _FakeRecovery:
+    def __init__(self, kept=None, waiting=()):
+        self.calls = []
+        self.kept = kept
+        self.due = {key: 0.0 for key in waiting}
+
+    def waiting(self, key):
+        return key in self.due
+
+    async def note_external_stop_async(self, keys, reason):
+        self.calls.append((list(keys), reason))
+        return list(keys) if self.kept is None else self.kept
+
+
+def _fake_loop(recovery, *keys):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(turn_recovery=recovery, _active_tasks={key: [_RunningTask()] for key in keys})
+
+
+def test_cli_stop_signal_notes_the_turns_here_and_in_parked_projects(tmp_path):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from navin.tui.runtime import TuiRuntime
+
+    runtime = TuiRuntime(SimpleNamespace(workspace_path=Path(tmp_path)), on_event=lambda _event: None)
+    here = _FakeRecovery(waiting=["cli:backoff"])
+    elsewhere = _FakeRecovery()
+    runtime.agent_loop = _fake_loop(here, "cli:direct")
+    runtime._parked["other"] = SimpleNamespace(agent_loop=_fake_loop(elsewhere, "cli:other"), workspace="/other")
+    idle = _FakeRecovery()
+    runtime._parked["idle"] = SimpleNamespace(agent_loop=_fake_loop(idle), workspace="/idle")
+    assert asyncio.run(runtime.note_external_stop("SIGTERM")) == 3
+    assert here.calls == [(["cli:backoff", "cli:direct"], "SIGTERM")]
+    assert elsewhere.calls == [(["cli:other"], "SIGTERM")]
+    assert idle.calls == [], "an engine without a running turn writes nothing"
+
+
+def test_cli_stop_signal_records_the_resumes_before_the_quit(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from navin.tui import resilience
+    from tests.test_tui_queue import make_app
+
+    log = tmp_path / "black-box.log"
+    monkeypatch.setattr(resilience, "log_path", lambda: log)
+    order = []
+
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            recovery = _FakeRecovery(kept=["cli:a", "cli:b"])
+            app.runtime.agent_loop = _fake_loop(recovery, "cli:a", "cli:b")
+            real_note = recovery.note_external_stop_async
+
+            async def note(keys, reason):
+                order.append("note")
+                return await real_note(keys, reason)
+
+            recovery.note_external_stop_async = note
+            app.exit = Mock()
+            app.runtime.close = AsyncMock(side_effect=lambda: order.append("close"))
+            app._on_stop_signal("SIGTERM")
+            for _ in range(20):
+                if app.exit.called:
+                    break
+                await pilot.pause()
+            app.exit.assert_called_once()
+            if app._runtime_close_task is not None:
+                await app._runtime_close_task
+            app.runtime.agent_loop = None
+            assert recovery.calls == [(["cli:a", "cli:b"], "SIGTERM")]
+    asyncio.run(run())
+    assert order == ["note", "close"], "the turns are noted before the quit cancels them"
+    assert "signal: SIGTERM: 2 turns will resume at the next start" in log.read_text(encoding="utf-8")
+
+
+def test_gateway_signal_stop_keeps_the_replay_of_its_turns(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from navin.cli.commands import _note_gateway_external_stop
+    from navin.session.turn_recovery import REPLAYED_AFTER_RESTART
+
+    _no_pressure(monkeypatch)
+    key, live = _replayed_once(tmp_path)
+    agent = SimpleNamespace(turn_recovery=live, _active_tasks={key: [_RunningTask()], "done": []})
+    assert asyncio.run(_note_gateway_external_stop(agent, "SIGTERM")) == [key]
+    assert REPLAYED_AFTER_RESTART not in _record(tmp_path, key)
+    assert TurnRecovery(SessionManager(tmp_path)).discover(channel="websocket") == [key]
+
+
+def test_gateway_shutdown_handler_reports_the_stop_signal():
+    import signal
+
+    from navin.cli.commands import _install_gateway_shutdown_handlers
+
+    async def run():
+        event = asyncio.Event()
+        names: list[str] = []
+        restore = _install_gateway_shutdown_handlers(
+            asyncio.get_running_loop(), event, [], lambda _text: None, names,
+        )
+        try:
+            signal.raise_signal(signal.SIGTERM)
+            await asyncio.wait_for(event.wait(), 5)
+        finally:
+            restore()
+        return names
+
+    assert asyncio.run(run()) == ["SIGTERM"]

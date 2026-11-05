@@ -1162,6 +1162,18 @@
       "category": "general"
     },
     {
+      "name": "agent-runtime-guard",
+      "description": "Control what an AI agent and its MCP servers may do while they run - a PreToolUse policy (denied commands, protected paths, approved hosts, approved MCP servers and tools, no credentials in arguments), a redacted log of every tool call, and a session audit that finds denied calls, loops and bursts. Use when the user asks to \"lock down what the agent can do\", \"block dangerous commands\", \"control MCP tool calls\", \"audit what the agent did\", \"stop the agent from touching production\", or deploys Navin, a subagent or an MCP server where a wrong call has a real cost. In French \"encadrer les actions de l'agent\", \"bloquer les commandes dangereuses\", \"auditer les appels d'outils\", \"controler les serveurs MCP\".",
+      "skill": "skills/agent-runtime-guard/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "ai-llm-telemetry",
+      "description": "Observe LLM applications and agents from their telemetry. Reads Opik (Comet) traces and spans, LiteLLM proxy spend logs, budgets and key limits, and OpenTelemetry GenAI spans (gen_ai.* attributes) to compute cost per model, team, user and day, token percentiles, cache hit ratio, tool call frequency, failure rate and latency, time to first token, error and retry rates, cost anomalies and runaway tool loops. Bundled scripts aggregate JSON or JSONL exports offline. Use when the user asks to \"how much did our LLM calls cost\", \"which team burns the most tokens\", \"audit the agent tool calls\", \"find runaway loops in traces\", \"set up Opik with LiteLLM\", \"is the LLM cache working\", or when an AI feature bill, latency or error rate needs an explanation. In French \"cout des appels LLM\", \"analyser les traces Opik\", \"audit des tool calls de l'agent\".",
+      "skill": "skills/ai-llm-telemetry/SKILL.md",
+      "category": "devops"
+    },
+    {
       "name": "algorithmic-art",
       "description": "Generates original algorithmic art with p5.js - seeded randomness, flow fields, particle systems, noise and parametric variation - packaged as a self-contained interactive HTML viewer with seed navigation, sliders and PNG export. Use when the user asks to \"make generative art\", \"create a flow field\", \"build a particle system sketch\", \"write art with code\" or wants a seeded, reproducible p5.js piece. In French \"génère de l'art génératif\", \"crée un flow field avec p5.js\" or \"fais une oeuvre algorithmique reproductible\".",
       "skill": "skills/algorithmic-art/SKILL.md",
@@ -1540,6 +1552,18 @@
       "category": "careers"
     },
     {
+      "name": "data-dlp-monitor",
+      "description": "Classify data and monitor for leaks and exfiltration. Finds personal, financial and secret data with validated detectors (IBAN mod 97, French NIR key, SIREN/SIRET and payment card Luhn, e-mail, French phone, AWS keys, JWT, private keys, RGPD article 9 vocabulary), proposes Public/Internal/Confidential/Restricted tiers, reviews Microsoft Purview DLP policies and labels, Google Cloud DLP infoTypes, AWS Macie, Nightfall and gitleaks results, and detects exfiltration signals (volume baseline per user, off-hours, new destination, archive then upload, DNS tunneling, personal cloud, LLM prompts) with a response playbook aligned on RGPD, CNIL, NIS2 and DORA. Use when the user asks to \"scan this folder for personal data\", \"classify these files\", \"check our DLP policies\", \"find exfiltration in these transfer logs\", \"is there a secret in this repo\", or shares an export that may contain sensitive data. In French \"classifier les donnees\", \"detecter une fuite de donnees\", \"verifier les politiques DLP\".",
+      "skill": "skills/data-dlp-monitor/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "data-lineage-observer",
+      "description": "Observe data pipelines through OpenLineage events and lineage catalogs (Marquez, DataHub, OpenMetadata) to answer where a dataset comes from, what depends on it and whether it is fresh. Reads RunEvents (START, COMPLETE, FAIL, facets schema, columnLineage, errorMessage, outputStatistics) emitted by Airflow, dbt, Spark, Flink or Dagster, walks the graph for impact and root cause, finds orphan datasets, traces personal data column by column and checks freshness SLAs from a JSONL export. Use when the user asks to \"what breaks if I change this table\", \"why is this dashboard stale\", \"where does this column come from\", \"set up OpenLineage for Airflow\", \"which datasets are orphaned\", or when a data quality incident needs a producer and a timeline. In French \"analyse d'impact sur une table\", \"lineage des donnees\", \"pourquoi la donnee est perimee\".",
+      "skill": "skills/data-lineage-observer/SKILL.md",
+      "category": "data"
+    },
+    {
       "name": "data-migration-agent",
       "description": "Plan and execute source→target data migrations with mapping, transforms, reconciliation, and cutover checks. Use for CRM/ERP/DB moves.",
       "skill": "skills/data-migration-agent/SKILL.md",
@@ -1592,6 +1616,12 @@
       "description": "Full-funnel marketing orchestrator - strategy, content, SEO, social, email, paid, and measurement. Use as the entry point for any broad marketing request, then delegate to specialist skills.",
       "skill": "skills/digital-marketing/SKILL.md",
       "category": "marketing"
+    },
+    {
+      "name": "disaster-recovery-planner",
+      "description": "Plan, run and evaluate disaster recovery (PRA) and business continuity (PCA) exercises and validate RPO and RTO targets against evidence. Builds the business impact analysis (MTPD, RTO, RPO, MBCO), picks the recovery strategy (backup and restore, pilot light, warm standby, active-active), writes the exercise plan with injects and success criteria, computes achieved RTO and RPO from drill timestamps, and maps evidence to DORA art. 11, 12 and 24 to 26, ISO 22301, NIS2 and ANSSI guides, using AWS Backup, Elastic Disaster Recovery, Route 53 ARC, Aurora Global Database, Azure Site Recovery, Velero and database PITR. Use when the user asks to \"plan a DR exercise\", \"run a failover test\", \"check our RTO and RPO\", \"write the business impact analysis\", or must prove backups restore within target. In French \"preparer un exercice PRA\", \"tester le plan de continuite\", \"valider nos RTO et RPO\".",
+      "skill": "skills/disaster-recovery-planner/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "discovery-call-assistant",
@@ -1781,6 +1811,12 @@
       "name": "iac-security-auditor",
       "description": "Audit infrastructure-as-code and runtime config - Dockerfiles, Kubernetes manifests, Terraform, CI/CD pipelines, and cloud settings for misconfigurations and hardening gaps. Use for /bastion, deploy reviews, or container/cloud hardening.",
       "skill": "skills/iac-security-auditor/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "identity-access-review",
+      "description": "Run identity and access reviews (IAM/PAM recertification, joiners-movers-leavers, dormant and orphan accounts, privileged access and MFA coverage, service account key age, break-glass accounts, separation-of-duties conflicts) across Microsoft Entra ID and PIM, Okta, SailPoint IdentityNow, Saviynt, CyberArk, HashiCorp Vault, AWS IAM (credential report, Access Analyzer), GCP IAM recommender, Kubernetes RBAC and GitHub organisations, then map findings to ISO 27001:2022, SOC 2, DORA, NIS2 and PCI DSS 4.0 and build an auditor evidence pack. Use when the user asks to \"review user access\", \"find dormant accounts\", \"check SoD conflicts\", \"list privileged accounts without MFA\", \"prepare the access recertification\", \"who has cluster-admin\", or sends an IAM export to analyse. In French \"revue des habilitations\", \"comptes dormants et orphelins\", \"separation des taches\", \"recertification des acces\".",
+      "skill": "skills/identity-access-review/SKILL.md",
       "category": "security"
     },
     {
@@ -2305,6 +2341,12 @@
       "category": "sales"
     },
     {
+      "name": "sbom-attestation",
+      "description": "Generate, score, diff, sign and verify software bills of materials and build attestations. Produces CycloneDX and SPDX SBOMs with syft, checks them against the NTIA minimum elements, scans them with grype or trivy, signs images and attestations with Cosign (key or keyless with Fulcio and Rekor), verifies SLSA v1.0 provenance and GitHub artifact attestations by digest, and drafts admission policies (Sigstore policy-controller, Kyverno verifyImages) and VEX statements. Use when the user asks to \"generate an SBOM\", \"sign this image with cosign\", \"verify the provenance\", \"check SBOM quality\", \"compare two SBOMs\", \"set up keyless signing\", or must prove supply-chain integrity for an audit (NTIA, CISA, EU CRA, SLSA). In French \"generer un SBOM\", \"signer l'image avec cosign\", \"verifier la provenance\", \"attester le build\".",
+      "skill": "skills/sbom-attestation/SKILL.md",
+      "category": "security"
+    },
+    {
       "name": "scrape-operator",
       "description": "Orchestrate any web scraping job to delivery - static, paginated, infinite-scroll, mass crawl, sitemap, JS pages via browser. Export datasets until done.",
       "skill": "skills/scrape-operator/SKILL.md",
@@ -2491,6 +2533,12 @@
       "category": "devops"
     },
     {
+      "name": "siem-edr-connector",
+      "description": "Collect, normalize and correlate security alerts from SIEM and EDR platforms (Splunk SPL and REST search jobs, Elastic Security KQL/EQL/ES|QL and detection rules API, Microsoft Sentinel and Defender for Endpoint KQL, Wazuh API and indexer, CrowdStrike Falcon FQL detects and alerts, SentinelOne Deep Visibility PowerQuery) into ECS or OCSF events, convert Sigma rules per backend, group alerts into incidents per host and user with MITRE ATT&CK tactics and a severity score, and produce a triage report. Use when the user asks to \"pull alerts from Splunk\", \"correlate EDR alerts\", \"convert this Sigma rule\", \"normalize Defender events to ECS\", \"hunt across SIEM and EDR\", or shares exported alert JSON from a security console. In French \"corréler les alertes SIEM\", \"récupérer les détections CrowdStrike\", \"convertir une règle Sigma\".",
+      "skill": "skills/siem-edr-connector/SKILL.md",
+      "category": "security"
+    },
+    {
       "name": "skill-creator",
       "description": "Create or update AgentSkills with scripts, references and assets, then measure them with an evaluation loop (prompts with and without the skill, deterministic grading, benchmark, HTML report, description tuning). Use when the user asks to \"create a skill\", \"package this skill\", \"improve the skill description\" or \"evaluate whether the skill helps\". In French \"crée un skill\", \"améliore la description du skill\" or \"évalue si le skill aide vraiment\".",
       "skill": "skills/skill-creator/SKILL.md",
@@ -2513,6 +2561,12 @@
       "description": "Builds small looping animated GIFs for Slack (custom emoji at 128x128, message GIFs up to 2 MB) from code with Pillow, applying size budgets, palette reduction and easing so the result reads well at thumbnail size. Use when the user asks to \"make a Slack emoji GIF\", \"animate this text for Slack\", \"create a bouncing GIF\", \"make a spinner emoji\" or wants a reaction GIF that fits Slack's limits. In French \"crée un GIF animé pour Slack\", \"anime ce texte en emoji\" or \"fais un GIF qui rebondit\".",
       "skill": "skills/slack-gif-creator/SKILL.md",
       "category": "design"
+    },
+    {
+      "name": "slo-error-budget",
+      "description": "Define, compute and review service level indicators, SLO targets and error budgets. Expresses availability, latency, correctness, freshness and throughput SLIs as good over total events, computes budget consumed and remaining over rolling or calendar windows, burn rates over 1h, 6h, 1d and 3d, and evaluates the Google SRE multi-window burn-rate alerts. Generates Prometheus recording and alert rules, reads and writes OpenSLO v1 and Sloth specs, maps to Pyrra, Nobl9, Datadog SLOs and Grafana SLO, and produces error budget policies and SLO review reports. Use when the user asks to \"define an SLO for this service\", \"how much error budget is left\", \"set up burn rate alerts\", \"generate Prometheus rules for my SLO\", \"convert this to OpenSLO\", or when a reliability review or release freeze decision needs numbers. In French \"calculer le budget d'erreur\", \"definir des SLO\", \"alertes de burn rate\".",
+      "skill": "skills/slo-error-budget/SKILL.md",
+      "category": "devops"
     },
     {
       "name": "social-media-manager",
@@ -2649,6 +2703,18 @@
       "description": "Applies one of ten ready-made color and type themes (Navin Studio as the default, plus Ink and Lime, Harbor, Terracotta, Moss, Slate, Aurora, Dune, Orchard, Midnight) to slides, documents, reports and HTML pages, or derives a new theme in the same format. Use when the user asks to \"pick a theme for this deck\", \"restyle the report\", \"show me the available themes\", \"make a custom color scheme\" or wants consistent styling across an artifact. In French \"applique un thème à ce document\", \"propose une palette de couleurs\", \"change le thème du deck\" or \"montre les thèmes disponibles\".",
       "skill": "skills/theme-factory/SKILL.md",
       "category": "design"
+    },
+    {
+      "name": "third-party-risk-register",
+      "description": "Build and maintain the ICT third-party risk register (DORA register of information templates B_01 to B_07 with LEI, contract reference, function criticality, substitutability, exit strategy, sub-contracting, data location), tier vendors (critical, important, standard), judge due diligence evidence (SOC 2 Type II, ISO 27001 scope, pentest, RGPD art. 28 DPA, BCP/DR, cyber insurance), check contract clauses (audit rights, 24h incident notification, SLA, termination assistance), measure concentration risk, track provider incidents and ratings (SecurityScorecard, BitSight), compute review dates. Use when the user asks to \"build the DORA register\", \"assess this vendor\", \"which contracts expire soon\", \"check our supplier concentration\", \"review the vendor contract clauses\", or shares a supplier list or SOC 2 report. In French \"registre des prestataires\", \"risque fournisseur\", \"plan de sortie\".",
+      "skill": "skills/third-party-risk-register/SKILL.md",
+      "category": "security"
+    },
+    {
+      "name": "threat-intelligence",
+      "description": "Collect, qualify, enrich and share cyber threat intelligence. Extracts and refangs IOCs (hashes, IPs, domains, URLs, e-mails, mutexes, YARA rule names) from reports, queries and feeds MISP (attributes/events restSearch, warninglists, sightings) and OpenCTI (GraphQL indicators, observables, relationships), reads and builds STIX 2.1 bundles and TAXII 2.1 collections, maps TTPs to MITRE ATT&CK with navigator layers, applies TLP sharing rules, confidence and aging, and enriches with VirusTotal, Shodan, abuse.ch, GreyNoise and AbuseIPDB within their rate limits. Use when the user asks to \"extract the IOCs from this report\", \"search MISP for this hash\", \"summarize this STIX bundle\", \"map this campaign to ATT&CK\", \"push these indicators to OpenCTI\", or pastes a CERT advisory with defanged indicators. In French \"extraire les IOC\", \"rechercher dans MISP\", \"cartographier sur ATT&CK\".",
+      "skill": "skills/threat-intelligence/SKILL.md",
+      "category": "security"
     },
     {
       "name": "threat-modeler",
