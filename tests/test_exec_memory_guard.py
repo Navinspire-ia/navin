@@ -126,12 +126,21 @@ def test_agent_commands_are_the_oom_killer_s_first_pick(monkeypatch) -> None:
     monkeypatch.delenv("NAVIN_EXEC_OOM_SCORE_ADJ", raising=False)
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
-        assert memory_guard.raise_oom_priority(child.pid) is True
-        assert _oom_score_adj(child.pid) == "200"
+        # A runner may start every process above 200 already (GitHub's job
+        # processes inherit 500): the score is raised to 200, never lowered.
+        inherited = int(_oom_score_adj(child.pid))
+        expected = max(inherited, 200)
+        assert memory_guard.raise_oom_priority(child.pid) is (inherited < 200)
+        assert int(_oom_score_adj(child.pid)) == expected
         # Only ever raised: a smaller value leaves it where it is.
         monkeypatch.setenv("NAVIN_EXEC_OOM_SCORE_ADJ", "100")
         assert memory_guard.raise_oom_priority(child.pid) is False
-        assert _oom_score_adj(child.pid) == "200"
+        assert int(_oom_score_adj(child.pid)) == expected
+        # A larger one is written, whatever the process started with.
+        higher = min(1000, expected + 100)
+        monkeypatch.setenv("NAVIN_EXEC_OOM_SCORE_ADJ", str(higher))
+        assert memory_guard.raise_oom_priority(child.pid) is (higher > expected)
+        assert int(_oom_score_adj(child.pid)) == higher
     finally:
         child.kill()
         child.wait()

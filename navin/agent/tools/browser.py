@@ -37,7 +37,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-import psutil
 from loguru import logger
 from pydantic import Field
 
@@ -823,15 +822,16 @@ class _BrowserSession:
                 await page.evaluate(_MASK_INIT_JS)
 
     async def ensure_page(self) -> Any:
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError as exc:
-            raise RuntimeError(_INSTALL_HINT) from exc
-
         if self.page is not None and not self.page.is_closed():
             return self.page
 
         if self._pw is None:
+            # Needed only to start Playwright: a session that already runs it
+            # (a relaunch after Navin closed its browser) does not import it.
+            try:
+                from playwright.async_api import async_playwright
+            except ImportError as exc:
+                raise RuntimeError(_INSTALL_HINT) from exc
             self._pw = await async_playwright().start()
         if (self._browser is None or not self._browser.is_connected()) and await self._connect_cloud_browser():
             pass
@@ -1641,8 +1641,12 @@ class _BrowserLimitError(RuntimeError):
     """Every live browser is busy and none freed up in time."""
 
 
+# psutil is imported inside the functions that use it: on Linux it imports
+# ``resource``, a POSIX-only module, and importing this module must not need one.
 def _memory_cap_bytes(config: BrowserToolConfig) -> int:
     """Memory one local browser may use, in bytes; 0 for no cap."""
+    import psutil
+
     value = int(config.memory_limit_mb)
     if value < 0:
         return 0
@@ -1656,7 +1660,7 @@ def _memory_cap_bytes(config: BrowserToolConfig) -> int:
     return min(int(total * _AUTO_MEMORY_SHARE), _AUTO_MEMORY_MAX_MB * _MB)
 
 
-def _is_debug_browser(proc: psutil.Process) -> bool:
+def _is_debug_browser(proc: Any) -> bool:
     return any(arg.startswith(_DEBUG_FLAGS) for arg in proc.cmdline())
 
 
@@ -1667,6 +1671,8 @@ def _chromium_main_pids() -> set[int]:
     ``--remote-debugging-port``; its own children may carry them too, so a
     flagged process whose parent is flagged is not a main one.
     """
+    import psutil
+
     try:
         descendants = psutil.Process().children(recursive=True)
     except psutil.Error as exc:
@@ -1702,8 +1708,10 @@ def _new_browser_pid(before: set[int], after: set[int]) -> int | None:
     return None
 
 
-def _tree_processes(pid: int) -> list[psutil.Process]:
-    """``pid`` and its descendants; empty when it is gone."""
+def _tree_processes(pid: int) -> list[Any]:
+    """``pid`` and its descendants (psutil processes); empty when it is gone."""
+    import psutil
+
     try:
         root = psutil.Process(pid)
         return [root, *root.children(recursive=True)]
@@ -1718,6 +1726,8 @@ def _tree_pids(pid: int) -> list[int]:
 
 def _tree_rss_bytes(pid: int) -> int:
     """Resident memory of a browser and every process it started."""
+    import psutil
+
     total = 0
     for proc in _tree_processes(pid):
         try:
@@ -1729,6 +1739,8 @@ def _tree_rss_bytes(pid: int) -> int:
 
 def _kill_tree(pid: int) -> int:
     """Kill a browser and its children. Returns how many were signalled."""
+    import psutil
+
     procs = _tree_processes(pid)
     killed: list[psutil.Process] = []
     for proc in reversed(procs):
@@ -1817,6 +1829,8 @@ async def _enforce_memory(session: _BrowserSession, used: int, cap: int) -> None
 
 def _free_memory_share() -> float:
     """Share of the machine's memory still available, 1.0 when unknown."""
+    import psutil
+
     memory = psutil.virtual_memory()
     return memory.available / memory.total if memory.total else 1.0
 

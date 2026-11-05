@@ -185,7 +185,7 @@ def test_a_clock_correction_does_not_make_a_live_peer_look_dead(registry, projec
         def create_time(self) -> float:
             return self._process.create_time() + 3600
 
-    monkeypatch.setattr(peer_activity.psutil, "Process", ClockMoved)
+    monkeypatch.setattr(psutil, "Process", ClockMoved)
     seen = [entry.session_key for entry in peer_activity.peers(project, "websocket:a")]
 
     # Outside Linux the kernel keeps the start time: a moved one is another process.

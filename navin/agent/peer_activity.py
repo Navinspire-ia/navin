@@ -38,7 +38,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import psutil
 from loguru import logger
 
 from navin.runtime_context import (
@@ -169,6 +168,8 @@ def _start_marker(pid: int) -> float:
         # The command name sits in parentheses and may hold spaces: starttime,
         # field 22, is the 20th field after it.
         return float(int(stat[stat.rfind(")") + 2:].split()[19]))
+    import psutil
+
     return float(psutil.Process(pid).create_time())
 
 
@@ -187,6 +188,10 @@ def _same_start(actual: float, recorded: float) -> bool:
 
 def _alive(pid: int, start: float) -> bool:
     """True while the process that wrote the entry still runs."""
+    # psutil is imported where it is used: on Linux it imports ``resource``,
+    # and importing this module must not need a POSIX-only module.
+    import psutil
+
     try:
         actual = _start_marker(pid)
     except (FileNotFoundError, ProcessLookupError, psutil.NoSuchProcess):
@@ -323,6 +328,8 @@ def begin_turn(
         if not _atexit_registered:
             atexit.register(_remove_own_entries)
             _atexit_registered = True
+        import psutil
+
         try:
             start = _self_start()
             # Wall-clock start, for people reading the file; liveness compares

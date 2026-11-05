@@ -10,6 +10,8 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+import psutil
+
 from navin.agent.tools import browser as browser_module
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.browser import BrowserTool, BrowserToolConfig, _BrowserSession
@@ -171,9 +173,9 @@ class ConfigDefaultsTests(unittest.TestCase):
             def __init__(self, total: int) -> None:
                 self.total = total
 
-        with patch.object(browser_module.psutil, "virtual_memory", lambda: _Ram(8 * 1024 * _MB)):
+        with patch.object(psutil, "virtual_memory", lambda: _Ram(8 * 1024 * _MB)):
             self.assertEqual(browser_module._memory_cap_bytes(BrowserToolConfig()), 2048 * _MB)
-        with patch.object(browser_module.psutil, "virtual_memory", lambda: _Ram(64 * 1024 * _MB)):
+        with patch.object(psutil, "virtual_memory", lambda: _Ram(64 * 1024 * _MB)):
             self.assertEqual(browser_module._memory_cap_bytes(BrowserToolConfig()), 4096 * _MB)
         self.assertEqual(browser_module._memory_cap_bytes(BrowserToolConfig(memory_limit_mb=900)), 900 * _MB)
         self.assertEqual(browser_module._memory_cap_bytes(BrowserToolConfig(memory_limit_mb=-1)), 0)
@@ -205,7 +207,7 @@ class MainPidDetectionTests(unittest.TestCase):
             def children(self, recursive: bool = False) -> list[_FakeProc]:
                 return procs
 
-        with patch.object(browser_module.psutil, "Process", lambda *args: _Root()):
+        with patch.object(psutil, "Process", lambda *args: _Root()):
             self.assertEqual(browser_module._chromium_main_pids(), {11})
         self.assertEqual(browser_module._new_browser_pid({11}, {11, 20}), 20)
         self.assertIsNone(browser_module._new_browser_pid({11}, {11}))

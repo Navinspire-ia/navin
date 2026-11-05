@@ -29,11 +29,28 @@ from navin.bus.queue import MessageBus
 from navin.config.loader import get_config_path, set_config_path
 from navin.providers.anthropic_provider import AnthropicProvider
 from navin.providers.base import LLMProvider, LLMResponse
+from navin.runtime_context import (
+    RUNTIME_CONTEXT_END,
+    RUNTIME_CONTEXT_TAG,
+    public_history_messages,
+)
 from navin.session.history_visibility import is_hidden_history_message
 from navin.session.manager import Session, SessionManager
 from navin.utils.runtime import BACKGROUND_CLAIM_CONTINUE_PROMPT
 
 _TAG = re.compile(r"\b(JOB-[A-Z0-9]+)\b")
+# Runtime-context blocks (git state, the agents of other sessions...) are
+# metadata next to the request. A real model answers the request, and so does
+# this one: a peer block naming chat A's task ("PARENT do JOB-MAIN") made the
+# fake model answer chat B for chat A.
+_RUNTIME_BLOCK = re.compile(
+    re.escape(RUNTIME_CONTEXT_TAG) + r".*?" + re.escape(RUNTIME_CONTEXT_END), re.DOTALL,
+)
+
+
+def _request_text(content: Any) -> str:
+    """What the user asked, without the runtime-context metadata."""
+    return _RUNTIME_BLOCK.sub(" ", _text(content))
 
 
 def _text(content: Any) -> str:
@@ -72,8 +89,10 @@ class RoutingProvider(LLMProvider):
         last_user = ""
         for message in reversed(messages):
             if message.get("role") == "user":
-                last_user = _text(message.get("content"))
-                break
+                text = _request_text(message.get("content"))
+                if text.strip():
+                    last_user = text
+                    break
         tags = _TAG.findall(last_user)
         tag = tags[-1] if tags else "JOB-NONE"
         self.entered.setdefault(tag, asyncio.Event()).set()
@@ -88,7 +107,7 @@ class RoutingProvider(LLMProvider):
             for message in reversed(messages):
                 if message.get("role") != "user":
                     break
-                trailing.extend(_TAG.findall(_text(message.get("content"))))
+                trailing.extend(_TAG.findall(_request_text(message.get("content"))))
             done = sorted(set(trailing)) or [tag]
             return LLMResponse(content=" ".join(f"ack-{t}" for t in done))
         if "queued task" in last_user:
@@ -128,7 +147,13 @@ async def _collect_outbound(loop: AgentLoop, sink: list) -> None:
 
 
 def _contents(session_messages: list[dict], role: str) -> list[str]:
-    return [_text(m.get("content")) for m in session_messages if m.get("role") == role]
+    # What the conversation holds, as the user sees it: the runtime metadata
+    # stored with each request (git state, the agents of other sessions) is
+    # not part of it.
+    return [
+        _text(m.get("content")) for m in public_history_messages(session_messages)
+        if m.get("role") == role
+    ]
 
 
 async def _wait_for(predicate, what: str, timeout: float = 30.0) -> None:
@@ -264,7 +289,7 @@ def test_queued_prompts_multitasked_in_parallel_all_land_in_their_chat(tmp_path)
 
             key_a, key_b = "websocket:chat-a", "websocket:chat-b"
             for source in (loop.sessions.get_or_create(key_a).messages, _disk_messages(loop, key_a)):
-                everything = " ".join(_text(m.get("content")) for m in source)
+                everything = " ".join(_text(m.get("content")) for m in public_history_messages(source))
                 assert "PARENT do JOB-MAIN" in everything
                 assert "reply-JOB-MAIN" in everything
                 for i in range(3):
@@ -274,7 +299,7 @@ def test_queued_prompts_multitasked_in_parallel_all_land_in_their_chat(tmp_path)
                     assert f"ack-JOB-Q{i}" in everything, everything
                 assert "JOB-OTHER" not in everything
             for source in (loop.sessions.get_or_create(key_b).messages, _disk_messages(loop, key_b)):
-                everything = " ".join(_text(m.get("content")) for m in source)
+                everything = " ".join(_text(m.get("content")) for m in public_history_messages(source))
                 assert "PARENT do JOB-OTHER" in everything
                 assert "reply-JOB-OTHER" in everything
                 assert "JOB-Q" not in everything and "JOB-MAIN" not in everything
