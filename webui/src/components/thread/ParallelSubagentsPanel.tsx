@@ -117,7 +117,7 @@ const STEP_KINDS = new Set([
   "patch",
 ]);
 
-const ERROR_KINDS = new Set(["timeout", "stalled", "cancelled", "limit", "unvalidated", "other"]);
+const ERROR_KINDS = new Set(["timeout", "stalled", "cancelled", "limit", "time_limit", "unvalidated", "other"]);
 
 /** "Wrote ar.json", localized from the step's stable kind. */
 export function subagentStepLabel(step: SubagentStep, t: TFunction): string {

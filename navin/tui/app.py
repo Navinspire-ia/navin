@@ -2514,7 +2514,7 @@ class NavinApp(App[None]):
         self.composer.clear_text()
         self._history_index = None
         self.transcript.auto_follow = True
-        self.prefs.remember(display_user_text(text))
+        self.prefs.remember(display_user_text(text), self.runtime.session_key)
         self._save_prefs_in_background()
         if text in {"exit", "quit", ":q"}:
             # The same door as Ctrl+Q: it asks when work is still running.
@@ -3471,6 +3471,9 @@ class NavinApp(App[None]):
         self.config = self.runtime.config
         self.project_root = Path(self.runtime.workspace)
         self.prefs.project_root = str(self.project_root)
+        # The arrows recall the prompts of the project now on screen.
+        await asyncio.to_thread(self.prefs.load_history, self.project_root)
+        self._history_index = None
         self._name_terminal_tab()
         self._load_engine_commands()
         self._engine_ready = True
@@ -5456,6 +5459,10 @@ def run_tui(
         # whichever project was open last: resumed here, its key was reused in
         # another folder and the two chats shared titles and history.
         session_id = prefs.session_for(project_root or Path(config.workspace_path))
+    # The prompts the Up and Down arrows recall are this project's own, read
+    # from the log every CLI appends to (prompt-history.jsonl), not from the
+    # copy of the preferences this CLI loaded.
+    prefs.load_history(project_root or Path(config.workspace_path))
     if project_root is not None:
         # `navin-cli [folder]`: the launch folder wins over the remembered one.
         prefs.project_root = str(project_root)

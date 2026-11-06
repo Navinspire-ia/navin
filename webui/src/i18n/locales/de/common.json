@@ -3068,6 +3068,7 @@
     "agentErrorAudioAuth": "Audio ist aufgrund eines Authentifizierungsfehlers fehlgeschlagen. Bitte versuchen Sie es erneut.",
     "agentErrorAuth": "Die Authentifizierung beim model-provider ist fehlgeschlagen. Prüfen Sie den API-Schlüssel in den Einstellungen oder wechseln Sie zu einem Modell aus einem Navin-Plan.",
     "agentErrorConnection": "Der Modell-Provider war nicht erreichbar. Navin hat bereits automatisch erneut versucht und setzt von selbst fort. Falls es anhält, prüfen Sie Ihre Internetverbindung sowie VPN, Proxy oder Firewall, die die Anfrage blockieren könnten.",
+    "agentErrorTimeout": "Der Modell-Provider antwortet nicht mehr: Innerhalb des Zeitlimits kam keine Antwort. Navin hat bereits automatisch erneut versucht. Versuchen Sie es gleich noch einmal oder wählen Sie ein anderes Modell.",
     "agentErrorContext": "Dieser Zug passt nicht mehr in das Kontextfenster des Modells. Beginnen Sie ein neues Gespräch oder wählen Sie ein Modell mit größerem Fenster.",
     "agentErrorGeneric": "Entschuldigung, es ist ein Fehler aufgetreten.",
     "agentErrorMediaEmpty": "Der provider hat die Aufgabe abgeschlossen, aber keine Medien erzeugt. Das ist meist eine Sperre aufgrund der Inhaltsrichtlinien (Markennamen, Logos, echte Produkt-UI, Personen) oder ein vorübergehender provider-Fehler. Formulieren Sie den Prompt neutral um und versuchen Sie es erneut, oder wechseln Sie in den Einstellungen zu einem anderen Medienmodell.",
@@ -10420,6 +10421,7 @@
         "stalled": "Modell-Stream hängt",
         "cancelled": "Abgesagt",
         "limit": "Schrittlimit erreicht",
+        "time_limit": "Zeitlimit erreicht",
         "unvalidated": "Änderungen nicht validiert",
         "other": "Wegen eines Fehlers gestoppt"
       },

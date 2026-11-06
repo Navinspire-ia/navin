@@ -48,6 +48,7 @@ def test_prefs_saves_are_serialized_and_the_latest_wins():
         writer = None
         for index in range(20):
             host.prefs.remember(f"prompt {index}")
+            host.prefs.remember_session("/work/project", f"cli:{index}")
             host.prefs.theme = f"theme-{index}"
             writer = host._save_prefs_in_background()
         assert writer is not None
@@ -59,7 +60,9 @@ def test_prefs_saves_are_serialized_and_the_latest_wins():
     # A burst coalesces: the first write and the newest, not twenty.
     assert len(prefs.writes) <= 3
     assert prefs.writes[-1]["theme"] == "theme-19"
-    assert prefs.writes[-1]["history"][-1] == "prompt 19"
+    assert list(prefs.writes[-1]["last_sessions"].values()) == ["cli:19"]
+    # The prompts of the arrows are appended to their own log, never rewritten here.
+    assert all("history" not in write for write in prefs.writes)
     assert threading.main_thread().name not in prefs.threads
 
 
@@ -67,14 +70,14 @@ def test_prefs_snapshot_is_taken_on_the_caller_thread():
     host = _Host()
 
     async def scenario() -> None:
-        host.prefs.remember("before")
+        host.prefs.remember_session("/work/project", "cli:before")
         writer = host._save_prefs_in_background()
         # Mutating after scheduling must not leak into the queued snapshot.
-        host.prefs.history.append("after")
+        host.prefs.remember_session("/work/project", "cli:after")
         await writer
 
     asyncio.run(scenario())
-    assert host.prefs.writes[-1]["history"] == ["before"]
+    assert list(host.prefs.writes[-1]["last_sessions"].values()) == ["cli:before"]
 
 
 def test_prefs_save_without_a_loop_writes_directly():

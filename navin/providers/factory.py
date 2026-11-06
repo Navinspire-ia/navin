@@ -275,9 +275,16 @@ def _inline_fallback_preset(
 
 
 # Bound the automatic failover chains: each extra candidate adds retry
-# latency before the user finally sees an error.
+# latency before the user finally sees an error. The plan's ladder is kept
+# whole on top of the cap (relay_ladder): ten models at most, in the order
+# the user set.
 _MAX_AUTO_FREE_FALLBACKS = 3
 _MAX_AUTO_PRESET_FALLBACKS = 5
+
+#: Providers relayed by the plan's ladder (``relay_ladder``). A step on one of
+#: them never leaves it: every substitute draws on the same subscription, never
+#: on the user's key of another provider.
+_MANAGED_PROVIDERS = frozenset({"navin", "bedrock", "litellm"})
 
 
 def _catalog_slugs(*, free: bool) -> list[str]:
@@ -401,21 +408,25 @@ def _auto_preset_fallback_presets(
     The model list is the fallback list. When the chosen model blocks (quota,
     rate limit, outage, expired key, dropped slug, refusal), the step continues
     on another configured text model whose provider holds credentials, and the
-    switch is announced. A flagship hands the step down the relay ladder
-    first (``relay_ladder``: Claude Opus and Fable relay each other, then
-    Claude Sonnet, then GPT-6 Astra and GPT-6.1 Sol). Then: the default
-    preset, the presets the routes name (the operator's explicit picks), and
-    the rest of the catalog alternating vendors so a vendor-wide outage is not
-    tried three times in a row. Free-tier slugs come last. The chain is
-    capped: a total outage should cost a handful of calls, not a tour of
-    thirty presets.
+    switch is announced. On a managed provider (Navin, Bedrock, LiteLLM) the
+    step goes down the plan's ladder first, in full (``relay_ladder``: Claude
+    Opus and Fable relay each other, then GPT-6 Astra, Claude Sonnet, GPT-6.1
+    Sol, the previous Fable and Opus, Kimi, Grok, GLM and GLM Flash), and never
+    leaves that provider. Then, up to the cap: the default preset, the presets
+    the routes name (the operator's explicit picks), and the rest of the
+    catalog alternating vendors so a vendor-wide outage is not tried three
+    times in a row. Free-tier slugs come last. The cap keeps a total outage
+    to a handful of calls, not a tour of thirty presets; it never cuts the
+    ladder, the order the user set.
 
     Every entry carries the primary's generation settings and context window,
     so the chain never shrinks the window the turn was planned against. Its
-    reasoning effort is the turn's own (``None``), except a substitute below
-    the chosen model on the ladder, which runs at its deepest effort. A preset
-    default here used to run every substitute at "low": a turn on Claude Opus
-    at "max" continued on Claude Sonnet at "low".
+    reasoning effort is the turn's own (``None``), except on the ladder below
+    the newest Opus and Fable, where a model takes over at its deepest effort
+    (xhigh for GPT, max for the others). An effort the user picked in the chat
+    is kept by every substitute (relay_ladder). A preset default here used to
+    run every substitute at "low": a turn on Claude Opus at "max" continued
+    on Claude Sonnet at "low".
     """
     active = ((model or primary.model) or "").strip()
     if not active or active.endswith(":free"):
@@ -434,25 +445,34 @@ def _auto_preset_fallback_presets(
             reasoning_effort=reasoning_effort,
         )
 
+    provider_name = (config.get_provider_name(active, preset=primary) or "").strip().lower()
+    managed = provider_name in _MANAGED_PROVIDERS
+
+    def _allowed(preset: ModelPresetConfig) -> bool:
+        """A usable chat preset the step may continue on."""
+        if not _is_chat_preset(preset) or not (preset.model or "").strip():
+            return False
+        if managed and (
+            (config.get_provider_name(preset.model, preset=preset) or "").strip().lower() != provider_name
+        ):
+            return False
+        return _preset_is_usable(config, preset)
+
     seen = {active, FREE_VISION_MODEL}
+    relays: list[ModelPresetConfig] = []
+    if managed:
+        usable = [(name, preset.model) for name, preset in config.model_presets.items() if _allowed(preset)]
+        for candidate in relay_candidates(active, usable):
+            if candidate.model in seen:
+                continue
+            seen.add(candidate.model)
+            relays.append(
+                _substitute(config.model_presets[candidate.preset_name], candidate.reasoning_effort)
+            )
+
+    room = max(0, _MAX_AUTO_PRESET_FALLBACKS - len(relays))
     paid: list[ModelPresetConfig] = []
     free: list[ModelPresetConfig] = []
-
-    usable = [
-        (name, preset.model)
-        for name, preset in config.model_presets.items()
-        if _is_chat_preset(preset)
-        and (preset.model or "").strip()
-        and _preset_is_usable(config, preset)
-    ]
-    for candidate in relay_candidates(active, usable):
-        if candidate.model in seen:
-            continue
-        seen.add(candidate.model)
-        paid.append(
-            _substitute(config.model_presets[candidate.preset_name], candidate.reasoning_effort)
-        )
-
     ordered: list[tuple[str, ModelPresetConfig]] = []
     taken: set[str] = set()
 
@@ -476,14 +496,10 @@ def _auto_preset_fallback_presets(
     ordered.extend(_interleave_by_vendor(rest))
 
     for _name, preset in ordered:
-        if len(paid) >= _MAX_AUTO_PRESET_FALLBACKS:
+        if len(paid) >= room:
             break
-        if not _is_chat_preset(preset):
-            continue
         slug = (preset.model or "").strip()
-        if not slug or slug in seen:
-            continue
-        if not _preset_is_usable(config, preset):
+        if slug in seen or not _allowed(preset):
             continue
         seen.add(slug)
         candidate = _substitute(preset, None)
@@ -494,7 +510,7 @@ def _auto_preset_fallback_presets(
 
     # No bundled-catalog top-up for the subscription: those slugs are
     # OpenRouter's, and it fails over only across its own synced catalog.
-    return (paid + free)[:_MAX_AUTO_PRESET_FALLBACKS]
+    return relays + (paid + free)[:room]
 
 
 def _is_navin(provider: str | None) -> bool:
@@ -532,7 +548,9 @@ def _resolve_fallback_presets(
 
     An explicit ``fallback_models`` list wins. Otherwise the list of configured
     presets is the fallback list: free primaries hop across the other free
-    slugs, every other primary continues on the other usable text presets.
+    slugs, every other primary continues on the other usable text presets, the
+    plan's ladder first on a managed provider. Main agents and subagents get
+    their provider here, so they share this chain.
     """
     presets = _configured_fallback_presets(config, primary, model=model)
     if not presets:
@@ -581,6 +599,10 @@ def make_provider(
             on_model_switch=notify_model_switch,
             sticky_retries=0 if is_auto_free_chain else PRIMARY_STICKY_RETRIES,
             model_labels=_model_labels(config),
+            relay_on_limit=(
+                (config.get_provider_name(active, preset=resolved) or "").strip().lower()
+                in _MANAGED_PROVIDERS
+            ),
         )
 
     return provider

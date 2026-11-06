@@ -57,6 +57,11 @@ NOT_FOUND = (
     "This model is no longer available. Pick another model from the "
     "selector and try again."
 )
+TIMEOUT = (
+    "The model provider stopped answering: no response came within the time "
+    "limit. Navin already retried automatically. Try again in a moment, or "
+    "pick another model."
+)
 DEFAULT = "Sorry, I encountered an error calling the AI model."
 
 
@@ -100,6 +105,12 @@ class UserFacingErrorSentinelsTest(unittest.TestCase):
 
     def test_connection(self) -> None:
         self.assertEqual(user_facing_llm_error("Connection error."), CONNECTION)
+
+    def test_timeout(self) -> None:
+        # A model that never answered used to end on DEFAULT, which cannot be
+        # told from a refused request.
+        self.assertEqual(user_facing_llm_error("Error calling LLM: timed out after 300s"), TIMEOUT)
+        self.assertEqual(user_facing_llm_error("Error calling LLM: stream stalled"), TIMEOUT)
 
     def test_default_is_not_prefixed_with_error(self) -> None:
         # The runner used to pass the fallback through user_facing_llm_error a

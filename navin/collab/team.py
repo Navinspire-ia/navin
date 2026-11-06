@@ -257,29 +257,39 @@ ROLE_DEFAULT_EFFORT: dict[str, str] = {
 
 # Model presets (names from the managed catalog, see slug_preset_key) and
 # efforts the default teammates start with: the hardest jobs (implementation,
-# security, adversarial review) on Opus 5.5 at xhigh, the architect on
-# GPT-6 Astra at max, the others split between GPT-6.1 Sol and Sonnet 5.5 at
-# max. A built-in default that is not configured on this install falls back
-# to the main model (see navin.collab.runtime.member_runtime).
+# security, adversarial review) on Opus 5.5, the architect on GPT-6 Astra,
+# the others split between GPT-6.1 Sol and Sonnet 5.5, every one at high. Max
+# and xhigh are the user's pick, never a default: at max a teammate could
+# think for minutes before its first word (silent subagents, 2026-11-06). A
+# built-in default that is not configured on this install falls back to the
+# main model (see navin.collab.runtime.member_runtime).
 OPUS_PRESET = "claude-opus-5-5"
 ASTRA_PRESET = "gpt-6-astra"
 SOL_PRESET = "gpt-6-1-sol"
 SONNET_PRESET = "claude-sonnet-5-5"
 DEFAULT_MEMBER_MODELS: dict[str, tuple[str, str]] = {
-    "michel": (ASTRA_PRESET, "max"),
-    "mark": (OPUS_PRESET, "xhigh"),
-    "ethan": (OPUS_PRESET, "xhigh"),
-    "grace": (OPUS_PRESET, "xhigh"),
-    "salma": (SOL_PRESET, "max"),
-    "karim": (SOL_PRESET, "max"),
-    "jack": (SOL_PRESET, "max"),
-    "daniel": (SOL_PRESET, "max"),
-    "lucas": (SOL_PRESET, "max"),
-    "olivia": (SONNET_PRESET, "max"),
-    "lea": (SONNET_PRESET, "max"),
-    "ava": (SONNET_PRESET, "max"),
-    "nora": (SONNET_PRESET, "max"),
-    "ryan": (SONNET_PRESET, "max"),
+    "michel": (ASTRA_PRESET, "high"),
+    "mark": (OPUS_PRESET, "high"),
+    "ethan": (OPUS_PRESET, "high"),
+    "grace": (OPUS_PRESET, "high"),
+    "salma": (SOL_PRESET, "high"),
+    "karim": (SOL_PRESET, "high"),
+    "jack": (SOL_PRESET, "high"),
+    "daniel": (SOL_PRESET, "high"),
+    "lucas": (SOL_PRESET, "high"),
+    "olivia": (SONNET_PRESET, "high"),
+    "lea": (SONNET_PRESET, "high"),
+    "ava": (SONNET_PRESET, "high"),
+    "nora": (SONNET_PRESET, "high"),
+    "ryan": (SONNET_PRESET, "high"),
+}
+# The efforts those defaults had before (saved team v6). A saved teammate still
+# on its built-in model at that effort moves to high (v7, navin.config.schema);
+# any other effort was picked by the user and stays.
+LEGACY_MEMBER_EFFORTS: dict[str, str] = {
+    "michel": "max", "mark": "xhigh", "ethan": "xhigh", "grace": "xhigh",
+    "salma": "max", "karim": "max", "jack": "max", "daniel": "max", "lucas": "max",
+    "olivia": "max", "lea": "max", "ava": "max", "nora": "max", "ryan": "max",
 }
 BUILTIN_MEMBER_PRESETS: frozenset[str] = frozenset(preset for preset, _ in DEFAULT_MEMBER_MODELS.values())
 # Label and model of each built-in default, for the Settings > Team picker

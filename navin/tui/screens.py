@@ -938,6 +938,7 @@ answer in the card input.
 
 ## Files
 
-Preferences: `~/.navin/tui.json` (theme, mode, sidebar, prompt history).
+Preferences: `~/.navin/tui.json` (theme, mode, sidebar).
+Prompt history (Up / Down): `~/.navin/prompt-history.jsonl`, kept per project.
 Config: `~/.navin/config.json` (edited through Settings, schema validated).
 """

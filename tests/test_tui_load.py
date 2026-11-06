@@ -454,3 +454,32 @@ def test_session_picker_reveals_current_session_on_open(tmp_path):
             await pilot.press("down")
             assert picker._highlighted_item().id == "124"
     asyncio.run(run())
+
+
+def test_tool_output_is_not_mounted_during_app_shutdown(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            row = ToolCall("run", "exec", {"command": "pytest checks.py"})
+            await app.transcript.mount(row)
+            await pilot.pause()
+            assert row.is_mounted and not row._output_mounted
+            row._open = True
+            # Textual retains is_mounted, but is_attached becomes false as
+            # soon as exit begins, even before the DOM is torn down.
+            with patch.object(app, "_exit", True):
+                assert row.is_mounted and not row.is_attached
+                row._refresh_body()
+                row._ensure_output()
+                row.on_resize()
+                assert not row._output_mounted
+                assert not row.query(".tool-output")
+            # A deferred attempt must not poison the lazy-mount state.
+            row._refresh_body()
+            await pilot.pause()
+            assert row._output_mounted
+            assert len(row.query(".tool-output")) == 1
+            assert len(row.query(".tool-body")) == 1
+            row._ensure_output()
+            assert len(row.query(".tool-actions")) == 1
+    asyncio.run(run())

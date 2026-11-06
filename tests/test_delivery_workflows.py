@@ -456,6 +456,74 @@ def _runtime(provider: Any) -> LLMRuntime:
 
 
 class DeliveryNudgeRunnerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_announced_next_action_after_first_tool_continues(self) -> None:
+        for read_only, plan_only, text, expected_calls in (
+            (False, False, "Je vérifie où en sont les tâches et les dossiers, puis j'enchaîne compliance et notes.", 3),
+            (True, False, "Je vais examiner les notes.", 2),
+            (False, True, "Je vais examiner les notes.", 2),
+            (False, False, "Les tâches et dossiers ont été vérifiés.", 2),
+            (False, False, "Si tu veux, je lance la suite.", 2),
+        ):
+            with self.subTest(read_only=read_only, plan_only=plan_only, text=text):
+                provider = _FakeProvider([
+                    LLMResponse(content="", finish_reason="tool_calls", tool_calls=[
+                        ToolCallRequest(id="status_1", name="read_file", arguments={"path": "status.md"}),
+                    ]),
+                    LLMResponse(content=text, finish_reason="stop"),
+                    LLMResponse(content="Terminé.", finish_reason="stop"),
+                ])
+                tools = ToolRegistry()
+                tools.register(_ReadFileTool())
+                await AgentRunner().run(AgentRunSpec(
+                    initial_messages=[{"role": "user", "content": "Vérifie les dossiers puis traite compliance et notes."}],
+                    tools=tools, runtime=_runtime(provider), max_iterations=5,
+                    max_tool_result_chars=4000, hook=AgentHook(),
+                    read_only_tools=read_only, plan_read_only=plan_only,
+                ))
+                self.assertEqual(provider.calls, expected_calls)
+
+    async def test_announced_work_nudge_is_bounded(self) -> None:
+        provider = _FakeProvider([
+            LLMResponse(content="", finish_reason="tool_calls", tool_calls=[
+                ToolCallRequest(id="status_1", name="read_file", arguments={"path": "status.md"}),
+            ]),
+            LLMResponse(content="J'enchaîne compliance et notes.", finish_reason="stop"),
+        ])
+        tools = ToolRegistry()
+        tools.register(_ReadFileTool())
+        await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Traite compliance et notes."}],
+            tools=tools, runtime=_runtime(provider), max_iterations=8,
+            max_tool_result_chars=4000, hook=AgentHook(),
+        ))
+        self.assertEqual(provider.calls, 3)
+
+    async def test_announced_next_action_after_a_resumed_read_continues(self) -> None:
+        # The read ran before the turn was resumed: this run starts on its
+        # result, so it used no tool itself and still announces the rest.
+        provider = _FakeProvider([
+            LLMResponse(
+                content="Je vérifie où en sont les tâches et les dossiers, puis j'enchaîne compliance et notes.",
+                finish_reason="stop",
+            ),
+            LLMResponse(content="Terminé.", finish_reason="stop"),
+        ])
+        tools = ToolRegistry()
+        tools.register(_ReadFileTool())
+        await AgentRunner().run(AgentRunSpec(
+            initial_messages=[
+                {"role": "user", "content": "Vérifie les dossiers puis traite compliance et notes."},
+                {"role": "assistant", "content": "", "tool_calls": [{
+                    "id": "status_1", "type": "function",
+                    "function": {"name": "read_file", "arguments": "{\"path\": \"status.md\"}"},
+                }]},
+                {"role": "tool", "tool_call_id": "status_1", "name": "read_file", "content": "tasks open"},
+            ],
+            tools=tools, runtime=_runtime(provider), max_iterations=5,
+            max_tool_result_chars=4000, hook=AgentHook(),
+        ))
+        self.assertEqual(provider.calls, 2)
+
     async def test_zero_tool_final_answer_is_nudged_once(self) -> None:
         provider = _FakeProvider(
             [

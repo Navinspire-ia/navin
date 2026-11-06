@@ -81,6 +81,7 @@ from navin.utils.prompt_templates import render_template
 from navin.utils.runtime import (
     IGNORED_NUDGES_BEFORE_FINAL,
     NO_PROGRESS_STOP_FALLBACK,
+    announces_work,
     build_background_claim_continue_message,
     build_budget_exhausted_finalization_message,
     build_delivery_continue_message,
@@ -543,6 +544,26 @@ _MANAGED_QUOTA_ERROR_MESSAGE = (
     "add your own provider key."
 )
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+
+
+def without_model_error_placeholder(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*messages* without the placeholder a model error left at their end.
+
+    A run that ends on a model error closes the conversation with
+    ``_PERSISTED_MODEL_ERROR_PLACEHOLDER``. A run resumed from those messages
+    must not see it: the model would take "reply unavailable" for an answer it
+    already gave.
+    """
+    kept = list(messages)
+    while (
+        kept
+        and kept[-1].get("role") == "assistant"
+        and not kept[-1].get("tool_calls")
+        and kept[-1].get("content") == _PERSISTED_MODEL_ERROR_PLACEHOLDER
+    ):
+        kept.pop()
+    return kept
+
 _USAGE_CEILING_MESSAGE = (
     "This model reached its usage limit (quota or budget), and no other model "
     "could take over. Pick another model to keep going now, or try again later."
@@ -2068,6 +2089,32 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 continue
 
+            # A status read is not delivery when the answer explicitly announces
+            # the next action: "Je verifie ou en sont les taches, puis
+            # j'enchaine compliance et notes" ended a Grok 4.7 turn after one
+            # read (2026-11-06). This applies to desk tasks and subagents, and
+            # to a turn resumed after the read ran, but never overrides
+            # Ask/Plan mode. Build turns (/forge) are left to their own
+            # reminders below, which name what the turn still owes. Once per
+            # turn.
+            if (
+                (tools_used or request_used_tools(messages))
+                and soft_nudges < 1
+                and response.finish_reason != "error"
+                and assistant_message is not None
+                and not spec.read_only_tools
+                and not spec.plan_read_only
+                and not spec.requires_verify_before_done
+                and announces_work(clean)
+            ):
+                soft_nudges += 1
+                if hook.wants_streaming():
+                    await hook.on_stream_end(context, resuming=True)
+                messages.append(assistant_message)
+                messages.append(build_remaining_work_continue_message())
+                await hook.after_iteration(context)
+                continue
+
             # User Stop / SubagentStop hooks (hooks.json) may refuse the final
             # answer with a reason; the reason becomes the next instruction.
             if (
@@ -2422,6 +2469,7 @@ class AgentRunner:
                     final_content = user_facing_llm_error(
                         clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                     )
+                await self._record_model_error(spec, response, clean, iteration)
                 # Ending on an error must not erase what the turn already did:
                 # a 16-minute run that died on a provider refusal showed only
                 # the refusal, and the user could not tell what was saved.
@@ -2825,13 +2873,19 @@ class AgentRunner:
             else timeout_s
         )
         from navin.providers.model_switch_notice import relay_listener
+        from navin.providers.relay_ladder import chat_chosen_effort
 
         try:
             # Tag the request with the session key so providers that support
             # cache-affinity routing (OpenRouter session_id, OpenAI
             # prompt_cache_key) keep the whole session on one warm cache.
-            # A model taking over the step is named in the working line.
-            with session_affinity(spec.session_key), relay_listener(drafting.relayed):
+            # A model taking over the step is named in the working line, and
+            # keeps an effort the user picked in the chat.
+            with (
+                session_affinity(spec.session_key),
+                relay_listener(drafting.relayed),
+                chat_chosen_effort(getattr(spec.runtime, "reasoning_effort_chosen", False) is True),
+            ):
                 response = (
                     await coro if outer_timeout_s is None
                     else await asyncio.wait_for(coro, timeout=outer_timeout_s)
@@ -4039,6 +4093,35 @@ class AgentRunner:
         if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
             return
         messages.append(build_assistant_message(_PERSISTED_MODEL_ERROR_PLACEHOLDER))
+
+    @staticmethod
+    async def _record_model_error(
+        spec: AgentRunSpec, response: LLMResponse, clean: str | None, iteration: int,
+    ) -> None:
+        """Write the model error that ends this step in the model-error log.
+
+        The detail is what the provider said (``error_detail``), not the chat
+        text: a refusal the chat can only show as "Sorry, I encountered an
+        error calling the AI model." (a 400 whose body is a dict) was logged
+        with that very sentence on 2026-11-06, and its cause was lost.
+        """
+        from navin.providers.model_error_log import record_model_error
+        from navin.providers.user_facing_errors import provider_error_detail
+
+        text = (clean or "").strip()
+        provider_said = (response.error_detail or "").strip()
+        await asyncio.to_thread(record_model_error, {
+            "session": spec.session_key,
+            "scope": spec.user_hook_scope,
+            "model": str(getattr(spec.runtime, "model", "") or ""),
+            "iteration": iteration,
+            "error_kind": response.error_kind,
+            "status": response.error_status_code,
+            "code": response.error_code,
+            "retryable": LLMProvider._is_transient_response(response),
+            "provider": response.error_provider,
+            "detail": provider_said or provider_error_detail(text) or text[:200],
+        })
 
     def _partition_tool_batches(
         self,

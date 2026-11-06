@@ -48,6 +48,24 @@ _CONNECTION = (
     "internet connection, and any VPN, proxy or firewall that could "
     "block the request."
 )
+# The request reached the provider, which then said nothing in time (read
+# timeout, a stream that went silent, the step's wall clock). Named as such:
+# subagents that stopped on it used to report the generic error, which could
+# not be told from a refused request.
+_TIMEOUT = (
+    "The model provider stopped answering: no response came within the time "
+    "limit. Navin already retried automatically. Try again in a moment, or "
+    "pick another model."
+)
+_TIMEOUT_MARKERS = (
+    "timed out",
+    "timeout after",
+    "read timeout",
+    "readtimeout",
+    "request timeout",
+    "apitimeouterror",
+    "stream stalled",
+)
 _UPSTREAM = (
     "The model provider hit a temporary error. Navin already retried "
     "automatically and resumes by itself. You can also pick another model."
@@ -94,6 +112,7 @@ _SENTINELS = frozenset(
         _RATE_LIMIT,
         _QUOTA,
         _CONNECTION,
+        _TIMEOUT,
         _UPSTREAM,
         _CONTEXT,
         _AUTH,
@@ -104,7 +123,9 @@ _SENTINELS = frozenset(
 # Capacity / transport / unknown provider failures: another catalog model on
 # the same plan can finish the turn. Auth, a too-long prompt, and a retired
 # model cannot, so those stay out of the failover set.
-_FAILOVER_SENTINELS = frozenset({_DEFAULT, _UPSTREAM, _RATE_LIMIT, _CONNECTION, _MODEL_UNAVAILABLE})
+_FAILOVER_SENTINELS = frozenset(
+    {_DEFAULT, _UPSTREAM, _RATE_LIMIT, _CONNECTION, _TIMEOUT, _MODEL_UNAVAILABLE}
+)
 _HTTP_STATUS_RE = re.compile(r"\b([45]\d{2})\b")
 
 _ERROR_PREFIX_RE = re.compile(r"^(?:error:\s*)+", re.IGNORECASE)
@@ -357,6 +378,8 @@ def _classify_error_text(lower: str) -> str | None:
         return _CONNECTION
     if is_model_unavailable_text(lower):
         return _MODEL_UNAVAILABLE
+    if any(marker in lower for marker in _TIMEOUT_MARKERS):
+        return _TIMEOUT
     if any(marker in lower for marker in _CONTEXT_MARKERS):
         return _CONTEXT
     if (

@@ -91,6 +91,13 @@ const SENTINELS: ReadonlyArray<{ text: string; key: string }> = [
       + "selector and try again.",
     key: "message.agentErrorNotFound",
   },
+  {
+    text:
+      "The model provider stopped answering: no response came within the time "
+      + "limit. Navin already retried automatically. Try again in a moment, or "
+      + "pick another model.",
+    key: "message.agentErrorTimeout",
+  },
 ];
 
 /** Exposed for the test that pins frontend and backend to the same strings. */

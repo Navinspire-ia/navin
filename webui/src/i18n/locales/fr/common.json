@@ -3084,6 +3084,7 @@
     "agentErrorAudioAuth": "L'audio a échoué à cause d'une erreur d'authentification. Réessayez.",
     "agentErrorAuth": "L'authentification auprès du fournisseur de modèle a échoué. Vérifiez la clé API dans Réglages, ou passez à un modèle du forfait Navin.",
     "agentErrorConnection": "Impossible de joindre le fournisseur de modèle. Navin a déjà réessayé et reprend tout seul. Si le problème persiste, vérifiez votre connexion internet, et tout VPN, proxy ou pare-feu qui pourrait bloquer la requête.",
+    "agentErrorTimeout": "Le fournisseur de modèle ne répond plus : aucune réponse n'est arrivée dans le délai. Navin a déjà réessayé automatiquement. Réessayez dans un instant, ou choisissez un autre modèle.",
     "agentErrorContext": "Ce tour ne tient plus dans la fenêtre de contexte du modèle. Démarrez une nouvelle conversation, ou choisissez un modèle avec une fenêtre plus large.",
     "agentErrorGeneric": "Désolé, une erreur s'est produite.",
     "agentErrorMediaEmpty": "Le fournisseur a terminé le travail sans produire de média. C'est en général un blocage de politique de contenu (marques, logos, interface produit, personnes) ou une panne temporaire. Reformulez la demande avec des mots neutres et réessayez, ou changez de modèle média dans Réglages.",
@@ -10743,6 +10744,7 @@
         "stalled": "Le flux du modèle s'est bloqué",
         "cancelled": "Annulé",
         "limit": "Limite d'étapes atteinte",
+        "time_limit": "Limite de temps atteinte",
         "unvalidated": "Modifications non validées",
         "other": "Arrêté sur une erreur"
       },

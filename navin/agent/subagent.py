@@ -41,7 +41,12 @@ from navin.agent.choice import (
 )
 from navin.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from navin.agent.run_policy import TurnPolicy, current_turn_policy
-from navin.agent.runner import AgentLoopGuard, AgentRunner, AgentRunSpec
+from navin.agent.runner import (
+    AgentLoopGuard,
+    AgentRunner,
+    AgentRunSpec,
+    without_model_error_placeholder,
+)
 from navin.agent.subagent_journal import SubagentJournal, owner_alive
 from navin.agent.tools.context import (
     RequestContext,
@@ -162,6 +167,86 @@ def _changed_files_note(
 # killing a 20-minute compile because it was quiet is worse than a silent card.
 # 8s is short enough that "Starting..." never looks dead; 60s felt stuck.
 _HEARTBEAT_S = 8.0
+
+# A model that stops answering (timeout, dropped stream, 5xx, 429) usually
+# answers again a minute later. The run then resumes where it stopped, with the
+# work already done, instead of ending on "Sorry, I encountered an error
+# calling the AI model." (subagents lost on 2026-11-06 after one silent
+# minute). The waits before each resume; NAVIN_SUBAGENT_MODEL_RESUMES sets how
+# many (0 turns resuming off).
+_MODEL_RESUME_DELAYS_S: tuple[float, ...] = (15.0, 45.0, 90.0)
+_MODEL_RESUMES_ENV = "NAVIN_SUBAGENT_MODEL_RESUMES"
+# Time limits of one run, in minutes (0 disables either). Past the first the
+# subagent is asked once for its report; past the second it is stopped with
+# its partial work. On 2026-11-06 subagents ran for three hours while their
+# parent waited for a report that never came.
+_WRAPUP_ENV = "NAVIN_SUBAGENT_WRAPUP_MIN"
+_MAX_RUN_ENV = "NAVIN_SUBAGENT_MAX_MIN"
+_DEFAULT_WRAPUP_MIN = 45.0
+_DEFAULT_MAX_RUN_MIN = 90.0
+
+
+def _model_resume_limit() -> int:
+    """How many times a run is resumed after a model error that may clear."""
+    raw = os.environ.get(_MODEL_RESUMES_ENV, "").strip()
+    if not raw:
+        return len(_MODEL_RESUME_DELAYS_S)
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning("Ignoring invalid {}={!r}", _MODEL_RESUMES_ENV, raw)
+        return len(_MODEL_RESUME_DELAYS_S)
+
+
+def _resumable_model_error(response: Any) -> bool:
+    """True for a model error that may clear by itself: not a refusal, not a quota."""
+    from navin.providers.base import LLMProvider
+
+    if response is None or getattr(response, "finish_reason", None) != "error":
+        return False
+    return (
+        not LLMProvider.is_arrearage_response(response)
+        and LLMProvider._is_transient_response(response)
+    )
+
+
+def _limit_seconds(name: str, default_min: float) -> float | None:
+    """The time limit *name* sets in minutes, as seconds; None when it is 0."""
+    raw = os.environ.get(name, "").strip()
+    minutes = default_min
+    if raw:
+        try:
+            minutes = float(raw)
+        except ValueError:
+            logger.warning("Ignoring invalid {}={!r}; using {} min", name, raw, default_min)
+    return minutes * 60.0 if minutes > 0 else None
+
+
+def _wrapup_note(wrapup_s: float, max_s: float | None) -> str:
+    stop = f" The run is stopped at {max_s / 60:.0f} minutes." if max_s else ""
+    return (
+        f"Time check: you have been working on this task for {wrapup_s / 60:.0f} minutes. "
+        "Finish the step in progress, then write your final report now: what is done, "
+        "what was verified (with its evidence) and what remains. Do not start new work."
+        + stop
+    )
+
+
+def _time_limit_message(limit_s: float) -> str:
+    return (
+        f"Stopped: this subagent reached its time limit ({limit_s / 60:.0f} min) before "
+        "finishing. Its partial work is kept: check it and continue in a new, narrower "
+        "task instead of starting over."
+    )
+
+
+def _resume_note(resumed: int) -> str:
+    if not resumed:
+        return ""
+    return (
+        f"\n\nThe model stopped answering: Navin resumed this subagent {resumed} time(s) "
+        "automatically, with the work already done, before giving up."
+    )
 
 # Prompt + tool registry stay off the event loop, on a dedicated pool so a
 # wave of 50 cannot starve other to_thread work (git, worktrees, the parent
@@ -386,11 +471,14 @@ _TIMEOUT_PREFIXES = (
     "error calling llm: request timed out",
 )
 _LIMIT_PREFIX = "subagent reached its iteration limit"
+# What the time limit writes in the status (see SubagentManager._enforce_time_limit).
+_TIME_LIMIT_PREFIX = "time limit of"
 _ERROR_REASONS = {
     "cancelled": "Cancelled",
     "stalled": "Model stream stalled",
     "timeout": "Model timed out",
     "limit": "Reached its step limit",
+    "time_limit": "Reached its time limit",
     # The validation gate ended the run: its edits are kept, but their checks
     # failed or never passed. Not an error of the model or of the run itself.
     "unvalidated": "Changes not validated",
@@ -415,6 +503,8 @@ def _humanize_error(err: str | None, kind: str | None = None) -> tuple[str, str]
     if kind == "timeout" or low.startswith(_TIMEOUT_PREFIXES):
         return "timeout", _ERROR_REASONS["timeout"]
     if kind == "limit" or low.startswith(_LIMIT_PREFIX):
+        if low.startswith(_TIME_LIMIT_PREFIX):
+            return "time_limit", _ERROR_REASONS["time_limit"]
         return "limit", _ERROR_REASONS["limit"]
     if kind == "unvalidated":
         return "unvalidated", _ERROR_REASONS["unvalidated"]
@@ -448,6 +538,16 @@ class SubagentStatus:
     last_status_line: str = ""
     # Rolling record of finished tool calls, newest last, for the card details.
     steps: list = field(default_factory=list)  # [{kind, verb, target, status}, ...]
+    # time.monotonic() when the run itself started, after any queue: the
+    # wrap-up note and the time limit count from here.
+    run_started_at: float = 0.0
+    # time.monotonic() when the current phase began ("Waiting for the model (3 min)").
+    phase_since: float = 0.0
+    # Shown instead of the plain wait line while a model error is being resumed.
+    waiting_note: str = ""
+    # Seconds spent waiting for the user's approval: that time is the user's,
+    # it does not count toward the wrap-up note or the time limit.
+    paused_s: float = 0.0
 
 
 @dataclass(slots=True)
@@ -674,6 +774,7 @@ class _SubagentHook(AgentHook):
         status: SubagentStatus | None = None,
         on_progress: Callable[[SubagentStatus], None] | None = None,
         record_event: Callable[..., Any] | None = None,
+        can_resume: Callable[[Any], bool] | None = None,
     ) -> None:
         super().__init__()
         self._reraise = True
@@ -682,6 +783,8 @@ class _SubagentHook(AgentHook):
         self._on_progress = on_progress
         self._completed_call_ids: set[str] = set()
         self._record_event = record_event
+        # True for a model error the manager is about to resume (_run_subagent).
+        self._can_resume = can_resume
 
     def wants_streaming(self) -> bool:
         # Streaming is what keeps a slow model alive here. A non-streamed call
@@ -706,6 +809,7 @@ class _SubagentHook(AgentHook):
         if self._status.phase == phase:
             return
         self._status.phase = phase
+        self._status.phase_since = time.monotonic()
         if self._on_progress is not None:
             self._on_progress(self._status)
 
@@ -799,19 +903,30 @@ class _SubagentHook(AgentHook):
         ])
         self._status.usage = dict(context.usage)
         if context.error:
-            self._status.error = str(context.error)
             response = context.response
-            self._status.error_kind = (
-                getattr(response, "error_kind", None) if response is not None else None
-            )
-            self._status.phase = "error"
+            if self._can_resume is not None and self._can_resume(response):
+                # The manager resumes this run in a moment (_run_subagent): not
+                # a failure yet, and the card must not read as finished.
+                self._status.error = None
+                self._status.error_kind = None
+                self._status.phase = "awaiting_model"
+                self._status.phase_since = time.monotonic()
+                self._status.waiting_note = "Model not responding, resuming shortly"
+            else:
+                self._status.error = str(context.error)
+                self._status.error_kind = (
+                    getattr(response, "error_kind", None) if response is not None else None
+                )
+                self._status.phase = "error"
         elif context.tool_events:
             self._status.error = None
             self._status.error_kind = None
+            self._status.waiting_note = ""
             self._status.phase = "tools_completed"
         else:
             self._status.error = None
             self._status.error_kind = None
+            self._status.waiting_note = ""
             self._status.phase = "final_response"
         if self._on_progress is not None:
             self._on_progress(self._status)
@@ -930,6 +1045,8 @@ class SubagentManager:
         # from the license-sync thread and needs a way back onto this loop.
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
+        # Runs the watchdog stopped at their time limit, with that limit (s).
+        self._time_limited: dict[str, float] = {}
         # Outcomes are kept per session: one busy conversation fanning out
         # dozens of subagents must not evict another conversation's history,
         # and a wide fan-out (25+) must stay fully retrievable via
@@ -1066,6 +1183,8 @@ class SubagentManager:
         task_id: str,
         status: SubagentStatus | None,
         on_progress: Callable[[SubagentStatus], None] | None,
+        *,
+        can_resume: Callable[[Any], bool] | None = None,
     ) -> AgentHook:
         """The subagent's own hook, plus whatever accounts for what it spends.
 
@@ -1077,6 +1196,7 @@ class SubagentManager:
         hook: AgentHook = _SubagentHook(
             task_id, status, on_progress=on_progress,
             record_event=lambda kind, payload: self._journal_event(task_id, kind, payload),
+            can_resume=can_resume,
         )
         if not self._usage_hooks:
             return hook
@@ -2298,12 +2418,37 @@ class SubagentManager:
                 for status in list(self._task_statuses.values()):
                     if status.phase in {"done", "error"}:
                         continue
+                    self._enforce_time_limit(status, now)
                     last = status.last_progress_at or status.started_at
                     if now - last < _HEARTBEAT_S:
                         continue
                     self._publish_progress(status, force=True)
         except asyncio.CancelledError:
             return
+
+    def _enforce_time_limit(self, status: SubagentStatus, now: float) -> None:
+        """Stop a run past its time limit; its partial work and the reason reach the parent.
+
+        Not while it waits for the user's approval: that time is the user's.
+        """
+        limit_s = _limit_seconds(_MAX_RUN_ENV, _DEFAULT_MAX_RUN_MIN)
+        if (
+            limit_s is None
+            or not status.run_started_at
+            or status.phase in {"queued", "awaiting_approval", "done", "error"}
+            or status.task_id in self._time_limited
+            or now - status.run_started_at - status.paused_s < limit_s
+        ):
+            return
+        running = self._running_tasks.get(status.task_id)
+        if running is None or running.done():
+            return
+        self._time_limited[status.task_id] = limit_s
+        logger.warning(
+            "Subagent [{}] reached its time limit ({:.0f} min); stopping it",
+            status.task_id, limit_s / 60,
+        )
+        running.cancel(f"time limit of {limit_s / 60:.0f} min reached")
 
     def request_drain(self) -> None:
         """Re-check every queue. Safe to call from another thread.
@@ -2412,6 +2557,7 @@ class SubagentManager:
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         budget = self._collab_budget.get(task_id, 0)
+        status.run_started_at = time.monotonic()
 
         def _emit_progress(current: SubagentStatus, *, force: bool = False) -> None:
             self._publish_progress(current, force=force)
@@ -2662,7 +2808,12 @@ class SubagentManager:
                     peer_token = peer_activity.bind_turn(peer_turn)
                     await asyncio.to_thread(peer_activity.publish_turn, peer_turn)
 
+                wrapup_s = _limit_seconds(_WRAPUP_ENV, _DEFAULT_WRAPUP_MIN)
+                max_run_s = _limit_seconds(_MAX_RUN_ENV, _DEFAULT_MAX_RUN_MIN)
+                wrapup_sent = False
+
                 async def _team_injections(*, limit: int = 64, wait: bool = False) -> list[dict[str, Any]]:
+                    nonlocal wrapup_sent
                     session = sess_key or f"{origin['channel']}:{origin['chat_id']}"
                     received = self.drain_team_messages(session, task_id, limit, record_delivery=False)
                     injected = [{"role": "user", "content": (
@@ -2694,9 +2845,22 @@ class SubagentManager:
                             logger.warning("Subagent [{}] team delivery failed, {} kept for retry: {}",
                                            task_id, len(received) - index, error)
                             return injected[:index]
+                    if (
+                        wrapup_s is not None
+                        and not wrapup_sent
+                        and status.phase not in {"responding", "final_response"}
+                        and time.monotonic() - status.run_started_at - status.paused_s >= wrapup_s
+                    ):
+                        # Once per run: the subagent reports instead of working
+                        # on for hours while its parent waits.
+                        wrapup_sent = True
+                        injected.append({"role": "user", "content": _wrapup_note(wrapup_s, max_run_s)})
                     return injected
 
-                result = await self.runner.run(AgentRunSpec(
+                resume_limit = _model_resume_limit()
+                resumes_left = resume_limit
+                resumed = 0
+                run_spec = AgentRunSpec(
                     initial_messages=messages,
                     tools=tools,
                     runtime=runtime,
@@ -2704,7 +2868,10 @@ class SubagentManager:
                     max_iterations=self.max_iterations,
                     max_tool_result_chars=self.max_tool_result_chars,
                     tool_result_clearing=self.tool_result_clearing,
-                    hook=self._build_hook(task_id, status, _emit_progress),
+                    hook=self._build_hook(
+                        task_id, status, _emit_progress,
+                        can_resume=lambda response: resumes_left > 0 and _resumable_model_error(response),
+                    ),
                     finalize_on_max_iterations=False,
                     continue_on_max_iterations=True,
                     error_message=None,
@@ -2736,7 +2903,35 @@ class SubagentManager:
                     read_only_tools=permission_mode == "plan",
                     locked_denied_tools=agent_denied,
                     allowed_tools=agent_allowed,
-                ))
+                )
+                result = await self.runner.run(run_spec)
+                delays = _MODEL_RESUME_DELAYS_S or (30.0,)
+                while resumes_left > 0 and result.stop_reason == "error" and result.retryable_error:
+                    resumes_left -= 1
+                    resumed += 1
+                    delay = delays[min(resumed, len(delays)) - 1]
+                    logger.warning(
+                        "Subagent [{}] stopped on a model error; resuming in {:.0f}s ({}/{})",
+                        task_id, delay, resumed, resume_limit,
+                    )
+                    status.phase = "awaiting_model"
+                    status.error = None
+                    status.error_kind = None
+                    status.waiting_note = (
+                        f"Model not responding, resuming in {delay:.0f}s ({resumed}/{resume_limit})"
+                    )
+                    self._publish_progress(status, force=True)
+                    await asyncio.sleep(delay)
+                    status.phase_since = time.monotonic()
+                    status.waiting_note = (
+                        f"Resumed after the model stopped answering ({resumed}/{resume_limit})"
+                    )
+                    # Same conversation, minus the error placeholder: the work
+                    # already done is not redone.
+                    run_spec = replace(
+                        run_spec, initial_messages=without_model_error_placeholder(result.messages),
+                    )
+                    result = await self.runner.run(run_spec)
             finally:
                 if peer_token is not None:
                     peer_activity.reset_turn(peer_token)
@@ -2814,6 +3009,7 @@ class SubagentManager:
                 await self._announce_result(
                     task_id, label, task,
                     (result.error or "Error: subagent execution failed.")
+                    + _resume_note(resumed)
                     + _changed_files_note(loop_guard.validation, partial=True) + note,
                     origin, "error", origin_message_id,
                 )
@@ -2836,9 +3032,15 @@ class SubagentManager:
             # the shutdown that asked for the cancellation. Keeping the tree is
             # the safe answer for an interrupted run anyway.
             over_budget = bool(budget) and self._total_tokens(status) > budget
+            time_limit_s = self._time_limited.pop(task_id, None)
             status.phase = "error"
-            status.error = f"token budget of {budget} reached" if over_budget else "cancelled"
-            status.error_kind = "limit" if over_budget else "cancelled"
+            if over_budget:
+                status.error, status.error_kind = f"token budget of {budget} reached", "limit"
+            elif time_limit_s:
+                status.error = f"time limit of {time_limit_s / 60:.0f} min reached"
+                status.error_kind = "limit"
+            else:
+                status.error, status.error_kind = "cancelled", "cancelled"
             self._publish_progress(status, force=True, done=True)
             kept_at = checkout.path if checkout is not None else None
             if checkout is not None:
@@ -2862,7 +3064,7 @@ class SubagentManager:
                         (
                             f"Stopped: this teammate used its token budget ({budget}) "
                             "before finishing. Partial work may be in the tree."
-                            if over_budget else (
+                            if over_budget else _time_limit_message(time_limit_s) if time_limit_s else (
                                 "Cancelled before its final answer." + _cancel_reason(cancel_error) if changed
                                 else "Cancelled before a result was produced." + _cancel_reason(cancel_error)
                             )
@@ -2909,6 +3111,12 @@ class SubagentManager:
         if status.phase == "initializing":
             return "Starting…"
         if status.phase == "awaiting_model":
+            if status.waiting_note:
+                return status.waiting_note
+            waited = time.monotonic() - status.phase_since if status.phase_since else 0.0
+            if waited >= 60.0:
+                # A model silent for minutes is told apart from one that just started.
+                return f"Waiting for the model ({int(waited // 60)} min)"
             return "Waiting for model response..."
         if status.phase in {"final_response", "responding"}:
             return "Writing response…"
@@ -2946,18 +3154,21 @@ class SubagentManager:
         Concurrent tool calls can each ask: the card leaves that state when the
         last open request is answered, back to the phase it was in.
         """
-        state: dict[str, Any] = {"open": 0, "phase": None}
+        state: dict[str, Any] = {"open": 0, "phase": None, "since": 0.0}
 
         def waiting(active: bool) -> None:
             if active:
                 state["open"] += 1
                 if state["open"] == 1 and status.phase not in {"done", "error"}:
                     state["phase"] = status.phase
+                    state["since"] = time.monotonic()
                     status.phase = "awaiting_approval"
             else:
                 state["open"] = max(0, state["open"] - 1)
                 if state["open"] == 0 and status.phase == "awaiting_approval":
                     status.phase = state["phase"] or "awaiting_tools"
+                    # The wait for the user is not run time (time limit, wrap-up).
+                    status.paused_s += max(0.0, time.monotonic() - state["since"])
             if status.phase not in {"done", "error"}:
                 self._publish_progress(status, force=True)
 

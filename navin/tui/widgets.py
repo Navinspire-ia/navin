@@ -1074,12 +1074,18 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         """
         if self._output_mounted:
             return
-        self._output_mounted = True
+        if not self.is_attached or self._closing or self._pruning:
+            # The CLI is closing or the row left the transcript: Textual
+            # refuses to mount into it (a resize queued while the CLI quit
+            # ended the quit on MountError, 2026-11-06 17:23). The next paint
+            # of an attached row mounts the output.
+            return
         viewport = VerticalScroll(classes="tool-output")
         actions = Horizontal(classes="tool-actions")
         self.mount(viewport, actions)
         viewport.mount(*self._output_widgets())
         actions.mount(*self._action_widgets())
+        self._output_mounted = True
 
     def on_mount(self) -> None:
         # Grouped rows animate too: each running step shows its own spinner,
@@ -1476,7 +1482,9 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         return command if short_run_target(command) != command else ""
 
     def _refresh_body(self) -> None:
-        if not self.is_mounted:
+        # is_mounted survives DOM removal; queued paints can also arrive while
+        # the app is exiting, when Textual no longer permits mounting children.
+        if not self.is_mounted or not self.is_attached or self._closing or self._pruning:
             return
         if not self.display or (self._cluster_owner is not None and not self._cluster_owner.display):
             return

@@ -3,46 +3,99 @@
 
 """Which model takes over when the chosen one cannot answer.
 
-The flagships of the plan form a ladder, strongest first. When one of them
-cannot answer (quota reached, rate limited, down), the step goes to the next
-one still available: first the flagships of its own family (Claude Opus and
-Claude Fable relay each other, then Claude Sonnet), then those of the other
-family (GPT-6 Astra, then GPT-6.1 Sol). Staying in the family first keeps the
-tool-call habits and the prompt style the turn was written for.
+The models of the plan form one ladder. When the chosen model cannot answer
+(quota reached, rate limited, down), the step goes to the next one of the
+ladder still available, in the order the user set (2026-11-06):
 
-A substitute below the chosen model on the ladder runs at its deepest
-reasoning effort, to make up for the step down. A peer, or a stronger model,
-keeps the effort the turn runs at.
+1. Claude Opus and Claude Fable, which relay each other;
+2. GPT-6 Astra, then Claude Sonnet, then GPT-6.1 Sol;
+3. the release before the newest Claude Fable, then the one before the
+   newest Claude Opus;
+4. Kimi, Grok, GLM, then GLM Flash.
 
-Families are matched by name without their version, and the newest version in
-the model list is the one used, so the ladder follows new releases without an
-edit here: Claude Opus 5.6 replaces 5.5 the day it reaches the catalog.
+The chosen model is left out wherever it sits, and a model off the ladder is
+relayed by the whole ladder. Each Bedrock model draws on its own quota, so an
+older Fable or Opus still answers when the newest one is limited.
+
+The newest Opus and Fable keep the effort the turn runs at. Every other model
+takes over at its deepest effort: xhigh for GPT, max for the others, which
+each provider fits to what the model takes (see ``reasoning_control``). An
+effort the user picked in the chat is kept by every model taking over
+(``chat_chosen_effort``).
+
+Families are matched by name without their version, and the releases are
+read from the model list, so the ladder follows new releases without an edit
+here: Claude Opus 5.6 takes the place of 5.5 the day it reaches the catalog,
+and 5.5 becomes the release before it. The factory serves this ladder to the
+managed providers only (Navin, Bedrock, LiteLLM), and never makes a step leave
+its provider.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
-#: Model families, strongest first. Families sharing a rung are peers.
-RELAY_LADDER: tuple[tuple[str, ...], ...] = (
-    ("claude-opus", "claude-fable"),
-    ("claude-sonnet",),
-    ("gpt-astra",),
-    ("gpt-sol",),
+#: The models that take over, in the order they are tried: a family and a
+#: release, 0 for the newest version of the family in the model list and 1
+#: for the one before it.
+RELAY_ORDER: tuple[tuple[str, int], ...] = (
+    ("claude-opus", 0),
+    ("claude-fable", 0),
+    ("gpt-astra", 0),
+    ("claude-sonnet", 0),
+    ("gpt-sol", 0),
+    ("claude-fable", 1),
+    ("claude-opus", 1),
+    ("kimi", 0),
+    ("grok", 0),
+    ("glm", 0),
+    ("glm-flash", 0),
 )
 
-#: Effort asked of a substitute below the chosen model. Each provider fits it
-#: to the deepest value the model takes (see ``reasoning_control``).
-STEP_DOWN_EFFORT = "max"
+#: The flagships: their newest release keeps the effort the turn runs at.
+PEER_FAMILIES = frozenset({"claude-opus", "claude-fable"})
+
+#: The deepest effort asked of every other model taking over. Each provider
+#: fits it to what the model takes (see ``reasoning_control``).
+DEEPEST_EFFORT = "max"
+#: GPT models stop at xhigh.
+GPT_DEEPEST_EFFORT = "xhigh"
+
+#: True while a step runs at an effort the user picked in the chat.
+_CHAT_EFFORT: ContextVar[bool] = ContextVar("navin_chat_chosen_effort", default=False)
+
+
+@contextmanager
+def chat_chosen_effort(chosen: bool) -> Iterator[None]:
+    """Within the block, a model taking over keeps the step's effort when *chosen*."""
+    token = _CHAT_EFFORT.set(bool(chosen))
+    try:
+        yield
+    finally:
+        _CHAT_EFFORT.reset(token)
+
+
+def effort_chosen_in_chat() -> bool:
+    """True when the running step's effort was picked by the user in the chat."""
+    return _CHAT_EFFORT.get()
+
 
 _VERSION = re.compile(r"\d+(?:\.\d+)*")
+#: Moonshot writes the version after a "k": "kimi-k3".
+_KIMI_VERSION = re.compile(r"k(\d+(?:\.\d+)*)")
+#: A Bedrock id ("us.anthropic.claude-opus-5-5-v1:0") names a region and a
+#: vendor before the model, and a revision after it.
+_BEDROCK_PREFIX = re.compile(r"^(?:[a-z]+\.)+(?=[a-z])")
+_REVISION = re.compile(r"v\d+")
 
 
 @dataclass(frozen=True)
 class RelayCandidate:
-    """One substitute of the ladder, in the order it is tried."""
+    """One model of the ladder, in the order it is tried."""
 
     preset_name: str
     model: str
@@ -54,75 +107,75 @@ def model_family(slug: str) -> tuple[str, tuple[int, ...]]:
     """The family and version of a model slug.
 
     ``"anthropic/claude-opus-5.5"`` gives ``("claude-opus", (5, 5))``, and so
-    does ``"claude-opus-5-5"``; ``"openai/gpt-6.1-sol"`` gives
-    ``("gpt-sol", (6, 1))``. A slug without a version gives ``("", ())``.
+    do ``"claude-opus-5-5"`` and the Bedrock id
+    ``"us.anthropic.claude-opus-5-5-v1:0"``; ``"openai/gpt-6.1-sol"`` gives
+    ``("gpt-sol", (6, 1))`` and ``"moonshotai/kimi-k3"`` ``("kimi", (3,))``.
+    A slug without a version gives ``("", ())``.
     """
     name = slug.strip().lower().rsplit("/", 1)[-1].split(":", 1)[0]
+    tokens = [token for token in _BEDROCK_PREFIX.sub("", name).split("-") if token]
+    if len(tokens) > 1 and _REVISION.fullmatch(tokens[-1]):
+        tokens.pop()
     words: list[str] = []
     version: list[int] = []
-    for token in name.split("-"):
+    for token in tokens:
+        kimi = _KIMI_VERSION.fullmatch(token) if words == ["kimi"] else None
         if _VERSION.fullmatch(token):
             version.extend(int(part) for part in token.split("."))
-        elif token:
+        elif kimi is not None:
+            version.extend(int(part) for part in kimi.group(1).split("."))
+        else:
             words.append(token)
     if not words or not version:
         return "", ()
     return "-".join(words), tuple(version)
 
 
-def _rung(family: str) -> int | None:
-    for index, rung in enumerate(RELAY_LADDER):
-        if family in rung:
-            return index
-    return None
-
-
-def _maker(family: str) -> str:
-    return family.split("-", 1)[0]
+def relay_effort(family: str, release: int) -> str | None:
+    """The effort a model of *family* takes over at; ``None`` keeps the turn's."""
+    if family in PEER_FAMILIES and release == 0:
+        return None
+    return GPT_DEEPEST_EFFORT if family.startswith("gpt-") else DEEPEST_EFFORT
 
 
 def relay_candidates(
     primary_model: str,
     models: Iterable[tuple[str, str]],
 ) -> list[RelayCandidate]:
-    """The ladder's substitutes for *primary_model*, in the order they are tried.
+    """The ladder's models for a step chosen on *primary_model*, in the order they are tried.
 
     *models* lists the usable chat presets as ``(preset name, model slug)``,
-    in catalog order. The chosen model's own family is left out: its older
-    versions draw on the same quota and answer worse. Empty when the chosen
-    model is not on the ladder; the generic chain then applies unchanged.
+    in catalog order; the first preset of a model is the one used. The chosen
+    model keeps its place among the releases of its family, so the release
+    before it stays "the one before" even when the chosen preset is not in
+    *models*.
     """
-    family, _version = model_family(primary_model)
-    primary_rung = _rung(family)
-    if primary_rung is None:
-        return []
     chosen = primary_model.strip().lower()
-    newest: dict[str, tuple[tuple[int, ...], str, str]] = {}
+    chosen_identity = model_family(primary_model)
+    releases: dict[str, list[tuple[tuple[int, ...], str | None, str]]] = {}
     for preset_name, slug in models:
-        candidate_family, version = model_family(slug)
-        if candidate_family == family or _rung(candidate_family) is None:
-            continue
-        if slug.strip().lower() == chosen:
-            continue
-        best = newest.get(candidate_family)
-        if best is None or version > best[0]:
-            newest[candidate_family] = (version, preset_name, slug.strip())
-    ladder = [name for rung in RELAY_LADDER for name in rung]
-    own = _maker(family)
-    # Stable sort: the ladder's own order is kept inside each group.
-    ladder.sort(key=lambda name: 0 if _maker(name) == own else 1)
+        cleaned = slug.strip()
+        family, version = model_family(cleaned)
+        if family:
+            releases.setdefault(family, []).append((version, preset_name, cleaned))
+    family, version = chosen_identity
+    if family and all(known != version for known, _name, _slug in releases.get(family, [])):
+        releases.setdefault(family, []).append((version, None, primary_model.strip()))
+    for entries in releases.values():
+        # Newest first; the catalog order settles two presets of one release,
+        # and the first of them stands for the release.
+        entries.sort(key=lambda entry: entry[0], reverse=True)
+        entries[:] = [entry for index, entry in enumerate(entries) if index == 0 or entries[index - 1][0] != entry[0]]
+
     candidates: list[RelayCandidate] = []
-    for name in ladder:
-        if name not in newest:
+    for family, release in RELAY_ORDER:
+        entries = releases.get(family, [])
+        if release >= len(entries):
             continue
-        _found, preset_name, slug = newest[name]
-        rung = _rung(name)
-        weaker = rung is not None and rung > primary_rung
+        version, preset_name, slug = entries[release]
+        if preset_name is None or slug.lower() == chosen or (family, version) == chosen_identity:
+            continue
         candidates.append(
-            RelayCandidate(
-                preset_name=preset_name,
-                model=slug,
-                reasoning_effort=STEP_DOWN_EFFORT if weaker else None,
-            )
+            RelayCandidate(preset_name=preset_name, model=slug, reasoning_effort=relay_effort(family, release))
         )
     return candidates

@@ -96,6 +96,7 @@ class FallbackProvider(LLMProvider):
         on_model_switch: Callable[[str, str], Any] | None = None,
         sticky_retries: int = PRIMARY_STICKY_RETRIES,
         model_labels: Mapping[str, str] | None = None,
+        relay_on_limit: bool = False,
     ):
         self._primary = primary
         # Display names by model slug ("Claude Fable 5.1"), for what the user reads.
@@ -113,6 +114,11 @@ class FallbackProvider(LLMProvider):
         # normal state and hopping to the next free model is the whole design.
         # A model the user picked deserves the wait instead.
         self._sticky_retries = max(0, int(sticky_retries))
+        # On the plan's ladder every model draws on its own quota: a model at
+        # its rate limit hands the step to the next one at once. Asked again, a
+        # saturated Claude Opus cost up to four refusals of twenty seconds each
+        # before Fable took the step (2026-11-06, "ca tourne en rond").
+        self._relay_on_limit = bool(relay_on_limit)
         # Notified with (chosen_model, served_model) when a turn is answered by a
         # model the user did not pick. Without this the swap is invisible and the
         # UI keeps showing the chosen model.
@@ -408,7 +414,10 @@ class FallbackProvider(LLMProvider):
             # steps run at "none"). A fallback preset without its own value
             # inherits it rather than dropping it, otherwise the substitute
             # model reasons at its default while the primary was told not to.
-            if fallback.reasoning_effort is not None:
+            # An effort the user picked in the chat stays, whatever the preset.
+            from navin.providers.relay_ladder import effort_chosen_in_chat
+
+            if fallback.reasoning_effort is not None and not effort_chosen_in_chat():
                 kwargs["reasoning_effort"] = fallback.reasoning_effort
             try:
                 fallback_response = await call(fallback_provider, kwargs)
@@ -477,8 +486,10 @@ class FallbackProvider(LLMProvider):
         waits longer than a sticky retry: there the next model is the only
         useful move. Each wait is capped at ``STICKY_MAX_DELAY_S``. Retries stop
         as soon as content has been streamed, since the turn is already partly
-        delivered. The outer ``chat_with_retry`` ladder does not multiply this:
-        it gives a chain a single extra pass (see ``LLMProvider``).
+        delivered. A rate limit is not retried on the plan's ladder
+        (``relay_on_limit``): the next model has its own quota. The outer
+        ``chat_with_retry`` ladder does not multiply this: it gives a chain a
+        single extra pass (see ``LLMProvider``).
         """
         import asyncio
 
@@ -494,6 +505,8 @@ class FallbackProvider(LLMProvider):
             if has_streamed is not None and has_streamed[0]:
                 return response
             budget = sticky_retry_budget(response, self._sticky_retries)
+            if self._relay_on_limit and response.error_status_code == 429:
+                budget = 0
             if attempt >= budget:
                 return response
             attempt += 1

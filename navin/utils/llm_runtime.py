@@ -29,6 +29,9 @@ class LLMRuntime:
     context_window_tokens: int
     model_preset: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
+    #: True when the user picked the reasoning effort in the chat (composer or
+    #: CLI picker): a model taking over a step keeps it (relay_ladder).
+    reasoning_effort_chosen: bool = False
 
     @classmethod
     def capture(
@@ -66,6 +69,7 @@ class LLMRuntime:
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        reasoning_effort_chosen: bool | None = None,
     ) -> LLMRuntime:
         """Return a derived runtime for explicit per-run generation overrides."""
         generation = self.generation
@@ -81,6 +85,11 @@ class LLMRuntime:
                     if reasoning_effort is None
                     else reasoning_effort
                 ),
+            ),
+            reasoning_effort_chosen=(
+                self.reasoning_effort_chosen
+                if reasoning_effort_chosen is None
+                else reasoning_effort_chosen
             ),
         )
 

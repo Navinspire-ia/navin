@@ -86,7 +86,9 @@ def member_runtime(
                 ) from exc
     effort = (getattr(member, "reasoning_effort", None) or "").strip()
     if effort and hasattr(runtime, "with_generation_overrides"):
-        runtime = runtime.with_generation_overrides(reasoning_effort=effort)
+        # The teammate's own effort replaces the chat's: its substitutes use
+        # their default (high), not the effort picked for the main model.
+        runtime = runtime.with_generation_overrides(reasoning_effort=effort, reasoning_effort_chosen=False)
     return runtime
 
 

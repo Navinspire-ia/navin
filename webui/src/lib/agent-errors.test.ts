@@ -77,5 +77,12 @@ describe("agentErrorKey", () => {
         + "automatically and resumes by itself. You can also pick another model.",
       )?.key,
     ).toBe("message.agentErrorUpstream");
+    expect(
+      agentErrorKey(
+        "The model provider stopped answering: no response came within the time "
+        + "limit. Navin already retried automatically. Try again in a moment, or "
+        + "pick another model.",
+      )?.key,
+    ).toBe("message.agentErrorTimeout");
   });
 });

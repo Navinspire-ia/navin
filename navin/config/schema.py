@@ -1153,8 +1153,9 @@ def _default_collab_members() -> list[CollabMemberConfig]:
 # (v2: full toolboxes for everyone, v3: video tools for Designer and Marketing,
 # v4: mobile and appfactory for everyone, infra for DevOps, Infra, Architect
 # and Security; v5: drawn human faces and genders for the default teammates;
-# v6: default teammates still on the main model get their own model preset).
-COLLAB_TOOLS_VERSION = 6
+# v6: default teammates still on the main model get their own model preset;
+# v7: default teammates still at their old built-in max or xhigh move to high).
+COLLAB_TOOLS_VERSION = 7
 
 
 class CollabTeamConfig(Base):
@@ -1228,6 +1229,7 @@ class CollabConfig(Base):
         from navin.collab.team import (
             DEFAULT_MEMBER_MODELS,
             LEGACY_DEFAULT_AVATARS,
+            LEGACY_MEMBER_EFFORTS,
             ROLE_DEFAULT_EFFORT,
             ROLE_TOOLS,
             default_spec,
@@ -1263,6 +1265,16 @@ class CollabConfig(Base):
                 role = str(member.get("role") or "custom")
                 if (member.get(effort_key) or "") in {"", ROLE_DEFAULT_EFFORT.get(role, "medium")}:
                     member[effort_key] = model[1]
+            if (
+                isinstance(member, dict) and version < 7 and (spec := default_spec(member)) is not None
+                and (model := DEFAULT_MEMBER_MODELS.get(str(spec["id"]))) is not None
+                and (member.get("model_preset") or member.get("modelPreset")) == model[0]
+            ):
+                # Still on its built-in model at the old built-in effort (max
+                # or xhigh): high now. An effort the user picked stays.
+                effort_key = "reasoningEffort" if "reasoningEffort" in member else "reasoning_effort"
+                if (member.get(effort_key) or "") == LEGACY_MEMBER_EFFORTS.get(str(spec["id"])):
+                    member = {**member, effort_key: model[1]}
             upgraded.append(member)
         return {**data, "members": upgraded, "tools_version": COLLAB_TOOLS_VERSION}
 

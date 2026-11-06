@@ -3084,6 +3084,7 @@
     "agentErrorAudioAuth": "Audio failed due to an authentication error. Please try again.",
     "agentErrorAuth": "Authentication with the model provider failed. Check the API key in Settings, or switch to a Navin plan model.",
     "agentErrorConnection": "Could not reach the model provider. Navin already retried automatically and resumes by itself. If it persists, check your internet connection, and any VPN, proxy or firewall that could block the request.",
+    "agentErrorTimeout": "The model provider stopped answering: no response came within the time limit. Navin already retried automatically. Try again in a moment, or pick another model.",
     "agentErrorContext": "This turn no longer fits in the model's context window. Start a new conversation, or pick a model with a larger window.",
     "agentErrorGeneric": "Sorry, I encountered an error.",
     "agentErrorMediaEmpty": "The provider finished the job but produced no media. This is usually a content-policy block (brand names, logos, real product UI, people) or a transient provider failure. Rephrase the prompt with neutral wording and try again, or switch to another media model in Settings.",
@@ -10743,6 +10744,7 @@
         "stalled": "Model stream stalled",
         "cancelled": "Cancelled",
         "limit": "Reached its step limit",
+        "time_limit": "Reached its time limit",
         "unvalidated": "Changes not validated",
         "other": "Stopped on an error"
       },

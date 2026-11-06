@@ -1757,6 +1757,10 @@ class AgentLoop:
             )
             if effort != runtime.generation.reasoning_effort:
                 runtime = runtime.with_generation_overrides(reasoning_effort=effort)
+            # Picked in the chat (composer, CLI picker): a model taking over
+            # a step keeps it instead of its own default (relay_ladder).
+            if isinstance(override, str) and override.strip() and effort == override.strip().lower():
+                runtime = runtime.with_generation_overrides(reasoning_effort_chosen=True)
         except Exception:
             logger.debug("adaptive reasoning effort skipped", exc_info=True)
         return runtime
