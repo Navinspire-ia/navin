@@ -1175,6 +1175,54 @@ class RemainingWorkNudgeTest(unittest.TestCase):
         self.assertEqual(result.final_content, "Task 3 is still to do.")
 
 
+class _CancelledInsideTool(Tool):
+    """A tool whose awaited work was cancelled, while the turn itself was not."""
+
+    @property
+    def name(self) -> str:
+        return "probe"
+
+    @property
+    def description(self) -> str:
+        return "probe"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: Any) -> str:
+        import asyncio
+
+        raise asyncio.CancelledError()
+
+
+class CancelledInsideAToolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_cancellation_raised_by_a_tool_does_not_end_the_turn(self) -> None:
+        # Re-raised, it ended the whole turn with no answer, as if the user
+        # had typed /stop, and cancelled the other tools of the batch.
+        provider = _FakeProvider([
+            LLMResponse(
+                content="",
+                finish_reason="tool_calls",
+                tool_calls=[ToolCallRequest(id="1", name="probe", arguments={})],
+            ),
+            LLMResponse(content="Recovered from the probe failure.", finish_reason="stop"),
+        ])
+        tools = ToolRegistry()
+        tools.register(_CancelledInsideTool())
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "probe it"}],
+            tools=tools,
+            runtime=_runtime(provider),
+            max_iterations=4,
+            max_tool_result_chars=2000,
+            hook=AgentHook(),
+        ))
+        self.assertEqual(result.final_content, "Recovered from the probe failure.")
+        tool_rows = [m for m in result.messages if m.get("role") == "tool"]
+        self.assertIn("cancelled from inside", str(tool_rows[0]["content"]))
+
+
 class OpenPlanStepsNudgeTest(unittest.IsolatedAsyncioTestCase):
     """A build turn does not hand back while its plan still has open steps."""
 
@@ -1183,6 +1231,7 @@ class OpenPlanStepsNudgeTest(unittest.IsolatedAsyncioTestCase):
 
     async def _run(
         self, plan: list[list[dict[str, str]]], finals: list[str], *, scope: str = "main",
+        workflow: bool = True,
     ) -> tuple[int, AgentRunResult]:
         import tempfile
         from pathlib import Path
@@ -1209,7 +1258,7 @@ class OpenPlanStepsNudgeTest(unittest.IsolatedAsyncioTestCase):
         answers = iter(plan)
         with tempfile.TemporaryDirectory() as tmp, mock.patch(
             "navin.board.auto_advance.open_plan_steps",
-            side_effect=lambda *_a: next(answers, plan[-1]),
+            side_effect=lambda *_a, **_k: next(answers, plan[-1]),
         ):
             result = await AgentRunner().run(
                 AgentRunSpec(
@@ -1219,7 +1268,7 @@ class OpenPlanStepsNudgeTest(unittest.IsolatedAsyncioTestCase):
                     max_iterations=10,
                     max_tool_result_chars=2000,
                     hook=AgentHook(),
-                    requires_verify_before_done=True,
+                    requires_verify_before_done=workflow,
                     workspace=Path(tmp),
                     session_key="cli:plan",
                     user_hook_scope=scope,
@@ -1264,6 +1313,35 @@ class OpenPlanStepsNudgeTest(unittest.IsolatedAsyncioTestCase):
         calls, result = await self._run([[self._STEP]], ["Done with step 1.", "x"], scope="subagent")
         self.assertEqual(self._nudges(result), [])
         self.assertEqual(calls, 3)
+
+    async def test_a_plain_agent_turn_is_sent_back_to_its_open_steps_too(self) -> None:
+        # Seen live: Agent turns (not a workflow command) stopped after
+        # "step 4 done" with the rest of the plan open, after every step.
+        calls, result = await self._run(
+            [[self._STEP], []], ["Done with step 1.", "All steps done."], workflow=False,
+        )
+        self.assertEqual(len(self._nudges(result)), 1)
+        self.assertEqual(calls, 4)
+        self.assertEqual(result.final_content, "All steps done.")
+
+    def test_a_later_slice_of_the_request_still_drives_the_plan(self) -> None:
+        from navin.agent.runner import _request_called_board
+        from navin.session import turn_continuation as tc
+
+        board = {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "b1", "type": "function", "function": {"name": "board", "arguments": "{}"}},
+        ]}
+        request = [
+            {"role": "user", "content": "build the stats page"},
+            board,
+            {"role": "tool", "tool_call_id": "b1", "name": "board", "content": "t-1 claimed"},
+            {"role": "user", "content": "[Background command finished] session a succeeded",
+             "injected_event": "exec_finished"},
+            {"role": "user", "content": tc._turn_budget_continuation_prompt()},
+        ]
+        self.assertTrue(_request_called_board(request))
+        # A message the user typed starts another request.
+        self.assertFalse(_request_called_board([*request[:3], {"role": "user", "content": "and the colors?"}]))
 
 
 class ShortcutNudgeTest(unittest.IsolatedAsyncioTestCase):
@@ -1657,3 +1735,29 @@ class BackgroundClaimNudgeTest(unittest.IsolatedAsyncioTestCase):
 
         visible = [m for m in result.messages if not is_hidden_history_message(m)]
         self.assertNotIn(self._CLAIM, [m.get("content") for m in visible])
+
+
+class OutputLimitStreamTest(unittest.IsolatedAsyncioTestCase):
+    async def test_an_answer_cut_by_the_output_limit_is_shown_once(self) -> None:
+        # The live last part stayed on screen and the joined answer was sent
+        # after it as a new segment: the end of the answer showed twice.
+        provider = _StreamingFakeProvider([
+            LLMResponse(content="First half of the answer, ", finish_reason="length"),
+            LLMResponse(content="second half.", finish_reason="stop"),
+        ])
+        hook = _StreamEndRecorder()
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "explique"}],
+            tools=ToolRegistry(),
+            runtime=_runtime(provider),
+            max_iterations=4,
+            max_tool_result_chars=2000,
+            hook=hook,
+            conversational_turn=True,
+        ))
+        joined = "First half of the answer, second half."
+        self.assertEqual(result.final_content, joined)
+        # Each live part is withdrawn; the joined answer is the one segment kept.
+        kept = [end for end in hook.ends if end == (False, False)]
+        self.assertEqual(len(kept), 1, hook.ends)
+        self.assertEqual(hook.deltas[-1], joined)

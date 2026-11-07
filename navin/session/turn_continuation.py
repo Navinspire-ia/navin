@@ -93,6 +93,17 @@ _STRIPPED_INBOUND_META_KEYS = {
     INTERNAL_CONTINUATION_PENDING_META,
     "goal_requested",
     "original_command",
+    # A turn woken by a finished command or a subagent result resumes as a
+    # plain slice of the chat: the next slice is not that event again.
+    "injected_event",
+    "exec_session_id",
+    "exit_code",
+    "subagent_task_id",
+    # The replay token of a recovered request (turn_recovery.RECOVERY_ID_META,
+    # not imported: that module imports this one). Carried by the next slices,
+    # it dropped them in silence as soon as another record was written, while
+    # the slices of a request that was never replayed kept going.
+    "_turn_recovery_id",
 }
 
 
@@ -214,7 +225,19 @@ async def maybe_continue_turn(ctx: Any) -> bool:
         session_metadata=ctx.session.metadata,
         message_metadata=ctx.msg.metadata,
         session_key=ctx.session_key,
+        workspace=getattr(getattr(ctx, "request_context", None), "workspace", None),
     )
+    if ctx.session.metadata.get(_STALL_REPORT_SENT_KEY):
+        # This slice was the stuck report: deliver it, do not resume. Its
+        # state is dropped here whatever the slice's stop reason, so a later
+        # background result or slice can be resumed again. The former cleanup
+        # sat after a check that had already returned, and the flag refused
+        # every continuation until the user's next message.
+        logger.info("Continuation stopped after the stuck report")
+        for stale in (_STALL_REPORT_SENT_KEY, _STALLED_SLICES_KEY, _STALLED_CALLS_KEY):
+            ctx.session.metadata.pop(stale, None)
+        _park_board_after_hard_stop(ctx)
+        return False
     if not kind:
         if ctx.stop_reason in _CONTINUABLE_STOPS or ctx.stop_reason in _PLAN_CONTINUABLE_STOPS:
             _park_board_after_hard_stop(ctx)
@@ -234,13 +257,6 @@ async def maybe_continue_turn(ctx: Any) -> bool:
         _park_board_after_hard_stop(ctx)
         return False
     session_meta = ctx.session.metadata
-    if session_meta.get(_STALL_REPORT_SENT_KEY):
-        # The stuck report was the last slice: deliver it, do not resume.
-        logger.info("Continuation stopped after the stuck report")
-        session_meta.pop(_STALL_REPORT_SENT_KEY, None)
-        session_meta.pop(_STALLED_SLICES_KEY, None)
-        _park_board_after_hard_stop(ctx)
-        return False
     report, stalled = record_slice(
         session_meta, list(ctx.all_messages or []), len(getattr(ctx, "initial_messages", []) or []),
     )
@@ -329,6 +345,7 @@ def _continuation_kind(
     session_metadata: Mapping[str, Any] | None,
     message_metadata: Mapping[str, Any] | None = None,
     session_key: str | None = None,
+    workspace: Any = None,
 ) -> str | None:
     plan_only = stop_reason in _PLAN_CONTINUABLE_STOPS
     if not pending_queue_available or (stop_reason not in _CONTINUABLE_STOPS and not plan_only):
@@ -346,7 +363,9 @@ def _continuation_kind(
         message_metadata=message_metadata,
     ):
         return _GOAL_CONTINUATION_KIND
-    if _board_continuation_available(session_key=session_key, message_metadata=message_metadata):
+    if _board_continuation_available(
+        session_key=session_key, message_metadata=message_metadata, workspace=workspace,
+    ):
         return _BOARD_CONTINUATION_KIND
     if plan_only:
         # No accepted plan behind this turn: the forced answer stands.
@@ -455,8 +474,22 @@ def _tool_result_text(message: Mapping[str, Any]) -> str:
 
 _READ_TOOLS = frozenset({
     "read_file", "list_dir", "find_files", "grep", "search", "glob", "web_fetch", "web_search",
-    "scrape", "file_search", "symbols", "lsp",
+    "scrape", "file_search", "symbols", "lsp", "code_index", "metagraph",
 })
+# Checks that passed move a task forward without editing a file (a QA step
+# runs tests and browser checks): a new command or verdict is progress, the
+# same one again is circling. Failed calls are counted as failures above.
+_CHECK_TOOLS = frozenset({
+    "test_run", "verify", "lint", "code_review", "browser", "computer", "run_cli_app", "write_stdin",
+})
+# Durations and clock times do not make a result new: the same green test run
+# again ("12 passed in 3.21s", then "in 3.40s") is the same result.
+_VOLATILE_RESULT = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+    r"|\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b"
+    r"|\b\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|seconds|min|mins|minutes)\b",
+    re.IGNORECASE,
+)
 
 
 def _new_action(
@@ -468,7 +501,7 @@ def _new_action(
     """True unless this exact call already ran with this exact result."""
     if seen_actions is None:
         return True
-    payload = json.dumps(args, sort_keys=True, default=str) + "\0" + result[-2000:]
+    payload = json.dumps(args, sort_keys=True, default=str) + "\0" + _VOLATILE_RESULT.sub("#", result[-2000:])
     signature = hashlib.sha1(f"{name}:{payload}".encode("utf-8", "replace")).hexdigest()[:12]
     if signature in seen_actions:
         return False
@@ -541,12 +574,24 @@ def slice_report(
             if _new_action(seen_actions, name, args, text):
                 report.progressed = report.changed = True
         elif name == "board" and str(args.get("action") or "") in _BOARD_CHANGES:
-            report.progressed = report.changed = True
+            # The same move or update again (a task bounced back to a status
+            # it already had, the same evidence written twice) moves nothing.
+            if _new_action(seen_actions, name, args, text):
+                report.progressed = report.changed = True
         elif name == "exec" and not _read_only_command(str(args.get("command") or args.get("cmd") or "")):
             if _new_action(seen_actions, name, args, text):
                 report.progressed = report.changed = True
         elif name == "project" and str(args.get("action") or "") not in ("detect", "status"):
-            report.progressed = report.changed = True
+            if _new_action(seen_actions, name, args, text):
+                report.progressed = report.changed = True
+        elif name in _CHECK_TOOLS:
+            if _new_action(seen_actions, name, args, text):
+                report.progressed = True
+        elif name == "spawn":
+            # Delegated work. Its result names a new id every time, so only
+            # the request itself tells a new delegation from a repeat.
+            if _new_action(seen_actions, name, args, ""):
+                report.progressed = report.changed = True
     report.failures = report.failures[-6:]
     return report
 
@@ -592,6 +637,9 @@ def record_slice(
     if report.progressed:
         state.pop(_STALLED_SLICES_KEY, None)
         state.pop(_STALLED_CALLS_KEY, None)
+        # Blank replies are bounded in a row, not per request: a long plan
+        # with three blank replies hours apart is not a model that is stuck.
+        state.pop(_EMPTY_FINAL_ROUNDS_KEY, None)
     else:
         state[_STALLED_SLICES_KEY] = int(state.get(_STALLED_SLICES_KEY) or 0) + 1
         state[_STALLED_CALLS_KEY] = int(state.get(_STALLED_CALLS_KEY) or 0) + report.calls
@@ -661,33 +709,40 @@ def _board_continuation_available(
     *,
     session_key: str | None = None,
     message_metadata: Mapping[str, Any] | None = None,
+    workspace: Any = None,
 ) -> bool:
-    """True when this chat still has an open board task mid-build.
+    """True when this chat still has a board step it can work on now.
 
     "Touched the board once" is not enough: that list is never pruned, so any
     later, unrelated request in the chat got the build prompt (claim the step,
     start the server, re-read the plan) and spent its slices re-listing a
-    board whose work was finished.
+    board whose work was finished. A step that is blocked, held by someone
+    else or still waiting on a dependency is not one either: counting those
+    resumed requests that had nothing left to do on the plan.
     """
+    from filelock import Timeout
+
     from navin.board import session_focus
 
-    touched = session_focus.touched(session_key)
+    try:
+        touched = session_focus.touched(session_key)
+    except (OSError, Timeout) as exc:
+        # Cannot tell which plan this chat drives: keep the former behaviour
+        # (resume) rather than end the run on a file error.
+        logger.warning("Plan of {} unreadable, resuming the run anyway: {}", session_key, exc)
+        return True
     if not touched:
         return False
     scope = (message_metadata or {}).get("workspace_scope")
     project = scope.get("project_path") if isinstance(scope, Mapping) else None
+    project = project or workspace
     if not project:
         return True  # cannot tell: keep the former behaviour
-    try:
-        from navin.board.store import ProjectBoardStore
+    from navin.board.auto_advance import open_plan_steps
 
-        statuses = {task.get("id"): task.get("status") for task in ProjectBoardStore(project).read_tasks()}
-    except Exception:
-        return True
-    return any(
-        task_id in statuses and statuses[task_id] not in _CLOSED_TASK_STATUSES
-        for task_id in touched
-    )
+    # The same steps the end-of-answer reminder names: in progress for this
+    # chat, or owned and ready. A board that cannot be read lists none.
+    return bool(open_plan_steps(project, session_key, request_drives_plan=True))
 
 
 def _increment_continuation_round(
@@ -708,6 +763,11 @@ def _increment_goal_continuation_round(session_metadata: MutableMapping[str, Any
 
 def _park_board_after_hard_stop(ctx: Any) -> None:
     """Stop the plan spinner when we cannot auto-continue any further."""
+    if getattr(ctx, "keep_plan_active", False):
+        # Teammates still work steps of this plan (their results are owed):
+        # moving those steps back to the to-do column would let them be
+        # claimed twice.
+        return
     try:
         from navin.board.cancel_focus import park_focused_active_tasks_to_todo_safe
 

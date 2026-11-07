@@ -95,12 +95,21 @@ class PlanPanel(Static):
         return index, items[index]
 
     def step_label(self) -> str:
-        """``Step 2/3: Add the tests`` for the working line; empty without a current step."""
+        """``Étape 22/40: Add the tests`` for the working line; empty without a current step.
+
+        Numbered by progress, like the panel's "21/40 terminées": the steps are
+        listed in the order the chat touched them, so a step taken up again
+        after a stop can sit first in that list. Numbered by its place, the
+        line read "Étape 1/40" with 21 steps done and looked like the plan
+        had started over.
+        """
         current = self._current()
         if current is None:
             return ""
-        index, item = current
-        return f"Step {index + 1}/{len((self.plan or {}).get('items') or [])}: {item['title']}"
+        plan = self.plan or {}
+        total = int(plan.get("total_count") or len(plan.get("items") or []))
+        done = int(plan.get("done_count") or 0)
+        return f"Étape {min(done + 1, total)}/{total}: {current[1]['title']}"
 
     def repaint(self) -> None:
         if self.plan is None and not self.error:
@@ -122,29 +131,29 @@ class PlanPanel(Static):
         plan = self.plan
         if plan is None:
             out.append("! ", style=ink["coral"])
-            out.append(f"Plan unavailable: {self.error}", style=ink["muted"])
+            out.append(f"Plan indisponible : {self.error}", style=ink["muted"])
             return out
         items = plan.get("items") or []
         done, total = int(plan.get("done_count") or 0), int(plan.get("total_count") or len(items))
         folded = self.folded
         out.append("▸ " if folded else "▾ ", style=ink["muted"])
         if plan.get("complete"):
-            out.append("✓ Plan complete", style=f"bold {ink['green']}")
-            out.append(f"  {done}/{total} steps", style=ink["muted"])
+            out.append("✓ Plan terminé", style=f"bold {ink['green']}")
+            out.append(f"  {done}/{total} étapes", style=ink["muted"])
         else:
             out.append("Plan", style=f"bold {ink['blue']}")
-            out.append(f"  {done}/{total} done", style=ink["muted"])
+            out.append(f"  {done}/{total} terminées", style=ink["muted"])
             current = self._current()
             if folded and current is not None:
-                out.append(" · now: ", style=ink["muted"])
+                out.append(" · en cours : ", style=ink["muted"])
                 out.append(current[1]["title"], style=ink["text"])
         goal = " ".join(str(plan.get("goal") or "").split())
         if goal and not folded:
             out.append(f" · {goal}", style=ink["muted"])
         warning = (
-            f"Paused: {plan['pause_reason']}" if plan.get("pause_reason")
-            else "Loop detected, the plan is being revised" if plan.get("loop_detected")
-            else "Replanning" if plan.get("replan_needed") else ""
+            f"En pause : {plan['pause_reason']}" if plan.get("pause_reason")
+            else "Boucle détectée, révision du plan" if plan.get("loop_detected")
+            else "Révision du plan" if plan.get("replan_needed") else ""
         )
         if warning:
             out.append("\n  ! ", style=ink["coral"])
@@ -155,10 +164,10 @@ class PlanPanel(Static):
         for row in self._window(items, current_id):
             out.append("\n")
             if row[0] == "earlier":
-                out.append(f"  ↑ {row[1]} earlier step{'s' if row[1] != 1 else ''}", style=ink["muted"])
+                out.append(f"  ↑ {row[1]} étape(s) précédente(s)", style=ink["muted"])
                 continue
             if row[0] == "later":
-                out.append(f"  … {row[1]} more step{'s' if row[1] != 1 else ''}", style=ink["muted"])
+                out.append(f"  … {row[1]} autre(s) étape(s)", style=ink["muted"])
                 continue
             item = row[1]
             title_style, suffix = ink["text"], ""
@@ -166,20 +175,20 @@ class PlanPanel(Static):
                 glyph, mark = "✓", ink["green"]
                 title_style = ink["muted"]
             elif item.get("cancelled"):
-                glyph, mark, title_style, suffix = "-", ink["muted"], ink["muted"], "  cancelled"
+                glyph, mark, title_style, suffix = "-", ink["muted"], ink["muted"], "  annulée"
             elif item["id"] == current_id:
                 glyph, mark = "◉", ink["blue"]
                 title_style = f"bold {ink['text']}"
                 if item.get("blocked"):
-                    suffix = "  blocked"
+                    suffix = "  bloquée"
             elif item.get("blocked"):
-                glyph, mark, suffix = "!", ink["coral"], "  blocked"
+                glyph, mark, suffix = "!", ink["coral"], "  bloquée"
             else:
                 glyph, mark = "○", ink["muted"]
             out.append(f"  {glyph} ", style=mark)
             out.append(str(item.get("title") or item["id"]), style=title_style)
             if suffix:
-                out.append(suffix, style=ink["coral"] if "blocked" in suffix else ink["muted"])
+                out.append(suffix, style=ink["coral"] if "bloquée" in suffix else ink["muted"])
         return out
 
     def _window(self, items: list[dict[str, Any]], current_id: Any) -> list[tuple[Any, ...]]:

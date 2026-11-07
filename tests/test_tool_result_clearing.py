@@ -446,3 +446,72 @@ def test_old_turn_thought_signatures_are_dropped_with_stale_results():
     bare = _without_thought_signature({**call, "extra_content": {"google": {"thought_signature": "x"}}})
     assert "extra_content" not in bare
     assert not _has_thought_signatures({"role": "assistant", "tool_calls": [bare]})
+
+
+class InjectedRowsDoNotAgeTheRequestTest(unittest.TestCase):
+    """Rows the runtime saved as user messages are not turns the user typed.
+
+    Seen live: two background commands finishing during one task cleared
+    every read of that task, and the model re-read the same files in a loop.
+    """
+
+    _BIG = "x" * 4000
+
+    def _clear(self, messages: list[dict], inflight: int = 0) -> list[dict]:
+        config = ContextGovernanceConfig(
+            provider=None, model="m", tools=None, workspace=None, session_key="k",
+            max_tool_result_chars=100000, clearing=ToolResultClearing(), inflight_start_index=inflight,
+        )
+        return ContextGovernor().clear_stale_turn_tool_results(config, messages)
+
+    def _call(self, n: int, name: str = "read_file") -> list[dict]:
+        return [
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": f"c{n}", "type": "function", "function": {"name": name, "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": f"c{n}", "name": name, "content": self._BIG},
+        ]
+
+    def _kept(self, messages: list[dict]) -> dict[str, bool]:
+        return {
+            m["tool_call_id"]: m["content"] == self._BIG for m in messages if m.get("role") == "tool"
+        }
+
+    def test_background_results_do_not_age_the_reads_of_the_task(self) -> None:
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "Fix the release build"},
+            *self._call(1),
+            {"role": "user", "content": "[Background command finished] session a1 succeeded",
+             "injected_event": "exec_finished"},
+            *self._call(2, "exec"),
+            {"role": "user", "content": "[Subagent 'audit' completed successfully]\n\nResult: ok"},
+            *self._call(3, "exec"),
+        ]
+        self.assertEqual(self._kept(self._clear(messages)), {"c1": True, "c2": True, "c3": True})
+
+    def test_rows_added_by_the_run_in_progress_are_not_turns(self) -> None:
+        start = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "Fix the release build"},
+        ]
+        run = [
+            *self._call(1),
+            {"role": "user", "content": "Please verify before you finish."},
+            *self._call(2),
+            {"role": "user", "content": "One more reminder from a gate."},
+            *self._call(3),
+        ]
+        kept = self._kept(self._clear([*start, *run], inflight=len(start)))
+        self.assertEqual(kept, {"c1": True, "c2": True, "c3": True})
+
+    def test_a_turn_the_user_typed_before_still_ages_out(self) -> None:
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "First request"},
+            *self._call(1),
+            {"role": "user", "content": "Second request"},
+            *self._call(2),
+            {"role": "user", "content": "Third request"},
+        ]
+        self.assertEqual(self._kept(self._clear(messages, inflight=len(messages))), {"c1": False, "c2": True})

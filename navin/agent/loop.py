@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
@@ -796,6 +797,10 @@ class AgentLoop:
                     previous_model=(
                         str(getattr(default, "model", "") or "") if routed else None
                     ),
+                    # Only this chat's turn runs on it: sent to every window,
+                    # the label and the effort control of another chat moved.
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
                 )
             except Exception:
                 logger.debug("Task-route model announce skipped", exc_info=True)
@@ -2235,6 +2240,26 @@ class AgentLoop:
         # Durable: a restart must not resume the request the user stopped.
         self.turn_recovery.cancel(key)
 
+    async def _close_dropped_continuation(self, msg: InboundMessage, key: str) -> None:
+        """End the run of an internal continuation that is dropped here.
+
+        The slice before it skipped the end of the run because this slice was
+        queued. Dropped without a word (stale after /stop, goal no longer
+        active, recovery mismatch), it left the desktop and the terminal
+        showing Working with nothing running.
+        """
+        if not turn_continuation.internal_continuation_inbound(msg.metadata):
+            return
+        for _, coordinator in self._automation_turn_coordinators:
+            # A cron or trigger run waits for its last slice; this was it.
+            coordinator.complete(msg, response=None)
+        await self._runtime_events().turn_completed(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            session_key=key,
+            metadata=msg.metadata,
+        )
+
     def _is_stale_continuation(self, msg: InboundMessage, key: str) -> bool:
         """True when *msg* is an internal continuation of a run stopped by /stop."""
         if not turn_continuation.internal_continuation_inbound(msg.metadata):
@@ -2255,6 +2280,13 @@ class AgentLoop:
         Returns the total number of cancelled tasks + subagents.
         """
         tasks = self._active_tasks.pop(key, [])
+        # /new and /stop run inside a dispatch task registered under this very
+        # key when the session was idle: cancelling it cancelled the command
+        # itself, before it could clear the session or answer.
+        current = asyncio.current_task()
+        if current in tasks:
+            tasks = [t for t in tasks if t is not current]
+            self._active_tasks.setdefault(key, []).append(current)
         cancelled = sum(1 for t in tasks if not t.done() and t.cancel())
         # Bounded wait: this runs inline in run(), the only inbound reader. A
         # task that unwinds slowly (or swallows one CancelledError) must not
@@ -2983,6 +3015,7 @@ class AgentLoop:
                     if await agent_context.handle_runtime_control(self, msg, self.tools):
                         continue
                     if not self.turn_recovery.matches(msg, effective_key):
+                        await self._close_dropped_continuation(msg, effective_key)
                         continue
                     # A goal-continuation slice may still be in flight on the bus
                     # when /stop deactivates the goal; running it would resume the
@@ -2997,6 +3030,7 @@ class AgentLoop:
                                 "Dropping stale goal continuation for session {} (goal inactive)",
                                 effective_key,
                             )
+                            await self._close_dropped_continuation(msg, effective_key)
                             continue
                     # Board and turn-budget continuations have no goal state to
                     # gate on; a /stop marker is the only thing that can tell a
@@ -3006,6 +3040,7 @@ class AgentLoop:
                             "Dropping stale internal continuation after /stop for session {}",
                             effective_key,
                         )
+                        await self._close_dropped_continuation(msg, effective_key)
                         continue
                     if self.commands.is_priority(raw):
                         await self._dispatch_command_inline(
@@ -3273,7 +3308,11 @@ class AgentLoop:
                                     "artifact auto-detect skipped for {}",
                                     msg.chat_id,
                                 )
-                    elif msg.channel == "cli":
+                    elif msg.channel == "cli" and not turn_continuation.internal_continuation_pending(msg.metadata):
+                        # Not between two slices of one run: the terminal
+                        # closed the turn on this empty reply, showed it as
+                        # finished at every step budget, and sent the queued
+                        # prompts into the middle of the task.
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=msg.channel, chat_id=msg.chat_id,
                             content="", metadata=msg.metadata or {},
@@ -3289,8 +3328,12 @@ class AgentLoop:
                             session_key=session_key,
                             metadata=msg.metadata,
                         )
-                    for _, coordinator in self._automation_turn_coordinators:
-                        coordinator.complete(msg, response=response)
+                        # A cron or trigger run ends with its last slice: completed
+                        # at the first step budget, it was recorded as "ok" with an
+                        # empty answer while its next slices still worked, and the
+                        # next occurrence could start a second chain beside them.
+                        for _, coordinator in self._automation_turn_coordinators:
+                            coordinator.complete(msg, response=response)
                 except asyncio.CancelledError:
                     turn_cancelled = True
                     for _, coordinator in self._automation_turn_coordinators:
@@ -3588,6 +3631,19 @@ class AgentLoop:
         busy.update(
             key for key, queue in (getattr(subagents, "_queued", None) or {}).items() if queue
         )
+        # A build still running in the background, or a request waiting out
+        # a provider cooldown, comes back to this history: archived meanwhile,
+        # its result or replay found only a summary.
+        from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
+
+        busy.update(
+            row.owner_session_key
+            for row in DEFAULT_EXEC_SESSION_MANAGER.running_snapshot()
+            if row.owner_session_key
+        )
+        recovery = getattr(self, "turn_recovery", None)
+        if recovery is not None:
+            busy.update(key for key in list(getattr(recovery, "due", None) or {}) if recovery.waiting(key))
         return busy
 
     def _schedule_background(self, coro) -> None:
@@ -3673,7 +3729,15 @@ class AgentLoop:
         history = replay_history_images(
             session.get_history(**_hist_kwargs), model=runtime.model
         )
-        workspace_scope = self.workspace_scopes.for_message(msg, session.metadata)
+        # The chat's own project. Resolved from the "system" channel, a
+        # desktop chat bound to a project got the default workspace: the
+        # wrong context, and plan steps parked on the wrong board.
+        workspace_scope = self.workspace_scopes.for_turn(
+            channel=channel, message_metadata=msg.metadata, session_metadata=session.metadata,
+        )
+        # A background result is a new step of the work: the stall and
+        # blank-reply counters of the slices before it do not apply to it.
+        turn_continuation.reset_budget_continuation_rounds(session.metadata)
 
         from navin.command.modules import metadata_requests_evidence_only
 
@@ -3705,6 +3769,36 @@ class AgentLoop:
         )
         wall_done = time.time()
         latency_ms = max(0, int((wall_done - t_wall) * 1000))
+        # A turn woken by a finished command or a subagent result works the
+        # same plan as the user's turn. When it reaches its step budget it must
+        # be resumed like any other slice: it used to end there, silently, and
+        # the user had to type "continue" after every background result.
+        continued = False
+        if pending_queue is not None and not self.turn_recovery.waiting(key):
+            # Not while the user's own request waits for its retry: this slice
+            # would take its record over and the request would never be retried.
+            resume = SimpleNamespace(
+                session=session,
+                pending_queue=pending_queue,
+                stop_reason=stop_reason,
+                # Same metadata dict: the pending flag set on it keeps the
+                # dispatcher from closing the run between the two slices.
+                msg=dataclasses.replace(msg, channel=channel, chat_id=chat_id),
+                session_key=key,
+                final_content=final_content,
+                all_messages=all_msgs,
+                initial_messages=messages,
+                visible_run_started_at=t_wall,
+                suppress_response=False,
+                # Where to park the plan's active steps if the run ends here.
+                request_context=SimpleNamespace(workspace=workspace_scope.project_path),
+                # Teammates still working steps of this plan keep them active.
+                keep_plan_active=self._owed_subagent_results(key) > 0,
+            )
+            continued = await turn_continuation.maybe_continue_turn(resume)
+            if continued:
+                final_content = resume.final_content
+                all_msgs = resume.all_messages
         if msg.metadata.get("injected_event") == "exec_finished":
             # The announcement of a background command's exit is the model's
             # cue, not a chat turn the user typed; keep it out of the transcript.
@@ -3736,6 +3830,9 @@ class AgentLoop:
                 ),
             )
         )
+        if continued:
+            # The next slice is queued and owns the answer; nothing is final yet.
+            return None
         content = final_content or "Background task completed."
         outbound_metadata: dict[str, Any] = {}
         if channel == "slack" and key.startswith("slack:") and key.count(":") >= 2:

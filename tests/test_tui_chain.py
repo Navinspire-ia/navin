@@ -212,6 +212,8 @@ def test_agents_panel_shows_humanized_status_and_red_cross_only_when_done(tmp_pa
         app = make_app(tmp_path)
         async with app.run_test(size=(120, 30)) as pilot:
             panel = app.query_one("#agents", AgentsPanel)
+            await pilot.press("f7")
+            await pilot.pause()
             await app._on_runtime_event(UiSubagent(
                 "t1", "auditor", "error", "", None, 1, False,
                 "httpx.ReadTimeout: The read operation timed out after 600s",

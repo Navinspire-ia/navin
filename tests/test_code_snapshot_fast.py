@@ -107,6 +107,41 @@ def test_another_chats_file_tool_edits_are_not_this_chats_to_validate(tmp_path):
     assert cv.written_by_other_chats(tmp_path, {"src/mine.ts"}, agent) == {"src/mine.ts"}
 
 
+def test_files_another_cli_process_wrote_are_not_this_agents_to_validate(tmp_path, monkeypatch):
+    # 2026-11-07: two CLIs on one project. Two subagents of one CLI stopped on
+    # "Changes not validated" for 30 files the other CLI's agent was writing.
+    from navin.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
+
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    registry = tmp_path / "state" / "chat-writes.json"
+    monkeypatch.setattr(cv, "_shared_writes_path", lambda _root: registry)
+    for name in ("theirs.py", "mine.py"):
+        (root / "src" / name).write_text("a = 1\n")
+    state = cv.CodeValidationState()
+    state.observe_workspace(cv.workspace_code_snapshot(root), root=root)
+
+    real_pid = cv.os.getpid()
+    with monkeypatch.context() as other_process:
+        other_process.setattr(cv.os, "getpid", lambda: real_pid + 1)
+        cv.note_chat_writes(root, {"src/theirs.py"}, FileStates())
+    # The other process's memory is not this one's: only the registry knows.
+    cv._CHAT_WRITES.pop(cv._write_key(root / "src" / "theirs.py"))
+    this_chat = FileStates()
+    cv.note_chat_writes(root, {"src/mine.py"}, this_chat)
+    for name in ("theirs.py", "mine.py"):
+        (root / "src" / name).write_text("a = 2  # longer\n")
+    token = bind_file_states(this_chat)
+    try:
+        state.observe_workspace(cv.workspace_code_snapshot(root), root=root)
+    finally:
+        reset_file_states(token)
+    assert state.paths == {"src/mine.py"}
+    # Once this process writes the file last, it is its own work again.
+    cv.note_chat_writes(root, {"src/theirs.py"}, this_chat)
+    assert cv.written_by_other_chats(root, {"src/theirs.py"}, this_chat) == set()
+
+
 def test_runner_watches_editing_calls_only():
     call = lambda name, **arguments: SimpleNamespace(name=name, arguments=arguments)  # noqa: E731
     assert _may_edit_workspace(call("exec", command="npm run build")) is True

@@ -7,15 +7,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
+
+from filelock import FileLock
+from loguru import logger
 
 from navin.quality.check_budget import current_budget
 from navin.quality.evidence import VerificationEvidence
@@ -588,25 +593,97 @@ def _chat_owner() -> object | None:
     return bound_file_states()
 
 
+def _shared_writes_path(root: Path) -> Path:
+    """Where every CLI and gateway process of this machine notes its writes to ``root``.
+
+    2026-11-07: two CLIs on one project. The subagents of one were stopped on
+    "Changes not validated" for 30 files the other CLI's agent was writing at
+    the same time: the in-process registry cannot see another process.
+    """
+    from navin.config.paths import get_runtime_subdir
+
+    digest = hashlib.sha256(_write_key(Path(root)).encode("utf-8")).hexdigest()[:16]
+    return get_runtime_subdir("chat-writes") / f"{digest}.json"
+
+
+def _read_shared_writes(path: Path) -> dict[str, Any]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        # A hint shared between processes: unreadable means no other process is
+        # known, the behaviour before the registry existed. Logged, not silent.
+        logger.warning("Ignoring unreadable chat-write registry {}: {}", path, exc)
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _shared_entry(value: object) -> tuple[int, float] | None:
+    if (
+        isinstance(value, list) and len(value) == 2
+        and isinstance(value[0], int) and isinstance(value[1], (int, float))
+    ):
+        return value[0], float(value[1])
+    return None
+
+
+def _note_shared_writes(root: Path, keys: list[str], now: float) -> None:
+    """Record this process as the last writer of ``keys`` for the other processes."""
+    path = _shared_writes_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with FileLock(str(path) + ".lock", timeout=10):
+            entries = {
+                key: list(entry)
+                for key, value in _read_shared_writes(path).items()
+                if (entry := _shared_entry(value)) is not None and now - entry[1] < _CHAT_WRITE_WINDOW_S
+            }
+            pid = os.getpid()
+            for key in keys:
+                entries.pop(key, None)
+                entries[key] = [pid, now]
+            while len(entries) > _CHAT_WRITES_MAX:
+                entries.pop(next(iter(entries)))
+            handle, name = tempfile.mkstemp(prefix=".chat-writes-", suffix=".tmp", dir=path.parent)
+            try:
+                with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                    json.dump(entries, stream)
+                os.replace(name, path)
+            finally:
+                if os.path.exists(name):
+                    os.unlink(name)
+    except OSError as exc:
+        # A busy or unwritable registry (lock timeout, a Windows reader holding
+        # the file): this write stays known to this process only, as before the
+        # registry existed. Logged, not silent.
+        logger.warning("Chat-write registry {} not updated: {}", path, exc)
+
+
 def note_chat_writes(root: Path, paths: set[str], owner: object | None = None) -> None:
     """Remember that the running chat wrote ``paths`` (relative to ``root`` or absolute)."""
     owner = owner if owner is not None else _chat_owner()
     if owner is None or not paths:
         return
     now = time.monotonic()
+    keys: list[str] = []
     with _CHAT_WRITES_LOCK:
         for path in paths:
             candidate = Path(path)
-            _CHAT_WRITES[_write_key(candidate if candidate.is_absolute() else Path(root) / candidate)] = (owner, now)
+            key = _write_key(candidate if candidate.is_absolute() else Path(root) / candidate)
+            _CHAT_WRITES[key] = (owner, now)
+            keys.append(key)
         while len(_CHAT_WRITES) > _CHAT_WRITES_MAX:
             _CHAT_WRITES.pop(next(iter(_CHAT_WRITES)))
+    _note_shared_writes(Path(root), keys, time.time())
 
 
 def written_by_other_chats(root: Path, paths: set[str], owner: object | None = None) -> set[str]:
     """The ``paths`` (relative to ``root``) another chat last wrote with a file tool, recently.
 
     "Another" is anyone but ``owner`` and the agents it started: a sibling
-    subagent or the parent chat counts as another writer for a subagent.
+    subagent or the parent chat counts as another writer for a subagent, and
+    so does any chat of another CLI or gateway process on the same project.
     """
     owner = owner if owner is not None else _chat_owner()
     if owner is None or not paths:
@@ -617,6 +694,14 @@ def written_by_other_chats(root: Path, paths: set[str], owner: object | None = N
         for path in paths:
             entry = _CHAT_WRITES.get(_write_key(Path(root) / path))
             if entry is not None and not _written_by(entry[0], owner) and now - entry[1] < _CHAT_WRITE_WINDOW_S:
+                foreign.add(path)
+    rest = [path for path in paths if path not in foreign]
+    if rest:
+        shared = _read_shared_writes(_shared_writes_path(Path(root)))
+        pid, wall = os.getpid(), time.time()
+        for path in rest:
+            entry = _shared_entry(shared.get(_write_key(Path(root) / path)))
+            if entry is not None and entry[0] != pid and wall - entry[1] < _CHAT_WRITE_WINDOW_S:
                 foreign.add(path)
     return foreign
 

@@ -334,9 +334,26 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             RuntimeEventContext,
             SessionTurnStarted,
         )
+        from navin.tui.runtime import UiAssistantMessage, UiEngineError, UiTurnEnd
 
         app = self.app
         attempts = 0
+        turn_ended = asyncio.Event()
+        error_rendered = asyncio.Event()
+        answer_rendered = asyncio.Event()
+        second_turn_ended = asyncio.Event()
+        render_event = app.runtime._on_event
+
+        async def observe_event(event):
+            await render_event(event)
+            if isinstance(event, UiTurnEnd):
+                turn_ended.set()
+                if answer_rendered.is_set():
+                    second_turn_ended.set()
+            elif isinstance(event, UiEngineError) and "lost connection" in event.text:
+                error_rendered.set()
+            elif isinstance(event, UiAssistantMessage) and event.text == "Received: second":
+                answer_rendered.set()
 
         async def engine():
             nonlocal attempts
@@ -348,6 +365,7 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         async with app.run_test(size=(72, 25)) as pilot:
+            app.runtime._on_event = observe_event
             event_bus = RuntimeEventBus()
             app.runtime.agent_loop = SimpleNamespace(run=engine, runtime_events=event_bus)
             app.runtime._refresh_status = lambda: None
@@ -364,13 +382,20 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
                 active.cancel()
                 await asyncio.gather(active, return_exceptions=True)
             app.runtime._finish_turn({})
-            await pilot.pause()
+            # Turn-end rendering and the failed engine's done callback run in
+            # separate tasks. Synchronize with their rendered events, not an
+            # arbitrary paint pause or a fixed sleep under suite load.
+            await asyncio.wait_for(turn_ended.wait(), 5)
+            turn_ended.clear()
             await app.submit_text("first")
-            await pilot.pause()
+            await asyncio.wait_for(error_rendered.wait(), 5)
+            await asyncio.wait_for(turn_ended.wait(), 5)
             self.assertFalse(app.runtime.turn_active)
             self.assertTrue(any("lost connection" in str(note.content) for note in app.query(SystemNote)))
+            turn_ended.clear()
             await app.submit_text("second")
-            await pilot.pause()
+            await asyncio.wait_for(answer_rendered.wait(), 5)
+            await asyncio.wait_for(second_turn_ended.wait(), 5)
             self.assertEqual(attempts, 2)
             self.assertEqual(app._current.text, "Received: second")
             self.assertFalse(app.query_one(WorkingLine).display)
@@ -567,14 +592,14 @@ def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_on
             await settle(app)
             await pilot.pause()
             text = str(panel.content)
-            assert panel.display and "Plan  0/2 done" in text
+            assert panel.display and "Plan  0/2 terminées" in text
             assert panel.folded and "\n" not in text
             # Clicking the collapsed title opens the detailed checklist.
             await pilot.click(panel)
             text = str(panel.content)
             assert "◉ Fix the rounding" in text and "○ Add the tests" in text
             app._refresh_working_line()
-            assert "Step 1/2: Fix the rounding · " in str(app.query_one(WorkingLine).content)
+            assert "Étape 1/2: Fix the rounding · " in str(app.query_one(WorkingLine).content)
             store.update_task(ids[0], actor="agent", actor_type="agent", fields={"status": "done"})
             store.update_task(ids[1], actor="agent", actor_type="agent", fields={"status": "in_progress"})
             await app._render_runtime_event(UiToolEvent(
@@ -584,14 +609,14 @@ def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_on
             await settle(app)
             await pilot.pause()
             text = str(panel.content)
-            assert "1/2 done" in text and "✓ Fix the rounding" in text and "◉ Add the tests" in text
+            assert "1/2 terminées" in text and "✓ Fix the rounding" in text and "◉ Add the tests" in text
             app._refresh_working_line()
             line = str(app.query_one(WorkingLine).content)
-            assert "Step 2/2: Add the tests" in line and "\n" not in line
+            assert "Étape 2/2: Add the tests" in line and "\n" not in line
             # One click folds the plan to one line that still says where it is.
             await pilot.click(panel)
             folded = str(panel.content)
-            assert "\n" not in folded and "now: Add the tests" in folded
+            assert "\n" not in folded and "en cours : Add the tests" in folded
             await pilot.click(panel)
             assert "○" not in str(panel.content) and "✓ Fix the rounding" in str(panel.content)
             # The plan is this chat's own.
@@ -601,6 +626,22 @@ def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_on
         asyncio.run(run())
     finally:
         session_focus.clear()
+
+
+def test_a_step_taken_up_again_is_numbered_by_progress_not_by_its_place() -> None:
+    # Seen live: "Plan 21/40 terminées", then "Étape 1/40" on the working
+    # line, because the step taken up again after a stop was the first one
+    # the chat had touched. The user read it as a restart from scratch.
+    from navin.tui.plan_panel import PlanPanel
+
+    panel = PlanPanel()
+    items = [{"id": "t-1", "title": "CO P2 : backend", "done": False}]
+    items += [{"id": f"t-{n}", "title": f"Step {n}", "done": n <= 22} for n in range(2, 41)]
+    panel.plan = {"items": items, "current_id": "t-1", "done_count": 21, "total_count": 40, "complete": False}
+    assert panel.step_label() == "Étape 22/40: CO P2 : backend"
+    # Never past the last step, even while the last one is still open.
+    panel.plan = {**panel.plan, "done_count": 40}
+    assert panel.step_label() == "Étape 40/40: CO P2 : backend"
 
 
 def test_the_working_line_stays_on_one_row_with_a_long_step() -> None:
@@ -634,11 +675,19 @@ def test_session_history_and_plans_show_dates_states_and_unfinished_work(tmp_pat
     board.create_task(title="Tests", actor="test", actor_type="agent")
     shown: list[str] = []
     host = SimpleNamespace(push_screen=AsyncMock())
-    with patch("navin.tui.app.MarkdownScreen", side_effect=lambda text: shown.append(text) or text):
-        asyncio.run(NavinApp._show_session_history(host, str(tmp_path), "cli:direct", sessions))
-        asyncio.run(NavinApp._show_session_plans(host, str(tmp_path), "cli:direct"))
-    history, plans = shown
-    assert "07/11/2026" in history and "Build the charts" in history and "Add the tests" in history
-    assert "Response recorded" in history and "No completed response recorded" in history
-    assert "1/2 tasks complete" in plans and "To resume" in plans and "Tests" in plans
+    from navin.board import session_focus
+
+    session_focus.remember("cli:direct", [task["id"] for task in board.read_tasks()])
+    try:
+        with patch("navin.tui.session_overview.SessionOverviewScreen", side_effect=lambda mode, **kwargs: shown.append((mode, kwargs)) or mode):
+            asyncio.run(NavinApp._show_session_history(host, str(tmp_path), "cli:direct", sessions))
+            asyncio.run(NavinApp._show_session_plans(host, str(tmp_path), "cli:direct"))
+        history, plans = shown
+        assert history[0] == "history" and plans[0] == "plan"
+        assert history[1]["prompts"][0]["date"].startswith("07/11/2026")
+        assert [row["text"] for row in history[1]["prompts"]] == ["Build the charts", "Add the tests"]
+        assert [row["answered"] for row in history[1]["prompts"]] == ["1", ""]
+        assert [row["title"] for row in plans[1]["tasks"]] == ["Charts", "Tests"]
+    finally:
+        session_focus.forget("cli:direct")
     assert "\u2014" not in history + plans

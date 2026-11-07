@@ -130,6 +130,19 @@ class OpenFilePreviewTool(Tool):
                 f"Relative paths resolve against the project root, {root}."
             )
 
+        # Under the workspace restriction nothing above the root is shown, in
+        # the terminal too: the terminal branch used to return before this
+        # check, so a restricted agent could open ~/.ssh/id_rsa full screen or
+        # any HTML file of the disk in the browser. On the desktop the preview
+        # panel refuses such files anyway; saying so here leaves the agent a
+        # chance to put the file where it can be seen.
+        if _workspace_restricted() and not _within(target, root):
+            return ToolResult.error(
+                f"Error: {target} is outside the project ({root}), and the preview "
+                "only shows files inside it. Write or copy the file into the "
+                "project first, then preview that copy."
+            )
+
         if channel == "cli":
             # The TUI consumes this event: the browser or the system viewer for
             # HTML, PDF and images, its own preview screen for text.
@@ -146,17 +159,6 @@ class OpenFilePreviewTool(Tool):
             return (
                 f"{target} sent to the terminal preview: HTML, PDF and image files "
                 "open in the user's browser or viewer, other files in the terminal."
-            )
-
-        # Under the workspace restriction the preview panel refuses anything
-        # above the root, so sending it would be reported as opened and then
-        # show nothing at all. Better to say so here, while there is still an
-        # agent able to put the file where it can be seen.
-        if _workspace_restricted() and not _within(target, root):
-            return ToolResult.error(
-                f"Error: {target} is outside the project ({root}), and the preview "
-                "panel only shows files inside it. Write or copy the file into the "
-                "project first, then preview that copy."
             )
 
         try:

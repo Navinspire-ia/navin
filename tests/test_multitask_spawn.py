@@ -277,7 +277,8 @@ class MultitaskSpawnHandlerTest(unittest.IsolatedAsyncioTestCase):
         ack: asyncio.Future = asyncio.get_running_loop().create_future()
         msg = _control_message("fix the login bug", "websocket:chat-42", ack)
 
-        handled = await handle_multitask_spawn(_state(manager), msg, None)
+        with mock.patch("navin.agent.worktree.can_isolate", return_value=True) as can_isolate:
+            handled = await handle_multitask_spawn(_state(manager), msg, None)
 
         self.assertTrue(handled)
         result = await ack
@@ -291,9 +292,25 @@ class MultitaskSpawnHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(call["workspace_scope"])
         self.assertIsNotNone(call["runtime"])
         # Cursor-style isolation: each Multitask prompt runs in its own git
-        # worktree; the manager falls back to the shared tree without git.
+        # worktree, decided for the chat's own project.
         self.assertTrue(call["isolate"])
+        can_isolate.assert_called_once_with("/tmp/proj")
         self.assertIsNone(call.get("client_key"))
+
+    async def test_a_project_without_git_shares_its_tree_instead_of_failing(self) -> None:
+        # Asking for isolation there stopped every prompt on "isolation was
+        # requested but the isolated checkout could not be created".
+        manager = _FakeManager()
+        ack: asyncio.Future = asyncio.get_running_loop().create_future()
+        msg = _control_message("write the brief", "websocket:chat-43", ack)
+        with tempfile.TemporaryDirectory() as plain:
+            state = _state(manager)
+            state.workspace_scopes = SimpleNamespace(
+                for_turn=lambda **kwargs: SimpleNamespace(project_path=plain),
+            )
+            await handle_multitask_spawn(state, msg, None)
+        self.assertTrue((await ack)["ok"])
+        self.assertFalse(manager.spawn_calls[0]["isolate"])
 
     async def test_a_full_session_is_handed_over_not_refused(self) -> None:
         """Past the limit the manager queues, so the handler must still spawn.

@@ -146,6 +146,7 @@ class AgentsScreen(ModalScreen[None]):
         dismiss: Callable[[str], Any] | None = None,
         dismiss_finished: Callable[[], Any] | None = None,
         select: str | None = None,
+        state_filter: str = "all",
     ) -> None:
         super().__init__()
         self._dismiss_row = dismiss
@@ -164,7 +165,7 @@ class AgentsScreen(ModalScreen[None]):
         self._has_more = False
         self._history_error = ""
         self._full_log = False
-        self._state_filter = "all"
+        self._state_filter = state_filter if state_filter in {name for name, _, _ in _FILTERS} else "all"
         self._notice = ""
 
     def compose(self) -> ComposeResult:

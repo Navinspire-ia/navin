@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,32 @@ from navin.utils.progress_events import (
     invoke_file_edit_progress,
     on_progress_accepts_file_edit_events,
 )
+
+NOT_WRITTEN_REASON = "Not written: the patch failed on another file"
+
+
+def attribute_patch_error(trackers: list[FileEditTracker], error: str) -> list[str]:
+    """The reason of a failed multi-file edit, on the file that caused it.
+
+    A patch is all or nothing and names the file it stopped on. Repeated on
+    every file, one bad hunk read as five "text to replace not found". The
+    other files only say they were not written. When no file is named, every
+    file keeps the whole reason.
+    """
+    if len(trackers) < 2:
+        return [error] * len(trackers)
+
+    def named(text: str) -> bool:
+        return bool(text) and re.search(
+            rf"(?<![\w./-]){re.escape(text)}(?![\w./-])", error,
+        ) is not None
+
+    culprits = {id(t) for t in trackers if named(t.display_path)}
+    if not culprits:
+        culprits = {id(t) for t in trackers if named(t.path.name)}
+    if not culprits:
+        return [error] * len(trackers)
+    return [error if id(t) in culprits else NOT_WRITTEN_REASON for t in trackers]
 
 
 class FileEditActivityHook(AgentHook):
@@ -106,8 +133,10 @@ class FileEditActivityHook(AgentHook):
         key = self._tool_call_key(tool_call)
         trackers = self._trackers_by_call.get(key, [])
         if trackers:
+            reasons = attribute_patch_error(trackers, str(error))
             events = [
-                build_file_edit_error_event(tracker, str(error)) for tracker in trackers
+                build_file_edit_error_event(tracker, reason)
+                for tracker, reason in zip(trackers, reasons)
             ]
             context.file_edit_events[tool_call.id] = events
             await self._emit(events)

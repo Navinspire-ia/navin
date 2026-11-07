@@ -259,6 +259,17 @@ def repo_root(workspace: Path) -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
+def can_isolate(workspace: Path | str | None) -> bool:
+    """Whether :func:`create` can check ``workspace`` out again (git with a commit)."""
+    if not workspace:
+        return False
+    folder = Path(workspace)
+    if not folder.is_dir():
+        return False
+    origin = repo_root(folder)
+    return origin is not None and _git(["rev-parse", "--verify", "HEAD"], cwd=origin) is not None
+
+
 def create(
     workspace: Path,
     task_id: str,

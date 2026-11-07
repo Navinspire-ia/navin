@@ -239,7 +239,10 @@ def _linux_host_env() -> dict[str, str]:
 
 def _launchers(target: str) -> list[list[str]]:
     if sys.platform == "win32":
-        return [["cmd", "/c", "start", "", target]]
+        # Explorer hands the link to the default browser without a shell parse.
+        # ``cmd /c start "" <url>`` let cmd read the ``&`` of a query string as
+        # a command separator: ``https://a/?x=1&calc`` ran ``calc``.
+        return [["explorer.exe", target]]
     if sys.platform == "darwin":
         return [["open", target]]
     # Absolute host paths first: AppImage PATH can shadow xdg-open.

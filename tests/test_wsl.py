@@ -350,6 +350,22 @@ class HostOpenTest(unittest.TestCase):
         self.assertEqual(powershell[-1], f"Start-Process '{url}'")
         self.assertEqual(commands[-1][0], "explorer.exe")
 
+    def test_no_quote_in_a_link_or_a_file_name_can_end_the_powershell_string(self) -> None:
+        # A link the model wrote ("https://x/';calc;'") ran calc on Windows
+        # once wslview was missing; a typographic quote did the same in a name.
+        url = "https://x.y/';calc.exe;'\u2019;calc;\u2018"
+        powershell = next(c for c in wsl.host_open_commands(url) if c[0] == "powershell.exe")
+        self.assertEqual(
+            powershell[-1],
+            "Start-Process 'https://x.y/'';calc.exe;''\u2019\u2019;calc;\u2018\u2018'",
+        )
+        name = "C:\\Users\\me\\Rapport d\u2019audit \u201a\u201b.html"
+        file_ps = next(c for c in wsl.host_open_path_commands("/mnt/c/x", name) if c[0] == "powershell.exe")
+        self.assertEqual(
+            file_ps[-1],
+            "Start-Process -FilePath 'C:\\Users\\me\\Rapport d\u2019\u2019audit \u201a\u201a\u201b\u201b.html'",
+        )
+
     def test_the_first_working_opener_ends_the_search(self) -> None:
         run = mock.Mock(return_value=mock.Mock(returncode=0))
         with mock.patch.object(wsl.shutil, "which", side_effect=lambda n: f"/usr/bin/{n}"):

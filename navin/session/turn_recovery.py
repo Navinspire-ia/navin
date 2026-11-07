@@ -25,6 +25,9 @@ MAX_RECOVERY_ATTEMPTS = 6
 # machine, a runaway command under WSL) down would otherwise do it at every
 # start. The user resumes it with a message.
 REPLAYED_AFTER_RESTART = "replayed_after_restart"
+# Slices that carry a run on past its step budget. One that arrives with no
+# tracked request belongs to work a background result started.
+_RUN_SLICE_KINDS = frozenset({continuation._TURN_CONTINUATION_KIND, continuation._BOARD_CONTINUATION_KIND})
 # Graceful stops from outside the turn (SIGTERM, SIGHUP) that may each spare
 # its replay (see ``TurnRecovery.note_external_stop``). Past this, a turn cut
 # again after a replay waits for the user, whatever stopped the process.
@@ -137,16 +140,28 @@ class TurnRecovery:
         if same_request and previous.get("status") == "running" and (not persisted or previous.get("request_persisted")):
             return False
         if continuation.internal_continuation_inbound(msg.metadata) or same_request:
-            if not isinstance(previous, dict):
+            if isinstance(previous, dict):
+                record = dict(previous)
+                if (
+                    continuation.internal_continuation_inbound(msg.metadata)
+                    and msg.metadata.get(continuation.INTERNAL_CONTINUATION_KIND_META) != "recovery"
+                ):
+                    # The slice before this one ran to its end and was saved:
+                    # the replayed run works again. Kept for the whole run, the
+                    # replay mark closed an hour of healthy work at the next
+                    # restart ("stopped twice in a row"). ``attempts`` stays: it
+                    # still bounds how often one request can restart the process.
+                    record.pop(REPLAYED_AFTER_RESTART, None)
+            elif msg.metadata.get(continuation.INTERNAL_CONTINUATION_KIND_META) in _RUN_SLICE_KINDS:
+                # The next slice of work a background result started (a finished
+                # command, a subagent's answer): no user request is tracked for it,
+                # so it starts its own record. Without one, a restart or a
+                # provider error in that chain lost the rest of the work silently.
+                record = self._new_record(msg)
+            else:
                 return False
-            record = dict(previous)
         else:
-            record = {
-                "id": uuid.uuid4().hex,
-                "started_at": time.time(),
-                "attempts": 0,
-                "request": portable_request(msg),
-            }
+            record = self._new_record(msg)
         record["request_persisted"] = bool(record.get("request_persisted")) or persisted
         msg.metadata[TRACKED_REQUEST_META] = record["id"]
         record["status"] = "running"
@@ -358,6 +373,15 @@ class TurnRecovery:
             except (AttributeError, OSError, OverflowError, ValueError):
                 pass
         return now - last > MAX_RECOVERY_AGE_S
+
+    @staticmethod
+    def _new_record(msg: InboundMessage) -> dict[str, Any]:
+        return {
+            "id": uuid.uuid4().hex,
+            "started_at": time.time(),
+            "attempts": 0,
+            "request": portable_request(msg),
+        }
 
     @staticmethod
     def _count_restart(record: dict[str, Any]) -> bool:

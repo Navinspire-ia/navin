@@ -34,8 +34,8 @@ class _Bus:
         self.outbound = _Queue()
 
 
-def _run(tool: OpenFilePreviewTool, path: str, workspace: Path | None = None):
-    context = SimpleNamespace(channel="websocket", chat_id="c1", workspace=workspace)
+def _run(tool: OpenFilePreviewTool, path: str, workspace: Path | None = None, channel: str = "websocket"):
+    context = SimpleNamespace(channel=channel, chat_id="c1", workspace=workspace)
     with patch(
         "navin.agent.tools.open_file_preview.current_request_context",
         return_value=context,
@@ -82,6 +82,31 @@ class OpenFilePreviewTest(unittest.TestCase):
         self.assertIn("outside the project", message)
         # The way out has to be in the message, or the agent just tries again.
         self.assertIn("copy the file into the", message.lower())
+
+    def test_the_terminal_refuses_a_file_above_the_project_when_restricted(self):
+        # The terminal branch returned before the restriction: a restricted
+        # agent could open ~/.ssh/id_rsa full screen, or any HTML file of the
+        # disk in the browser.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir(parents=True)
+            secret = Path(tmp) / "id_rsa"
+            secret.write_text("-----BEGIN KEY-----", encoding="utf-8")
+            bus = _Bus()
+            tool = OpenFilePreviewTool(bus=bus, working_dir=str(root))
+            with patch(
+                "navin.agent.tools.open_file_preview._workspace_restricted",
+                return_value=True,
+            ):
+                result = _run(tool, str(secret), channel="cli")
+                inside = root / "notes.md"
+                inside.write_text("# ok", encoding="utf-8")
+                _run(tool, "notes.md", channel="cli")
+
+        self.assertIn("outside the project", _text(result))
+        # The file inside the project still reaches the terminal preview.
+        self.assertEqual(len(bus.outbound.items), 1)
+        self.assertEqual(bus.outbound.items[0].channel, "cli")
 
     def test_allows_it_when_the_workspace_restriction_is_off(self):
         """The panel accepts it in that mode, so the tool must not be stricter."""

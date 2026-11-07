@@ -13,7 +13,13 @@ from typing import Any
 
 from navin.agent.tools.atomic_write import write_all
 from navin.agent.tools.base import ToolResult, tool_parameters
-from navin.agent.tools.filesystem import _best_window, _find_matches, _FsTool
+from navin.agent.tools.filesystem import (
+    _best_window,
+    _find_matches,
+    _FsTool,
+    _leading_ws,
+    _preserve_quote_style,
+)
 from navin.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -34,6 +40,7 @@ class _PatchSummary:
     path: str
     added: int = 0
     deleted: int = 0
+    note: str = ""
 
 
 class _PatchError(ValueError):
@@ -96,6 +103,7 @@ def _replacement_diff_stats(content: str, pos: int, old: str, new: str) -> tuple
 
 def _apply_update(
     content: str, old_text: str, new_text: str, edit: dict, path: str,
+    notes: list[str] | None = None,
 ) -> tuple[str, int, int]:
     """Replace ``old_text`` in ``content`` and return the new text with its line stats.
 
@@ -131,7 +139,26 @@ def _apply_update(
             norm_new = norm_new.removesuffix("\n")
             positions = [eof_pos]
     if not positions:
-        raise _PatchError(_not_found_detail(norm_old, norm_content, path))
+        loose = None
+        if not edit.get("match_lines") and not edit.get("at_eof") and edit.get("occurrence") is None:
+            loose = _loose_replacement(norm_content, norm_old, norm_new)
+        if loose is None:
+            raise _PatchError(_not_found_detail(norm_old, norm_content, path))
+        start, end, replacement, line = loose
+        new_norm = norm_content[:start] + replacement + norm_content[end:]
+        added, deleted = _replacement_diff_stats(
+            norm_content, start, norm_content[start:end], replacement,
+        )
+        if new_norm and terminated and not new_norm.endswith("\n"):
+            new_norm += "\n"
+        if uses_crlf:
+            new_norm = new_norm.replace("\n", "\r\n")
+        if notes is not None:
+            notes.append(
+                f"old_text matched line {line} only after correcting its indentation or "
+                "quotes; the new text was shifted the same way. Copy old_text verbatim next time."
+            )
+        return new_norm, added, deleted
 
     occurrence = edit.get("occurrence")
     if occurrence is not None and not isinstance(occurrence, int):
@@ -194,6 +221,68 @@ def _exact_positions(content: str, needle: str) -> list[int]:
         start = idx + max(1, len(needle))
 
 
+def _shift_indent(old: str, actual: str, new: str) -> str | None:
+    """Re-indent *new* by the uniform shift that turns *old* into *actual*.
+
+    None when the lines are not shifted uniformly (tabs against spaces, lines
+    moved by different amounts): guessing there would write wrong indentation.
+    """
+    old_lines, actual_lines = old.splitlines(), actual.splitlines()
+    if len(old_lines) != len(actual_lines):
+        return None
+    pairs = [
+        (_leading_ws(o), _leading_ws(a))
+        for o, a in zip(old_lines, actual_lines)
+        if o.strip() and a.strip()
+    ]
+    if not pairs:
+        return None
+    first_old, first_actual = pairs[0]
+    if first_actual.startswith(first_old):
+        add, remove = first_actual[len(first_old):], ""
+    elif first_old.startswith(first_actual):
+        add, remove = "", first_old[len(first_actual):]
+    else:
+        return None
+    if any(a_ws != add + o_ws[len(remove):] or not o_ws.startswith(remove) for o_ws, a_ws in pairs):
+        return None
+    if not add and not remove:
+        return new
+    shifted: list[str] = []
+    for line in new.split("\n"):
+        if not line.strip():
+            shifted.append(line)
+        elif add:
+            shifted.append(add + line)
+        elif line.startswith(remove):
+            shifted.append(line[len(remove):])
+        else:
+            return None
+    return "\n".join(shifted)
+
+
+def _loose_replacement(content: str, old: str, new: str) -> tuple[int, int, str, int] | None:
+    """The one place a hunk fits once its indentation or quotes are corrected.
+
+    Seen live: blocks sent with 12 spaces where the file has 4 were refused
+    again and again, five files at a time, while edit_file already accepts
+    the same near match. Applied only when it is the only near match and the
+    indentation is shifted uniformly; the new text is shifted the same way.
+    """
+    matches = _find_matches(content, old)
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    start, end, text = match.start, match.end, match.text
+    if old.endswith("\n") and not text.endswith("\n") and content[end:end + 1] == "\n":
+        end += 1
+        text += "\n"
+    replacement = _shift_indent(old, text, new)
+    if replacement is None:
+        return None
+    return start, end, _preserve_quote_style(old, text, replacement), match.line
+
+
 def _line_of(content: str, offset: int) -> int:
     return content.count("\n", 0, offset) + 1
 
@@ -206,8 +295,9 @@ def _preview_lines(lines: list[int]) -> str:
 def _not_found_detail(old_text: str, content: str, path: str) -> str:
     """Say why the text was close but not equal, instead of only that it missed.
 
-    apply_patch stays exact on purpose, so a near miss has to be reported
-    precisely enough for the next call to succeed without another read.
+    A near match is applied only when it is the only one and its indentation
+    is shifted uniformly (``_loose_replacement``). Any other miss has to be
+    reported precisely enough for the next call to succeed without another read.
     """
     loose = _find_matches(content, old_text)
     if loose:
@@ -269,7 +359,8 @@ def _format_summary(summary: _PatchSummary) -> str:
     stats = ""
     if summary.added or summary.deleted:
         stats = f" (+{summary.added}/-{summary.deleted})"
-    return f"- {summary.action} {summary.path}{stats}"
+    note = f"\n  Note: {summary.note}" if summary.note else ""
+    return f"- {summary.action} {summary.path}{stats}{note}"
 
 
 @tool_parameters(
@@ -470,14 +561,16 @@ class ApplyPatchTool(_FsTool):
                     if pending is None and not source_is_file:
                         raise _PatchError(f"path to update is not a file: {path}")
 
+                    loose_notes: list[str] = []
                     new_norm, added, deleted = await asyncio.to_thread(
-                        _apply_update, content, old_text, new_text, edit, path,
+                        _apply_update, content, old_text, new_text, edit, path, loose_notes,
                     )
 
                     writes[source] = new_norm
                     summaries.append(
                         _PatchSummary(
-                            action="update", path=path, added=added, deleted=deleted
+                            action="update", path=path, added=added, deleted=deleted,
+                            note=" ".join(loose_notes),
                         )
                     )
 

@@ -13,11 +13,18 @@ Regression tests for the "agent freezes at max iterations" hard stop:
 from __future__ import annotations
 
 import asyncio
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from navin.agent.loop import AgentLoop
 from navin.board import session_focus
 from navin.bus.events import InboundMessage
+from navin.bus.queue import MessageBus
+from navin.providers.base import LLMProvider
 from navin.session import turn_continuation as tc
 from navin.session.goal_state import GOAL_STATE_KEY
 
@@ -391,6 +398,157 @@ class EndsWithUserQuestionTest(unittest.TestCase):
         self.assertFalse(
             tc.ends_with_user_question("Why did it fail?\nBecause of X. Fixed.")
         )
+
+
+class SliceProgressTest(unittest.IsolatedAsyncioTestCase):
+    """What counts as progress decides between resuming a task and calling it stuck."""
+
+    @staticmethod
+    def _slice(*calls: tuple[str, dict, str]) -> list[dict]:
+        rows: list[dict] = []
+        for n, (name, args, result) in enumerate(calls):
+            rows.append({"role": "assistant", "content": "", "tool_calls": [
+                {"id": f"c{n}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}},
+            ]})
+            rows.append({"role": "tool", "tool_call_id": f"c{n}", "name": name, "content": result})
+        return rows
+
+    def test_the_same_board_move_again_is_not_progress(self) -> None:
+        # Moving the same task back and forth used to count as progress at
+        # every slice, so a circling run was resumed without end.
+        state: dict = {tc._EMPTY_FINAL_ROUNDS_KEY: 2}
+        move = ("board", {"action": "move", "task_id": "t-1", "status": "in_progress"}, "Task moved: t-1")
+        report, _ = tc.record_slice(state, self._slice(move), 0)
+        self.assertTrue(report.progressed)
+        # Real progress ends the run of blank replies counted so far.
+        self.assertNotIn(tc._EMPTY_FINAL_ROUNDS_KEY, state)
+        report, _ = tc.record_slice(state, self._slice(move), 0)
+        self.assertFalse(report.progressed)
+
+    def test_a_new_green_check_is_progress_and_its_rerun_is_not(self) -> None:
+        # A QA slice of green checks was taken for a slice that did nothing;
+        # and a rerun differing only by its duration was taken for new work.
+        state: dict = {}
+        first = ("test_run", {"target": "tests/test_a.py"}, "pytest: 12 passed (3210 ms) in 3.21s")
+        report, _ = tc.record_slice(state, self._slice(first), 0)
+        self.assertTrue(report.progressed)
+        again = ("test_run", {"target": "tests/test_a.py"}, "pytest: 12 passed (3402 ms) in 3.40s")
+        report, _ = tc.record_slice(state, self._slice(again), 0)
+        self.assertFalse(report.progressed)
+
+    async def test_the_stuck_report_is_delivered_once_then_work_can_resume(self) -> None:
+        # The flag of the stuck report used to stay set until the user's next
+        # message: no background result could resume the plan after it.
+        meta = {tc._STALL_REPORT_SENT_KEY: True, tc._STALLED_SLICES_KEY: 3, tc._STALLED_CALLS_KEY: 20}
+        ctx = SimpleNamespace(
+            session=SimpleNamespace(key="cli:stuck", metadata=meta),
+            pending_queue=asyncio.Queue(),
+            stop_reason="completed",
+            msg=InboundMessage(channel="cli", sender_id="user", chat_id="stuck", content="go"),
+            session_key="cli:stuck",
+            final_content="I am stuck on the build.",
+            all_messages=[],
+            initial_messages=[],
+            request_context=None,
+            keep_plan_active=True,
+        )
+        self.assertFalse(await tc.maybe_continue_turn(ctx))
+        self.assertEqual(meta, {})
+
+
+class _QuietProvider(LLMProvider):
+    """Never called: the agent run itself is stubbed in these tests."""
+
+    def get_default_model(self) -> str:
+        return "test-system-turn"
+
+    async def chat(self, **kwargs):  # pragma: no cover - a call would be a test bug
+        raise AssertionError("the model must not be called here")
+
+
+class SystemTurnContinuationTest(unittest.IsolatedAsyncioTestCase):
+    """A turn woken by a background result keeps working past its step budget.
+
+    Seen live (2026-11-07): after a background command finished, the turn that
+    read its result ran fourteen steps, reached the budget, and stopped there
+    with no answer and no resume. The user saw the agent halt "after a few
+    operations" and had to type "continue" after every finished command.
+    """
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.loop = AgentLoop(provider=_QuietProvider(), workspace=Path(folder.name), bus=MessageBus())
+        self.loop._mcp_servers = {}
+        self.key = "websocket:system-turn-chat"
+        self.queue: asyncio.Queue = asyncio.Queue()
+
+    def _finished_command(self) -> InboundMessage:
+        return InboundMessage(
+            channel="system",
+            sender_id="exec",
+            chat_id=self.key,
+            content="[Background command finished] session abc succeeded (exit code 0) after 9s.",
+            session_key_override=self.key,
+            metadata={"injected_event": "exec_finished", "exec_session_id": "abc"},
+        )
+
+    async def _run(self, msg: InboundMessage, stop_reason: str, final: str | None):
+        async def run_agent_loop(messages, **kwargs):
+            done = [*messages, {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "exec", "arguments": "{}"}},
+            ]}, {"role": "tool", "tool_call_id": "c1", "name": "exec", "content": "Exit code: 0"}]
+            if final:
+                done.append({"role": "assistant", "content": final})
+            return final, ["exec"], done, stop_reason, False
+
+        with patch.object(self.loop, "_run_agent_loop", run_agent_loop):
+            return await self.loop._process_system_message(
+                msg, runtime=self.loop.runtime_for_inbound(msg),
+                session_key=self.key, pending_queue=self.queue,
+            )
+
+    async def test_a_budget_stop_after_a_finished_command_queues_the_next_slice(self) -> None:
+        msg = self._finished_command()
+        response = await self._run(msg, "max_iterations", None)
+        # No "Background task completed." placeholder: the next slice answers.
+        self.assertIsNone(response)
+        self.assertTrue(tc.internal_continuation_pending(msg.metadata))
+        queued = self.queue.get_nowait()
+        self.assertTrue(tc.internal_continuation_inbound(queued.metadata))
+        self.assertEqual(queued.metadata[tc.INTERNAL_CONTINUATION_KIND_META], "turn_budget")
+        # The next slice is a plain slice of the chat, not the command event again.
+        self.assertNotIn("injected_event", queued.metadata)
+        self.assertNotIn("exec_session_id", queued.metadata)
+        # Nor a replay of a recovered request: carried on, its token dropped
+        # the slice in silence once another record was written.
+        from navin.session.turn_recovery import RECOVERY_ID_META
+
+        self.assertIn(RECOVERY_ID_META, tc._STRIPPED_INBOUND_META_KEYS)
+        self.assertEqual((queued.channel, queued.chat_id), ("websocket", "system-turn-chat"))
+        self.assertEqual(queued.session_key_override, self.key)
+        self.assertIn("Continue the unfinished task", queued.content)
+        # The work of the slice is kept in the history for the next slice.
+        history = self.loop.sessions.get_or_create(self.key).messages
+        self.assertTrue(any(row.get("role") == "tool" for row in history))
+
+    async def test_a_finished_system_turn_still_answers(self) -> None:
+        msg = self._finished_command()
+        response = await self._run(msg, "completed", "The build is green.")
+        self.assertIsNotNone(response)
+        self.assertEqual(response.content, "The build is green.")
+        self.assertTrue(self.queue.empty())
+        self.assertFalse(tc.internal_continuation_pending(msg.metadata))
+
+    async def test_no_slice_takes_over_a_request_waiting_for_its_retry(self) -> None:
+        # The user's request hit a provider error and waits for its retry: a
+        # slice queued here would adopt its record, and the request would
+        # never be retried.
+        msg = self._finished_command()
+        with patch.object(self.loop.turn_recovery, "waiting", return_value=True):
+            await self._run(msg, "max_iterations", None)
+        self.assertTrue(self.queue.empty())
+        self.assertFalse(tc.internal_continuation_pending(msg.metadata))
 
 
 if __name__ == "__main__":

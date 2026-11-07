@@ -443,8 +443,12 @@ class ContextGovernor:
         stale_turns = int(getattr(policy, "stale_after_user_turns", 0) or 0)
         if stale_turns <= 0:
             return messages
+        # Rows the run in progress added (its reminders, the messages drained
+        # into it) are part of the current request, never turns of their own:
+        # counted as turns, they aged out the reads this very run had made.
+        inflight = config.inflight_start_index if config.inflight_start_index > 0 else len(messages)
         user_indexes = [
-            i for i, m in enumerate(messages)
+            i for i, m in enumerate(messages[:inflight])
             if m.get("role") == "user" and not _is_runtime_turn(m)
         ]
         # Keep the current turn plus the last `stale_turns` completed turns.
@@ -748,18 +752,30 @@ def _has_thought_signatures(message: dict[str, Any]) -> bool:
     return isinstance(calls, list) and any(_thought_signature(call) for call in calls)
 
 
+# Results the runtime announces in the chat and saves as user rows: a
+# finished background command, a subagent's answer, a Stop hook's verdict.
+_RUNTIME_EVENT_PREFIXES = ("[Background command finished]", "[Subagent '", "[Stop hook]")
+
+
 def _is_runtime_turn(message: dict[str, Any]) -> bool:
-    """A reminder the agent loop sent itself, not a turn the user typed.
+    """A user row the runtime wrote (a reminder, a background result), not a turn the user typed.
 
     Counting those as turns aged the current request's own reads out after
-    two reminders, and the model re-read files it had just opened.
+    two of them: two background commands finishing during one task cleared
+    every read of that task, and the model re-read the same files in a loop
+    until its step budget ran out.
     """
-    from navin.session.history_visibility import is_runtime_nudge_message
+    from navin.session.history_visibility import (
+        is_hidden_history_message,
+        is_runtime_nudge_message,
+    )
 
-    try:
-        return is_runtime_nudge_message(message)
-    except Exception:  # noqa: BLE001 - never let a heuristic break the request
-        return False
+    if message.get("injected_event") or is_hidden_history_message(message):
+        return True
+    content = message.get("content")
+    if isinstance(content, str) and content.lstrip().startswith(_RUNTIME_EVENT_PREFIXES):
+        return True
+    return is_runtime_nudge_message(message)
 
 
 def _without_thought_signature(call: Any) -> Any:

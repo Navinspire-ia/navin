@@ -562,6 +562,25 @@ if __name__ == "__main__":
 
 
 class OpenPlanStepsTest(_Base):
+    async def test_a_plan_view_that_cannot_be_written_does_not_fail_the_saved_change(self) -> None:
+        # Reported as a failed call, the model created every task a second time.
+        from unittest import mock
+
+        with mock.patch.object(session_focus, "remember", side_effect=OSError("disk full")):
+            out = await self._run(action="create", title="Only once")
+        self.assertIn("The board change is saved", out)
+        self.assertIn("Do not repeat the change", out)
+        titles = [task["title"] for task in ProjectBoardStore(self.project).read_tasks()]
+        self.assertEqual(titles.count("Only once"), 1)
+
+    async def test_a_new_plan_keeps_the_plan_another_project_runs_under_this_key(self) -> None:
+        # Same session key in two projects: ids of the other board are not
+        # found here, and "all done" over nothing wiped that active plan.
+        session_focus.remember(self.key, ["t-elsewhere"])
+        await self._run(action="create", title="Here")
+        self.assertEqual(session_focus.touched(self.key)[0], "t-elsewhere")
+        self.assertEqual(len(session_focus.touched(self.key)), 2)
+
     async def test_lists_workable_steps_only_while_the_turn_drives_the_plan(self) -> None:
         a, b, c = await self._plan("One", "Two", "Three")
         steps = auto_advance.open_plan_steps(self.project, self.key)
@@ -583,6 +602,22 @@ class OpenPlanStepsTest(_Base):
         # pushed back onto this plan.
         self._finish()
         self.assertEqual(auto_advance.open_plan_steps(self.project, self.key), [])
+        # A later slice of the same request (it called the board in an
+        # earlier slice) still drives it.
+        self.assertEqual(
+            [
+                step["id"]
+                for step in auto_advance.open_plan_steps(self.project, self.key, request_drives_plan=True)
+            ],
+            [b, c],
+        )
+
+    def test_a_failure_that_was_fixed_is_not_a_failed_step(self) -> None:
+        self.assertFalse(auto_advance.reports_failure("Fixed the 2 failing tests, step 3 done."))
+        self.assertFalse(auto_advance.reports_failure("Corrigé les tests en échec.\n\nÉtape 3 terminée."))
+        self.assertFalse(auto_advance.reports_failure("The deploy failed earlier.\n\nAll checks pass now."))
+        self.assertTrue(auto_advance.reports_failure("Fixed the import, but 3 tests are still failing."))
+        self.assertTrue(auto_advance.reports_failure("Je n'ai pas pu lancer le build."))
 
     def test_no_session_or_no_board_call_means_no_steps(self) -> None:
         self.assertEqual(auto_advance.open_plan_steps(self.project, None), [])

@@ -718,10 +718,13 @@ class WebuiTurnCoordinator:
         )
 
     async def _handle_runtime_model_changed(self, event: RuntimeModelChanged) -> None:
+        if event.chat_id and event.channel != "websocket":
+            # The model of a terminal or channel turn: no desktop chat runs it.
+            return
         await self.bus.publish_outbound(
             outbound_message_for_event(
                 channel="websocket",
-                chat_id="*",
+                chat_id=event.chat_id or "*",
                 event=RuntimeModelUpdatedEvent(
                     model=event.model,
                     model_preset=event.model_preset,

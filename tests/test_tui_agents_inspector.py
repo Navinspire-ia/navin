@@ -21,11 +21,17 @@ def test_all_two_hundred_agents_can_be_inspected_without_expanding_chat(tmp_path
                     "test-model", 2, False, None, task_description=f"Implement module {index}",
                     steps=[{"kind": "read", "verb": "Read", "target": f"module{index}.py", "status": "ok"}],
                 ))
-            assert len(str(panel.content).splitlines()) <= panel.MAX_ROWS
-            assert len(str(panel.content).splitlines()) == 8
-            assert "+194 more agents" in str(panel.content)
+            assert not panel.expanded
+            assert len(str(panel.content).splitlines()) == 1
+            assert "200 total" in str(panel.content)
+            await pilot.press("f7")
+            await pilot.pause()
+            assert panel.expanded
+            assert len(str(panel.content).splitlines()) == 202  # header, 200 rows, collapse hint
+            assert "show less" in str(panel.content).splitlines()[-1]
             assert "Developer 5" in str(panel.content)
-            assert "Developer 6 " not in str(panel.content)
+            assert "Developer 6 " in str(panel.content)
+            assert "Developer 199" in str(panel.content)
             await pilot.press("f8")
             await pilot.pause()
             assert isinstance(app.screen, AgentsScreen)
@@ -47,7 +53,7 @@ def test_all_two_hundred_agents_can_be_inspected_without_expanding_chat(tmp_path
             panel.dismiss("agent-199")
             panel.tick(False, 0)
             assert "agent-199" not in panel._agents
-            await pilot.click(panel)
+            await pilot.press("f8")
             await pilot.pause()
             assert isinstance(app.screen, AgentsScreen)
             assert "agent-199" in app.screen._rows
@@ -286,6 +292,8 @@ def test_finished_rows_persist_until_dismissed_with_hint(tmp_path):
             await app._on_runtime_event(UiSubagent("ask", "Asker", "awaiting_approval",
                                                    "Waiting for your approval", None, 1, False, None))
             await pilot.pause()
+            await pilot.press("f7")
+            await pilot.pause()
             lines = str(panel.content).splitlines()
             assert len(lines) <= AgentsPanel.MAX_ROWS
             assert lines[1].startswith("×") and "Tester" in lines[1]
@@ -321,6 +329,8 @@ def test_finished_rows_auto_dismiss_after_grace_period(tmp_path):
             await app._on_runtime_event(UiSubagent("ok", "Writer", "done", "Completed", None, 1, True, None))
             await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
             await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
+            await pilot.pause()
+            await pilot.press("f7")
             await pilot.pause()
             assert panel.AUTO_DISMISS_DONE_S == 10 * 60 and panel.AUTO_DISMISS_ERROR_S == 15 * 60
             assert {"ok", "bad", "run"} <= set(panel._agents)
@@ -411,6 +421,9 @@ def test_clicking_a_failed_row_opens_f8_on_it(tmp_path):
             await app._on_runtime_event(UiSubagent("run", "Runner", "awaiting_model", "Working", None, 1, False, None))
             await app._on_runtime_event(UiSubagent("bad", "Tester", "error", "", None, 1, True, "Model timed out"))
             await pilot.pause()
+            await pilot.click(panel, offset=(4, 0))
+            await pilot.pause()
+            assert panel.expanded
             lines = str(panel.content).splitlines()
             assert "Tester" in lines[1]
             await pilot.click(panel, offset=(4, 1))

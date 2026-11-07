@@ -685,6 +685,38 @@ _MAX_UNBOUNDED_SLICES = 40
 _MIN_UNBOUNDED_STEPS = 1000
 
 
+def _request_called_board(messages: list[dict[str, Any]]) -> bool:
+    """Whether the request in progress, its earlier slices included, used the board.
+
+    Each continuation slice is a new turn for the board's own log: a slice
+    that only finished a step claimed earlier looked unrelated to the plan,
+    and the run ended with the next steps still open. Rows the runtime wrote
+    (reminders, continuation prompts, background results) are skipped; the
+    first message the user typed bounds the request.
+    """
+    from navin.session.history_visibility import (
+        is_hidden_history_message,
+        is_runtime_nudge_message,
+    )
+
+    for message in reversed(messages):
+        role = message.get("role")
+        if role == "assistant":
+            for call in message.get("tool_calls") or ():
+                function = call.get("function") if isinstance(call, dict) else None
+                if isinstance(function, dict) and function.get("name") == "board":
+                    return True
+        elif role == "user":
+            if (
+                message.get("injected_event")
+                or is_hidden_history_message(message)
+                or is_runtime_nudge_message(message)
+            ):
+                continue
+            return False
+    return False
+
+
 def _call_read_only(tool: Any, params: Any) -> bool:
     """Whether this specific call is side-effect free (per-action aware)."""
     checker = getattr(tool, "call_read_only", None)
@@ -2030,24 +2062,39 @@ class AgentRunner:
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=False)
-                retry_messages = self._finalization_retry_messages(messages_for_model)
-                response = await self._request_finalization_retry(spec, messages_for_model)
-                finalized = True
-                retry_usage = self._usage_or_estimate(spec, retry_messages, response)
-                self._accumulate_usage(usage, retry_usage)
-                retry_n = int(retry_usage.get("prompt_tokens") or 0)
-                if retry_n > peak_prompt_tokens:
-                    peak_prompt_tokens = retry_n
-                    peak_request_messages = list(retry_messages)
-                raw_usage = self._merge_usage(raw_usage, retry_usage)
-                context.response = response
-                context.usage = dict(raw_usage)
-                context.tool_calls = list(response.tool_calls)
-                clean = hook.finalize_content(context, response.content)
-                if is_blank_text(clean):
-                    response, clean = await self._strict_finalization_retry(
-                        spec, hook, context, messages_for_model, response, clean,
+                if (
+                    tools_used
+                    and not spec.finalize_on_max_iterations
+                    and not spec.continue_on_max_iterations
+                ):
+                    # Mid-task, with a dispatcher that resumes slices: a
+                    # summary written without tools ended the task as
+                    # "completed" with its next steps undone. The slice goes
+                    # back as a blank reply instead, which the continuation
+                    # resumes (at most two blank replies in a row).
+                    logger.warning(
+                        "Blank replies mid-task for {}; handing the slice back for a resume",
+                        spec.session_key or "default",
                     )
+                else:
+                    retry_messages = self._finalization_retry_messages(messages_for_model)
+                    response = await self._request_finalization_retry(spec, messages_for_model)
+                    finalized = True
+                    retry_usage = self._usage_or_estimate(spec, retry_messages, response)
+                    self._accumulate_usage(usage, retry_usage)
+                    retry_n = int(retry_usage.get("prompt_tokens") or 0)
+                    if retry_n > peak_prompt_tokens:
+                        peak_prompt_tokens = retry_n
+                        peak_request_messages = list(retry_messages)
+                    raw_usage = self._merge_usage(raw_usage, retry_usage)
+                    context.response = response
+                    context.usage = dict(raw_usage)
+                    context.tool_calls = list(response.tool_calls)
+                    clean = hook.finalize_content(context, response.content)
+                    if is_blank_text(clean):
+                        response, clean = await self._strict_finalization_retry(
+                            spec, hook, context, messages_for_model, response, clean,
+                        )
 
             if response.finish_reason == "length" and not is_blank_text(clean):
                 length_recovery_count += 1
@@ -2232,6 +2279,16 @@ class AgentRunner:
                 and not spec.read_only_tools
                 and not spec.plan_read_only
             )
+            # The plan this conversation works through is finished on any turn
+            # that can act, not only on workflow commands: an Agent turn that
+            # answered "step 4 done" with steps 5 to N still open ended there,
+            # and the user had to type "continue" after every step.
+            plan_turn = (
+                response.finish_reason != "error"
+                and assistant_message is not None
+                and not spec.read_only_tools
+                and not spec.plan_read_only
+            )
             # Back done, front forgotten: checked on every turn that writes
             # code (CLI, desktop and subagents), not only on workflow commands.
             # Still one reminder each, so a turn never loops on it.
@@ -2350,7 +2407,7 @@ class AgentRunner:
                     }
             if (
                 continue_prompt is None
-                and build_turn
+                and plan_turn
                 and plan_nudges < _MAX_PLAN_NUDGES
                 and not validation.pending
                 and spec.workspace
@@ -2367,6 +2424,7 @@ class AgentRunner:
                 if not asks_user(clean) and not reports_failure(clean):
                     steps = await asyncio.to_thread(
                         open_plan_steps, spec.workspace, spec.session_key,
+                        request_drives_plan=_request_called_board(messages),
                     )
                     mark = (
                         validation.revision,
@@ -2460,7 +2518,28 @@ class AgentRunner:
                 continue
 
             if hook.wants_streaming() and context.streamed_content:
-                await hook.on_stream_end(context, resuming=False)
+                if (
+                    length_parts
+                    and not spec.defer_final_stream
+                    and response.finish_reason != "error"
+                    and not is_blank_text(clean)
+                ):
+                    # The answer was cut by the output limit: its parts are
+                    # joined below and sent as one last segment. Kept on
+                    # screen, this live last part showed the end twice.
+                    context.stream_discarded = True
+                    try:
+                        await hook.on_stream_end(context, resuming=True)
+                    finally:
+                        context.stream_discarded = False
+                        context.streamed_content = False
+                else:
+                    await hook.on_stream_end(context, resuming=False)
+            elif context.streamed_reasoning:
+                # A task turn defers its final text, so no stream ended here:
+                # the reasoning of the last step stayed open (never shown in
+                # the terminal, still "thinking" on the desktop).
+                await hook.emit_reasoning_end()
 
             if response.finish_reason == "error":
                 from navin.providers.fallback_policy import is_exhausted_account
@@ -2503,6 +2582,12 @@ class AgentRunner:
                 )
                 if should_continue:
                     had_injections = True
+                    # The injected message carries the turn on: this error no
+                    # longer ends it. Left set, a good answer later in the run
+                    # was still reported (and replayed) as this error stop.
+                    error = None
+                    final_content = None
+                    stop_reason = "completed"
                     continue
                 break
             if (
@@ -2556,6 +2641,11 @@ class AgentRunner:
                 )
                 if should_continue:
                     had_injections = True
+                    # Same as after an error: a later good answer must not be
+                    # taken for this blank reply and replaced by a resume.
+                    error = None
+                    final_content = None
+                    stop_reason = "completed"
                     continue
                 break
 
@@ -3853,9 +3943,23 @@ class AgentRunner:
             return payload + hint + (escalation or ""), event, (
                 RuntimeError(payload) if spec.fail_on_tool_error else None
             )
-        except asyncio.CancelledError:
-            raise
         except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                current = asyncio.current_task()
+                if current is None or current.cancelling():
+                    raise
+                # Raised inside the tool (a task or future it awaited was
+                # cancelled), not a stop of this turn: report it as this
+                # call's failure. Re-raising ended the whole turn with no
+                # answer and cancelled the other tools of the batch.
+                logger.warning(
+                    "Tool {} raised CancelledError while the turn was not cancelled; "
+                    "reporting it as a tool error",
+                    tool_call.name,
+                )
+                exc = RuntimeError(
+                    "the tool was cancelled from inside (a task or future it awaited was cancelled)"
+                )
             await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
             event = {
                 "name": tool_call.name,

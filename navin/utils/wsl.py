@@ -503,7 +503,9 @@ def host_open_commands(url: str) -> list[list[str]]:
     ``wslview`` (from wslu) exists for exactly this and is tried first.
     PowerShell's ``Start-Process`` is the reliable built-in fallback; the URL
     goes in single quotes because it carries ``&`` between query parameters,
-    which PowerShell would otherwise read as a statement separator. Plain
+    which PowerShell would otherwise read as a statement separator, and every
+    quote PowerShell recognises inside it is doubled (:func:`powershell_literal`):
+    a link like ``https://x/';calc;'`` used to run ``calc``. Plain
     ``explorer.exe`` closes the list: it hands the URL to ShellExecute without
     a shell parse, but reports failure through its exit code even on success,
     which is why it is last and judged only on having started.
@@ -515,10 +517,21 @@ def host_open_commands(url: str) -> list[list[str]]:
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            f"Start-Process '{url}'",
+            f"Start-Process {powershell_literal(url)}",
         ],
         ["explorer.exe", url],
     ]
+
+
+# PowerShell reads all of these as a single quote, and two in a row as one
+# literal quote: doubling only the ASCII one let a typographic quote (common in
+# French file names, "Rapport d’audit") close the string.
+_POWERSHELL_QUOTES = frozenset("'\u2018\u2019\u201a\u201b")
+
+
+def powershell_literal(text: str) -> str:
+    """``text`` as a PowerShell single-quoted literal that nothing in it can end."""
+    return "'" + "".join(ch * 2 if ch in _POWERSHELL_QUOTES else ch for ch in text) + "'"
 
 
 def open_url_on_host(url: str) -> bool:
@@ -570,10 +583,9 @@ def host_open_path_commands(path: str, windows_path: str) -> list[list[str]]:
     """Ways to open a file of this distribution with its Windows default app.
 
     Same order as :func:`host_open_commands`. wslview takes the Linux path and
-    translates it itself; PowerShell and Explorer get the Windows path. Inside
-    PowerShell's single quotes a quote is written twice.
+    translates it itself; PowerShell and Explorer get the Windows path, quoted
+    by :func:`powershell_literal`.
     """
-    quoted = windows_path.replace("'", "''")
     return [
         ["wslview", path],
         [
@@ -581,7 +593,7 @@ def host_open_path_commands(path: str, windows_path: str) -> list[list[str]]:
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            f"Start-Process -FilePath '{quoted}'",
+            f"Start-Process -FilePath {powershell_literal(windows_path)}",
         ],
         ["explorer.exe", windows_path],
     ]

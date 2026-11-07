@@ -102,6 +102,23 @@ class OpenExternalUrlTest(unittest.TestCase):
         popen.assert_not_called()
         browser.assert_not_called()
 
+    def test_windows_fallback_never_lets_cmd_parse_the_link(self):
+        # When ShellExecute refused, the link went to `cmd /c start`: the `&`
+        # of a query string was a command separator there, so
+        # https://a/?x=1&calc started calc.
+        shell = mock.Mock(ShellExecuteW=mock.Mock(return_value=2))
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=False),
+            mock.patch("sys.platform", "win32"),
+            mock.patch("ctypes.windll", create=True, **{"shell32": shell}),
+            mock.patch("shutil.which", side_effect=lambda name: f"C:\\Windows\\{name}"),
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertTrue(open_external_url("https://a.example/?x=1&calc"))
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv, ["explorer.exe", "https://a.example/?x=1&calc"])
+        self.assertNotIn("cmd", argv)
+
     def test_windows_shell_failure_does_not_claim_a_file_opened(self):
         shell = mock.Mock(ShellExecuteW=mock.Mock(return_value=2))
         with (

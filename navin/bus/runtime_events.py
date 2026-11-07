@@ -86,6 +86,10 @@ class RuntimeModelChanged:
     reason: str | None = None
     previous_model: str | None = None
     used_percent: int | None = None
+    # The chat whose turn chose this model, for a change that belongs to one
+    # turn (task routing). None: a change for every chat (budget, settings).
+    channel: str | None = None
+    chat_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +316,8 @@ class RuntimeEventPublisher:
         reason: str | None = None,
         previous_model: str | None = None,
         used_percent: int | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
     ) -> None:
         self.bus.publish_nowait(
             RuntimeModelChanged(
@@ -320,6 +326,8 @@ class RuntimeEventPublisher:
                 reason=reason,
                 previous_model=previous_model,
                 used_percent=used_percent,
+                channel=channel,
+                chat_id=chat_id,
             )
         )
 

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from filelock import Timeout
 from loguru import logger
 
 from navin.agent.tools.base import Tool, ToolResult
@@ -82,6 +83,27 @@ def _parallel_hint(ready: int) -> str:
         "told to close them on the board, and keep a share for yourself. Keep "
         "only tasks that depend on each other sequential."
     )
+def _record_session_focus(
+    store: ProjectBoardStore, session_key: str | None, action: str, touched: list[str],
+) -> None:
+    """Add the tasks of this call to the chat's plan (run in a worker thread).
+
+    A new plan after a finished one replaces it, so the previous checklist
+    does not come back. Finished means: its tasks are found on this board and
+    all done. A session key can be shared by two projects (``cli:direct``):
+    ids of the other project's plan are not on this board, and "all done" over
+    nothing found used to wipe that project's plan, which was still active.
+    """
+    previous = session_focus.touched(session_key)
+    if action == "create" and touched and previous:
+        wanted = set(previous)
+        found = [task for task in store.read_tasks() if task.get("id") in wanted]
+        if found and all(task.get("status") == "done" for task in found):
+            session_focus.replace(session_key, touched)
+            return
+    session_focus.remember(session_key, touched)
+
+
 def _with_note(result: Any, note: str) -> Any:
     """Append *note* to a tool result, keeping a ToolResult's flags."""
     if isinstance(result, ToolResult):
@@ -660,16 +682,20 @@ class BoardTool(Tool):
             return ToolResult.error(f"Error: {e.message}")
         if action in _MUTATING_ACTIONS and getattr(result, "made_progress", None) is not False:
             session_key = current_request_session_key()
-            # A new plan after a completed one must not inherit the previous
-            # checklist (which otherwise reappears after a gateway restart).
-            previous = session_focus.touched(session_key)
-            if action == "create" and touched and previous and all(
-                task.get("status") == "done"
-                for task in store.read_tasks() if task.get("id") in previous
-            ):
-                session_focus.replace(session_key, touched)
-            else:
-                session_focus.remember(session_key, touched)
+            try:
+                await run_off_loop(_record_session_focus, store, session_key, action, touched)
+            except (OSError, Timeout) as exc:
+                # The board change above is saved; only this chat's plan view
+                # was not updated. Reported as a failed call, it made the
+                # model make the change again: a second copy of every task.
+                logger.warning(
+                    "Plan view of {} not updated after board {}: {}", session_key, action, exc,
+                )
+                result = _with_note(
+                    result,
+                    "The board change is saved, but this chat's plan view could not be updated "
+                    f"({type(exc).__name__}: {exc}). Do not repeat the change.",
+                )
             notes = self._auto_advance(
                 store, session_key, action=action, task_id=task_id,
                 status=status, who_type=who_type, touched=touched,

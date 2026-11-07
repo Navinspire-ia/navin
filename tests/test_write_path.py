@@ -292,6 +292,51 @@ class ApplyPatchTest(_WorkspaceTest):
         self.assertIn("line 1", out)
         self.assertEqual(self._read("a.py"), "def f():\n    return 1\n")
 
+    def test_a_unique_hunk_with_wrong_indentation_is_applied_and_reindented(self) -> None:
+        # Seen live: hunks sent with 12 spaces for a block indented by 4 were
+        # refused again and again ("text to replace not found").
+        _write(self.root, "a.py", "def f(approver):\n    if approver is not None:\n        return 1\n    return 0\n")
+        self.states.record_read(self.root / "a.py")
+        out = self._apply([{
+            "path": "a.py",
+            "action": "replace",
+            "old_text": "            if approver is not None:\n                return 1\n",
+            "new_text": "            if approver is not None:\n                return 2\n",
+        }])
+        self.assertIn("Patch applied", out)
+        self.assertIn("matched line 2", out)
+        self.assertEqual(
+            self._read("a.py"),
+            "def f(approver):\n    if approver is not None:\n        return 2\n    return 0\n",
+        )
+
+    def test_a_near_match_found_twice_is_still_refused(self) -> None:
+        _write(self.root, "a.py", "  x = 1\n    x = 1\n")
+        self.states.record_read(self.root / "a.py")
+        out = self._apply([
+            {"path": "a.py", "action": "replace", "old_text": "        x = 1", "new_text": "        x = 2"},
+        ])
+        self.assertIn("near match", out)
+        self.assertEqual(self._read("a.py"), "  x = 1\n    x = 1\n")
+
+    def test_a_failed_patch_names_its_reason_on_the_file_that_caused_it(self) -> None:
+        from types import SimpleNamespace
+
+        from navin.agent.hooks.file_edit_activity import NOT_WRITTEN_REASON, attribute_patch_error
+
+        files = [
+            SimpleNamespace(display_path="ui/src/lib/capabilities.ts", path=Path("/p/ui/src/lib/capabilities.ts")),
+            SimpleNamespace(display_path="ui/src/lib/capabilities.tsx", path=Path("/p/ui/src/lib/capabilities.tsx")),
+            SimpleNamespace(display_path="server/api.py", path=Path("/p/server/api.py")),
+        ]
+        error = "Error applying patch: old_text not found in ui/src/lib/capabilities.tsx, but 1 near match"
+        self.assertEqual(
+            attribute_patch_error(files, error),
+            [NOT_WRITTEN_REASON, error, NOT_WRITTEN_REASON],
+        )
+        # Nothing named: every file keeps the whole reason.
+        self.assertEqual(attribute_patch_error(files, "Error: disk full"), ["Error: disk full"] * 3)
+
     def test_a_missing_final_newline_is_preserved(self) -> None:
         _write(self.root, "a.py", "value = 1")
         self.states.record_read(self.root / "a.py")

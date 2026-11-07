@@ -326,21 +326,28 @@ def begin_board_call(session_key: str | None, *, turn_id: str | None = None) -> 
         return index
 
 
-def open_plan_steps(workspace: Path | str | None, session_key: str | None) -> list[dict[str, str]]:
+def open_plan_steps(
+    workspace: Path | str | None,
+    session_key: str | None,
+    *,
+    request_drives_plan: bool = False,
+) -> list[dict[str, str]]:
     """Steps of this conversation's plan still to do and workable right now.
 
-    Only while the current turn drives the plan (it called the board): a turn
-    about something else must not be pushed back onto an old plan. Counted:
-    the session's steps in progress, and the planned or backlog steps it owns
-    whose dependencies are done. Blocked steps, steps held by someone else and
-    steps still waiting on a dependency are not the agent's to finish now.
+    Only while the current request drives the plan (it called the board, in
+    this turn or, with ``request_drives_plan``, in an earlier slice of the
+    same request): a turn about something else must not be pushed back onto
+    an old plan. Counted: the session's steps in progress, and the planned or
+    backlog steps it owns whose dependencies are done. Blocked steps, steps
+    held by someone else and steps still waiting on a dependency are not the
+    agent's to finish now.
     """
     key = (session_key or "").strip()
     if not key or workspace is None:
         return []
     with _auto_guard:
         log = _turns.get(key)
-        drives_plan = log is not None and log.calls > 0
+        drives_plan = request_drives_plan or (log is not None and log.calls > 0)
     if not drives_plan:
         return []
     try:
@@ -674,10 +681,40 @@ _NO_FAILURE = re.compile(
 )
 
 
+# "Fixed the 2 failing tests", "corrige l'echec du build": a failure that is
+# over. Read as the current state, it switched the plan reminder off at the
+# end of the very step that repaired it. A "but" or a "still" in between
+# keeps the failure that follows ("fixed the import, but 3 tests still fail").
+_FIXED_FAILURE = re.compile(
+    r"\b(?:fixed|repaired|resolved|corrected|corrig[ée]e?s?|r[ée]par[ée]e?s?|r[ée]solue?s?)\b"
+    r"(?:(?!\b(?:but|mais|still|yet|encore|toujours|reste|remain\w*)\b)[^.\n]){0,40}?"
+    r"\b(?:failing|failed|failures?|[ée]checs?|[ée]chou\w*|errors?|erreurs?)\b",
+    re.IGNORECASE,
+)
+
+
+def _answer_tail(final_content: str) -> str:
+    """The last paragraph, with the one before it when the last is a list."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", final_content.strip()) if p.strip()]
+    if not paragraphs:
+        return ""
+    tail = [paragraphs[-1]]
+    lines = [line for line in paragraphs[-1].splitlines() if line.strip()]
+    if len(paragraphs) > 1 and lines and all(_LIST_ITEM.match(line) for line in lines):
+        tail.insert(0, paragraphs[-2])
+    return "\n".join(tail)
+
+
 def reports_failure(final_content: str | None) -> bool:
+    """True when the answer ends on a failure that is still there.
+
+    Only the closing paragraph says how the step ended: a summary that
+    mentions an earlier failure, or one it fixed, is not a failed step.
+    """
     if not isinstance(final_content, str):
         return False
-    return bool(_FAILURE_REPORT.search(_NO_FAILURE.sub(" ", final_content)))
+    text = _FIXED_FAILURE.sub(" ", _NO_FAILURE.sub(" ", _answer_tail(final_content)))
+    return bool(_FAILURE_REPORT.search(text))
 
 
 def _event_failed(event: Mapping[str, Any]) -> bool:

@@ -111,6 +111,30 @@ class CancelSustainedGoalTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sessions.saved, 0)
 
 
+class CancelledByOwnCommandTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_command_in_an_idle_session_does_not_cancel_itself(self) -> None:
+        # /new in an idle chat runs inside a dispatch task registered under
+        # that very session: cancelling "the session's tasks" cancelled the
+        # command before it cleared the session or answered.
+        async def cancel_by_session(_key: str) -> int:
+            return 0
+
+        loop = SimpleNamespace(
+            _active_tasks={},
+            _STOP_GRACE_S=0.5,
+            subagents=SimpleNamespace(cancel_by_session=cancel_by_session),
+        )
+        other = asyncio.create_task(asyncio.Event().wait())
+
+        async def command() -> int:
+            loop._active_tasks["cli:direct"] = [asyncio.current_task(), other]
+            return await AgentLoop._cancel_active_tasks(loop, "cli:direct")
+
+        cancelled = await asyncio.create_task(command())
+        self.assertEqual(cancelled, 1)
+        self.assertTrue(other.cancelled())
+
+
 class _FakeStopLoop:
     """Just enough loop surface for cmd_stop."""
 
@@ -506,6 +530,88 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(bus.inbound), 1)
         self.assertEqual(bus.inbound[0].content, "continuation slice")
+
+
+class SliceBoundaryTest(unittest.IsolatedAsyncioTestCase):
+    """Between two slices of one run, nothing may tell the screen the turn ended.
+
+    Seen live: the terminal closed the turn on the empty reply a slice
+    publishes when it queues the next one, so the agent looked like it
+    stopped at every step budget, and queued prompts went into the task.
+    """
+
+    def _coordinator(self, done: list) -> tuple:
+        return (None, SimpleNamespace(complete=lambda msg, **kw: done.append(kw)))
+
+    async def _run(self, *, pending: bool):
+        from navin.bus.runtime_events import TurnCompleted
+        from navin.session.turn_continuation import INTERNAL_CONTINUATION_PENDING_META
+
+        bus = _FakeBus()
+
+        async def fake_process(msg, on_stream=None, on_stream_end=None, pending_queue=None):
+            if pending:
+                msg.metadata[INTERNAL_CONTINUATION_PENDING_META] = True
+            return None
+
+        stub = _dispatch_stub(bus, fake_process)
+        completed: list = []
+        stub._runtime_events().bus.subscribe(completed.append, TurnCompleted)
+        done: list = []
+        stub._automation_turn_coordinators = [self._coordinator(done)]
+        await AgentLoop._dispatch(
+            stub, InboundMessage(channel="cli", sender_id="user", chat_id="direct", content="build it"),
+        )
+        return bus, completed, done
+
+    async def test_a_slice_that_queued_the_next_one_does_not_end_the_turn(self) -> None:
+        bus, completed, done = await self._run(pending=True)
+        self.assertEqual(bus.outbound, [])
+        self.assertEqual(completed, [])
+        # A cron or trigger run is not reported finished at its first budget.
+        self.assertEqual(done, [])
+
+    async def test_the_last_slice_ends_the_turn(self) -> None:
+        bus, completed, done = await self._run(pending=False)
+        self.assertEqual([m.content for m in bus.outbound], [""])
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(done, [{"response": None}])
+
+    async def test_a_dropped_continuation_closes_its_run(self) -> None:
+        from navin.bus.runtime_events import TurnCompleted
+        from navin.session.turn_continuation import INTERNAL_CONTINUATION_META
+
+        stub = _dispatch_stub(_FakeBus(), None)
+        completed: list = []
+        stub._runtime_events().bus.subscribe(completed.append, TurnCompleted)
+        done: list = []
+        stub._automation_turn_coordinators = [self._coordinator(done)]
+        dropped = InboundMessage(
+            channel="cli", sender_id="system:continuation", chat_id="direct", content="Continue",
+            metadata={INTERNAL_CONTINUATION_META: True},
+        )
+        await AgentLoop._close_dropped_continuation(stub, dropped, "cli:direct")
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(done, [{"response": None}])
+        # A message the user typed is not a run to close.
+        typed = InboundMessage(channel="cli", sender_id="user", chat_id="direct", content="hi")
+        await AgentLoop._close_dropped_continuation(stub, typed, "cli:direct")
+        self.assertEqual(len(completed), 1)
+
+    def test_a_running_build_or_a_waiting_retry_keeps_the_chat_out_of_idle_compaction(self) -> None:
+        from unittest.mock import patch
+
+        stub = SimpleNamespace(
+            _pending_queues={}, _active_tasks={}, _session_locks={},
+            subagents=SimpleNamespace(_session_tasks={}, _queued={}),
+            turn_recovery=SimpleNamespace(
+                due={"cli:retry": 1.0, "cli:done": 2.0}, waiting=lambda key: key == "cli:retry",
+            ),
+        )
+        rows = [SimpleNamespace(owner_session_key="cli:build"), SimpleNamespace(owner_session_key="")]
+        manager = SimpleNamespace(running_snapshot=lambda: rows)
+        with patch("navin.agent.tools.exec_session.DEFAULT_EXEC_SESSION_MANAGER", manager):
+            self.assertEqual(AgentLoop._busy_session_keys(stub), {"cli:build", "cli:retry"})
 
 
 class ParentTurnConcurrencyTest(unittest.IsolatedAsyncioTestCase):

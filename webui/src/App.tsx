@@ -2875,10 +2875,12 @@ function Shell({
     text: string;
     nonce: number;
     documentTemplate?: { category: string; name: string; title?: string };
+    targetKey?: string;
   } | null>(null);
   const [chatAutoSendRequest, setChatAutoSendRequest] = useState<{
     text: string;
     nonce: number;
+    targetKey?: string;
   } | null>(null);
   const onRunDevAction = useCallback(
     (
@@ -4488,8 +4490,25 @@ function Shell({
     onSelect: onSelectChat,
     onRelaunchPlan: (key: string, text: string) => {
       onSelectChat(key);
-      // Reuse the selected thread's composer send path, not the currently open chat.
-      setChatAutoSendRequest((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
+      // Queue it where the selected chat opens (Code, a studio or the full
+      // chat), bound to that chat: through the chat queue alone, a relaunch
+      // on Code never sent, then went into whatever chat was open later.
+      const destination = resolveChatOpenView(
+        key,
+        sidebarState.module_by_key,
+        view,
+        sessions.find((session) => session.key === key)?.preview,
+      ) as ShellView;
+      const next = (current: { nonce: number } | null) => ({
+        text,
+        nonce: (current?.nonce ?? 0) + 1,
+        targetKey: key,
+      });
+      if (isWorkbenchView(destination)) {
+        setDevAutoSendRequest(next);
+      } else {
+        setChatAutoSendRequest(next);
+      }
     },
     onRequestDelete,
     onTogglePin,

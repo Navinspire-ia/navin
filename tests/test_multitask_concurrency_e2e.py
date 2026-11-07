@@ -15,16 +15,19 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from navin.agent import worktree
 from navin.agent.loop import AgentLoop
 from navin.agent.subagent import request_multitask_spawn
 from navin.agent.tools import exec_session
 from navin.agent.tools.registry import ToolRegistry
 from navin.bus.events import InboundMessage
+from navin.bus.outbound_events import StreamDeltaEvent, StreamEndEvent, outbound_event_from_message
 from navin.bus.queue import MessageBus
 from navin.config.loader import get_config_path, set_config_path
 from navin.providers.anthropic_provider import AnthropicProvider
@@ -101,15 +104,15 @@ class RoutingProvider(LLMProvider):
             await gate.wait()
         await asyncio.sleep(self.delay)
         if "[Subagent '" in last_user:
-            # Results injected together reach the model in one call, as
-            # consecutive user messages: acknowledge every one of them.
-            trailing: list[str] = []
-            for message in reversed(messages):
-                if message.get("role") != "user":
-                    break
-                trailing.extend(_TAG.findall(_request_text(message.get("content"))))
-            done = sorted(set(trailing)) or [tag]
-            return LLMResponse(content=" ".join(f"ack-{t}" for t in done))
+            # A result arriving while an answer is in flight restarts the
+            # model: acknowledge all result cards, including ones from an
+            # earlier superseded answer, so none vanishes from the final.
+            received: set[str] = set()
+            for message in messages:
+                content = _request_text(message.get("content"))
+                if message.get("role") == "user" and "[Subagent '" in content:
+                    received.update(_TAG.findall(content))
+            return LLMResponse(content=" ".join(f"ack-{t}" for t in sorted(received)))
         if "queued task" in last_user:
             return LLMResponse(content=f"result-{tag}")
         return LLMResponse(content=f"reply-{tag}")
@@ -135,6 +138,13 @@ def isolated_config(tmp_path):
 def _make_loop(tmp_path, provider: RoutingProvider) -> AgentLoop:
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
+    # Multitask spawns are isolated git worktrees. A bare temp directory makes
+    # every worker fail closed before calling the fake provider, hiding the
+    # actual concurrent-chat behavior this end-to-end test is meant to cover.
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.invalid", "commit",
+                    "--allow-empty", "-qm", "test base"], check=True)
     loop = AgentLoop(provider=provider, workspace=workspace, bus=MessageBus())
     loop._mcp_servers = {}
     loop.tools = ToolRegistry()
@@ -178,6 +188,21 @@ def _finals(outbound: list, chat_id: str) -> list[str]:
 
 def _finals_text(outbound: list, chat_id: str) -> str:
     return "\n".join(_finals(outbound, chat_id))
+
+
+def _visible_stream_text(outbound: list, chat_id: str) -> str:
+    """Reconstruct the chat's streamed answer, excluding withdrawn segments."""
+    segments: dict[str, str] = {}
+    for message in outbound:
+        if message.chat_id != chat_id:
+            continue
+        event = outbound_event_from_message(message)
+        if isinstance(event, StreamDeltaEvent):
+            stream_id = event.stream_id or ""
+            segments[stream_id] = segments.get(stream_id, "") + message.content
+        elif isinstance(event, StreamEndEvent) and event.discarded:
+            segments.pop(event.stream_id or "", None)
+    return "\n".join([*segments.values(), *_finals(outbound, chat_id)])
 
 
 def test_two_chats_started_together_keep_their_own_history(tmp_path):
@@ -261,31 +286,41 @@ def test_queued_prompts_multitasked_in_parallel_all_land_in_their_chat(tmp_path)
                 channel="websocket", sender_id="user", chat_id="chat-b",
                 content="PARENT do JOB-OTHER", metadata={"_wants_stream": True},
             ))
-            results = await asyncio.gather(*(
-                request_multitask_spawn(
-                    loop.bus, "websocket:chat-a", f"queued task JOB-Q{i}",
-                    client_key=f"qp-{i}", timeout=10,
-                )
-                for i in range(3)
-            ))
-            assert all(r.get("ok") for r in results), results
-            provider.hold["JOB-MAIN"].set()
+            # Keep isolated worktrees under tmp_path, not the user's home (or
+            # an unwritable CI/sandbox home). Production still creates real
+            # git worktrees; only their test storage root changes.
+            with patch.object(worktree, "worktrees_root", return_value=tmp_path / "worktrees"):
+                results = await asyncio.gather(*(
+                    request_multitask_spawn(
+                        loop.bus, "websocket:chat-a", f"queued task JOB-Q{i}",
+                        client_key=f"qp-{i}", timeout=10,
+                    )
+                    for i in range(3)
+                ))
+                assert all(r.get("ok") for r in results), results
+                provider.hold["JOB-MAIN"].set()
 
-            # The user sees every answer in its own chat (streamed, like the
-            # webui), not only the last one of a turn that absorbed results.
-            await _wait_for(
-                lambda: all(
-                    f"ack-JOB-Q{i}" in _finals_text(outbound, "chat-a") for i in range(3)
+                # The user sees every answer in its own chat (streamed, like the
+                # webui), not only the last one of a turn that absorbed results.
+                await _wait_for(
+                    lambda: all(
+                        f"ack-JOB-Q{i}" in _visible_stream_text(outbound, "chat-a") for i in range(3)
+                    )
+                    and "reply-JOB-OTHER" in _visible_stream_text(outbound, "chat-b"),
+                    "all multitask results acknowledged",
                 )
-                and "reply-JOB-MAIN" in _finals_text(outbound, "chat-a")
-                and "reply-JOB-OTHER" in _finals_text(outbound, "chat-b"),
-                "all multitask results acknowledged",
-            )
-            await _wait_for(
-                lambda: not loop._pending_queues and not loop.subagents._running_tasks,
-                "everything idle",
-            )
+                await _wait_for(
+                    lambda: not loop._pending_queues and not loop.subagents._running_tasks,
+                    "everything idle",
+                )
+
             await asyncio.sleep(0.3)
+            # The first candidate was superseded while a result was injected:
+            # a discarded draft must not masquerade as a delivered answer.
+            visible_a = _visible_stream_text(outbound, "chat-a")
+            assert "reply-JOB-MAIN" not in visible_a
+            for i in range(3):
+                assert f"ack-JOB-Q{i}" in visible_a
 
             key_a, key_b = "websocket:chat-a", "websocket:chat-b"
             for source in (loop.sessions.get_or_create(key_a).messages, _disk_messages(loop, key_a)):

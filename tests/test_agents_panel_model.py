@@ -14,7 +14,7 @@ def _render(model: str | None) -> str:
         "ab12": {"started": now - 5, "tokens": 3400, "label": "build", "task": "",
                  "status": "Working…", "error": False, "model": model},
     }
-    panel.expanded = False
+    panel.expanded = True
     app = SimpleNamespace(current_theme=SimpleNamespace(dark=True))
     with mock.patch.object(AgentsPanel, "app", new=app, create=True):
         return panel._render_rows(160, True, 0.0, now).plain

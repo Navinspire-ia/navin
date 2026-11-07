@@ -3488,7 +3488,39 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
                 widget._refresh_body()
                 continue
             widget.apply(phase=phase, result=result, error=error, output=output, percent=percent, output_mode=output_mode)
+        if (
+            name == "board" and phase == "end" and isinstance(arguments, dict)
+            and arguments.get("status") == "done" and arguments.get("task_id")
+        ):
+            self._settle_earlier_validation(str(arguments["task_id"]), result)
         self._release_finished_activity()
+
+    def _settle_earlier_validation(self, task_id: str, result: Any) -> None:
+        """Rows still waiting to close ``task_id`` show it closed once a later call did.
+
+        A close refused before its checks ran is retried once they pass, often
+        in a later turn with a row of its own. The refused row of the earlier
+        turn kept its "!" for good: six refused closes read as six alarms,
+        though every task was done.
+        """
+        transcript = self.parent
+        if not isinstance(transcript, Transcript):
+            return
+        for bubble in transcript.children:
+            if isinstance(bubble, AssistantMessage):
+                for tool in list(bubble._tools.values()):
+                    args = tool.arguments if isinstance(tool.arguments, dict) else {}
+                    if (
+                        tool.validation_pending
+                        and args.get("status") == "done"
+                        and str(args.get("task_id") or "") == task_id
+                    ):
+                        tool.apply(phase="end", result=result)
+                        tool._refresh_head()
+            if bubble is self:
+                # Later turns stay as they are: a task reopened and refused
+                # again there still waits on its checks.
+                break
 
     def _mounted_after(self, widget: Widget | None, anchor: Widget) -> bool:
         """Whether ``widget`` sits below ``anchor`` in this bubble."""

@@ -647,8 +647,11 @@ def activity_label(
 ) -> str:
     """Describe actual activity without treating printed output as added code."""
     if phase == "error" and is_validation_pending(name, error):
-        target = "Board completion" if name == "board" else "Task completion"
-        return f"Validation pending: {target}"
+        if name == "board":
+            # The task it is about: several refused closes read as one alarm
+            # repeated, "Validation pending: Board completion" six times.
+            return f"Validation pending: {_board_label(arguments if isinstance(arguments, dict) else {}, pending=True)}"
+        return "Validation pending: Task completion"
     args = arguments if isinstance(arguments, dict) else {}
     verb = tool_verb(name)
     pending = phase in {"start", "output"}
@@ -1541,12 +1544,41 @@ def _graph_compact_rows(text: str, max_rows: int = 8) -> list[tuple[int | None, 
     return rows
 
 
+# What the validation gate tells the agent, not the user. Shown as it is,
+# "request approval for that command" read as a permission request that no
+# approval card ever showed, even with every permission granted.
+_AGENT_ONLY_VALIDATION = (
+    "This is a validation prerequisite, not a request for user permission.",
+    "Continue the required validation automatically.",
+    "Retry closing only after it passes.",
+    "If a required command actually needs permission, request approval for that command and explain why.",
+    "User approval does not replace passing validation.",
+)
+_VALIDATION_HEADS = ("Validation pending: task remains open.", "Validation required before closing this work.")
+VALIDATION_FOR_USER = "Navin runs these checks itself before closing the task: nothing needs your approval."
+
+
 def display_tool_error(error: str) -> str:
     """Hide agent retry instructions while preserving the actionable failure."""
-    return re.sub(
+    text = re.sub(
         r"\n\s*\[(?:No tool was executed\.|Analyze the error above).*\]\s*$",
         "", error.replace("\r\n", "\n"), flags=re.DOTALL,
     ).strip()
+    if not text.startswith(_VALIDATION_HEADS):
+        return text
+    lines: list[str] = []
+    for line in text.splitlines():
+        kept = line
+        for sentence in _AGENT_ONLY_VALIDATION:
+            kept = kept.replace(sentence, "")
+        if kept != line:
+            # Only the gate's own sentences are touched, never a failure
+            # excerpt with its indentation.
+            kept = " ".join(kept.split())
+            if not kept:
+                continue
+        lines.append(kept)
+    return "\n".join([lines[0], VALIDATION_FOR_USER, *lines[1:]])
 
 
 def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:

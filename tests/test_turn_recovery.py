@@ -666,3 +666,56 @@ def test_gateway_shutdown_handler_reports_the_stop_signal():
         return names
 
     assert asyncio.run(run()) == ["SIGTERM"]
+
+
+def test_a_replayed_task_that_works_again_is_resumed_at_the_next_restart(tmp_path):
+    # Seen live: a task replayed after a quit worked for an hour in slices,
+    # then the next restart closed it as "stopped twice in a row".
+    from navin.session import turn_continuation as tc
+
+    _, session, _ = setup_record(tmp_path)
+    sessions = SessionManager(tmp_path)
+    reborn = TurnRecovery(sessions)
+    assert reborn.discover(channel="websocket") == [session.key]
+    replay = reborn.take_due(active_keys=set())[0]
+    session = sessions.get_or_create(session.key)
+    reborn.begin(session, replay)
+    for _ in range(3):
+        reborn.begin(session, InboundMessage(
+            channel="websocket", chat_id="recovery-test", sender_id="system:continuation",
+            content="Continue the unfinished task", session_key_override=session.key,
+            metadata={tc.INTERNAL_CONTINUATION_META: True, tc.INTERNAL_CONTINUATION_KIND_META: "turn_budget"},
+        ))
+    sessions.save(session)
+
+    again = TurnRecovery(SessionManager(tmp_path))
+    assert again.discover(channel="websocket") == [session.key]
+    assert again.cut_twice == set()
+    assert again.abandoned == []
+
+
+def test_the_work_a_background_result_started_resumes_after_a_restart(tmp_path):
+    # A finished command woke the chat; its turn queued a next slice. That
+    # chain had no record: a restart lost the rest of the work silently.
+    from navin.session import turn_continuation as tc
+
+    sessions = SessionManager(tmp_path)
+    session = sessions.get_or_create("websocket:system-chain")
+    recovery = TurnRecovery(sessions)
+    recovery.begin(session, InboundMessage(
+        channel="websocket", chat_id="system-chain", sender_id="system:continuation",
+        content="Continue the unfinished task", session_key_override=session.key,
+        metadata={tc.INTERNAL_CONTINUATION_META: True, tc.INTERNAL_CONTINUATION_KIND_META: "turn_budget"},
+    ))
+    assert session.metadata[RECOVERY_KEY]["status"] == "running"
+    # A goal slice with no tracked request still starts nothing.
+    goal = SessionManager(tmp_path).get_or_create("websocket:goal-only")
+    TurnRecovery(SessionManager(tmp_path)).begin(goal, InboundMessage(
+        channel="websocket", chat_id="goal-only", sender_id="system:continuation",
+        content="Continue the goal", session_key_override=goal.key,
+        metadata={tc.INTERNAL_CONTINUATION_META: True, tc.INTERNAL_CONTINUATION_KIND_META: "sustained_goal"},
+    ))
+    assert RECOVERY_KEY not in goal.metadata
+
+    again = TurnRecovery(SessionManager(tmp_path))
+    assert again.discover(channel="websocket") == [session.key]

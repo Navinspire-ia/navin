@@ -81,6 +81,9 @@ def test_f6_runs_queued_prompts_in_parallel_and_cards_show(tmp_path):
             await pilot.pause()
             panel = app.query_one("#agents", AgentsPanel)
             assert "ab12" in panel._agents
+            await pilot.press("f7")
+            await pilot.pause()
+            assert panel.expanded
             assert "add a README section" in str(panel.content)
 
             # Its result is announced into this same chat as a normal reply.

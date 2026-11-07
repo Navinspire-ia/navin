@@ -59,6 +59,7 @@ import { usePendingReview, PendingChangesContext } from "@/hooks/usePendingRevie
 import { proveProjectPath } from "@/components/dev/proveChange";
 import { useProveChange } from "@/hooks/useProveChange";
 import { codePanelHref } from "@/lib/code-panel-route";
+import { autoSendTargetsChat, runtimeModelFrameApplies } from "@/lib/thread-routing";
 import { ApprovalPrompt } from "@/components/thread/ApprovalPrompt";
 import { ChoicePrompt } from "@/components/thread/ChoicePrompt";
 import { CredentialRequestCards } from "@/components/thread/CredentialRequestCard";
@@ -341,6 +342,8 @@ interface ThreadShellProps {
     text: string;
     nonce: number;
     documentTemplate?: { category: string; name: string; title?: string };
+    /** Send only in this chat (its session key); others leave it queued. */
+    targetKey?: string;
   } | null;
   /** Text to drop into the composer without sending it. */
   composerSeed?: {
@@ -1583,7 +1586,7 @@ export function ThreadShell({
     return client.onRuntimeModelUpdate((modelName, modelPreset, meta) => {
       // The frame reaches every window. Another chat's budget swap must not
       // repin this thread onto a model its user never picked.
-      if (meta?.chatId && meta.chatId !== "*" && chatId && meta.chatId !== chatId) return;
+      if (!runtimeModelFrameApplies(meta, chatId)) return;
       const reason = meta?.reason || "";
       if (reason.startsWith("task:")) {
         const role = reason.slice("task:".length).trim();
@@ -2057,6 +2060,7 @@ export function ThreadShell({
       consumedAutoSendNonceRef.current = autoSendRequest.nonce;
       return;
     }
+    if (!autoSendTargetsChat(autoSendRequest.targetKey, historyKey)) return;
     // Wait until the agent is idle: the effect re-runs when isStreaming/booting
     // change, so the action is queued instead of silently dropped.
     if (isStreaming || booting) return;
@@ -2093,6 +2097,7 @@ export function ThreadShell({
     handleComposerTurnModeChange,
     handleThreadSend,
     handleWelcomeSend,
+    historyKey,
     isViewer,
     isStreaming,
     selectedDocumentTemplate,

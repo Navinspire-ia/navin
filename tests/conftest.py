@@ -55,6 +55,15 @@ from navin.providers import reasoning_control  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _private_chat_write_registry(tmp_path_factory, monkeypatch):
+    """Writes shared between CLI processes go to a temporary registry, never ~/.navin."""
+    from navin.agent import code_validation
+
+    registry = tmp_path_factory.getbasetemp() / "chat-writes.json"
+    monkeypatch.setattr(code_validation, "_shared_writes_path", lambda _root: registry)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_config_path(tmp_path):
     previous = loader._current_config_path
     loader.set_config_path(tmp_path / "config.json")

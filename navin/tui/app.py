@@ -1457,6 +1457,10 @@ class NavinApp(App[None]):
             return
         key = self.runtime.session_key
         self._queued_prompts[key] = [item for item in self._queued_prompts.get(key, []) if item.id != event.prompt_id]
+        # Hide the queue immediately when its last item is removed. The
+        # durable flush in _refresh_queue can yield to another UI update.
+        if not self._queued_prompts[key]:
+            self.query_one(PromptQueue).display = False
         await self._refresh_queue()
 
     @on(QueuedPromptRow.Edited)
@@ -3647,8 +3651,9 @@ class NavinApp(App[None]):
                 title or "Session",
                 [
                     PickItem("open", "Open"),
-                    PickItem("history", "History", "prompts, dates and processing state"),
-                    PickItem("plans", "My plans", "project tasks and unfinished work"),
+                    PickItem("history", "Historique", "messages et dates de cette conversation"),
+                    PickItem("plans", "Plan", "tâches, échecs et reprise de cette conversation"),
+                    PickItem("agents", "Tâches parallèles", "échecs, reprise et relance (F8)"),
                     PickItem("fork", "Fork", "a copy of this chat to go on from here"),
                     PickItem("rename", "Rename"),
                     PickItem("pin", "Unpin" if pinned else "Pin"),
@@ -3673,6 +3678,10 @@ class NavinApp(App[None]):
             await self._show_session_history(path, key, live)
         elif choice == "plans":
             await self._show_session_plans(path, key)
+        elif choice == "agents":
+            if not here or key != self.runtime.session_key:
+                await self._open_project_session(path, key)
+            self.action_inspect_agents(state_filter="errors")
         elif choice == "fork":
             await self._fork_session(path, key, title, live)
         elif choice == "rename":
@@ -3725,54 +3734,24 @@ class NavinApp(App[None]):
             await self._flash("session deleted", "success")
 
     async def _show_session_history(self, path: str, key: str, live: Any = None) -> None:
-        """Every prompt of a chat with its date and whether a reply was saved."""
-        from datetime import datetime
-
+        """Show the saved prompts of this chat without rebuilding a Markdown document."""
         from navin.session.manager import SessionManager
+        from navin.tui.session_overview import SessionOverviewScreen, collect_prompt_history
 
         def collect() -> list[dict[str, Any]]:
             manager = live if live is not None else SessionManager(Path(path))
             session = manager.peek(key)
-            return list(session.messages) if session else []
+            return collect_prompt_history(session.messages if session else [])
 
-        messages = await asyncio.to_thread(collect)
-        prompts: list[str] = []
-        for index, message in enumerate(messages):
-            if message.get("role") != "user" or message.get("injected_event") or message.get("_channel_delivery"):
-                continue
-            content = message.get("content")
-            if not isinstance(content, str) or not content.strip():
-                continue
-            stamp = str(message.get("timestamp") or "")
-            try:
-                date = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
-            except ValueError:
-                date = "Date unavailable"
-            following = messages[index + 1:]
-            turn = following[:next((n for n, row in enumerate(following) if row.get("role") == "user"), len(following))]
-            completed = any(row.get("role") == "assistant" and row.get("content") and not row.get("tool_calls") for row in turn)
-            state = "🟢 Response recorded (task completion not verified)" if completed else "🟠 No completed response recorded"
-            prompts.append(f"### {date} - {state}\n\n{content.strip()}\n")
-        await self.push_screen(MarkdownScreen("# Session history\n\n" + ("\n---\n\n".join(prompts) if prompts else "No prompts saved in this session.")))
+        prompts = await asyncio.to_thread(collect)
+        await self.push_screen(SessionOverviewScreen("history", prompts=prompts))
 
     async def _show_session_plans(self, path: str, key: str) -> None:
-        """The project's plan: finished tasks, what is left, and how to resume it."""
-        from navin.board.store import ProjectBoardStore
+        """Only this chat's board tasks, with an explicit failed-work tab."""
+        from navin.tui.session_overview import SessionOverviewScreen, collect_session_plan
 
-        tasks = await asyncio.to_thread(ProjectBoardStore(Path(path)).read_tasks)
-        done = sum(task.get("status") == "done" for task in tasks)
-        lines = [f"# My plans - {done}/{len(tasks)} tasks complete", ""]
-        for task in tasks:
-            state = str(task.get("status") or "planned")
-            icon = "🟢" if state == "done" else "⚪" if state == "cancelled" else "🟠"
-            lines.append(f"## {icon} {task.get('title') or 'Untitled'} - {state}")
-            if task.get("description"):
-                lines.append(str(task["description"]))
-            if state not in {"done", "cancelled"}:
-                lines.append(f"\nTo resume: open this session and ask to continue task `{task.get('id')}`. Dependencies: {', '.join(task.get('depends_on') or []) or 'none'}.\n")
-        if not tasks:
-            lines.append("No project tasks saved yet.")
-        await self.push_screen(MarkdownScreen("\n\n".join(lines)))
+        tasks = await asyncio.to_thread(collect_session_plan, Path(path), key)
+        await self.push_screen(SessionOverviewScreen("plan", tasks=tasks))
 
     async def _fork_session(self, path: str, key: str, title: str, live: Any = None) -> None:
         """Copy a chat and open the copy, like Fork chat in the desktop."""
@@ -4551,7 +4530,7 @@ class NavinApp(App[None]):
         if panel is not None:
             panel.dismiss_finished()
 
-    def action_inspect_agents(self, task_id: str = "") -> None:
+    def action_inspect_agents(self, task_id: str = "", *, state_filter: str = "all") -> None:
         from navin.tui.agents import AgentsScreen
 
         panel = self._agents_panel()
@@ -4563,6 +4542,7 @@ class NavinApp(App[None]):
             dismiss=panel.dismiss if panel else None,
             dismiss_finished=panel.dismiss_finished if panel else None,
             select=task_id or None,
+            state_filter=state_filter,
         ))
 
     def action_rename_chat(self) -> None:
@@ -5225,6 +5205,25 @@ class NavinApp(App[None]):
             cancel_first=True,
         ):
             self._quit_confirmed = True
+            # A quit the user confirmed is a stop from outside the turns: it
+            # must not use up their single replay, or the next start, often
+            # just to load new code, closed them as "stopped twice in a row".
+            note = getattr(self.runtime, "note_external_stop", None)
+            if callable(note):
+                try:
+                    kept = await note(f"quit ({reason})")
+                except Exception as exc:
+                    resilience.record(
+                        "quit", f"could not keep the resume of the running turns: {exc!r}",
+                        project=self._project_label(),
+                    )
+                else:
+                    if kept:
+                        turns = "turn will" if kept == 1 else "turns will"
+                        resilience.record(
+                            "quit", f"{kept} {turns} resume at the next start",
+                            project=self._project_label(),
+                        )
             await self.action_quit(reason)
 
     # -- jump to the latest messages ----------------------------------------

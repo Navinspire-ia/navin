@@ -584,7 +584,7 @@ def test_gpt_turn_through_the_runner_streams_each_step_once(tmp_path):
     ])
     provider = _gpt_provider([step1, step2])
     hook = StreamHook()
-    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook)))
+    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook, conversational_turn=True)))
     assert result.stop_reason == "completed"
     assert result.final_content == "a.py sets x; src has b.py."
     assert hook.events == [
@@ -607,7 +607,7 @@ def test_claude_turn_through_the_runner_streams_each_step_once(tmp_path):
     )
     provider = _claude_provider([_claude_tool_turn(), final])
     hook = StreamHook()
-    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook)))
+    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook, conversational_turn=True)))
     assert result.final_content == "Done: x = 1."
     reasoning = "".join(v for k, v in hook.events if k == "reasoning")
     assert reasoning == "Look at both files."  # streamed once, not re-emitted post-hoc
@@ -631,7 +631,7 @@ def test_mid_stream_retry_through_the_runner_keeps_one_final_answer(tmp_path):
     second = _Steps([(0, _cc(content="The answer is 42.")), (0, _cc(finish="stop"))])
     provider = _gpt_provider([first, second])
     hook = StreamHook()
-    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook)))
+    result = asyncio.run(AgentRunner().run(_spec(provider, root, hook, conversational_turn=True)))
     assert result.final_content == "The answer is 42."
     # The interrupted attempt is closed as its own segment before the retry.
     assert hook.events == [
@@ -800,7 +800,7 @@ def _inbound(content: str, chat: str):
 
     return InboundMessage(
         channel="websocket", sender_id="user", chat_id=chat, content=content,
-        metadata={"_wants_stream": True, "composer_mode": "agent"},
+        metadata={"_wants_stream": True, "composer_mode": "agent", "conversational_turn": True},
     )
 
 
@@ -949,7 +949,7 @@ def test_mid_stream_retry_marks_the_partial_segment_discarded(tmp_path):
     first = _Steps([(0, _cc(content="The ans")), (0, FakeConnectionError("reset"))])
     second = _Steps([(0, _cc(content="The answer is 42.")), (0, _cc(finish="stop"))])
     hook = _DiscardHook()
-    result = asyncio.run(AgentRunner().run(_spec(_gpt_provider([first, second]), root, hook)))
+    result = asyncio.run(AgentRunner().run(_spec(_gpt_provider([first, second]), root, hook, conversational_turn=True)))
     assert result.final_content == "The answer is 42."
     assert hook.events == [
         ("delta", "The ans"), ("end", True, True),

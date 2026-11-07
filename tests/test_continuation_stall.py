@@ -198,6 +198,15 @@ def test_board_prompt_only_while_a_touched_task_is_open(tmp_path, monkeypatch) -
     assert tc._board_continuation_available(session_key="s", message_metadata=meta)
     store.update_task(task["id"], actor="user", actor_type="human", fields={"status": "done"})
     assert not tc._board_continuation_available(session_key="s", message_metadata=meta)
+    # A blocked step is not work the chat can resume: it used to restart the
+    # board checklist on requests that had nothing left to do on the plan.
+    blocked = store.create_task(title="Wait for the key", status="blocked", actor="agent", actor_type="agent")
+    monkeypatch.setattr(session_focus, "touched", lambda _key: [blocked["id"]])
+    assert not tc._board_continuation_available(session_key="s", message_metadata=meta)
+    # The terminal sends no scope with its messages: the turn's workspace is used.
+    active = store.create_task(title="Wire it", status="in_progress", actor="agent", actor_type="agent")
+    monkeypatch.setattr(session_focus, "touched", lambda _key: [active["id"]])
+    assert tc._board_continuation_available(session_key="s", workspace=tmp_path)
 
 
 def test_unbounded_runs_stop_when_two_slices_change_nothing() -> None:

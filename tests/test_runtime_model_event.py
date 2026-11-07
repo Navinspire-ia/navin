@@ -66,3 +66,39 @@ class RuntimeModelFrameTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeModelRoutingTest(unittest.IsolatedAsyncioTestCase):
+    """The model of one chat's turn goes to that chat only.
+
+    Seen live: every routed turn was broadcast to every desktop window, so the
+    bar above a chat showed another chat's model and its effort control
+    changed that other chat's preset.
+    """
+
+    async def _published(self, **fields: Any) -> list[OutboundMessage]:
+        from navin.bus.runtime_events import RuntimeModelChanged
+        from navin.session.webui_turns import WebuiTurnCoordinator
+
+        sent: list[OutboundMessage] = []
+
+        class _Bus:
+            async def publish_outbound(self, message: OutboundMessage) -> None:
+                sent.append(message)
+
+        coordinator = WebuiTurnCoordinator(bus=_Bus(), sessions=None, schedule_background=lambda _c: None)
+        await coordinator._handle_runtime_model_changed(
+            RuntimeModelChanged(model="gpt-5.6-terra", model_preset="codex", **fields)
+        )
+        return sent
+
+    async def test_a_desktop_turn_reaches_its_own_chat(self) -> None:
+        sent = await self._published(reason="route:code", channel="websocket", chat_id="chat-7")
+        self.assertEqual([m.chat_id for m in sent], ["chat-7"])
+
+    async def test_a_terminal_turn_reaches_no_desktop_chat(self) -> None:
+        self.assertEqual(await self._published(reason="task:review", channel="cli", chat_id="direct"), [])
+
+    async def test_a_change_for_every_chat_is_still_broadcast(self) -> None:
+        sent = await self._published(reason="budget", previous_model="ox-alpha", used_percent=80)
+        self.assertEqual([m.chat_id for m in sent], ["*"])

@@ -4444,6 +4444,13 @@ async def handle_multitask_spawn(state: Any, msg: Any, registry: Any) -> bool:
             session_metadata=session_metadata,
         )
         runtime = state.llm_runtime()
+        # Each Multitask prompt gets its own git checkout so parallel tasks
+        # cannot trample each other's edits. A folder without git (Documents,
+        # Marketing, a new project) shares its tree: asking for isolation
+        # there made every prompt stop on "isolation was requested".
+        isolate = await asyncio.to_thread(
+            worktree.can_isolate, getattr(scope, "project_path", None),
+        )
         detail = await manager.spawn(
             task=prompt,
             runtime=runtime,
@@ -4455,11 +4462,7 @@ async def handle_multitask_spawn(state: Any, msg: Any, registry: Any) -> bool:
             parent_metadata=(
                 dict(session_metadata) if isinstance(session_metadata, dict) else None
             ),
-            # Cursor-style isolation: each Multitask prompt gets its own git
-            # worktree so parallel tasks cannot trample each other's edits.
-            # On a non-git project the manager falls back to the shared tree
-            # and says so in the announcement.
-            isolate=True,
+            isolate=isolate,
             client_key=client_key,
         )
         if not spawn_was_accepted(detail):
