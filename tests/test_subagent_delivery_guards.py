@@ -419,3 +419,62 @@ def test_validation_failure_status_distinguishes_missing_from_failed_checks(tmp_
 
     assert asyncio.run(run(False)) == "unvalidated"
     assert asyncio.run(run(True)) == "validation_failed"
+
+
+def test_a_failed_settlement_journal_write_after_a_merge_still_announces_success(tmp_path, monkeypatch):
+    """The merge happened: a journal error must not settle the checkout again."""
+    from navin.agent import worktree, worktree_merge
+
+    merges: list[str] = []
+    settled_again: list[object] = []
+
+    def create(root, task_id, pool_size=0):
+        path = tmp_path / "checkout"
+        path.mkdir(exist_ok=True)
+        return SimpleNamespace(path=path, origin=tmp_path, base="abc123", task_id=task_id)
+
+    async def settle_after_run(manager, checkout, *, ok, task_id, label, origin, on_settled=None):
+        merges.append(task_id)
+        note = "\n\nMerged automatically: 1 file changed."
+        await on_settled(note)
+        return note
+
+    class Runner:
+        async def run(self, spec):
+            return AgentRunResult(final_content="Feature added.", messages=[])
+
+    async def run():
+        manager = _manager(tmp_path, monkeypatch, runner=Runner())
+        real_io = manager._journal_io
+
+        def journal_io(method, *args):
+            if method == "checkpoint" and args[-1].get("phase") == "settled":
+                raise RuntimeError("database is locked")
+            return real_io(method, *args)
+
+        manager._journal_io = journal_io
+        real_settle = manager._settle_worktree
+
+        async def settle_worktree(checkout, **kwargs):
+            if checkout is not None:
+                settled_again.append(checkout)
+            return await real_settle(checkout, **kwargs)
+
+        manager._settle_worktree = settle_worktree
+        await manager.spawn(task="Add the feature", runtime=Mock(), session_key="cli:one", isolate=True)
+        await asyncio.gather(*list(manager._running_tasks.values()))
+        published = [m.content for m in manager.bus.published]
+        active = manager.active_worktrees()
+        await _stop(manager, "cli:one")
+        return published, active
+
+    monkeypatch.setattr(worktree, "create", create)
+    monkeypatch.setattr(worktree_merge, "settle_after_run", settle_after_run)
+    published, active = asyncio.run(run())
+    assert len(merges) == 1
+    assert settled_again == []
+    assert len(published) == 1
+    assert "completed successfully" in published[0]
+    assert "Merged automatically" in published[0]
+    assert "Error" not in published[0] and "kept at" not in published[0]
+    assert active == []

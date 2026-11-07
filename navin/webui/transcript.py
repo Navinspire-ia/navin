@@ -802,26 +802,45 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
 
 
 def _prompt_turn_status(rows: list[dict[str, Any]]) -> str:
-    """Use only persisted final answers, never progress or discarded streams."""
-    error = any(
-        row.get("event") in {"error", "turn_error"}
-        or (row.get("event") == "message" and row.get("kind") == "error")
-        or (row.get("event") == "message" and row.get("kind") == "progress"
+    """Use only persisted final answers, never progress or discarded streams.
+
+    A turn or model error always marks the prompt as failed. A failed tool only
+    does when no final answer follows it: the agent may recover from a tool
+    error and still answer, and that turn is done.
+    """
+    def is_answer(row: dict[str, Any]) -> bool:
+        return (
+            (row.get("event") == "message"
+             and row.get("kind") not in {"progress", "tool_hint", "reasoning", "error"}
+             and isinstance(row.get("text"), str) and bool(row["text"].strip()))
+            or (row.get("event") == "stream_end" and not row.get("discarded")
+                and isinstance(row.get("text"), str) and bool(row["text"].strip()))
+        )
+
+    def is_tool_failure(row: dict[str, Any]) -> bool:
+        return (
+            row.get("event") == "message" and row.get("kind") == "progress"
             and isinstance(row.get("tool_events"), list)
             and any(isinstance(tool, dict) and tool.get("phase") == "error"
-                    for tool in row["tool_events"]))
+                    for tool in row["tool_events"])
+        )
+
+    if any(
+        row.get("event") in {"error", "turn_error"}
+        or (row.get("event") == "message" and row.get("kind") == "error")
         for row in rows
-    )
-    if error:
+    ):
         return "error"
-    answered = any(
-        (row.get("event") == "message"
-         and row.get("kind") not in {"progress", "tool_hint", "reasoning", "error"}
-         and isinstance(row.get("text"), str) and bool(row["text"].strip()))
-        or (row.get("event") == "stream_end" and not row.get("discarded")
-            and isinstance(row.get("text"), str) and bool(row["text"].strip()))
-        for row in rows
-    )
+    answered = False
+    unanswered_tool_failure = False
+    for row in rows:
+        if is_tool_failure(row):
+            unanswered_tool_failure = True
+        elif is_answer(row):
+            answered = True
+            unanswered_tool_failure = False
+    if unanswered_tool_failure:
+        return "error"
     return "done" if answered and any(row.get("event") == "turn_end" for row in rows) else "unfinished"
 
 

@@ -310,7 +310,22 @@ def _stop_hook_round_cap(spec: Any) -> int:
         return round_cap(spec.workspace, spec.session_key, _MAX_STOP_HOOK_ROUNDS)
     except Exception:  # noqa: BLE001 - never break a turn over the loop
         return _MAX_STOP_HOOK_ROUNDS
+# Validation reminders for one unchanged code revision. A real fix (a new
+# revision) opens a new count; the absolute ceiling below still stops a loop
+# whose revision keeps moving without progress (a test rewriting a file).
 _MAX_TOTAL_VALIDATION_NUDGES = 8
+_MAX_ABSOLUTE_VALIDATION_NUDGES = 3 * _MAX_TOTAL_VALIDATION_NUDGES
+# Replies whose tool call was cut by the output limit (finish_reason=length)
+# sent back to the model, tools still offered, per accepted request.
+_MAX_CUT_TOOL_CALL_NUDGES = 2
+_CUT_TOOL_CALL_PROMPT = (
+    "Your previous tool call ({names}) was cut by the output limit, so it was "
+    "not executed and nothing changed. Split the write into smaller calls (one "
+    "file or one section per call, exact replacements instead of a full rewrite) "
+    "and call the tool again."
+)
+# Largest tool schema pasted into the last-chance invalid-arguments nudge.
+_SCHEMA_HINT_MAX_CHARS = 4000
 # Browser-driven test runs (Playwright, Cypress, Puppeteer, tests/browser,
 # e2e) per accepted request, installs of their browsers included. A CLI session
 # asked for a sidebar restyle ran one browser script after another, installed
@@ -941,6 +956,10 @@ class AgentLoopGuard:
     tool_failures: dict[str, int] = field(default_factory=dict)
     readonly_calls: dict[str, int] = field(default_factory=dict)
     invalid_tool_iterations: int = 0
+    # The JSON schema of the failing tools was sent once with the last-chance
+    # invalid-arguments nudge of this request.
+    invalid_schema_hint_sent: bool = False
+    cut_tool_call_nudges: int = 0
     file_argument_fallback: frozenset[str] = field(default_factory=frozenset)
     no_progress_streak: int = 0
     no_progress_nudge_count: int = 0
@@ -1217,15 +1236,25 @@ class AgentRunner:
             return False, injection_cycles
         if real_injection:
             injection_cycles += 1
+        # A message the user typed while this answer was finishing does not
+        # make the answer wrong: the model already read it, so the user keeps
+        # it too, and the next answer follows it. Only Navin's own goal
+        # continuation (and background results) still supersede it.
+        keep_answer = real_injection and any(
+            self._typed_by_user(injection) for injection in injections
+        )
         if assistant_message is not None:
-            assistant_message[HIDDEN_HISTORY_META] = {"kind": "superseded_answer"}
+            if not keep_answer:
+                assistant_message[HIDDEN_HISTORY_META] = {"kind": "superseded_answer"}
             messages.append(assistant_message)
         self._append_injected_messages(messages, injections)
         if assistant_message is not None and iteration is not None:
             await self._emit_checkpoint(
                 spec,
                 {
-                    "phase": "continuing",
+                    # "continuing" marks a withdrawn candidate (kept out of
+                    # the journal); a kept answer is a normal step of the run.
+                    "phase": "answered" if keep_answer else "continuing",
                     "iteration": iteration,
                     "model": spec.runtime.model,
                     "assistant_message": assistant_message,
@@ -1241,6 +1270,40 @@ class AgentRunner:
         else:
             logger.info("Injected sustained-goal continuation {}", phase)
         return True, injection_cycles
+
+    @staticmethod
+    def _typed_by_user(message: dict[str, Any]) -> bool:
+        """An injected row the user typed: not a background result, a nudge or a peer."""
+        from navin.session.history_visibility import is_runtime_nudge_message
+
+        return (
+            message.get("role") == "user"
+            and not message.get("injected_event")
+            and message.get("injection_sender", "user") == "user"
+            and not is_hidden_history_message(message)
+            and not is_runtime_nudge_message(message)
+        )
+
+    @staticmethod
+    def _invalid_arguments_schema_hint(spec: AgentRunSpec, tool_calls: list[ToolCallRequest]) -> str:
+        """The JSON schema of the tools called with invalid arguments, as a nudge."""
+        parts: list[str] = []
+        for name in dict.fromkeys(call.name for call in tool_calls):
+            tool = spec.tools.get(name)
+            schema = getattr(tool, "parameters", None) if tool is not None else None
+            if not isinstance(schema, dict) or not schema:
+                continue
+            text = json.dumps(schema, ensure_ascii=False, sort_keys=True, default=str)
+            if len(text) > _SCHEMA_HINT_MAX_CHARS:
+                text = text[:_SCHEMA_HINT_MAX_CHARS] + " ..."
+            parts.append(f"{name} parameters (JSON schema): {text}")
+        if not parts:
+            return ""
+        return (
+            "\n\nLast attempt before this turn stops on invalid tool arguments. "
+            + "\n".join(parts)
+            + "\nSend one complete JSON object that matches this schema, with the actual values."
+        )
 
     @staticmethod
     async def _discard_candidate(
@@ -1745,6 +1808,21 @@ class AgentRunner:
                 if (
                     fatal_error is None
                     and invalid_tool_iterations > 0
+                    and not loop_guard.invalid_schema_hint_sent
+                    and invalid_tool_iterations >= spec.max_invalid_tool_iterations - 1
+                    and (schema_hint := self._invalid_arguments_schema_hint(spec, response.tool_calls))
+                ):
+                    # Before the stop, the model gets the exact schema once:
+                    # the per-call hint only names the required fields, and a
+                    # model that kept guessing the shape had nothing else to go on.
+                    loop_guard.invalid_schema_hint_sent = True
+                    results[-1] = str(results[-1]) + schema_hint
+                    invalid_tool_iterations = loop_guard.invalid_tool_iterations = min(
+                        invalid_tool_iterations, max(spec.max_invalid_tool_iterations - 1, 0),
+                    )
+                if (
+                    fatal_error is None
+                    and invalid_tool_iterations > 0
                     and invalid_tool_iterations >= spec.max_invalid_tool_iterations
                 ):
                     names = ", ".join(dict.fromkeys(call.name for call in response.tool_calls))
@@ -2036,8 +2114,42 @@ class AgentRunner:
                     response.finish_reason,
                     spec.session_key or "default",
                 )
+            # A tool call cut by the output limit: its text only announces the
+            # call ("I write the file now"), so it is never the answer. The
+            # model is sent back, tools still offered, to split the write.
+            cut_tool_call = response.finish_reason == "length" and response.has_tool_calls
+            if cut_tool_call and loop_guard.cut_tool_call_nudges < _MAX_CUT_TOOL_CALL_NUDGES:
+                loop_guard.cut_tool_call_nudges += 1
+                cut_names = ", ".join(dict.fromkeys(call.name for call in response.tool_calls))
+                logger.info(
+                    "Tool call {} cut by the output limit on turn {} for {} ({}/{}); asking for smaller calls",
+                    cut_names, iteration, spec.session_key or "default",
+                    loop_guard.cut_tool_call_nudges, _MAX_CUT_TOOL_CALL_NUDGES,
+                )
+                announcement = None
+                if not is_blank_text(response.content or ""):
+                    announcement = build_assistant_message(
+                        response.content or "",
+                        reasoning_content=response.reasoning_content,
+                        thinking_blocks=response.thinking_blocks,
+                    )
+                await self._discard_candidate(hook, context, announcement)
+                if announcement is not None:
+                    messages.append(announcement)
+                messages.append({
+                    "role": "user",
+                    "content": _CUT_TOOL_CALL_PROMPT.format(names=cut_names),
+                    HIDDEN_HISTORY_META: {"kind": "cut_tool_call"},
+                })
+                await hook.after_iteration(context)
+                continue
 
             clean = hook.finalize_content(context, response.content)
+            if cut_tool_call:
+                # Out of reminders: the announcement still is not an answer.
+                # It is withdrawn and the reply is handled as a blank one.
+                await self._discard_candidate(hook, context, None)
+                clean = ""
             if response.finish_reason != "error" and is_blank_text(clean):
                 empty_content_retries += 1
                 if empty_content_retries < spec.max_empty_retries:
@@ -2095,6 +2207,10 @@ class AgentRunner:
                         response, clean = await self._strict_finalization_retry(
                             spec, hook, context, messages_for_model, response, clean,
                         )
+                    if response.finish_reason == "length" and response.has_tool_calls:
+                        # The finalization reply was cut mid tool call too:
+                        # its text is an announcement, not the answer.
+                        clean = ""
 
             if response.finish_reason == "length" and not is_blank_text(clean):
                 length_recovery_count += 1
@@ -2235,10 +2351,16 @@ class AgentRunner:
                 limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
                 await validation.warm_related_tests()
                 attempts = validation.nudge()
-                # Two identical refusals stop a stuck finish. The total cap
-                # also stops a loop whose state keeps moving without progress
-                # (a test rewriting a tracked file made one run 496 turns).
-                if attempts > limit or validation.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES:
+                # Two identical refusals stop a stuck finish. The cap per
+                # unchanged revision stops a loop whose state keeps moving
+                # without a fix; the absolute ceiling stops one whose revision
+                # keeps moving without progress (a test rewriting a tracked
+                # file made one run 496 turns).
+                if (
+                    attempts > limit
+                    or validation.revision_nudges > _MAX_TOTAL_VALIDATION_NUDGES
+                    or validation.total_nudges > _MAX_ABSOLUTE_VALIDATION_NUDGES
+                ):
                     await self._discard_candidate(hook, context, assistant_message)
                     final_content = validation.completion_message(
                         reason="repeated" if attempts > limit else "no_progress",
@@ -2513,7 +2635,21 @@ class AgentRunner:
             )
             if should_continue:
                 had_injections = True
-                await self._discard_candidate(hook, context, assistant_message)
+                if assistant_message is None or is_hidden_history_message(assistant_message):
+                    await self._discard_candidate(hook, context, assistant_message)
+                else:
+                    # The user typed a message while this answer was
+                    # finishing: the answer stays, on screen and in history.
+                    if length_parts:
+                        seam = " " if raw_content[:1].isspace() and not length_parts[-1].endswith(" ") else ""
+                        assistant_message["content"] = "".join(length_parts) + seam + str(
+                            assistant_message.get("content") or ""
+                        )
+                        length_parts.clear()
+                        length_recovery_count = 0
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=True)
+                        context.streamed_content = False
                 await hook.after_iteration(context)
                 continue
 

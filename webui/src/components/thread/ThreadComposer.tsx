@@ -198,6 +198,7 @@ import {
   splitPastedContentSegments,
   type PastedContentMap,
 } from "@/lib/pasted-content";
+import { appendPromptHistory, readPromptHistory } from "@/lib/prompt-history";
 import { applyDeskChatCommand } from "@/lib/desk-chat-command";
 import { configurationCommand, configurationCommands, configurationHash } from "@/lib/configuration-command";
 import {
@@ -1020,13 +1021,11 @@ function ThreadComposerImpl({
     historyIndexRef.current = null;
     historyDraftRef.current = "";
   }, [sessionKey]);
+  // Stores the collapsed text (paste placeholders, not the pasted bodies).
   const rememberPrompt = (prompt: string) => {
-    const history = historyRef.current;
-    const next = history[history.length - 1] === prompt ? history : [...history, prompt].slice(-PROMPT_HISTORY_LIMIT);
-    historyRef.current = next;
+    historyRef.current = appendPromptHistory(sessionKey, historyRef.current, prompt);
     historyIndexRef.current = null;
     historyDraftRef.current = "";
-    try { localStorage.setItem(promptHistoryKey(sessionKey), JSON.stringify(next)); } catch { /* storage unavailable */ }
   };
   const [pastes, setPastes] = useState<PastedContentMap>({});
   const [internalTurnMode, setInternalTurnMode] =
@@ -2249,7 +2248,7 @@ function ThreadComposerImpl({
     const isSlashSideChannel = isSideChannelLifecycle(slashLifecycle);
     const finalizeActiveTurn =
       slashLifecycle === "finalize_active_turn";
-    rememberPrompt(expanded);
+    rememberPrompt(trimmed);
     onSend(
       content,
       payload,
@@ -5031,15 +5030,3 @@ function AttachmentChip({
   );
 }
 
-const PROMPT_HISTORY_LIMIT = 100;
-function promptHistoryKey(sessionKey: string | null): string {
-  return `navin:prompt-history:${sessionKey ?? "new-chat"}`;
-}
-function readPromptHistory(sessionKey: string | null): string[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(promptHistoryKey(sessionKey)) ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(-PROMPT_HISTORY_LIMIT) : [];
-  } catch {
-    return [];
-  }
-}

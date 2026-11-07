@@ -4080,10 +4080,9 @@ class NavinApp(App[None]):
         self._push_preview_screen(markdown)
 
     def _push_preview_screen(self, markdown: str) -> None:
-        self.run_worker(self._push_preview_wait(markdown), exclusive=True, group="picker")
-
-    async def _push_preview_wait(self, markdown: str) -> None:
-        await self.push_screen(MarkdownScreen(markdown))
+        # Pushed directly, not through the exclusive "picker" worker group: a
+        # preview the agent asks for must never cancel a picker the user has open.
+        self.push_screen(MarkdownScreen(markdown))
 
     def _write_last_copy(self, text: str) -> str:
         root = Path(getattr(self.runtime.status, "workspace", "") or self.project_root)

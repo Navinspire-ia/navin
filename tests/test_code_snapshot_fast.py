@@ -142,6 +142,52 @@ def test_files_another_cli_process_wrote_are_not_this_agents_to_validate(tmp_pat
     assert cv.written_by_other_chats(root, {"src/theirs.py"}, this_chat) == set()
 
 
+def test_the_async_observation_reads_the_cross_process_registry_off_the_loop(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    from navin.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
+
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    registry = tmp_path / "state" / "chat-writes.json"
+    monkeypatch.setattr(cv, "_shared_writes_path", lambda _root: registry)
+    (root / "src" / "theirs.py").write_text("a = 1\n")
+    (root / "src" / "mine.py").write_text("a = 1\n")
+    real_pid = cv.os.getpid()
+    with monkeypatch.context() as other_process:
+        other_process.setattr(cv.os, "getpid", lambda: real_pid + 1)
+        cv.note_chat_writes(root, {"src/theirs.py"}, FileStates())
+    cv._CHAT_WRITES.pop(cv._write_key(root / "src" / "theirs.py"))
+    readers: list[threading.Thread] = []
+    real_read = cv._read_shared_writes
+
+    def recording_read(path):
+        readers.append(threading.current_thread())
+        return real_read(path)
+
+    monkeypatch.setattr(cv, "_read_shared_writes", recording_read)
+    this_chat = FileStates()
+
+    async def run():
+        state = cv.CodeValidationState()
+        await state.observe_workspace_async(cv.workspace_code_snapshot(root), root=root)
+        for name in ("theirs.py", "mine.py"):
+            (root / "src" / name).write_text("a = 2  # longer\n")
+        token = bind_file_states(this_chat)
+        try:
+            await state.observe_workspace_async(cv.workspace_code_snapshot(root), root=root)
+        finally:
+            reset_file_states(token)
+        return state, threading.current_thread()
+
+    state, loop_thread = asyncio.run(run())
+    assert readers, "the registry is still consulted"
+    assert loop_thread not in readers, "the registry was read on the event loop"
+    # Same verdict as the synchronous path: the other process's file is not ours.
+    assert state.paths == {"src/mine.py"}
+
+
 def test_runner_watches_editing_calls_only():
     call = lambda name, **arguments: SimpleNamespace(name=name, arguments=arguments)  # noqa: E731
     assert _may_edit_workspace(call("exec", command="npm run build")) is True

@@ -88,6 +88,11 @@
       "copy": "Copy",
       "showMore": "Show full prompt",
       "showLess": "Show less",
+      "copyAria": "Copy prompt: {{title}}",
+      "showMoreAria": "Show full prompt: {{title}}",
+      "showLessAria": "Show less of prompt: {{title}}",
+      "copied": "Copied",
+      "copyFailed": "Could not copy",
       "status": { "done": "Done", "unfinished": "Not finished", "error": "Error" }
     },
     "plans": {
@@ -97,8 +102,9 @@
       "error": "Could not load the plan.",
       "progress": "{{done}}/{{total}} tasks complete",
       "relaunch": "Relaunch",
+      "relaunchAria": "Relaunch {{title}} ({{id}})",
       "relaunchAll": "Relaunch all unfinished",
-      "status": { "done": "Done", "active": "In progress", "blocked": "Blocked", "pending": "Planned" }
+      "status": { "done": "Done", "active": "In progress", "blocked": "Blocked", "cancelled": "Stopped", "pending": "Planned" }
     },
     "activity": {
       "complete": "Agent finished",
@@ -10014,6 +10020,7 @@
       "effortPickerAria": "Choose thinking effort",
       "effortPickerTitle": "Thinking effort",
       "effortSection": "Effort",
+      "effortNextTurnHint": "Applies to the next turn",
       "contextPickerTitle": "Context window",
       "contextPickerAria": "Choose the context window",
       "contextSection": "Context",

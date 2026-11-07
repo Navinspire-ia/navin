@@ -283,7 +283,7 @@ class AgentsScreen(ModalScreen[None]):
             badge = Text(_STATE_LABELS[state],
                          style="cyan" if state == "running" else "green" if state == "succeeded" else "red")
             table.add_row(Text(str(row.get("label", key)), style="bold"), badge,
-                          Text(str(row.get("status", "")).splitlines()[0][:90]),
+                          Text((str(row.get("status", "")).splitlines() or [""])[0][:90]),
                           str(row.get("tokens", 0)), Text(key, style="dim"), key=key)
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))

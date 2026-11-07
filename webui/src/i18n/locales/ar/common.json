@@ -88,6 +88,11 @@
       "copy": "نسخ",
       "showMore": "عرض الرسالة كاملة",
       "showLess": "عرض أقل",
+      "copyAria": "نسخ الرسالة: {{title}}",
+      "showMoreAria": "عرض الرسالة كاملة: {{title}}",
+      "showLessAria": "عرض أقل من الرسالة: {{title}}",
+      "copied": "تم النسخ",
+      "copyFailed": "تعذر النسخ",
       "status": { "done": "مكتمل", "unfinished": "غير مكتمل", "error": "خطأ" }
     },
     "plans": {
@@ -97,8 +102,9 @@
       "error": "تعذر تحميل الخطة.",
       "progress": "{{done}}/{{total}} مهام مكتملة",
       "relaunch": "إعادة التشغيل",
+      "relaunchAria": "إعادة تشغيل {{title}} ({{id}})",
       "relaunchAll": "إعادة تشغيل جميع المهام غير المكتملة",
-      "status": { "done": "مكتمل", "active": "قيد التنفيذ", "blocked": "محظور", "pending": "مخطط" }
+      "status": { "done": "مكتمل", "active": "قيد التنفيذ", "blocked": "محظور", "cancelled": "متوقف", "pending": "مخطط" }
     },
     "activity": {
       "complete": "انتهى الوكيل",
@@ -10166,6 +10172,7 @@
       "effortPickerAria": "اختيار مستوى التفكير",
       "effortPickerTitle": "مستوى التفكير",
       "effortSection": "المستوى",
+      "effortNextTurnHint": "يُطبّق على الدور التالي",
       "contextPickerTitle": "نافذة السياق",
       "contextPickerAria": "اختيار نافذة السياق",
       "contextSection": "السياق",

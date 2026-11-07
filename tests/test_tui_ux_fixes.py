@@ -384,3 +384,68 @@ class TerminalPreviewScreenTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeldPreviewReplayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_held_turn_with_a_preview_opens_it_once_across_releases(self):
+        """A report reopened in the browser each time the chat was drawn mid-turn."""
+        from navin.bus.events import OutboundMessage
+        from navin.bus.outbound_events import StreamDeltaEvent
+
+        emitted: list = []
+
+        async def fake_emit(event):
+            emitted.append(event)
+
+        with tempfile.TemporaryDirectory() as name:
+            config = SimpleNamespace(workspace_path=Path(name))
+            runtime = TuiRuntime(config, on_event=fake_emit)
+            runtime._emit = fake_emit
+            workspace = str(runtime.workspace)
+            turn = asyncio.create_task(asyncio.sleep(3600))
+            self.addCleanup(turn.cancel)
+            runtime.agent_loop = SimpleNamespace(
+                _active_tasks={runtime.session_key: [turn]}, channels_config=None,
+            )
+            bus = MessageBus()
+            runtime.bus = bus
+            consumer = asyncio.create_task(runtime._consume_outbound(bus, workspace))
+            self.addCleanup(consumer.cancel)
+            channel, chat_id = runtime.channel, runtime.chat_id
+            runtime._hold(True)
+            await bus.publish_outbound(outbound_message_for_event(
+                channel=channel, chat_id=chat_id, event=FilePreviewOpenRequestedEvent(path="/tmp/report.html"),
+            ))
+            await bus.publish_outbound(OutboundMessage(
+                channel=channel, chat_id=chat_id, content="Hi", event=StreamDeltaEvent("Hi", "s"),
+            ))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            self.assertFalse(await runtime.release_held())
+            runtime._hold(True)
+            self.assertFalse(await runtime.release_held())
+            previews = [event for event in emitted if isinstance(event, UiFilePreview)]
+            self.assertEqual([event.path for event in previews], ["/tmp/report.html"])
+
+
+class PreviewKeepsPickerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_preview_does_not_cancel_the_open_picker(self):
+        """The preview shared the exclusive "picker" group: the user's choice was lost."""
+        from textual.worker import WorkerState
+
+        with tempfile.TemporaryDirectory() as name:
+            app = _make_app(Path(name))
+            async with app.run_test(size=(100, 32)) as pilot:
+                await pilot.pause()
+                gate = asyncio.Event()
+                app._spawn(gate.wait())
+                await pilot.pause()
+                picker = [w for w in app.workers if w.group == "picker"]
+                self.assertEqual(len(picker), 1)
+                app._push_preview_screen("# Report")
+                await pilot.pause()
+                self.assertIsInstance(app.screen, MarkdownScreen)
+                self.assertNotEqual(picker[0].state, WorkerState.CANCELLED)
+                self.assertFalse(picker[0].is_cancelled)
+                gate.set()
+                await pilot.pause()

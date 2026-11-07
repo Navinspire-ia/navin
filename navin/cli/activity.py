@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from loguru import logger
 from rich.console import Console
 from rich.text import Text
 
@@ -40,6 +41,36 @@ from navin.utils.tool_hints import (
 # Test totals survive the tail of a finished command (same rule as the TUI).
 _TEST_TOTALS = re.compile(r"\b\d+ (?:passed|failed|tests?|errors?)\b", re.IGNORECASE)
 _EXIT_RE = re.compile(r"^Exit code: (-?\d+)\s*$", re.MULTILINE)
+# A bounded snapshot of a long command starts with this mark once cut.
+_CUT_MARK = "\u2026"
+# Head of a snapshot searched in the previous one to find where they meet.
+_PROBE_CHARS = 64
+
+
+def _snapshot_tail(previous: str, chunk: str) -> str:
+    """The part of a bounded output snapshot not printed yet.
+
+    A long command sends its last few KB, cut with a leading mark, on every
+    tick: the window slides, so the new snapshot starts inside the previous
+    one. Only what follows their overlap is new.
+    """
+    if not previous:
+        return chunk
+    previous = previous.removeprefix(_CUT_MARK)
+    chunk = chunk.removeprefix(_CUT_MARK)
+    if chunk.startswith(previous):
+        return chunk[len(previous):]
+    probe = chunk[:_PROBE_CHARS]
+    start = previous.find(probe) if probe else -1
+    while start != -1:
+        seen = previous[start:]
+        if chunk.startswith(seen):
+            return chunk[len(seen):]
+        if seen.startswith(chunk):
+            return ""
+        start = previous.find(probe, start + 1)
+    # No overlap: the whole window is new.
+    return chunk
 
 
 def _poll_group(name: str, args: dict[str, Any]) -> str:
@@ -129,8 +160,9 @@ class ActivityPrinter:
         if self.on_status is not None and text:
             try:
                 self.on_status(text)
-            except Exception:  # noqa: BLE001 - a status line must never break output
-                pass
+            except Exception as exc:
+                # A status line must never break the output: logged, not raised.
+                logger.debug("CLI activity status callback failed: {}", exc)
 
     def _compact_run(self, name: str) -> bool:
         return self.console.is_terminal and (tool_verb(name) == "run" or name == "test_run")
@@ -197,14 +229,8 @@ class ActivityPrinter:
                 if event.get("output_mode") == "snapshot":
                     previous = state["output"]
                     state["output"] = chunk
-                    if chunk.startswith(previous):
-                        chunk = chunk[len(previous):]
-                    else:
-                        # A bounded tail may have dropped its oldest lines.
-                        for overlap in range(min(len(previous), len(chunk)), 0, -1):
-                            if previous.endswith(chunk[:overlap]):
-                                chunk = chunk[overlap:]
-                                break
+                    # A bounded tail may have dropped its oldest lines.
+                    chunk = _snapshot_tail(previous, chunk)
                 else:
                     state["output"] += chunk
                 if state["printed"] and chunk:

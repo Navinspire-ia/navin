@@ -387,3 +387,22 @@ def test_display_file_edit_path_skips_resolve_inside_the_workspace(tmp_path, mon
     assert calls == []
     assert fee.display_file_edit_path(ws / "src" / ".." / "b.ts", ws) == "b.ts"
     assert calls
+
+
+def test_sliding_snapshots_beyond_the_bound_print_only_their_new_tail():
+    """A long command sends "\u2026" + output[-8000:]: each tick reprinted all 8 KB."""
+    lines = [f"line-{i:05d} ok\n" for i in range(1200)]
+    first = "".join(lines[:800])
+    second = "".join(lines[:900])
+    stream = io.StringIO()
+    printer = ActivityPrinter(Console(file=stream, width=140, force_terminal=False))
+    printer.consume(tool_events=[{"call_id": "run", "name": "exec", "phase": "start",
+                                  "arguments": {"command": "make long"}}])
+    printer.consume(tool_events=[{"call_id": "run", "name": "exec", "phase": "output",
+                                  "output_mode": "snapshot", "output": "\u2026" + first[-8000:]}])
+    before = stream.getvalue()
+    printer.consume(tool_events=[{"call_id": "run", "name": "exec", "phase": "output",
+                                  "output_mode": "snapshot", "output": "\u2026" + second[-8000:]}])
+    added = stream.getvalue()[len(before):]
+    assert len(first) > 8000 and len(second) > 8000
+    assert added == "".join(lines[800:900])

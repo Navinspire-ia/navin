@@ -509,3 +509,18 @@ def test_compact_log_expands_and_copies_unshortened_validation_and_output(tmp_pa
             await pilot.press("escape")
 
     asyncio.run(run())
+
+
+def test_a_row_with_an_empty_status_does_not_break_the_refresh(tmp_path):
+    """"".splitlines()[0] raised IndexError inside the 0.5 s refresh."""
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = AgentsScreen(lambda: {"task-1": {"label": "Quiet agent", "phase": "running", "status": ""}})
+            app.push_screen(screen)
+            await pilot.pause()
+            table = screen.query_one(DataTable)
+            assert table.row_count == 1
+            assert str(table.get_row_at(0)[2]) == ""
+            await pilot.press("escape")
+    asyncio.run(run())

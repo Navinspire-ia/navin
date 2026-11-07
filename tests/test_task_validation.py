@@ -956,6 +956,27 @@ def test_validation_reminders_have_a_total_cap_even_when_state_moves():
     assert state.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES
 
 
+def test_the_reminder_cap_counts_per_unchanged_revision():
+    from navin.agent.runner import _MAX_ABSOLUTE_VALIDATION_NUDGES, _MAX_TOTAL_VALIDATION_NUDGES
+
+    state = CodeValidationState()
+    state.edited({"a.py"}, require_tests=True)
+    for index in range(_MAX_TOTAL_VALIDATION_NUDGES):
+        state.checks_revision = index  # the checks move, the code does not
+        state.nudge()
+    assert state.revision_nudges == _MAX_TOTAL_VALIDATION_NUDGES
+    # A real fix between two reminders opens a new count for its revision.
+    state.edited({"a.py"}, require_tests=True)
+    state.nudge()
+    assert state.revision_nudges == 1
+    assert state.total_nudges == _MAX_TOTAL_VALIDATION_NUDGES + 1
+    # The same revision keeps counting; the absolute ceiling stays above it.
+    state.checks_revision = -5
+    state.nudge()
+    assert state.revision_nudges == 2
+    assert _MAX_ABSOLUTE_VALIDATION_NUDGES > _MAX_TOTAL_VALIDATION_NUDGES
+
+
 def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monkeypatch):
     from navin.agent import code_validation as cv
     from navin.quality.check_budget import budget_for
@@ -1034,11 +1055,16 @@ def test_green_candidate_waits_for_late_work_before_streaming_or_history(tmp_pat
         assert any(kind == "activity" for kind, _ in events)
         assert provider.calls == 3
         rejected = next(m for m in result.messages if m.get("content") == candidate)
-        assert is_hidden_history_message(rejected)
+        # The injected message is one the user typed: the answer it arrived
+        # after stays in history (decision of t-67fc20b5); only Navin's goal
+        # continuations and background results still withdraw it.
+        assert not is_hidden_history_message(rejected)
         assert [cp["assistant_message"]["content"] for cp in checkpoints if cp["phase"] == "final_response"] == [final]
-        assert any(cp["phase"] == "continuing" for cp in checkpoints)
+        assert any(cp["phase"] == "answered" for cp in checkpoints)
+        assert not any(cp["phase"] == "continuing" for cp in checkpoints)
         rows, _ = visible_chat_rows(result.messages)
-        assert candidate not in [row["content"] for row in rows]
+        contents = [row["content"] for row in rows]
+        assert contents.index(candidate) < contents.index("Read evidence.txt before concluding.")
         assert rows[-1]["content"] == final
 
     asyncio.run(run())

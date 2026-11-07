@@ -532,6 +532,161 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bus.inbound[0].content, "continuation slice")
 
 
+class DispatchQueueTest(unittest.IsolatedAsyncioTestCase):
+    """The queued work of a chat: one next slice, in order, never for a deleted chat."""
+
+    @staticmethod
+    def _continuation(content: str = "Continue the unfinished task") -> InboundMessage:
+        from navin.session.turn_continuation import INTERNAL_CONTINUATION_META
+
+        return _msg(content, sender_id="system:continuation", metadata={INTERNAL_CONTINUATION_META: True})
+
+    async def _dispatch_queuing(
+        self, stub, slice_msg: InboundMessage, *, fail: bool = False, trigger: InboundMessage | None = None,
+    ) -> None:
+        from navin.session.turn_continuation import INTERNAL_CONTINUATION_PENDING_META
+
+        async def fake_process(msg, on_stream=None, on_stream_end=None, pending_queue=None):
+            msg.metadata[INTERNAL_CONTINUATION_PENDING_META] = True
+            pending_queue.put_nowait(slice_msg)
+            if fail:
+                raise ValueError("the session could not be saved")
+            return None
+
+        stub._process_message = fake_process
+        await AgentLoop._dispatch(stub, trigger or _msg("build the release"))
+
+    async def test_only_one_next_slice_waits_per_chat(self) -> None:
+        # Seen in the audit: a message republished beside the next slice ran
+        # its own turn, which queued a second slice: two chains, two answers.
+        bus = _FakeBus()
+        stub = _dispatch_stub(bus, None)
+        stub._queued_continuations = {}
+        first = self._continuation("a")
+        await self._dispatch_queuing(stub, first)
+        await self._dispatch_queuing(stub, self._continuation("b"))
+        self.assertEqual([m.content for m in bus.inbound], ["a"])
+        # Read and waiting for the chat, slice a still holds its place: the
+        # turn of a message that got the chat first cannot queue another.
+        await self._dispatch_queuing(stub, self._continuation("x"), trigger=_msg("and the colors?"))
+        self.assertEqual([m.content for m in bus.inbound], ["a"])
+        # Slice a starts: the chat can queue its next slice again.
+        await self._dispatch_queuing(stub, self._continuation("c"), trigger=first)
+        self.assertEqual([m.content for m in bus.inbound], ["a", "c"])
+
+    async def test_a_turn_that_fails_after_queuing_its_slice_drops_it_and_ends_the_run(self) -> None:
+        # The user saw "Sorry, I encountered an error." while the queued slice
+        # still resumed, without the failed slice's messages: work redone.
+        from navin.bus.runtime_events import TurnCompleted
+
+        bus = _FakeBus()
+        stub = _dispatch_stub(bus, None)
+        stub._queued_continuations = {}
+        stub.turn_recovery = SimpleNamespace(
+            matches=lambda msg, key: True, waiting=lambda key: False,
+            schedule=lambda session: None, finish=lambda session: None,
+        )
+        stub._settle_pending_user_turn = lambda session: None
+        completed: list = []
+        stub._runtime_events().bus.subscribe(completed.append, TurnCompleted)
+        await self._dispatch_queuing(stub, self._continuation(), fail=True)
+        self.assertEqual(bus.inbound, [])
+        self.assertEqual([m.content for m in bus.outbound], ["Sorry, I encountered an error."])
+        self.assertEqual(len(completed), 1)
+
+    async def test_waiters_get_the_chat_in_the_order_they_came(self) -> None:
+        # A wait cut every 30 s put the message back at the end of the queue:
+        # a later message or slice passed an earlier one.
+        async def retry_notice(msg):
+            async def notice(text: str) -> None:
+                return None
+
+            return notice
+
+        def stub_noticing_every(seconds: float):
+            stub = _dispatch_stub(_FakeBus(), None)
+            stub._SESSION_LOCK_NOTICE_S = seconds
+            stub._build_retry_wait_callback = retry_notice
+            return stub
+
+        # The first waiter hits several notice windows; the second none.
+        early, late = stub_noticing_every(0.02), stub_noticing_every(60.0)
+        lock = asyncio.Lock()
+        order: list[str] = []
+
+        async def turn(stub, name: str) -> None:
+            async with stub._session_turn_lock(lock, _msg(name), "websocket:chat-1"):
+                order.append(name)
+
+        await lock.acquire()
+        first = asyncio.create_task(turn(early, "first"))
+        await asyncio.sleep(0.005)
+        second = asyncio.create_task(turn(late, "second"))
+        await asyncio.sleep(0.09)
+        lock.release()
+        await asyncio.wait_for(asyncio.gather(first, second), 5)
+        self.assertEqual(order, ["first", "second"])
+
+    async def test_a_deleted_chat_is_not_brought_back_by_late_background_work(self) -> None:
+        import tempfile
+
+        from navin.session.manager import SessionManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = SessionManager(Path(tmp))
+            key = "websocket:chat-1"
+            session = sessions.get_or_create(key)
+            session.add_message("user", "hello")
+            sessions.save(session)
+            self.assertTrue(sessions.delete_session(key))
+            scheduled: list = []
+            stub = SimpleNamespace(
+                sessions=sessions, _deleted_work_cancelled=set(),
+                _schedule_background=scheduled.append, _automation_turn_coordinators=[],
+            )
+            late = _msg("[Subagent 'audit' completed successfully]", sender_id="subagent")
+            self.assertTrue(await AgentLoop._drop_for_deleted_chat(stub, late, key))
+            self.assertTrue(await AgentLoop._drop_for_deleted_chat(stub, self._continuation(), key))
+            # The chat's remaining work is stopped once.
+            self.assertEqual(len(scheduled), 1)
+            scheduled[0].close()
+            self.assertIsNone(await AgentLoop._process_system_message(
+                stub,
+                InboundMessage(channel="system", sender_id="subagent", chat_id="websocket:chat-1", content="done"),
+                runtime=None,
+            ))
+            # Nothing brought the file back.
+            self.assertFalse(sessions._get_session_path(key).exists())
+            # A message the user types brings the chat back.
+            self.assertFalse(await AgentLoop._drop_for_deleted_chat(stub, _msg("still there?"), key))
+            self.assertFalse(sessions.was_deleted(key))
+
+    async def test_requests_given_up_after_start_get_their_note(self) -> None:
+        # Only the start read the lists of the recovery: a request found when
+        # the terminal opened its chat was closed in silence.
+        from navin.tui.runtime import TuiRuntime
+
+        closed: list = []
+        session = SimpleNamespace(metadata={})
+        sessions = _FakeSessions()
+        sessions.get_or_create = lambda key: session
+        loop = SimpleNamespace(
+            sessions=sessions,
+            turn_recovery=SimpleNamespace(abandoned=["cli:a"], cut_twice={"cli:a"}),
+            _restore_runtime_checkpoint=lambda s: closed.append("restored"),
+            _close_interrupted_turn=lambda s, cut_twice: closed.append(("note", cut_twice)),
+        )
+        loop.close_abandoned_turns = MethodType(AgentLoop.close_abandoned_turns, loop)
+        scans: list = []
+        loop.turn_recovery.discover = lambda **kwargs: scans.append(kwargs)
+        tui = SimpleNamespace(agent_loop=loop, channel="cli", session_key="cli:a")
+        await TuiRuntime._resume_interrupted_turn(tui)
+        self.assertEqual(scans, [{"channel": "cli", "session_key": "cli:a"}])
+        self.assertEqual(closed, ["restored", ("note", True)])
+        self.assertEqual(loop.turn_recovery.abandoned, [])
+        self.assertEqual(sessions.saved, 1)
+
+
 class SliceBoundaryTest(unittest.IsolatedAsyncioTestCase):
     """Between two slices of one run, nothing may tell the screen the turn ended.
 

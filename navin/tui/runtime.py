@@ -478,10 +478,13 @@ HOLD_MAX_S = 30.0
 #: Project roots whose resolved folder the runtime remembers (a handful in practice).
 WORKSPACE_KEYS_MAX = 256
 #: Events not replayed: open cards are drawn again from the brokers, and the
-#: subagent rows from the subagent manager, both with their current state.
+#: subagent rows from the subagent manager, both with their current state. A
+#: file preview already opened in the browser or viewer must not open again
+#: each time the chat is drawn mid-turn.
 _NOT_REPLAYED = (
     ApprovalRequestedEvent, ApprovalClosedEvent, ChoiceRequestedEvent, ChoiceClosedEvent,
     CredentialRequestedEvent, CredentialClosedEvent, SubagentProgressEvent,
+    FilePreviewOpenRequestedEvent,
 )
 
 
@@ -948,8 +951,14 @@ class TuiRuntime:
         recovery = getattr(self.agent_loop, "turn_recovery", None)
         if recovery is None:
             return
-        with contextlib.suppress(Exception):
+        try:
             await asyncio.to_thread(recovery.discover, channel=self.channel, session_key=self.session_key)
+            close = getattr(self.agent_loop, "close_abandoned_turns", None)
+            if callable(close):
+                # What this scan gave up on gets its note now, not at the next start.
+                await close()
+        except Exception:
+            logger.warning("Could not check the interrupted turn of {}", self.session_key, exc_info=True)
 
     def _runtime_task_finished(self, task: asyncio.Task) -> None:
         if self._closed:
@@ -1371,7 +1380,12 @@ class TuiRuntime:
                 if bus is not self.bus or not self._is_ours(msg):
                     self._log_turn(msg, workspace)
                     await self._note_background(msg, workspace)
-                elif self._holding and msg.channel != "system" and self._hold_fresh():
+                elif (
+                    self._holding and msg.channel != "system"
+                    and not isinstance(outbound_event_from_message(msg), FilePreviewOpenRequestedEvent)
+                    and self._hold_fresh()
+                ):
+                    # A preview is never replayed: it opens now, not with the log.
                     self._log_turn(msg, workspace)  # drawn by release_held
                 else:
                     event = outbound_event_from_message(msg)

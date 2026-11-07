@@ -99,6 +99,9 @@ _STRIPPED_INBOUND_META_KEYS = {
     "exec_session_id",
     "exit_code",
     "subagent_task_id",
+    # The slot token of the continuation being run (navin/agent/loop.py,
+    # _admit_queued_continuation): each queued slice gets its own.
+    "_queued_continuation_token",
     # The replay token of a recovered request (turn_recovery.RECOVERY_ID_META,
     # not imported: that module imports this one). Carried by the next slices,
     # it dropped them in silence as soon as another record was written, while

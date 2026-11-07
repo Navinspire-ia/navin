@@ -193,6 +193,9 @@ _STICKY_LIFTED_TOOLS: OrderedDict[str, frozenset[str]] = OrderedDict()
 
 # Seconds between idle-session archival checks (the TTL itself is in minutes).
 _IDLE_SESSION_CHECK_S = 60.0
+# Inbound metadata: the slot token of a queued internal continuation (one may
+# wait per session, see AgentLoop._admit_queued_continuation).
+_CONTINUATION_TOKEN_META = "_queued_continuation_token"
 
 SESSION_MODEL_PIN_KEY = "_last_model_preset"
 
@@ -1086,6 +1089,11 @@ class AgentLoop:
         # When a session has an active task, new messages for that session
         # are routed here instead of creating a new task.
         self._pending_queues: dict[str, asyncio.Queue] = {}
+        # session_key -> token of the one internal continuation waiting to run
+        # for it (see _admit_queued_continuation).
+        self._queued_continuations: dict[str, str] = {}
+        # Deleted chats whose remaining work was already stopped.
+        self._deleted_work_cancelled: set[str] = set()
         self._loop_guards: dict[str, AgentLoopGuard] = {}
         self._deferred_automation_turns: dict[str, list[InboundMessage]] = {}
         self._cron_turns = CronTurnCoordinator(
@@ -2240,6 +2248,113 @@ class AgentLoop:
         # Durable: a restart must not resume the request the user stopped.
         self.turn_recovery.cancel(key)
 
+    def _admit_queued_continuation(self, key: str, item: InboundMessage) -> bool:
+        """Let at most one internal continuation wait to run for a session.
+
+        A message that reached the pending queue after the runner's last drain
+        is republished beside the continuation, and its own turn could queue a
+        second one: two chains then ran "continue the unfinished task" side by
+        side and each delivered a final answer. The first one queued carries
+        the work on (it sees everything the other turn did); a later one is
+        dropped. The slot is held until the slice it holds starts, even while
+        that slice waits for the chat behind another turn; run() frees it when
+        it drops or reroutes the slice, so it never outlives its message.
+        """
+        slots = getattr(self, "_queued_continuations", None)
+        if not isinstance(slots, dict) or not isinstance(item.metadata, dict):
+            return True
+        token = item.metadata.get(_CONTINUATION_TOKEN_META)
+        current = slots.get(key)
+        if current is not None and current != token:
+            return False
+        if not token:
+            token = f"{time.monotonic_ns():x}-{id(item):x}"
+            item.metadata[_CONTINUATION_TOKEN_META] = token
+        slots[key] = token
+        return True
+
+    def _release_queued_continuation(self, key: str, msg: InboundMessage) -> None:
+        """Free the slot of ``key`` if ``msg`` is the continuation holding it."""
+        slots = getattr(self, "_queued_continuations", None)
+        if not isinstance(slots, dict) or not isinstance(msg.metadata, dict):
+            return
+        token = msg.metadata.get(_CONTINUATION_TOKEN_META)
+        if token and slots.get(key) == token:
+            slots.pop(key, None)
+
+    @staticmethod
+    def _abandon_queued_continuation(msg: InboundMessage) -> bool:
+        """The turn failed after it queued its next slice: that slice is dropped.
+
+        The error is shown to the user. Republished, the slice resumed without
+        the messages of the failed one (often its save was what failed) and
+        the model redid that work in silence. Clearing the flag lets the error
+        path end the run (turn_completed, idle) instead of waiting for it.
+        """
+        if not turn_continuation.internal_continuation_pending(msg.metadata):
+            return False
+        msg.metadata.pop(turn_continuation.INTERNAL_CONTINUATION_PENDING_META, None)
+        return True
+
+    def _chat_was_deleted(self, key: str) -> bool:
+        was_deleted = getattr(getattr(self, "sessions", None), "was_deleted", None)
+        return bool(callable(was_deleted) and was_deleted(key))
+
+    async def _drop_for_deleted_chat(self, msg: InboundMessage, key: str) -> bool:
+        """Whether ``msg`` comes for a chat the user deleted and must be dropped.
+
+        A subagent's result, a finished command or a queued slice that arrived
+        after the chat was deleted recreated its file and ran a turn in it.
+        Those are dropped, and the chat's remaining work is stopped once. A
+        message the user types for that key brings the chat back.
+        """
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        background = (
+            msg.channel == "system"
+            or msg.sender_id == "subagent"
+            or bool(metadata.get("injected_event"))
+            or turn_continuation.internal_continuation_inbound(metadata)
+        )
+        if msg.channel == "system":
+            # The chat a system message belongs to, as _process_system_message reads it.
+            key = msg.session_key_override or (
+                msg.chat_id if ":" in msg.chat_id else f"cli:{msg.chat_id}"
+            )
+        if not AgentLoop._chat_was_deleted(self, key):
+            return False
+        if not background:
+            forget = getattr(self.sessions, "forget_deletion", None)
+            if callable(forget):
+                forget(key)
+            return False
+        logger.info("Dropping a background message for deleted chat {} ({})", key, msg.sender_id)
+        stopped = getattr(self, "_deleted_work_cancelled", None)
+        schedule = getattr(self, "_schedule_background", None)
+        if isinstance(stopped, set) and key not in stopped and callable(schedule):
+            stopped.add(key)
+            schedule(AgentLoop._cancel_active_tasks(self, key))
+        for _, coordinator in getattr(self, "_automation_turn_coordinators", ()):
+            coordinator.complete(msg, response=None)
+        return True
+
+    async def close_abandoned_turns(self) -> int:
+        """Answer the requests the turn recovery gave up on with a short note.
+
+        Called after every ``turn_recovery.discover``: at start, and when the
+        terminal opens a chat (it scans that chat again). Only the start read
+        the lists, so a request found later was finished in silence and its
+        checkpoint was never restored. Returns how many were closed.
+        """
+        recovery = self.turn_recovery
+        abandoned, recovery.abandoned = list(recovery.abandoned), []
+        cut_twice, recovery.cut_twice = set(recovery.cut_twice), set()
+        for key in abandoned:
+            session = self.sessions.get_or_create(key)
+            self._restore_runtime_checkpoint(session)
+            self._close_interrupted_turn(session, cut_twice=key in cut_twice)
+            await self.sessions.save_async(session)
+        return len(abandoned)
+
     async def _close_dropped_continuation(self, msg: InboundMessage, key: str) -> None:
         """End the run of an internal continuation that is dropped here.
 
@@ -2964,13 +3079,7 @@ class AgentLoop:
                 self.turn_recovery.discover,
                 channel=recovery_channel, session_key=recovery_session_key, external=external,
             )
-            abandoned, self.turn_recovery.abandoned = self.turn_recovery.abandoned, []
-            cut_twice, self.turn_recovery.cut_twice = self.turn_recovery.cut_twice, set()
-            for key in abandoned:
-                session = self.sessions.get_or_create(key)
-                self._restore_runtime_checkpoint(session)
-                self._close_interrupted_turn(session, cut_twice=key in cut_twice)
-                await self.sessions.save_async(session)
+            await AgentLoop.close_abandoned_turns(self)
             for key in recovered:
                 session = self.sessions.get_or_create(key)
                 checkpoint = session.metadata.get(self._RUNTIME_CHECKPOINT_KEY)
@@ -3009,10 +3118,19 @@ class AgentLoop:
                     logger.warning("Error consuming inbound message: {}, continuing...", e)
                     continue
 
+                slot_key: str | None = None
+                dispatched = False
                 try:
                     raw = msg.content.strip()
                     effective_key = self._effective_session_key(msg)
+                    if turn_continuation.internal_continuation_inbound(msg.metadata):
+                        # It keeps the slot of the chat's one queued continuation
+                        # until its slice starts (_dispatch frees it then); a
+                        # slice dropped or routed elsewhere frees it below.
+                        slot_key = effective_key
                     if await agent_context.handle_runtime_control(self, msg, self.tools):
+                        continue
+                    if await AgentLoop._drop_for_deleted_chat(self, msg, effective_key):
                         continue
                     if not self.turn_recovery.matches(msg, effective_key):
                         await self._close_dropped_continuation(msg, effective_key)
@@ -3099,6 +3217,7 @@ class AgentLoop:
                     # Compute the effective session key before dispatching
                     # This ensures /stop command can find tasks correctly when unified session is enabled
                     task = asyncio.create_task(self._dispatch(msg))
+                    dispatched = True
                     self._active_tasks.setdefault(effective_key, []).append(task)
                     task.add_done_callback(
                         lambda t, k=effective_key: self._active_tasks.get(k, [])
@@ -3116,6 +3235,9 @@ class AgentLoop:
                         getattr(msg, "session_key", "?"),
                     )
                     continue
+                finally:
+                    if slot_key is not None and not dispatched:
+                        AgentLoop._release_queued_continuation(self, slot_key, msg)
         finally:
             if not mcp_task.done():
                 mcp_task.cancel()
@@ -3175,11 +3297,16 @@ class AgentLoop:
         """
         waited = 0.0
         notified = False
-        while True:
-            try:
-                await asyncio.wait_for(lock.acquire(), timeout=self._SESSION_LOCK_NOTICE_S)
-                break
-            except asyncio.TimeoutError:
+        # One acquire for the whole wait. A wait_for that timed out took this
+        # message out of the lock's queue and put it back at the end, so after
+        # 30 s a later message or slice passed an earlier one.
+        acquire = asyncio.ensure_future(lock.acquire())
+        try:
+            while True:
+                done, _ = await asyncio.wait({acquire}, timeout=self._SESSION_LOCK_NOTICE_S)
+                if done:
+                    acquire.result()
+                    break
                 waited += self._SESSION_LOCK_NOTICE_S
                 holder = self._session_lock_holders.get(session_key)
                 holder_preview = holder[0] if holder else "unknown turn"
@@ -3200,6 +3327,14 @@ class AgentLoop:
                     )
                 except Exception:
                     logger.debug("session lock wait notice failed", exc_info=True)
+        except BaseException:
+            if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
+                lock.release()
+            else:
+                # Cancelled while queued: Lock.acquire leaves the queue and
+                # wakes the next waiter if the lock was being handed over.
+                acquire.cancel()
+            raise
         preview = msg.content[:60] + "..." if len(msg.content) > 60 else msg.content
         self._session_lock_holders[session_key] = (preview, time.monotonic())
         try:
@@ -3219,8 +3354,11 @@ class AgentLoop:
         pending: asyncio.Queue | None = None
         turn_cancelled = False
         dispatch_skipped = False
+        drop_queued_continuations = False
         try:
             async with self._session_turn_lock(lock, msg, session_key), gate:
+                # The slice starts: the chat may queue its next one again.
+                AgentLoop._release_queued_continuation(self, session_key, msg)
                 if not self.turn_recovery.matches(msg, session_key):
                     dispatch_skipped = True
                     return
@@ -3385,6 +3523,7 @@ class AgentLoop:
                     raise
                 except Exception as exc:
                     logger.exception("Error processing message for session {}", session_key)
+                    drop_queued_continuations = AgentLoop._abandon_queued_continuation(msg)
                     session = self.sessions.get_or_create(session_key)
                     transient = LLMProvider._is_transient_response(
                         LLMProvider._unexpected_error_response(exc)
@@ -3418,6 +3557,7 @@ class AgentLoop:
                     logger.exception(
                         "Fatal error processing message for session {}", session_key
                     )
+                    drop_queued_continuations = AgentLoop._abandon_queued_continuation(msg)
                     session = self.sessions.get_or_create(session_key)
                     self.turn_recovery.finish(session)
                     self._settle_pending_user_turn(session)
@@ -3458,23 +3598,34 @@ class AgentLoop:
                     if queue is not None:
                         leftover = 0
                         dropped = 0
+                        abandoned = 0
+                        superseded = 0
                         while True:
                             try:
                                 item = queue.get_nowait()
                             except asyncio.QueueEmpty:
                                 break
+                            internal = turn_continuation.internal_continuation_inbound(
+                                getattr(item, "metadata", None)
+                            )
                             # A cancelled turn means the user hit /stop: internal
                             # goal continuations die with the turn, but messages
                             # the user typed meanwhile are kept and replayed in
                             # order as the next turn(s).
                             if turn_cancelled and (
-                                turn_continuation.internal_continuation_inbound(
-                                    getattr(item, "metadata", None)
-                                )
+                                internal
                                 or (getattr(item, "metadata", None) or {}).get("injected_event")
                                 or getattr(item, "sender_id", "") == "subagent"
                             ):
                                 dropped += 1
+                                continue
+                            if internal and drop_queued_continuations:
+                                abandoned += 1
+                                continue
+                            if internal and not AgentLoop._admit_queued_continuation(
+                                self, session_key, item,
+                            ):
+                                superseded += 1
                                 continue
                             await self.bus.publish_inbound(item)
                             leftover += 1
@@ -3487,6 +3638,16 @@ class AgentLoop:
                             logger.info(
                                 "Dropped {} queued message(s) after cancelled turn for session {}",
                                 dropped, session_key,
+                            )
+                        if abandoned:
+                            logger.info(
+                                "Dropped the next slice of session {}: its turn failed after queuing it",
+                                session_key,
+                            )
+                        if superseded:
+                            logger.info(
+                                "Dropped {} continuation(s) for session {}: one is already queued",
+                                superseded, session_key,
                             )
                     if turn_cancelled:
                         self._loop_guards.pop(session_key, None)
@@ -3501,6 +3662,8 @@ class AgentLoop:
                         self._runtime_events().clear_turn(session_key)
                     await self._publish_next_deferred_automation_turn(session_key)
         finally:
+            # Cancelled before it started (a /stop while it waited): its slot is freed.
+            AgentLoop._release_queued_continuation(self, session_key, msg)
             if pending is None and not dispatch_skipped:
                 await self._runtime_events().run_status_changed(
                     msg, session_key, "idle"
@@ -3675,6 +3838,10 @@ class AgentLoop:
         )
         logger.info("Processing system message from {}", msg.sender_id)
         key = msg.session_key_override or f"{channel}:{chat_id}"
+        if AgentLoop._chat_was_deleted(self, key):
+            # Late result for a deleted chat: get_or_create would bring it back.
+            logger.info("Dropping a system message for deleted chat {}", key)
+            return None
         session = self.sessions.get_or_create(key)
         self._runtime_events().record_turn_runtime(key, runtime)
         if self._restore_runtime_checkpoint(session):

@@ -2725,23 +2725,32 @@ class SubagentManager:
                 async def _record_settlement(note: str) -> None:
                     nonlocal recorded_note
                     recorded_note = note + (f"\n\n{gate_note}" if gate_note else "") + conflict_note
-                    await _on_checkpoint({
-                        "phase": "settled", "final_result": final_result,
-                        "settlement_note": recorded_note,
-                    })
+                    try:
+                        await _on_checkpoint({
+                            "phase": "settled", "final_result": final_result,
+                            "settlement_note": recorded_note,
+                        })
+                    except Exception:
+                        # The merge (or the keep) already happened: a failed
+                        # journal write must not turn it into an error that
+                        # settles the checkout a second time.
+                        logger.exception("Subagent [{}] settlement checkpoint failed", task_id)
 
+                # Settlement starts here: from now on the checkout is this
+                # call's alone. The outer error handler must never settle it a
+                # second time (a merged checkout announced as "work kept at").
+                settling, checkout = checkout, None
+                self._untrack_worktree(task_id)
                 # Record the note before releasing/removing an isolated checkout.
                 # A crash after merging can then replay delivery without needing
                 # a checkout that is gone or already reused by another task.
                 note = await worktree_merge.settle_after_run(
-                    self, checkout, ok=result.stop_reason not in worktree_merge.FAILED_STOPS,
+                    self, settling, ok=result.stop_reason not in worktree_merge.FAILED_STOPS,
                     task_id=task_id, label=label, origin=origin, on_settled=_record_settlement,
                 )
                 if recorded_note is None:
                     await _record_settlement(note)
                 settled_note = recorded_note or ""
-                checkout = None
-                self._untrack_worktree(task_id)
                 workspace_policy.clear_policy(task_id)
 
             status.stop_reason = result.stop_reason
@@ -2780,12 +2789,17 @@ class SubagentManager:
             async def _delivered() -> None:
                 status.phase = terminal_phase
                 self._publish_progress(status, force=True, done=True)
-                if session is not None and self._agent_sessions.get(task_id) != session:
-                    await asyncio.get_running_loop().run_in_executor(
-                        _journal_executor(), self._journal_io, "status", session, task_id,
-                        self._journal_metadata(status, done=True),
-                    )
-                await self.flush_journal()
+                try:
+                    if session is not None and self._agent_sessions.get(task_id) != session:
+                        await asyncio.get_running_loop().run_in_executor(
+                            _journal_executor(), self._journal_io, "status", session, task_id,
+                            self._journal_metadata(status, done=True),
+                        )
+                    await self.flush_journal()
+                except Exception:
+                    # Raised here, the outer handler announced the delivered
+                    # result a second time as an error.
+                    logger.exception("Subagent [{}] journal write after delivery failed", task_id)
 
             await self._announce_result(
                 task_id, label, task, content, origin, outcome, origin_message_id,
@@ -2998,7 +3012,9 @@ class SubagentManager:
                     nonlocal wrapup_sent
                     session = sess_key or f"{origin['channel']}:{origin['chat_id']}"
                     received = self.drain_team_messages(session, task_id, limit, record_delivery=False)
-                    injected = [{"role": "user", "content": (
+                    injected = [{"role": "user", "injection_sender": (
+                        "user" if item.get("sender") == "user" else "agent"
+                    ), "content": (
                         (
                             f"Message {item['message_id']} from the user, sent to you directly "
                             "while you work. Take it into account now.\n"

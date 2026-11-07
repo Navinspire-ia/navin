@@ -126,7 +126,7 @@ export function SubagentStatusBar({
             ? t("thread.team.barTitle", { defaultValue: "Team" })
             : t("thread.subagents.barTitle", { defaultValue: "Subagents" })}
           <span className="text-muted-foreground tabular-nums">{cards.length}</span>
-          <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+          <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform rtl:[&:not(.rotate-90)]:rotate-180", expanded && "rotate-90")} />
         </button>
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {chips.map(([key, label, tone]) => (

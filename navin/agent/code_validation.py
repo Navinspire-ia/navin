@@ -628,6 +628,22 @@ def _shared_entry(value: object) -> tuple[int, float] | None:
     return None
 
 
+def _replace_retrying(source: str, target: Path) -> None:
+    """``os.replace`` that waits out a reader holding ``target`` open on Windows.
+
+    Readers of the registry take no lock (same helper as
+    ``navin.board.session_focus._replace_retrying``).
+    """
+    for attempt in range(5):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (attempt + 1))
+
+
 def _note_shared_writes(root: Path, keys: list[str], now: float) -> None:
     """Record this process as the last writer of ``keys`` for the other processes."""
     path = _shared_writes_path(root)
@@ -649,7 +665,7 @@ def _note_shared_writes(root: Path, keys: list[str], now: float) -> None:
             try:
                 with os.fdopen(handle, "w", encoding="utf-8") as stream:
                     json.dump(entries, stream)
-                os.replace(name, path)
+                _replace_retrying(name, path)
             finally:
                 if os.path.exists(name):
                     os.unlink(name)
@@ -1076,7 +1092,12 @@ class CodeValidationState:
     test_result_note: str = ""
     last_nudge_key: tuple[Any, ...] | None = None
     ignored_nudges: int = 0
+    # Every reminder of the request (the absolute ceiling), and the ones sent
+    # since the code revision last changed (the per-revision cap): a real fix
+    # between two reminders opens a new count.
     total_nudges: int = 0
+    revision_nudges: int = 0
+    nudged_revision: int = -1
     workspace_snapshot: dict[str, tuple[int, int] | None] | None = None
     # Content of files seen changing, so a rewrite with identical bytes (a
     # generator run by the tests, a formatter) is not mistaken for an edit.
@@ -1101,12 +1122,16 @@ class CodeValidationState:
     def observe_workspace(
         self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None,
         digests: dict[str, str | None] | None = None,
+        foreign: set[str] | None = None,
     ) -> None:
+        """``foreign``: the changed paths other chats wrote, when already known."""
         if root is not None:
             self.root = Path(root)
         changed = self.stamp_changes(snapshot)
         self.workspace_snapshot = snapshot
-        if self.root is not None:
+        if foreign is not None:
+            changed -= foreign
+        elif self.root is not None:
             changed -= written_by_other_chats(self.root, changed)
         changed = {path for path in changed if self._content_changed(path, digests)}
         if changed:
@@ -1126,9 +1151,15 @@ class CodeValidationState:
         base = Path(root) if root is not None else self.root
         candidates = self.stamp_changes(snapshot)
         digests = None
+        foreign: set[str] | None = None
         if candidates and base is not None:
             digests = await asyncio.to_thread(file_digests, base, candidates)
-        self.observe_workspace(snapshot, root=root, digests=digests)
+            # The cross-process registry is a JSON file of up to 4096 entries:
+            # read and parsed in the thread too, for the chat running here.
+            foreign = await asyncio.to_thread(
+                written_by_other_chats, base, set(candidates), _chat_owner(),
+            )
+        self.observe_workspace(snapshot, root=root, digests=digests, foreign=foreign)
 
     def _content_changed(self, path: str, digests: dict[str, str | None] | None = None) -> bool:
         if self.root is None:
@@ -1570,6 +1601,10 @@ class CodeValidationState:
                bool(self.check_failure), bool(self.test_failure))
         self.ignored_nudges = self.ignored_nudges + 1 if key == self.last_nudge_key else 1
         self.last_nudge_key = key
+        if self.revision != self.nudged_revision:
+            self.nudged_revision = self.revision
+            self.revision_nudges = 0
+        self.revision_nudges += 1
         self.total_nudges += 1
         return self.ignored_nudges
 

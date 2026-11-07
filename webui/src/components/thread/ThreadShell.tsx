@@ -158,7 +158,7 @@ import {
   type RouteSwap,
 } from "@/lib/model-routing-summary";
 import { taskRoleShortLabel } from "@/lib/task-route-label";
-import { DEFAULT_REASONING_EFFORT_VALUES } from "@/lib/reasoning-effort";
+import { DEFAULT_REASONING_EFFORT_VALUES, reasoningEffortShortLabel } from "@/lib/reasoning-effort";
 import type {
   ArtifactRecord,
   ChatSummary,
@@ -1488,6 +1488,7 @@ export function ThreadShell({
     ? routedEffortPreset
     : threadPresetRow ?? activeModelPreset(settings);
   const effortValue = activeEffortPreset?.reasoning_effort ?? settings?.agent.reasoning_effort ?? "";
+  const effortLabelT = useCallback((key: string, fallback: string) => t(key, { defaultValue: fallback }), [t]);
   const effortOptions = useMemo(() => {
     const raw =
       activeEffortPreset?.reasoning_effort_values
@@ -3252,18 +3253,20 @@ export function ThreadShell({
           <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-4 py-1.5 text-xs text-muted-foreground" data-testid="live-model-effort">
             <span className="font-medium text-foreground">{liveTaskHint.modelLabel}</span>
             <label className="flex items-center gap-1.5">
-              <span>{t("thread.composer.effort", { defaultValue: "Effort" })}</span>
+              <span>{t("thread.composer.effortSection", { defaultValue: "Effort" })}</span>
               <select
-                aria-label={t("thread.composer.effort", { defaultValue: "Effort" })}
+                aria-label={t("thread.composer.effortSection", { defaultValue: "Effort" })}
+                aria-describedby="live-effort-next-turn-hint"
                 value={effortValue}
                 disabled={effortBusy || !activeEffortPreset || isViewer}
                 onChange={(event) => handleEffortSelectSync(event.target.value)}
                 className="rounded-md border border-border/60 bg-background px-1.5 py-0.5 text-foreground"
               >
-                {effortValue && !effortOptions.includes(effortValue) ? <option value={effortValue}>{effortValue}</option> : null}
-                {effortOptions.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                {effortValue && !effortOptions.includes(effortValue) ? <option value={effortValue}>{reasoningEffortShortLabel(effortValue, effortLabelT)}</option> : null}
+                {effortOptions.map((effort) => <option key={effort} value={effort}>{reasoningEffortShortLabel(effort, effortLabelT)}</option>)}
               </select>
             </label>
+            <span id="live-effort-next-turn-hint" className="text-muted-foreground/80">{t("thread.composer.effortNextTurnHint", { defaultValue: "Applies to the next turn" })}</span>
           </div>
         ) : null}
         {isViewer ? <ViewerReadOnlyBanner /> : null}

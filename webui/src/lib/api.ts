@@ -116,6 +116,7 @@ import { ApiError, parseApiErrorBody } from "./api-error";
 import type { CollabPayload, CollabSettings } from "./team";
 import { noteGatewayAnswered, noteGatewayStalled } from "./gateway-pace";
 import { isRetryableRead } from "./read-routes";
+import { forgetPromptHistory } from "./prompt-history";
 
 /** Prefer a gateway `error` field over a raw JSON body dumped into the UI. */
 function apiErrorMessage(status: number, text: string): string {
@@ -2363,10 +2364,13 @@ export async function deleteSession(
   const query = new URLSearchParams();
   if (options?.deleteAutomations) query.set("delete_automations", "true");
   const suffix = query.toString() ? `?${query}` : "";
-  return request<SessionDeleteResult>(
+  const result = await request<SessionDeleteResult>(
     `${resolvedBase}/api/sessions/${encodeURIComponent(key)}/delete${suffix}`,
     token,
   );
+  // The composer's prompt history of a deleted chat must not stay on disk.
+  if (result.deleted) forgetPromptHistory(key);
+  return result;
 }
 
 export interface SessionImportSourceStat {

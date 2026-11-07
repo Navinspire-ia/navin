@@ -196,5 +196,59 @@ class LengthRecoveryLimitTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("chunk", result.final_content or "")
 
 
+class InvalidArgumentsSchemaHintTest(unittest.IsolatedAsyncioTestCase):
+    async def test_the_schema_is_sent_once_before_the_tool_error_stop(self) -> None:
+        from navin.agent.runner import _MAX_INVALID_TOOL_ITERATIONS
+        from navin.agent.tools.base import Tool
+        from navin.providers.base import ToolCallRequest
+
+        class _Deploy(Tool):
+            name = "deploy"
+            description = "Deploy a service."
+            parameters = {
+                "type": "object",
+                "properties": {"service": {"type": "string", "description": "unique-marker-field"}},
+                "required": ["service"],
+            }
+
+            async def execute(self, service: str) -> str:
+                return f"deployed {service}"
+
+        registry = ToolRegistry()
+        registry.register(_Deploy())
+        broken = LLMResponse(
+            content="", finish_reason="tool_calls",
+            tool_calls=[ToolCallRequest(id="d", name="deploy", arguments={})],
+        )
+        provider = _FakeProvider([broken])
+        result = await AgentRunner().run(_spec(provider, tools=registry))
+
+        self.assertEqual(result.stop_reason, "tool_error")
+        self.assertEqual(provider.calls, _MAX_INVALID_TOOL_ITERATIONS)
+
+        def schema_hints(request: list[dict[str, Any]]) -> int:
+            return sum(
+                "parameters (JSON schema)" in str(m.get("content"))
+                for m in request if m.get("role") == "tool"
+            )
+
+        # The last attempt is made with the schema in hand, and it is sent once.
+        self.assertEqual(schema_hints(provider.requests[-1]), 1)
+        self.assertEqual(sum(schema_hints(r) for r in provider.requests[:-1]), 0)
+        self.assertIn("unique-marker-field", str(provider.requests[-1]))
+        self.assertTrue(any("parameters (JSON schema)" in str(m.get("content")) for m in result.messages))
+
+        # With the schema the model can correct itself: the run then completes.
+        fixed = LLMResponse(
+            content="", finish_reason="tool_calls",
+            tool_calls=[ToolCallRequest(id="e", name="deploy", arguments={"service": "api"})],
+        )
+        provider = _FakeProvider([broken, broken, fixed, LLMResponse(content="Deployed.", finish_reason="stop")])
+        result = await AgentRunner().run(_spec(provider, tools=registry))
+        self.assertEqual(result.stop_reason, "completed")
+        self.assertEqual(result.final_content, "Deployed.")
+        self.assertEqual(result.tools_used, ["deploy"])
+
+
 if __name__ == "__main__":
     unittest.main()

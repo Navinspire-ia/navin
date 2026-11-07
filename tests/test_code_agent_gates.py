@@ -1761,3 +1761,135 @@ class OutputLimitStreamTest(unittest.IsolatedAsyncioTestCase):
         kept = [end for end in hook.ends if end == (False, False)]
         self.assertEqual(len(kept), 1, hook.ends)
         self.assertEqual(hook.deltas[-1], joined)
+
+
+class _RecordingWriteTool(_WriteFileTool):
+    def __init__(self) -> None:
+        self.written: list[dict[str, Any]] = []
+
+    async def execute(self, **kwargs: Any) -> str:
+        self.written.append(kwargs)
+        return "wrote"
+
+
+class CutToolCallTest(unittest.IsolatedAsyncioTestCase):
+    """A tool call cut by the output limit is redone, never taken as the answer."""
+
+    _ANNOUNCE = "Je vais maintenant écrire le fichier complet."
+
+    def _cut(self) -> LLMResponse:
+        return LLMResponse(
+            content=self._ANNOUNCE, finish_reason="length",
+            tool_calls=[ToolCallRequest(id="w1", name="write_file", arguments={"path": "app.py", "content": "def mai"})],
+        )
+
+    async def _run(self, responses: list[LLMResponse]) -> tuple[_FakeProvider, _RecordingWriteTool, AgentRunResult]:
+        tool = _RecordingWriteTool()
+        tools = ToolRegistry()
+        tools.register(tool)
+        provider = _StreamingFakeProvider(responses)
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "écris app.py"}],
+            tools=tools,
+            runtime=_runtime(provider),
+            max_iterations=8,
+            max_tool_result_chars=2000,
+            hook=_StreamEndRecorder(),
+        ))
+        return provider, tool, result
+
+    @staticmethod
+    def _nudges(result: AgentRunResult) -> list[dict[str, Any]]:
+        from navin.session.history_visibility import HIDDEN_HISTORY_META
+
+        return [m for m in result.messages if (m.get(HIDDEN_HISTORY_META) or {}).get("kind") == "cut_tool_call"]
+
+    async def test_the_cut_call_is_redone_and_the_answer_is_the_final_text(self) -> None:
+        provider, tool, result = await self._run([
+            self._cut(),
+            LLMResponse(
+                content="", finish_reason="tool_calls",
+                tool_calls=[ToolCallRequest(id="w2", name="write_file", arguments={"path": "app.py", "content": "x"})],
+            ),
+            LLMResponse(content="app.py est écrit.", finish_reason="stop"),
+        ])
+        self.assertEqual(provider.calls, 3)
+        self.assertEqual(tool.written, [{"path": "app.py", "content": "x"}])
+        self.assertEqual(result.final_content, "app.py est écrit.")
+        self.assertEqual(result.stop_reason, "completed")
+        nudges = self._nudges(result)
+        self.assertEqual(len(nudges), 1)
+        self.assertIn("cut by the output limit", nudges[0]["content"])
+        self.assertIn("write_file", nudges[0]["content"])
+
+    async def test_the_announcement_never_becomes_the_answer(self) -> None:
+        provider, tool, result = await self._run([self._cut()])
+        self.assertEqual(tool.written, [])
+        self.assertEqual(len(self._nudges(result)), 2, "two reminders per request at most")
+        self.assertNotIn(self._ANNOUNCE, result.final_content or "")
+        self.assertLessEqual(provider.calls, 8)
+
+
+class InjectedUserMessageKeepsTheAnswerTest(unittest.IsolatedAsyncioTestCase):
+    """A message typed while an answer finishes does not make that answer vanish."""
+
+    async def _run(self, injection: dict[str, Any] | None, goal: bool = False) -> AgentRunResult:
+        provider = _FakeProvider([
+            LLMResponse(content="Answer A.", finish_reason="stop"),
+            LLMResponse(content="Answer B.", finish_reason="stop"),
+        ])
+        sent = {"done": False}
+
+        async def inject(**_kwargs: Any) -> list[dict[str, Any]]:
+            if injection is None or sent["done"] or provider.calls != 1:
+                return []
+            sent["done"] = True
+            return [dict(injection)]
+
+        goal_checks = {"n": 0}
+
+        def goal_active() -> bool:
+            goal_checks["n"] += 1
+            return goal and goal_checks["n"] == 1
+
+        return await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "question"}],
+            tools=ToolRegistry(),
+            runtime=_runtime(provider),
+            max_iterations=6,
+            max_tool_result_chars=2000,
+            injection_callback=inject,
+            goal_active_predicate=goal_active if goal else None,
+        ))
+
+    @staticmethod
+    def _answer(result: AgentRunResult, text: str) -> dict[str, Any]:
+        return next(m for m in result.messages if m.get("role") == "assistant" and m.get("content") == text)
+
+    async def test_a_typed_message_keeps_answer_a_and_b_follows_it(self) -> None:
+        from navin.session.history_visibility import is_hidden_history_message
+
+        result = await self._run({"role": "user", "content": "et aussi le prix ?"})
+        first = self._answer(result, "Answer A.")
+        self.assertFalse(is_hidden_history_message(first))
+        self.assertEqual(result.final_content, "Answer B.")
+        visible = [m.get("content") for m in result.messages if not is_hidden_history_message(m)]
+        self.assertEqual(visible[-3:], ["Answer A.", "et aussi le prix ?", "Answer B."])
+
+    async def test_a_goal_continuation_still_supersedes_the_answer(self) -> None:
+        from navin.session.history_visibility import is_hidden_history_message
+
+        result = await self._run(None, goal=True)
+        first = self._answer(result, "Answer A.")
+        self.assertTrue(is_hidden_history_message(first))
+        self.assertEqual(result.final_content, "Answer B.")
+
+    async def test_a_background_result_still_supersedes_the_answer(self) -> None:
+        from navin.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
+
+        result = await self._run({
+            "role": "user", "content": "[Subagent 'w'] done",
+            "injected_event": "subagent_result", HIDDEN_HISTORY_META: {"kind": "subagent_result"},
+        })
+        self.assertTrue(is_hidden_history_message(self._answer(result, "Answer A.")))
+        self.assertEqual(result.final_content, "Answer B.")

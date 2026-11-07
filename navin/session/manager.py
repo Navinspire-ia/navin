@@ -40,6 +40,12 @@ from navin.utils.helpers import (
 from navin.utils.subagent_channel_display import scrub_subagent_announce_body
 
 FILE_MAX_MESSAGES = 2000
+# Chats deleted in this process, by sessions folder and key, oldest first. A
+# late background result (a subagent's answer, a finished command, a queued
+# slice) used to recreate the file of a deleted chat and run a turn in it.
+_DELETED_CHATS: OrderedDict[tuple[str, str], None] = OrderedDict()
+_DELETED_CHATS_MAX = 2048
+_deleted_chats_lock = threading.Lock()
 # Messages that leave the live session (idle compaction, /compact, the file
 # cap) stay readable on screen: they go, oldest first, to a display-only file
 # in ``.navin/sessions/earlier/``. The model never replays it.
@@ -1367,11 +1373,29 @@ class SessionManager:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
 
+    def was_deleted(self, key: str) -> bool:
+        """Whether this process deleted the chat ``key`` (see :meth:`delete_session`)."""
+        with _deleted_chats_lock:
+            return (str(self.sessions_dir), key) in _DELETED_CHATS
+
+    def forget_deletion(self, key: str) -> None:
+        """The user writes in the chat ``key`` again: it is a live chat once more."""
+        with _deleted_chats_lock:
+            _DELETED_CHATS.pop((str(self.sessions_dir), key), None)
+
     def delete_session(self, key: str) -> bool:
         """Remove a session from disk (both workspace and legacy locations) and cache.
 
-        Returns True if at least one JSONL file was found and unlinked.
+        Returns True if at least one JSONL file was found and unlinked. The
+        key is remembered (:meth:`was_deleted`) so that work still running
+        for the chat cannot bring it back.
         """
+        with _deleted_chats_lock:
+            entry = (str(self.sessions_dir), key)
+            _DELETED_CHATS.pop(entry, None)
+            _DELETED_CHATS[entry] = None
+            while len(_DELETED_CHATS) > _DELETED_CHATS_MAX:
+                _DELETED_CHATS.popitem(last=False)
         paths = [
             self._get_session_path(key),
             self._get_legacy_lossy_path(key),

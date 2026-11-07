@@ -88,6 +88,11 @@
       "copy": "Copier",
       "showMore": "Afficher le message complet",
       "showLess": "Afficher moins",
+      "copyAria": "Copier le message : {{title}}",
+      "showMoreAria": "Afficher le message complet : {{title}}",
+      "showLessAria": "Afficher moins du message : {{title}}",
+      "copied": "Copié",
+      "copyFailed": "Copie impossible",
       "status": { "done": "Terminé", "unfinished": "Non terminé", "error": "Erreur" }
     },
     "plans": {
@@ -97,8 +102,9 @@
       "error": "Impossible de charger le plan.",
       "progress": "{{done}}/{{total}} tâches terminées",
       "relaunch": "Relancer",
+      "relaunchAria": "Relancer {{title}} ({{id}})",
       "relaunchAll": "Relancer toutes les tâches non terminées",
-      "status": { "done": "Terminé", "active": "En cours", "blocked": "Bloqué", "pending": "Planifié" }
+      "status": { "done": "Terminé", "active": "En cours", "blocked": "Bloqué", "cancelled": "Arrêté", "pending": "Planifié" }
     },
     "activity": {
       "complete": "Agent terminé",
@@ -10014,6 +10020,7 @@
       "effortPickerAria": "Choose thinking effort",
       "effortPickerTitle": "Thinking effort",
       "effortSection": "Effort",
+      "effortNextTurnHint": "S'applique au prochain tour",
       "contextPickerTitle": "Fenêtre de contexte",
       "contextPickerAria": "Choisir la fenêtre de contexte",
       "contextSection": "Contexte",

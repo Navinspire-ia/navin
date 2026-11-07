@@ -34,6 +34,18 @@ describe("SubagentStatusBar", () => {
     expect(screen.getByTestId("subagent-status-bar")).toBeTruthy();
   });
 
+  it("mirrors the collapsed chevron in RTL but not once expanded", () => {
+    const store = createSubagentCardStore();
+    store.upsert(frame({ taskId: "a" }));
+    render(<SubagentStatusBar store={store} />);
+    const chevron = () => Array.from(screen.getByTestId("subagent-status-toggle").querySelectorAll("svg")).at(-1);
+    const classes = () => (chevron()?.getAttribute("class") ?? "").split(/\s+/);
+    expect(classes()).toContain("rtl:[&:not(.rotate-90)]:rotate-180");
+    expect(classes()).not.toContain("rotate-90");
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
+    expect(classes()).toContain("rotate-90");
+  });
+
   it("counts states and lists what needs attention first", () => {
     const store = createSubagentCardStore();
     store.upsert(frame({ taskId: "run" }));
