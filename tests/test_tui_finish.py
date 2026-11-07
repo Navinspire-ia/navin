@@ -74,6 +74,20 @@ def test_validation_finish_is_structured_colored_and_copyable(theme, width, save
             await app.block.set_text(message)
             await app.block.finish(latency_ms=10, model=None, preset=None)
             await pilot.pause()
+            # Compact first: the verdict, its cause and the next step; the full
+            # report (status table, every path) is one click away.
+            from textual.widgets import Button
+
+            details = app.block.query_one(".assistant-validation-details", Button)
+            assert details.display and str(details.label) == "Validation details"
+            assert not app.block.query(MarkdownTable)
+            compact = app.block.query_one(Markdown).source
+            assert "- **Changes:** Saved" in compact and "Changed files" not in compact
+            details.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click(details)
+            await pilot.pause()
+            assert str(details.label) == "Hide validation details"
             heading = app.block.query_one(MarkdownH2)
             table = app.block.query_one(MarkdownTable)
             command = app.block.query_one(MarkdownFence)
@@ -411,4 +425,68 @@ def test_each_settled_code_block_copies_only_its_own_code():
             # Narrow layouts drop the icon rather than overlap the code.
             narrow = render_markdown_lines(FENCED, 8)
             assert not any(COPY_LABEL in line.plain for line in narrow)
+    asyncio.run(run())
+
+
+def test_a_finished_task_turn_folds_its_steps_under_one_control_and_keeps_blocks_open():
+    """The answer closes the turn; its steps fold, failures counted, a block stays open."""
+    from textual.widgets import Button, Static
+
+    async def run():
+        app = FinishHost()
+        async with app.run_test(size=(100, 40)) as pilot:
+            block = app.block
+            await block.tool_event("t1", "exec", "error", {"command": "pytest -q"}, "1 failed\nExit code: 1", "Exit code: 1", None)
+            await block.tool_event("t2", "exec", "end", {"command": "pytest -q"}, "2 passed\nExit code: 0", None, None)
+            await block.set_text("Fixed: both tests pass.")
+            await block.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            assert block._activity_blocks and not any(step.display for step in block._activity_blocks)
+            assert block.query_one(".assistant-result-rule", Static).display
+            assert block.query_one(".assistant-body.-answer", Markdown).display
+            show = block.query_one(".assistant-history", Button)
+            assert str(show.label) == "▸ Show activity · 2 steps · 1 failed"
+            await pilot.pause()
+            assert show.region.width >= len(str(show.label)), "the label must not be cut"
+            await pilot.click(show)
+            await pilot.pause()
+            assert all(step.display for step in block._activity_blocks)
+            hide = block.query_one(".assistant-recent", Button)
+            assert str(hide.label) == "▾ Hide activity"
+            await pilot.click(hide)
+            await pilot.pause()
+            assert not any(step.display for step in block._activity_blocks)
+
+            scroll = app.query_one(VerticalScroll)
+            blocked = AssistantMessage()
+            await scroll.mount(blocked)
+            await blocked.tool_event("t3", "exec", "end", {"command": "pytest -q"}, "1 failed\nExit code: 1", None, None)
+            await blocked.set_text("## Validation pending\n\nChanges are saved. The task is not validated yet.\n")
+            await blocked.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            # A blocked outcome needs its steps on screen.
+            assert all(step.display for step in blocked._activity_blocks)
+            assert not blocked._activity_folded
+
+            pending = AssistantMessage()
+            await scroll.mount(pending)
+            await pending.tool_event(
+                "b1", "board", "error", {"action": "move", "task_id": "t-1", "status": "done"},
+                None, "Validation pending: task remains open. Run the tests that cover the changed files.", None,
+            )
+            await pending.set_text("The fix is saved.")
+            await pending.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            # A completion still waiting on its checks is not folded away either.
+            assert all(step.display for step in pending._activity_blocks)
+            assert not pending._activity_folded
+
+            chat = AssistantMessage()
+            await scroll.mount(chat)
+            await chat.set_text("Hello.")
+            await chat.finish(latency_ms=1, model=None, preset=None)
+            await pilot.pause()
+            # A turn without steps reads as before: no rule, no control.
+            assert not chat.query_one(".assistant-result-rule", Static).display
+            assert not chat.query_one(".assistant-history-controls").display
     asyncio.run(run())

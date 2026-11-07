@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Validation en attente",
+    "summary": "Les modifications sont enregistrées. La tâche n'est pas encore validée.",
+    "details": "Détails, journaux et prochaines étapes"
+  },
   "actions": {
     "cancel": "Cancel"
   },
@@ -74,6 +79,27 @@
   },
   "chat": {
     "actions": "Actions de la discussion {{title}}",
+    "history": {
+      "title": "Historique",
+      "loading": "Chargement de l'historique...",
+      "empty": "Aucun message envoyé dans cette discussion pour le moment",
+      "error": "Impossible de charger l'historique.",
+      "unknownDate": "Date indisponible",
+      "copy": "Copier",
+      "showMore": "Afficher le message complet",
+      "showLess": "Afficher moins",
+      "status": { "done": "Terminé", "unfinished": "Non terminé", "error": "Erreur" }
+    },
+    "plans": {
+      "title": "Mes plans",
+      "loading": "Chargement du plan...",
+      "empty": "Aucun plan pour ce projet pour le moment",
+      "error": "Impossible de charger le plan.",
+      "progress": "{{done}}/{{total}} tâches terminées",
+      "relaunch": "Relancer",
+      "relaunchAll": "Relancer toutes les tâches non terminées",
+      "status": { "done": "Terminé", "active": "En cours", "blocked": "Bloqué", "pending": "Planifié" }
+    },
     "activity": {
       "complete": "Agent terminé",
       "running": "Agent en cours",
@@ -10693,6 +10719,7 @@
       "historyTitle": "Historique des sous-agents",
       "accepted": "Demande de l'agent acceptée.",
       "back": "Retour aux agents",
+      "listLabel": "Sous-agents",
       "returnChat": "Revenir au chat principal",
       "resume": "Reprendre l'agent",
       "relaunch": "Relancer l'agent",

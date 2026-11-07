@@ -118,11 +118,21 @@ def clear_policy(task_id: str | None = None) -> None:
 
 
 def policy_from_dict(data: Mapping[str, Any]) -> WorkspacePolicy:
+    if not isinstance(data, Mapping):
+        raise ValueError("workspace policy must be an object")
+    unknown = set(data) - {"allowed_paths", "allowed_commands", "test_commands", "denied_paths"}
+    if unknown:
+        raise ValueError("unknown workspace policy fields: " + ", ".join(sorted(map(str, unknown))))
+
     def tup(key: str) -> tuple[str, ...]:
-        value = data.get(key) or ()
+        value = data.get(key, ())
         if isinstance(value, str):
             value = (value,)
-        return tuple(str(v) for v in value)
+        if not isinstance(value, (list, tuple)) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise ValueError(f"{key} must be a list of non-empty strings")
+        return tuple(value)
 
     return WorkspacePolicy(
         allowed_paths=tup("allowed_paths"),
@@ -130,6 +140,22 @@ def policy_from_dict(data: Mapping[str, Any]) -> WorkspacePolicy:
         test_commands=tup("test_commands"),
         denied_paths=tup("denied_paths"),
     )
+
+
+def policy_from_descriptor(descriptor: Mapping[str, Any]) -> WorkspacePolicy | None:
+    """Restore explicit restrictions, never guess what an old isolated run allowed."""
+    if "workspace_policy" not in descriptor:
+        if descriptor.get("isolate") or descriptor.get("workspace_policy_required"):
+            raise ValueError("the saved workspace policy is missing; review and start a new task with explicit restrictions")
+        return None
+    data = descriptor["workspace_policy"]
+    if data is None:
+        if descriptor.get("workspace_policy_required"):
+            raise ValueError("the required workspace policy is missing")
+        return None
+    if not descriptor.get("isolate"):
+        raise ValueError("the saved workspace policy requires an isolated checkout")
+    return policy_from_dict(data)
 
 
 def _norm(path: str) -> str | None:

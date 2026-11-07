@@ -19,6 +19,7 @@ from navin.bus.queue import MessageBus
 from navin.tui.app import NavinApp
 from navin.tui.prefs import TuiPrefs
 from navin.tui.widgets import (
+    CompactionLine,
     PromptQueue,
     QueuedPromptRow,
     Sidebar,
@@ -148,6 +149,43 @@ class WorkingLineWidgetTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("/ps to view", str(line.content))
             line.set_line("")
             self.assertFalse(line.has_class("-visible"))
+
+    async def test_compaction_bar_animates_only_the_unmeasured_part(self) -> None:
+        from textual.app import App, ComposeResult
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield CompactionLine(id="compaction")
+                yield WorkingLine(id="working")
+
+        app = Host()
+        async with app.run_test(size=(92, 14)) as _pilot:
+            line = app.query_one(CompactionLine)
+            working = app.query_one(WorkingLine)
+            self.assertFalse(line.display)
+            line.update_progress("start", "Preparing the archive", None)
+            working.set_line("Working (7s • esc to interrupt)")
+            pending = str(line.content)
+            self.assertIn("[", pending)
+            self.assertIn("measuring", pending)
+            self.assertNotIn("%", pending)
+            line.tick(frame=5)
+            self.assertNotEqual(str(line.content), pending)
+            line.update_progress("summarizing", "Summarizing 40 messages", 0, frame=5)
+            self.assertIn("0%", str(line.content))
+            line.update_progress("measuring", "40 messages archived", 61, frame=5)
+            self.assertIn("61%", str(line.content))
+            self.assertIn("40 messages archived", str(line.content))
+            self.assertTrue(working.display)
+            line.update_progress("partial", "No safe boundary", 61)
+            self.assertIn("61%", str(line.content))
+            self.assertNotIn("100%", str(line.content))
+            line.update_progress("done", "Replay archive saved, token estimate unavailable", None)
+            self.assertIn("[saved]", str(line.content))
+            self.assertNotIn("100%", str(line.content))
+            line.reset()
+            self.assertFalse(line.display)
+            self.assertTrue(working.display)
 
 
 class _InteractionApp(NavinApp):
@@ -351,6 +389,121 @@ def test_the_working_line_names_the_model_that_took_over() -> None:
     assert format_working_line(elapsed_s=12, activity="Working…").startswith("Working… (")
 
 
+def test_compaction_progress_is_scoped_to_its_own_session_and_cleans_on_stop(tmp_path) -> None:
+    from navin.tui.runtime import UiCompactionProgress, UiTurnEnd
+
+    async def run() -> None:
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = _InteractionApp(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
+        async with app.run_test(size=(112, 34)) as pilot:
+            await app.submit_text("Please summarize this long chat")
+            await app.runtime.bus.consume_inbound()
+            assert app.runtime.turn_active
+            owner = {"session_key": app.runtime.session_key, "workspace": str(app.runtime.workspace)}
+            row = app.query_one(CompactionLine)
+            assert not row.display
+            await app._render_runtime_event(UiCompactionProgress(
+                "start", "Preparing the archive", **owner,
+            ))
+            await pilot.pause()
+            assert row.display and "measuring" in str(row.content)
+            assert not any("Compacting context" in str(child.content) for child in app.transcript.children if hasattr(child, "content"))
+            app._tick_spinner()
+            assert "Compacting context" in str(row.content)
+            assert "Working" in str(app.query_one(WorkingLine).content)
+            await app._render_runtime_event(UiCompactionProgress(
+                "measuring", "41 messages archived", 72, **owner,
+            ))
+            assert "72%" in str(row.content)
+            await app._render_runtime_event(UiCompactionProgress(
+                "measuring", "foreign chat", 99,
+                session_key="cli:another", workspace=str(app.runtime.workspace),
+            ))
+            await app._render_runtime_event(UiCompactionProgress(
+                "measuring", "foreign project", 99,
+                session_key=app.runtime.session_key, workspace="/another/project",
+            ))
+            assert "72%" in str(row.content) and "foreign" not in str(row.content)
+            await app._render_runtime_event(UiCompactionProgress(
+                "partial", "No safe boundary", 72, **owner,
+            ))
+            assert "72%" in str(row.content) and "100%" not in str(row.content)
+            app.runtime.status.turn_active = False
+            await app._render_runtime_event(UiTurnEnd())
+            assert not row.display
+
+    asyncio.run(run())
+
+
+def test_compaction_row_clears_before_changing_sessions_even_if_the_switch_fails(tmp_path) -> None:
+    from navin.tui.runtime import UiCompactionProgress
+
+    async def run() -> None:
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = _InteractionApp(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
+        async with app.run_test(size=(112, 34)):
+            await app.submit_text("A working session")
+            await app.runtime.bus.consume_inbound()
+            row = app.query_one(CompactionLine)
+            await app._render_runtime_event(UiCompactionProgress(
+                "summarizing", "Summarizing the first chat", 34,
+                session_key=app.runtime.session_key, workspace=str(app.runtime.workspace),
+            ))
+            assert row.display and "34%" in str(row.content)
+            with patch.object(app.runtime, "switch_session", side_effect=RuntimeError("switch failed")):
+                try:
+                    await app._show_session("cli:second")
+                except RuntimeError as error:
+                    assert "switch failed" in str(error)
+                else:
+                    raise AssertionError("A failed session switch must surface its error")
+            assert not row.display
+            assert app._compaction_session is None
+
+    asyncio.run(run())
+
+
+def test_compaction_progress_routes_to_a_dedicated_row_not_the_transcript() -> None:
+    from navin.bus.events import OUTBOUND_META_AGENT_UI
+    from navin.bus.outbound_events import ProgressEvent, outbound_message_for_event
+    from navin.tui.runtime import TuiRuntime, UiCompactionProgress
+    from navin.utils.task_progress import build_agent_ui_blob
+
+    rows = []
+    runtime = SimpleNamespace(
+        agent_loop=SimpleNamespace(channels_config=None),
+        status=SimpleNamespace(relay_model=""),
+        workspace=Path("/tmp/navin-test"),
+        _emit=lambda row: rows.append(row),
+    )
+
+    async def capture(row):
+        rows.append(row)
+
+    runtime._emit = capture
+
+    def message(data):
+        return outbound_message_for_event(
+            channel="cli", chat_id="direct", event=ProgressEvent(content=""),
+            metadata={OUTBOUND_META_AGENT_UI: build_agent_ui_blob(data)}, content="",
+        )
+
+    event = ProgressEvent(content="")
+    asyncio.run(TuiRuntime._dispatch_progress(runtime, message({
+        "phase": "compacting", "state": "summarizing", "step": "Waiting for the model",
+    }), event))
+    asyncio.run(TuiRuntime._dispatch_progress(runtime, message({
+        "phase": "compacting", "state": "measuring", "step": "Reduced tokens", "percent": 63,
+    }), event))
+    assert len(rows) == 2
+    assert all(isinstance(row, UiCompactionProgress) for row in rows)
+    assert rows[0].percent is None and rows[1].percent == 63
+    assert rows[0].session_key == "cli:direct"
+    assert rows[0].workspace == "/tmp/navin-test"
+
+
 def test_the_cli_hears_which_model_took_over_and_when_the_chosen_one_is_back() -> None:
     import asyncio
     from types import SimpleNamespace
@@ -371,3 +524,121 @@ def test_the_cli_hears_which_model_took_over_and_when_the_chosen_one_is_back() -
     assert runtime.status.relay_model == "Claude Fable 5.1"
     asyncio.run(TuiRuntime._dispatch_progress(runtime, relay(""), event))
     assert runtime.status.relay_model == ""
+
+
+def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_one(tmp_path, monkeypatch) -> None:
+    """A real board in the project, the app's own event path, no model."""
+    from textual.worker import WorkerCancelled
+
+    from navin.board import session_focus
+    from navin.board.store import ProjectBoardStore
+    from navin.tui.plan_panel import PlanPanel, load_cli_plan
+    from navin.tui.runtime import UiToolEvent
+
+    monkeypatch.setattr(session_focus, "_store_path", lambda: tmp_path / "session-focus.json")
+    session_focus.clear()
+
+    async def settle(app) -> None:
+        for worker in [w for w in app.workers if w.group == "plan-panel"]:
+            try:
+                await worker.wait()
+            except WorkerCancelled:
+                continue  # superseded by the refresh after it
+
+    async def run() -> None:
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = _InteractionApp(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
+        store = ProjectBoardStore(tmp_path)
+        # Wide enough for the step title: a narrow row keeps only "Step 1/2".
+        async with app.run_test(size=(150, 30)) as pilot:
+            panel = app.query_one("#plan", PlanPanel)
+            app._refresh_plan()
+            await settle(app)
+            assert not panel.display, "no plan, no panel"
+            await app.submit_text("Fix the rounding and add the tests")
+            await app.runtime.bus.consume_inbound()
+            key = app.runtime.session_key
+            ids = [store.create_task(title=title, actor="agent", actor_type="agent")["id"]
+                   for title in ("Fix the rounding", "Add the tests")]
+            store.update_task(ids[0], actor="agent", actor_type="agent", fields={"status": "in_progress"})
+            session_focus.remember(key, ids)
+            await app._render_runtime_event(UiToolEvent("b1", "board", "end", {"action": "create"}, result="2 tasks created:"))
+            await settle(app)
+            await pilot.pause()
+            text = str(panel.content)
+            assert panel.display and "Plan  0/2 done" in text
+            assert panel.folded and "\n" not in text
+            # Clicking the collapsed title opens the detailed checklist.
+            await pilot.click(panel)
+            text = str(panel.content)
+            assert "◉ Fix the rounding" in text and "○ Add the tests" in text
+            app._refresh_working_line()
+            assert "Step 1/2: Fix the rounding · " in str(app.query_one(WorkingLine).content)
+            store.update_task(ids[0], actor="agent", actor_type="agent", fields={"status": "done"})
+            store.update_task(ids[1], actor="agent", actor_type="agent", fields={"status": "in_progress"})
+            await app._render_runtime_event(UiToolEvent(
+                "b2", "board", "end", {"action": "move", "task_id": ids[0], "status": "done"},
+                result=f"Task moved: {ids[0]} [done] (medium) Fix the rounding @agent(agent)",
+            ))
+            await settle(app)
+            await pilot.pause()
+            text = str(panel.content)
+            assert "1/2 done" in text and "✓ Fix the rounding" in text and "◉ Add the tests" in text
+            app._refresh_working_line()
+            line = str(app.query_one(WorkingLine).content)
+            assert "Step 2/2: Add the tests" in line and "\n" not in line
+            # One click folds the plan to one line that still says where it is.
+            await pilot.click(panel)
+            folded = str(panel.content)
+            assert "\n" not in folded and "now: Add the tests" in folded
+            await pilot.click(panel)
+            assert "○" not in str(panel.content) and "✓ Fix the rounding" in str(panel.content)
+            # The plan is this chat's own.
+            assert load_cli_plan(tmp_path, "cli:another-chat") is None
+
+    try:
+        asyncio.run(run())
+    finally:
+        session_focus.clear()
+
+
+def test_the_working_line_stays_on_one_row_with_a_long_step() -> None:
+    from navin.tui.widgets import format_working_line
+
+    line = format_working_line(
+        elapsed_s=154, activity="Running pytest test_pricing.py",
+        step="Step 1/3: Corriger l'ordre remise/arrondi", width=81,
+    )
+    assert line == "Step 1/3 · Running pytest test_pricing.py (2m 34s • esc to interrupt)"
+    roomy = format_working_line(elapsed_s=5, activity="Working…", step="Step 2/3: Add the tests", width=120)
+    assert roomy.startswith("Step 2/3: Add the tests · Working… (5s")
+
+
+def test_session_history_and_plans_show_dates_states_and_unfinished_work(tmp_path) -> None:
+    from unittest.mock import AsyncMock
+
+    from navin.board.store import ProjectBoardStore
+    from navin.session.manager import SessionManager
+
+    sessions = SessionManager(tmp_path / "sessions")
+    session = sessions.get_or_create("cli:direct")
+    session.messages = [
+        {"role": "user", "content": "Build the charts", "timestamp": "2026-11-07T10:15:00"},
+        {"role": "assistant", "content": "Charts are built."},
+        {"role": "user", "content": "Add the tests", "timestamp": "2026-11-07T11:30:00"},
+    ]
+    sessions.save(session)
+    board = ProjectBoardStore(tmp_path)
+    board.create_task(title="Charts", actor="test", actor_type="agent", status="done")
+    board.create_task(title="Tests", actor="test", actor_type="agent")
+    shown: list[str] = []
+    host = SimpleNamespace(push_screen=AsyncMock())
+    with patch("navin.tui.app.MarkdownScreen", side_effect=lambda text: shown.append(text) or text):
+        asyncio.run(NavinApp._show_session_history(host, str(tmp_path), "cli:direct", sessions))
+        asyncio.run(NavinApp._show_session_plans(host, str(tmp_path), "cli:direct"))
+    history, plans = shown
+    assert "07/11/2026" in history and "Build the charts" in history and "Add the tests" in history
+    assert "Response recorded" in history and "No completed response recorded" in history
+    assert "1/2 tasks complete" in plans and "To resume" in plans and "Tests" in plans
+    assert "\u2014" not in history + plans

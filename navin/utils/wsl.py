@@ -529,8 +529,79 @@ def open_url_on_host(url: str) -> bool:
     and PowerShell / Explorer go through WSL's ``/init`` instead
     (:func:`windows_program_argv`). Nothing is started when even that is out.
     """
+    return _open_on_host(host_open_commands(url))
+
+
+def wsl_path_to_windows(path: str) -> str | None:
+    """The Windows path of a file of this distribution, for a Windows program.
+
+    ``/mnt/c/Users/me`` is ``C:\\Users\\me``; anything else lives inside the
+    distribution and is reached as ``\\\\wsl.localhost\\<distro>\\...``. The
+    distribution's name comes from ``WSL_DISTRO_NAME``, which WSL sets in every
+    process it starts, then from ``wslpath``. None when neither knows.
+    """
+    posix = PurePosixPath(path)
+    if not posix.is_absolute():
+        return None
+    parts = posix.parts
+    if len(parts) >= 3 and parts[1] == "mnt" and len(parts[2]) == 1 and parts[2].isalpha():
+        return f"{parts[2].upper()}:\\" + "\\".join(parts[3:])
+    distro = os.environ.get("WSL_DISTRO_NAME", "").strip()
+    if distro:
+        return to_unc(distro, posix)
+    wslpath = shutil.which("wslpath")
+    if not wslpath:
+        return None
+    try:
+        out = subprocess.run(
+            [wslpath, "-w", str(posix)],
+            capture_output=True,
+            timeout=5,
+            check=False,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = out.stdout.decode("utf-8", errors="replace").strip()
+    return value if out.returncode == 0 and value else None
+
+
+def host_open_path_commands(path: str, windows_path: str) -> list[list[str]]:
+    """Ways to open a file of this distribution with its Windows default app.
+
+    Same order as :func:`host_open_commands`. wslview takes the Linux path and
+    translates it itself; PowerShell and Explorer get the Windows path. Inside
+    PowerShell's single quotes a quote is written twice.
+    """
+    quoted = windows_path.replace("'", "''")
+    return [
+        ["wslview", path],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"Start-Process -FilePath '{quoted}'",
+        ],
+        ["explorer.exe", windows_path],
+    ]
+
+
+def open_path_on_host(path: str) -> bool:
+    """Open a file of this distribution with its Windows default app.
+
+    An HTML report opens in the Windows browser, a PDF in the PDF reader. True
+    when something took it; without a Windows path only wslview can try.
+    """
+    windows = wsl_path_to_windows(path)
+    commands = host_open_path_commands(path, windows) if windows else [["wslview", path]]
+    return _open_on_host(commands)
+
+
+def _open_on_host(commands: list[list[str]]) -> bool:
+    """Run the first host opener that takes the target. True when one did."""
     interop = host_interop_available()
-    for argv in host_open_commands(url):
+    for argv in commands:
         if not interop and argv[0] == "wslview":
             continue
         exe = shutil.which(argv[0])

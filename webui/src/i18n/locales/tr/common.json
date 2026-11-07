@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Doğrulama bekleniyor",
+    "summary": "Değişiklikler kaydedildi. Görev henüz doğrulanmadı.",
+    "details": "Ayrıntılar, günlükler ve sonraki adımlar"
+  },
   "actions": {
     "cancel": "Cancel"
   },

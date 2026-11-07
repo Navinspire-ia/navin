@@ -1053,6 +1053,7 @@ export function ThreadShell({
   }, [chatId]);
   const [liveTaskHint, setLiveTaskHint] = useState<{
     modelLabel?: string;
+    modelPreset?: string | null;
     taskRole?: string;
     routed?: boolean;
   } | null>(null);
@@ -1477,7 +1478,12 @@ export function ThreadShell({
   );
 
   const [effortBusy, setEffortBusy] = useState(false);
-  const activeEffortPreset = threadPresetRow ?? activeModelPreset(settings);
+  const routedEffortPreset = isStreaming && liveTaskHint?.modelPreset
+    ? settings?.model_presets.find((preset) => preset.name === liveTaskHint.modelPreset)
+    : undefined;
+  const activeEffortPreset = liveTaskHint?.routed && isStreaming
+    ? routedEffortPreset
+    : threadPresetRow ?? activeModelPreset(settings);
   const effortValue = activeEffortPreset?.reasoning_effort ?? settings?.agent.reasoning_effort ?? "";
   const effortOptions = useMemo(() => {
     const raw =
@@ -1523,7 +1529,7 @@ export function ThreadShell({
   const restoredEffortKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const presetName = activeEffortPreset?.name;
-    if (!presetName || !settings || !token || effortBusy) return;
+    if (!presetName || !settings || !token || effortBusy || (isStreaming && !!liveTaskHint)) return;
     const key = `${chatId ?? ""}::${presetName}`;
     if (restoredEffortKeyRef.current === key) return;
     restoredEffortKeyRef.current = key;
@@ -1531,7 +1537,7 @@ export function ThreadShell({
     if (stored === null || stored === effortValue) return;
     if (!effortOptions.includes(stored)) return;
     void handleEffortSelect(stored);
-  }, [activeEffortPreset?.name, chatId, effortBusy, effortOptions, effortValue, handleEffortSelect, settings, token]);
+  }, [activeEffortPreset?.name, chatId, effortBusy, effortOptions, effortValue, handleEffortSelect, isStreaming, liveTaskHint, settings, token]);
 
   const contextWindowValue =
     activeEffortPreset?.context_window_tokens ?? settings?.agent.context_window_tokens ?? null;
@@ -1584,6 +1590,7 @@ export function ThreadShell({
         if (role) {
           setLiveTaskHint({
             modelLabel: presetLabelForSlug(settings, modelName, modelPreset),
+            modelPreset,
             taskRole: role,
           });
         }
@@ -1595,7 +1602,7 @@ export function ThreadShell({
         // one-click way out (pin the default model here).
         const role = reason.slice("route:".length).trim();
         const toLabel = presetLabelForSlug(settings, modelName, modelPreset);
-        if (role) setLiveTaskHint({ modelLabel: toLabel, taskRole: role, routed: true });
+        if (role) setLiveTaskHint({ modelLabel: toLabel, modelPreset, taskRole: role, routed: true });
         const announceKey = `${chatId ?? "*"}:${role}`;
         if (!role || announcedRouteSwapsRef.current.has(announceKey)) return;
         announcedRouteSwapsRef.current.add(announceKey);
@@ -3234,6 +3241,24 @@ export function ThreadShell({
             {planBlock}
             {agentsAction}
             {reviewAction}
+          </div>
+        ) : null}
+        {isStreaming && liveTaskHint?.modelLabel && activeEffortPreset ? (
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-4 py-1.5 text-xs text-muted-foreground" data-testid="live-model-effort">
+            <span className="font-medium text-foreground">{liveTaskHint.modelLabel}</span>
+            <label className="flex items-center gap-1.5">
+              <span>{t("thread.composer.effort", { defaultValue: "Effort" })}</span>
+              <select
+                aria-label={t("thread.composer.effort", { defaultValue: "Effort" })}
+                value={effortValue}
+                disabled={effortBusy || !activeEffortPreset || isViewer}
+                onChange={(event) => handleEffortSelectSync(event.target.value)}
+                className="rounded-md border border-border/60 bg-background px-1.5 py-0.5 text-foreground"
+              >
+                {effortValue && !effortOptions.includes(effortValue) ? <option value={effortValue}>{effortValue}</option> : null}
+                {effortOptions.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+              </select>
+            </label>
           </div>
         ) : null}
         {isViewer ? <ViewerReadOnlyBanner /> : null}

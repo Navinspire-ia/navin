@@ -1,9 +1,9 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Bot } from "lucide-react";
+import { Bot, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -64,6 +64,7 @@ export function SubagentStatusBar({
 }) {
   const { t } = useTranslation();
   const reduce = useReducedMotion();
+  const [expanded, setExpanded] = useState(false);
   const { cards } = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const attention = useMemo(() => subagentAttentionOrder(cards), [cards]);
   const counts = useMemo(() => {
@@ -117,12 +118,16 @@ export function SubagentStatusBar({
       className={cn("mb-1.5 rounded-lg border border-border/60 bg-background/80 px-2 py-1 text-[12px]", className)}
     >
       <div className="flex min-h-6 items-center gap-2">
-        <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <span className="font-medium text-foreground/90">
+        <button type="button" data-testid="subagent-status-toggle" aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="inline-flex min-h-6 shrink-0 items-center gap-2 rounded-md font-medium text-foreground/90 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+          <Bot className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           {cards.every((card) => card.member)
             ? t("thread.team.barTitle", { defaultValue: "Team" })
             : t("thread.subagents.barTitle", { defaultValue: "Subagents" })}
-        </span>
+          <span className="text-muted-foreground tabular-nums">{cards.length}</span>
+          <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+        </button>
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {chips.map(([key, label, tone]) => (
             <span key={key} data-chip={key} className={cn("rounded-full bg-muted/60 px-1.5 tabular-nums", tone)}>
@@ -142,7 +147,7 @@ export function SubagentStatusBar({
         ) : null}
       </div>
       <AnimatePresence initial={false}>
-        {rows.map((card) => (
+        {expanded && rows.map((card) => (
           <motion.div
             key={card.taskId}
             layout={!reduce}
@@ -156,7 +161,7 @@ export function SubagentStatusBar({
           </motion.div>
         ))}
       </AnimatePresence>
-      {more > 0 ? (
+      {expanded && more > 0 ? (
         <button
           type="button"
           data-testid="subagent-status-more"

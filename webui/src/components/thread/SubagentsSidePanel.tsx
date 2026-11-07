@@ -310,7 +310,7 @@ export function SubagentChatView({ client, chatId, agent, canManage = true, onBa
     className={cn("absolute inset-0 z-10 flex flex-col bg-background", className)}
   >
     <div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-border/60 px-2 sm:px-3">
-      <Button variant="ghost" size="sm" onClick={onBack} className="h-9 shrink-0 gap-1.5 px-2"><ArrowLeft className="h-4 w-4 rtl:rotate-180" aria-hidden />{t("thread.subagents.returnChat", { defaultValue: "Return to main chat" })}</Button>
+      <Button variant="ghost" size="sm" onClick={onBack} className="h-9 shrink-0 gap-1.5 px-2"><ArrowLeft className="h-4 w-4 rtl:rotate-180" aria-hidden />{t("thread.subagents.listLabel", { defaultValue: "Sub-agents" })}</Button>
       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={current.label || current.task_id}>{current.label || current.task_id}</span>
       <StateBadge state={subagentState(current)} />
     </div>

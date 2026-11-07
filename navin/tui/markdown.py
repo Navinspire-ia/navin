@@ -280,3 +280,28 @@ def install_component_style_cache() -> None:
         return
     _ORIGINAL_PROCESS_COMPONENT_CLASSES = original
     Stylesheet._process_component_classes = _process_component_classes  # type: ignore[method-assign]
+
+
+def compact_validation_report(text: str) -> str:
+    """Keep the verdict and cause visible; the complete report stays one click away."""
+    if not text.startswith("## Validation pending\n"):
+        return text
+    sections = re.split(r"(?m)^### ", text)
+    kept = []
+    for section in sections:
+        title, _, body = section.partition("\n")
+        if title.startswith("Changed files ("):
+            continue
+        if title in {"Check failure", "Test failure"}:
+            lines = [line for line in body.splitlines() if line.strip() and not line.startswith("```")]
+            first = lines[0] if lines else "See validation details."
+            if len(first) > 240:
+                first = first[:237] + "..."
+            kept.append(f"### {title}\n\n{first}")
+        else:
+            kept.append(section.rstrip())
+    result = kept[0]
+    for section in kept[1:]:
+        result += "\n\n" + (section if section.startswith("### ") else "### " + section)
+    result = re.sub(r"(?m)^\| (?:Item \| Status|--- \| ---) \|\n?", "", result)
+    return re.sub(r"(?m)^\| ([^|]+) \| ([^|]+) \|$", r"- **\1:** \2", result)

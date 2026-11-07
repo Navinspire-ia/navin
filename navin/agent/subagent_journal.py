@@ -178,7 +178,11 @@ class SubagentJournal:
                 and previous.get("iteration") == clean.get("iteration")
                 and previous.get("assistant_message") == clean.get("assistant_message")
             )
-            if clean.get("assistant_message") and not repeats_batch_message:
+            # A "continuing" candidate was rejected by a completion gate: it is
+            # kept for recovery reasoning in the checkpoint, never shown in the
+            # agent's journal as if it were a conclusion.
+            superseded = clean.get("phase") == "continuing"
+            if clean.get("assistant_message") and not repeats_batch_message and not superseded:
                 self._append(session, task_id, "message", clean["assistant_message"])
             for message in clean.get("completed_tool_results") or []:
                 self._append(session, task_id, "message", visible_message(message))

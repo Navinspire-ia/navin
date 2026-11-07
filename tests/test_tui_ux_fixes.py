@@ -20,9 +20,11 @@ from navin.bus.outbound_events import (
     outbound_message_for_event,
 )
 from navin.bus.queue import MessageBus
+from navin.tui import file_preview
 from navin.tui.app import NavinApp
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import TuiRuntime, UiFilePreview
+from navin.tui.screens import MarkdownScreen
 from navin.tui.widgets import Composer, ComposerShell, Sidebar
 
 
@@ -278,6 +280,106 @@ class UiFilePreviewDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(emitted)
         self.assertIsInstance(emitted[-1], UiFilePreview)
         self.assertEqual(emitted[-1].path, "/tmp/x.md")
+
+
+class TerminalPreviewScreenTests(unittest.IsolatedAsyncioTestCase):
+    """An HTML report previewed from the CLI opens in the browser.
+
+    Its source filled a terminal box: rows of <tr data-family=...> cut at the
+    edge, then "... (truncated)".
+    """
+
+    REPORT = (
+        "<!doctype html><html lang='fr'><head><meta charset='utf-8'>"
+        "<title>Agent catalog audit</title><style>td{color:red}</style>"
+        "<script>var row = '<tr>';</script></head><body>"
+        "<h1>Audit du catalogue</h1><p>Statut des agents &amp; familles.</p>"
+        "<button>Exporter</button>"
+        "<table><thead><tr><th>Agent</th><th>Statut</th></tr></thead><tbody>"
+        "<tr data-family='banking' data-status='planned'><td class='agent'>"
+        "<strong>Navin Enterprise KYC / AML &amp; Sanctions</strong></td><td>Prévu</td></tr>"
+        "<tr><td>Agent Contrats | Polices</td><td>Publié annoncé</td></tr>"
+        "</tbody></table><ul><li>Banking</li><li></li><li>Insurance</li></ul>"
+        "<p><a href='https://navin.live/docs'>Documentation</a></p></body></html>"
+    )
+
+    def test_an_html_report_reads_as_markdown_not_tags(self):
+        markdown = file_preview.html_to_markdown(self.REPORT)
+        for leftover in ("<tr", "data-family", "color:red", "var row", "Exporter"):
+            self.assertNotIn(leftover, markdown)
+        self.assertTrue(markdown.startswith("# Audit du catalogue\n\nStatut des agents & familles."))
+        self.assertIn(
+            "| Agent | Statut |\n| --- | --- |\n"
+            "| Navin Enterprise KYC / AML & Sanctions | Prévu |\n"
+            "| Agent Contrats \\| Polices | Publié annoncé |",
+            markdown,
+        )
+        self.assertIn("- Banking\n- Insurance", markdown)
+        self.assertIn("[Documentation](https://navin.live/docs)", markdown)
+
+    async def _preview(self, path: Path, *, opened: bool):
+        app = _make_app(path.parent)
+        notes: list[str] = []
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            with (
+                patch("navin.utils.open_browser.open_local_file", return_value=opened) as opener,
+                patch(
+                    "navin.utils.open_browser.file_unavailable_reason",
+                    return_value="No browser or file viewer could be opened from here.",
+                ),
+                patch.object(app, "notify", side_effect=lambda message, **_: notes.append(str(message))),
+            ):
+                app._open_file_preview(str(path))
+                for _ in range(3):
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+            screen = app.screen
+            shown = screen._markdown if isinstance(screen, MarkdownScreen) else None
+        return opener, notes, shown
+
+    async def test_the_report_opens_in_the_browser_not_in_a_terminal_box(self):
+        with tempfile.TemporaryDirectory() as name:
+            report = Path(name) / "report.html"
+            report.write_text(self.REPORT, encoding="utf-8")
+            opener, notes, shown = await self._preview(report, opened=True)
+        opener.assert_called_once_with(str(report))
+        self.assertIsNone(shown)
+        self.assertIn("report.html opened in your browser.", notes)
+
+    async def test_without_a_browser_the_report_is_readable_text(self):
+        with tempfile.TemporaryDirectory() as name:
+            report = Path(name) / "report.html"
+            report.write_text(self.REPORT, encoding="utf-8")
+            _, notes, shown = await self._preview(report, opened=False)
+        self.assertFalse([note for note in notes if "report.html" in note])
+        self.assertIsNotNone(shown)
+        self.assertTrue(shown.startswith(
+            "**report.html** - shown here as text. No browser or file viewer could be opened from here."
+        ))
+        self.assertIn("| Navin Enterprise KYC / AML & Sanctions | Prévu |", shown)
+        self.assertNotIn("<tr", shown)
+
+    async def test_missing_report_is_an_error_not_a_browser_failure(self):
+        with tempfile.TemporaryDirectory() as name:
+            report = Path(name) / "missing.html"
+            opener, notes, shown = await self._preview(report, opened=True)
+        opener.assert_not_called()
+        self.assertIsNone(shown)
+        self.assertTrue(any("file not found" in note for note in notes))
+
+    async def test_a_markdown_file_stays_in_the_terminal_viewer(self):
+        with tempfile.TemporaryDirectory() as name:
+            notes_file = Path(name) / "notes.md"
+            notes_file.write_text("# Plan\n\n- one", encoding="utf-8")
+            opener, _, shown = await self._preview(notes_file, opened=True)
+        opener.assert_not_called()
+        self.assertEqual(shown, "# Plan\n\n- one")
+
+    def test_code_is_fenced_for_its_language_even_with_backticks_inside(self):
+        shown = file_preview.terminal_markdown(Path("/w/run.py"), b"print('```')\n")
+        self.assertEqual(shown, "**/w/run.py**\n\n````python\nprint('```')\n\n````")
+        self.assertIsNone(file_preview.terminal_markdown(Path("/w/a.bin"), b"\xff\xfe\x00"))
 
 
 if __name__ == "__main__":

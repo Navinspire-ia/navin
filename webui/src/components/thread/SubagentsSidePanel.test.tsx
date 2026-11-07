@@ -160,7 +160,7 @@ describe("Subagent inspection", () => {
     expect(within(view).getAllByText("read_file")).toHaveLength(2);
     expect(within(view).getByText("Completed", { selector: "[data-state]" })).toBeTruthy();
     expect(within(view).queryByRole("button", { name: "Load more actions" })).toBeNull();
-    fireEvent.click(within(view).getByRole("button", { name: "Return to main chat" }));
+    fireEvent.click(within(view).getByRole("button", { name: "Sub-agents" }));
     fireEvent.keyDown(window, { key: "Escape" });
     expect(back).toHaveBeenCalledTimes(2);
   });

@@ -2,6 +2,9 @@
 
 import asyncio
 import os
+import shlex
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,10 +19,12 @@ from navin.agent.subagent import (
     _resume_after_interrupted_batch,
     _SubagentHook,
     request_subagent_operation,
+    spawned_task_id,
 )
 from navin.agent.subagent_journal import SubagentJournal, owner_alive, process_identity
 from navin.providers.base import GenerationSettings
 from navin.utils.llm_runtime import LLMRuntime
+from navin.utils.proc import no_window_kwargs
 
 
 def runtime():
@@ -663,14 +668,30 @@ def test_resume_helper_falls_back_to_the_assistant_calls_without_pending_list():
 
 
 def test_an_isolated_run_resumes_in_its_saved_checkout(tmp_path, monkeypatch):
+    from navin.agent import workspace_policy as wp
+
     async def run():
         monkeypatch.setattr("navin.agent.subagent._outcomes_dir", lambda: tmp_path / "history")
         settled = []
+        checked = []
+        explicit = {"allowed_paths": ["src/**"], "denied_paths": ["src/private/**"],
+                    "allowed_commands": ["pytest"], "test_commands": ["pytest -q tests/test_feature.py"]}
+
+        def gate(checkout, task_id):
+            saved = wp.get_policy(task_id)
+            assert saved == wp.policy_from_dict(explicit)
+            assert saved.command_allowed("pytest -q tests/test_feature.py")
+            assert not saved.command_allowed("curl example.com")
+            assert not saved.path_allowed("src/private/key.py")
+            checked.append(task_id)
+            return None
 
         async def settle(_manager, checkout, **_kw):
+            assert checked == ["kept"]
             settled.append(checkout.path)
             return ""
 
+        monkeypatch.setattr(wp, "guarded_pre_merge_gate", gate)
         monkeypatch.setattr("navin.agent.worktree_merge.settle_after_run", settle)
         manager = SubagentManager(workspace=tmp_path, bus=Bus(), max_tool_result_chars=4000)
         checkout = tmp_path / "wt"
@@ -678,6 +699,7 @@ def test_an_isolated_run_resumes_in_its_saved_checkout(tmp_path, monkeypatch):
         descriptor = {"task": "Implement", "label": "Worker", "agent": None,
                       "origin": {"channel": "cli", "chat_id": "one", "session_key": "cli:one"},
                       "origin_message_id": None, "isolate": True, "scope_paths": None,
+                      "workspace_policy": explicit, "workspace_policy_required": True,
                       "workspace": str(tmp_path), "policy": {
                           "requires_verify_before_done": False, "validate_code_changes": False,
                           "locked_denied_tools": [], "allowed_tools": None,
@@ -706,8 +728,201 @@ def test_an_isolated_run_resumes_in_its_saved_checkout(tmp_path, monkeypatch):
         await asyncio.gather(*fresh._running_tasks.values())
         assert [Path(s.workspace) for s in fresh.runner.specs] == [checkout]
         assert settled == [checkout]
+        assert wp.get_policy("kept") is None, "Completed runs must release their in-memory restrictions"
+        relaunch = AsyncMock(return_value="started")
+        fresh.spawn = relaunch
+        assert await fresh.relaunch_agent("cli:one", "kept", runtime=runtime()) == "started"
+        assert wp.policy_from_dict(relaunch.call_args.kwargs["workspace_policy_spec"]) == wp.policy_from_dict(explicit)
+        with pytest.raises(ValueError, match="missing"):
+            wp.policy_from_descriptor({"isolate": True})
+        with pytest.raises(ValueError, match="missing"):
+            wp.policy_from_descriptor({**descriptor, "workspace_policy": None})
+        with pytest.raises(ValueError, match="non-empty strings"):
+            wp.policy_from_descriptor({**descriptor, "workspace_policy": {"allowed_paths": [None]}})
         fresh._watchdog_task.cancel()
         await asyncio.gather(fresh._watchdog_task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("valid_change", [True, False])
+def test_final_checkpoint_recovers_policy_settlement_and_delivery(tmp_path, monkeypatch, valid_change):
+    """Two restarts around finalization, a real Git merge, and a real targeted check."""
+    from navin.agent import workspace_policy as wp
+    from navin.agent import worktree
+    from navin.bus.events import InboundMessage
+    from navin.bus.queue import MessageBus
+
+    class SimulatedPowerLoss(BaseException):
+        pass
+
+    root = tmp_path / "project"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=root, check=True, capture_output=True, text=True,
+            timeout=20, **no_window_kwargs(),
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    (root / "feature.py").write_text("def run():\n    return 'old'\n")
+    (root / "check_feature.py").write_text(
+        "from pathlib import Path\nimport runpy\nimport sys\n"
+        "with Path(sys.argv[1]).open('a') as record:\n    record.write('checked\\n')\n"
+        "assert runpy.run_path('feature.py')['run']() == 'ready'\n"
+    )
+    git("add", ".")
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
+    initial_head = git("rev-parse", "HEAD")
+    (root / "user-draft.txt").write_text("uncommitted user work\n")
+    marker = tmp_path / "checks.txt"
+    explicit = {
+        "allowed_paths": ["feature.py"], "allowed_commands": ["python"], "denied_paths": [],
+        "test_commands": [shlex.join([sys.executable, "check_feature.py", str(marker)])],
+    }
+    monkeypatch.setattr("navin.agent.subagent._outcomes_dir", lambda: tmp_path / "history")
+    monkeypatch.setattr(worktree, "worktrees_root", lambda: tmp_path / "worktrees")
+
+    async def run():
+        managers = []
+        checkout = None
+
+        def manager():
+            instance = SubagentManager(workspace=root, bus=Bus(), max_tool_result_chars=4000)
+            instance.runner = Runner()
+            instance._build_tools = Mock()
+            instance._build_subagent_prompt = Mock(return_value="Agent")
+            managers.append(instance)
+            return instance
+
+        try:
+            first = manager()
+            first._start = Mock()  # Accept durably without running the task in this process.
+            detail = await first.spawn(
+                "Implement feature", label="Feature", isolate=True, runtime=runtime(),
+                origin_channel="cli", origin_chat_id="recovery", session_key="cli:recovery",
+                workspace_policy_spec=explicit,
+            )
+            task_id = spawned_task_id(detail)
+            assert task_id
+            saved = first.journal.get("cli:recovery", task_id)["descriptor"]
+            assert saved["workspace_policy"] == explicit
+            assert saved["workspace_policy_required"] is True
+            checkout = await asyncio.to_thread(worktree.create, root, task_id, pool_size=0)
+            assert checkout is not None
+            content = "ready" if valid_change else "broken"
+            (checkout.path / "feature.py").write_text(f"def run():\n    return '{content}'\n")
+            first.journal.checkpoint("cli:recovery", task_id, {
+                "phase": "continuing", "iteration": 1,
+                "assistant_message": {"role": "assistant", "content": "Premature candidate"},
+                "completed_tool_results": [], "pending_tool_calls": [],
+            })
+            first.journal.checkpoint("cli:recovery", task_id, {
+                "phase": "final_response", "iteration": 2,
+                "assistant_message": {"role": "assistant", "content": "Feature completed"},
+                "checkout": {"path": str(checkout.path), "origin": str(root), "base": checkout.base},
+            })
+            await first.flush_journal()
+            first.journal.abandon("cli:recovery", task_id)
+            wp.clear_policy(task_id)
+
+            resumed = manager()
+            release = worktree.release
+            released = []
+
+            def release_after_record(tree, **_kwargs):
+                checkpoint = resumed.journal.get("cli:recovery", task_id)["checkpoint"]
+                assert checkpoint["phase"] == "settled"
+                assert "Merged automatically" in checkpoint["settlement_note"]
+                released.append(tree.path)
+                return release(tree, pool_size=0)
+
+            monkeypatch.setattr(worktree, "release", release_after_record)
+
+            async def lose_power_before_announcement(_id, _label, _task, result, _origin, status, *_args, **_kwargs):
+                assert status == ("ok" if valid_change else "error")
+                assert marker.read_text() == "checked\n"
+                assert not resumed.journal.get("cli:recovery", task_id)["metadata"].get("done")
+                assert resumed.journal.get("cli:recovery", task_id)["checkpoint"]["phase"] == "settled"
+                assert ("Merged automatically" if valid_change else "Test failed") in result
+                raise SimulatedPowerLoss()
+
+            resumed._announce_result = lose_power_before_announcement
+            assert "resumed" in await resumed.recover_agent("cli:recovery", task_id, runtime=runtime())
+            outcomes = await asyncio.gather(*resumed._running_tasks.values(), return_exceptions=True)
+            assert len(outcomes) == 1 and isinstance(outcomes[0], SimulatedPowerLoss)
+            assert resumed.runner.specs == []
+            resumed._build_tools.assert_not_called()
+            await resumed.flush_journal()
+            settled_head = git("rev-parse", "HEAD")
+            assert (settled_head != initial_head) is valid_change
+            assert released == ([checkout.path] if valid_change else [])
+            assert checkout.path.exists() is (not valid_change)
+            resumed.journal.abandon("cli:recovery", task_id)
+
+            # A saturated queue must not turn a pending result into durable done.
+            congested = manager()
+            congested.bus = MessageBus(inbound_maxsize=1)
+            filler = InboundMessage(channel="cli", sender_id="test", chat_id="recovery", content="filler")
+            await congested.bus.publish_inbound(filler)
+            assert "resumed" in await congested.recover_agent("cli:recovery", task_id, runtime=runtime())
+            await asyncio.wait_for(asyncio.gather(*congested._running_tasks.values()), timeout=5)
+            await congested.flush_journal()
+            assert not congested.journal.get("cli:recovery", task_id)["metadata"]["done"]
+            assert congested.journal.get("cli:recovery", task_id)["checkpoint"]["phase"] == "settled"
+            assert task_id not in congested._agent_sessions
+            await asyncio.wait_for(congested.cancel_by_session("cli:recovery"), timeout=2)
+            if valid_change:
+                assert await congested.bus.consume_inbound() is filler
+                await asyncio.wait_for(asyncio.gather(*congested._background_tasks), timeout=5)
+                assert congested.bus.inbound.qsize() == 1
+                announcement = await congested.bus.consume_inbound()
+                assert announcement.metadata["subagent_task_id"] == task_id
+                assert "Merged automatically" in announcement.content
+                delivered = congested
+            else:
+                # Simulate another restart before the deferred put can finish.
+                deferred = list(congested._background_tasks)
+                assert deferred
+                for pending in deferred:
+                    pending.cancel()
+                await asyncio.gather(*deferred, return_exceptions=True)
+                congested.journal.abandon("cli:recovery", task_id)
+                delivered = manager()
+                assert "resumed" in await delivered.recover_agent("cli:recovery", task_id, runtime=runtime())
+                await asyncio.gather(*delivered._running_tasks.values())
+                assert len(delivered.bus.inbound) == 1
+            assert congested.runner.specs == delivered.runner.specs == []
+            congested._build_tools.assert_not_called()
+            delivered._build_tools.assert_not_called()
+            assert marker.read_text() == "checked\n"
+            assert git("rev-parse", "HEAD") == settled_head
+            history = delivered.agent_history("cli:recovery", task_id)
+            assert history["agent"]["done"]
+            assert "Premature candidate" not in str(history["events"])
+            result = history["events"][-1]["payload"]
+            assert result["status"] == ("ok" if valid_change else "error")
+            if valid_change:
+                assert "Merged automatically" in result["content"]
+                assert (root / "feature.py").read_text() == "def run():\n    return 'ready'\n"
+            else:
+                assert "Test failed" in result["content"] and str(checkout.path) in result["content"]
+                assert (root / "feature.py").read_text() == "def run():\n    return 'old'\n"
+                assert (checkout.path / "feature.py").read_text() == "def run():\n    return 'broken'\n"
+            assert (root / "user-draft.txt").read_text() == "uncommitted user work\n"
+            assert "Cannot resume" in await delivered.recover_agent("cli:recovery", task_id, runtime=runtime())
+            assert wp.get_policy(task_id) is None
+        finally:
+            for instance in managers:
+                await instance.flush_journal()
+                if instance._watchdog_task is not None:
+                    instance._watchdog_task.cancel()
+                    await asyncio.gather(instance._watchdog_task, return_exceptions=True)
+            if checkout is not None and checkout.path.exists():
+                worktree.remove(checkout)
 
     asyncio.run(run())
 

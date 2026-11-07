@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Validation pending",
+    "summary": "Changes are saved. The task is not validated yet.",
+    "details": "Details, logs and next steps"
+  },
   "actions": {
     "cancel": "Cancel"
   },
@@ -74,6 +79,27 @@
   },
   "chat": {
     "actions": "Chat actions for {{title}}",
+    "history": {
+      "title": "History",
+      "loading": "Loading history...",
+      "empty": "No prompts sent in this chat yet",
+      "error": "Could not load chat history.",
+      "unknownDate": "Date unavailable",
+      "copy": "Copy",
+      "showMore": "Show full prompt",
+      "showLess": "Show less",
+      "status": { "done": "Done", "unfinished": "Not finished", "error": "Error" }
+    },
+    "plans": {
+      "title": "My plans",
+      "loading": "Loading plan...",
+      "empty": "No plan for this project yet",
+      "error": "Could not load the plan.",
+      "progress": "{{done}}/{{total}} tasks complete",
+      "relaunch": "Relaunch",
+      "relaunchAll": "Relaunch all unfinished",
+      "status": { "done": "Done", "active": "In progress", "blocked": "Blocked", "pending": "Planned" }
+    },
     "activity": {
       "complete": "Agent finished",
       "running": "Agent running",
@@ -10693,6 +10719,7 @@
       "historyTitle": "Subagent history",
       "accepted": "Agent request accepted.",
       "back": "Back to agents",
+      "listLabel": "Sub-agents",
       "returnChat": "Return to main chat",
       "resume": "Resume agent",
       "relaunch": "Relaunch agent",

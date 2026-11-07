@@ -372,6 +372,7 @@ class TurnContext:
     suppress_response: bool = False
     # The final text is a notice the loop wrote itself (never streamed).
     final_is_notice: bool = False
+    defer_final_stream: bool = False
 
     on_progress: Callable[..., Awaitable[None]] | None = None
     on_stream: Callable[[str], Awaitable[None]] | None = None
@@ -2351,6 +2352,7 @@ class AgentLoop:
         turn_scopes: list[AbstractContextManager[Any]] | None = None,
         tools: ToolRegistry | None = None,
         request_context: RequestContext | None = None,
+        defer_final_stream: bool = False,
     ) -> tuple[str | None, list[str], list[dict], str, bool]:
         """Run the agent iteration loop.
 
@@ -2656,6 +2658,7 @@ class AgentLoop:
                 provider_retry_mode=self.provider_retry_mode,
                 progress_callback=on_progress,
                 stream_progress_deltas=on_stream is not None,
+                defer_final_stream=defer_final_stream,
                 retry_wait_callback=on_retry_wait,
                 checkpoint_callback=_checkpoint,
                 injection_callback=_drain_pending,
@@ -2842,7 +2845,7 @@ class AgentLoop:
             )
             # Push final content through stream so streaming channels (e.g. Telegram)
             # update the card instead of leaving it empty.
-            if on_stream and on_stream_end and should_stream:
+            if on_stream and on_stream_end and should_stream and not defer_final_stream:
                 await on_stream(result.final_content or "")
                 await on_stream_end(resuming=False)
         elif result.stop_reason == "error":
@@ -4149,19 +4152,13 @@ class AgentLoop:
                 ctx.on_progress = await self._build_bus_progress_callback(ctx.msg)
             on_progress = ctx.on_progress
 
-            async def _compacting_notice() -> None:
+            async def _compacting_update(data: dict[str, Any]) -> None:
                 from navin.utils.progress_events import invoke_on_progress
                 from navin.utils.task_progress import build_agent_ui_blob
 
                 await invoke_on_progress(
                     on_progress, "", tool_hint=False,
-                    agent_ui=build_agent_ui_blob(
-                        {
-                            "label": "Compacting context…",
-                            "indeterminate": True,
-                            "phase": "compacting",
-                        }
-                    ),
+                    agent_ui=build_agent_ui_blob(data),
                 )
 
             # Only what the prompt cannot fit without: proactive archiving
@@ -4172,7 +4169,7 @@ class AgentLoop:
                 runtime=ctx.runtime,
                 replay_max_messages=replay_max_messages,
                 urgent_only=True,
-                on_start=_compacting_notice if on_progress else None,
+                on_progress=_compacting_update if on_progress else None,
             )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
@@ -4253,6 +4250,11 @@ class AgentLoop:
             "running",
             started_at=ctx.visible_run_started_at,
         )
+        # Task answers wait for board settlement, continuation decisions and a
+        # successful history save. Ordinary conversation can still stream live.
+        ctx.defer_final_stream = bool(
+            ctx.on_stream is not None and not (ctx.msg.metadata or {}).get("conversational_turn")
+        )
         result = await self._run_agent_loop(
             ctx.initial_messages,
             runtime=ctx.runtime,
@@ -4275,6 +4277,7 @@ class AgentLoop:
             turn_scopes=ctx.turn_scopes,
             tools=ctx.tools,
             request_context=ctx.request_context,
+            defer_final_stream=ctx.defer_final_stream,
         )
         final_content, tools_used, all_msgs, stop_reason, had_injections = result
         ctx.final_content = final_content
@@ -4363,6 +4366,16 @@ class AgentLoop:
             turn_latency_ms=ctx.turn_latency_ms,
             final_is_notice=ctx.final_is_notice,
         )
+        if (
+            ctx.defer_final_stream and ctx.outbound is not None
+            and isinstance(ctx.outbound.event, StreamedResponseEvent)
+            and ctx.on_stream is not None
+        ):
+            # This is the only publication of a task's accepted final answer.
+            # Nothing that can resume its work or fail its save follows it.
+            await ctx.on_stream(ctx.final_content or "")
+            if ctx.on_stream_end is not None:
+                await ctx.on_stream_end(resuming=False)
         if ctx.outbound is not None and phase_timings:
             ctx.outbound.metadata["phase_timings_ms"] = phase_timings
         if ctx.ephemeral and ctx.outbound is not None:

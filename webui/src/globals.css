@@ -886,6 +886,19 @@
   [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] .markdown-content > :first-child:where(h1, h2, h3, h4, h5, h6, p.md-lead) {
     margin-top: 0.35em;
   }
+  /* A blocked validation is not a success: its card keeps neutral report
+     typography, without the result column indent or the green check marks. */
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] [data-testid="validation-pending-card"] .markdown-content.markdown-content {
+    padding-inline-start: 0;
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] [data-testid="validation-pending-card"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead) {
+    margin-inline-start: 0;
+    padding-inline-start: 0;
+    text-indent: 0;
+  }
+  [data-virtual-index]:has([data-testid="journal-result-heading"]) + [data-agent-result="true"] [data-testid="validation-pending-card"] .markdown-content :where(h1, h2, h3, h4, h5, h6, p.md-lead)::before {
+    content: none;
+  }
 
   /* L→R sheen clipped to live activity labels. The highlight lives inside
      the glyphs, not in the row background, so dark mode stays quiet. */

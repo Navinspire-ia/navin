@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Validierung ausstehend",
+    "summary": "Die Änderungen sind gespeichert. Die Aufgabe ist noch nicht validiert.",
+    "details": "Details, Protokolle und nächste Schritte"
+  },
   "actions": {
     "cancel": "Abbrechen"
   },
@@ -10370,6 +10375,7 @@
       "historyTitle": "Subagent-Verlauf",
       "accepted": "Agent-Anfrage akzeptiert.",
       "back": "Zurück zu den Agents",
+      "listLabel": "Subagenten",
       "returnChat": "Zurück zum Haupt-Chat",
       "resume": "Agent fortsetzen",
       "relaunch": "Agent neu starten",

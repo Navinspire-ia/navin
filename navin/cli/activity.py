@@ -121,6 +121,8 @@ class ActivityPrinter:
     def _outcome(self, summary: str, *, first: bool = True) -> None:
         if summary:
             lead = "  └ " if first else "    "
+            # A plan lists one step per line, aligned under the first.
+            summary = summary.replace("\n", "\n    ")
             self.console.print(Text(f"{lead}{summary}", style=activity_palette()["muted"]), highlight=False)
 
     def _status(self, text: str) -> None:
@@ -260,8 +262,9 @@ class ActivityPrinter:
         event: dict[str, Any], state: dict[str, Any],
     ) -> None:
         family = tool_cluster_kind(name)
-        label = activity_label(name, args, phase=phase)
         result = event.get("result")
+        # A finished board call is named by its task title, not its id.
+        label = activity_label(name, args, phase=phase, result=result if phase == "end" else None)
         error = event.get("error")
         glyph = status_glyph(name, phase, result, error)
         output_lines = state["output"].splitlines()

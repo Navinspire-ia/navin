@@ -421,20 +421,18 @@ def test_parallel_agents_show_under_the_chat_in_at_most_ten_rows(tmp_path):
             await pilot.pause()
             assert panel.display
             lines = str(panel.content).splitlines()
-            assert lines[0].startswith("● main")
-            assert len(lines) <= AgentsPanel.MAX_ROWS
-            assert "show more (+6)" in lines[-1]
+            assert lines == ["▸ Sub-agents  12 total · 12 running"]
             await pilot.press("f7")
             await pilot.pause()
             expanded = str(panel.content).splitlines()
             assert len(expanded) == 1 + 12 + 1
             assert "show less" in expanded[-1]
+            # Same label for every agent: rows are named by their task instead.
+            assert "Task number 0" in expanded[1]
+            assert "6m 10s · ↓ 335.5k tokens" in expanded[1]
             await pilot.press("f7")
             await pilot.pause()
-            assert len(str(panel.content).splitlines()) <= AgentsPanel.MAX_ROWS
-            # Same label for every agent: rows are named by their task instead.
-            assert "Task number 0" in lines[1]
-            assert "6m 10s · ↓ 335.5k tokens" in lines[1]
+            assert str(panel.content).splitlines() == ["▸ Sub-agents  12 total · 12 running"]
             assert not app.query(SystemNote), "progress never floods the chat"
             for index in range(12):
                 await app._on_runtime_event(UiSubagent(
@@ -464,14 +462,13 @@ def test_eight_agents_show_six_rows_then_show_more_expands(tmp_path):
                 ))
             await pilot.pause()
             lines = str(panel.content).splitlines()
-            assert len(lines) == 1 + 6 + 1
-            assert "show more (+2)" in lines[-1]
+            assert lines == ["▸ Sub-agents  8 total · 8 running"]
             panel.toggle_expanded()
             lines = str(panel.content).splitlines()
             assert sum("Worker" in line for line in lines) == 8
             assert "show less" in lines[-1]
             await app._on_runtime_event(UiSubagent("a0", "Worker 0", "done", "Completed", None, 2, True, None))
-            assert "Done" in str(panel.content)
+            assert "1 done" in str(panel.content) and "7 running" in str(panel.content)
             panel._agents["a0"]["done_at"] -= 3600
             panel.dismiss("a0")
             await app._on_runtime_event(UiSubagent("a1", "Worker 1", "awaiting_tools", "Reading files", None, 3, False, None))

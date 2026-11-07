@@ -49,6 +49,18 @@ def test_result_summaries_are_short_outcomes():
     error = "Error: Invalid parameters for tool 'apply_patch': missing required edits[0].path"
     assert result_summary("apply_patch", {}, None, phase="error", error=error) == "invalid arguments"
     assert result_summary("read_file", {"path": "a.py"}, read, phase="start") == ""
+    # A board call reads as the plan it changed, not as raw board output.
+    created = (
+        "2 tasks created:\n  t-1a [backlog] (high) Fix the rounding\n"
+        "  t-2b [backlog] (medium) Add the tests\nPlan auto-advance: t-1a claimed as the current step."
+    )
+    assert result_summary("board", {"action": "create"}, created) == "1. Fix the rounding\n2. Add the tests"
+    moved = (
+        "Task moved: t-1a [done] (high) Fix the rounding @agent(agent) Ledger progress recorded.\n"
+        "Next task claimed: t-2b [in_progress] (medium) Add the tests @agent(agent)"
+    )
+    assert result_summary("board", {"action": "move"}, moved) == "Next: Add the tests"
+    assert result_summary("board", {"action": "move"}, "Task moved: t-1a [done] (high) Fix it") == ""
 
 
 def test_agent_errors_are_humanized_and_labels_say_what_happened():
@@ -63,6 +75,17 @@ def test_agent_errors_are_humanized_and_labels_say_what_happened():
     assert activity_label("spawn", {"task": "Audit the login flow\nthen report"}) == "Agent Audit the login flow"
     assert activity_label("board", {"action": "move", "task_id": "T3", "status": "done"}) == "Completed task T3"
     assert activity_label("board", {"action": "plan"}) == "Updated plan"
+    # Once the call went through, the task's title replaces its id.
+    moved = "Task moved: t-1a [done] (high) Fix the rounding @agent(agent)"
+    done = {"action": "move", "task_id": "t-1a", "status": "done"}
+    assert activity_label("board", done, result=moved) == "Completed: Fix the rounding"
+    assert activity_label("board", done, phase="start", result=moved) == "Complete task t-1a"
+    plan = {"action": "create", "tasks": [{"title": "Fix the rounding"}, {"title": "Add the tests"}]}
+    assert activity_label("board", plan) == "Planned 2 steps"
+    claimed = "Task claimed: t-2b [in_progress] (medium) Add the tests @agent(agent)"
+    assert activity_label("board", {"action": "claim", "task_id": "t-2b"}, result=claimed) == "Started: Add the tests"
+    # "python -m pytest" runs pytest on the files, not python on "pytest".
+    assert activity_label("exec", {"command": "python -m pytest -q tests/test_a.py"}) == "Ran pytest test_a.py"
     assert ask_user_answer_text('The user chose "b" (Beta).') == "Beta"
 
 

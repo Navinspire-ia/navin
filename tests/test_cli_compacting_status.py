@@ -40,7 +40,21 @@ def test_compacting_notice_shows_beside_working() -> None:
     msg = _progress({"label": "Compacting context…", "indeterminate": True, "phase": "compacting"})
     handled = asyncio.run(_maybe_print_interactive_progress(msg, None, None, renderer))
     assert handled is True
-    assert renderer.statuses == ["Working… Compacting context…"]
+    assert len(renderer.statuses) == 1
+    assert "Compacting context" in renderer.statuses[0]
+    assert "measuring" in renderer.statuses[0]
+    assert "%" not in renderer.statuses[0]
+
+
+def test_real_percentage_replaces_animation_but_not_the_working_step() -> None:
+    renderer = _Renderer()
+    asyncio.run(_maybe_print_interactive_progress(_progress({
+        "label": "Compacting context…", "phase": "compacting", "state": "measuring",
+        "step": "82 messages archived; 3,200/5,000 tokens reduced", "percent": 61,
+    }), None, None, renderer))
+    assert "61%" in renderer.statuses[-1]
+    assert "82 messages archived" in renderer.statuses[-1]
+    assert "measuring" not in renderer.statuses[-1]
 
 
 def test_other_task_progress_label_replaces_status() -> None:

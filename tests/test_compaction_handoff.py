@@ -351,6 +351,151 @@ class UrgentOnlyConsolidationTest(_HandoffTest):
         )
         self.assertGreater(self.sessions.get_or_create("s-urgent").last_consolidated, 0)
 
+    def test_post_archive_progress_ignores_the_old_provider_peak(self) -> None:
+        from navin.session.context_usage_meta import LAST_CONTEXT_USAGE_KEY
+
+        session = self._session()
+        session.metadata[LAST_CONTEXT_USAGE_KEY] = {"peak_prompt_tokens": 1_500}
+        self.sessions.save(session)
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=600), urgent_only=True,
+            on_progress=report,
+        ))
+        updates = [e for e in events if e.get("state") == "measuring" and e.get("tokens_after")]
+        self.assertTrue(updates)
+        self.assertLess(updates[-1]["tokens_after"], updates[-1]["tokens_before"])
+        self.assertGreater(updates[-1]["percent"], 0)
+        self.assertEqual(events[-1]["state"], "partial")
+
+    def test_completion_reaches_100_only_after_the_new_context_is_measured_and_saved(self) -> None:
+        session = self._session()
+        self.consolidator._input_token_budget = lambda _runtime: 350
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+            if event["state"] == "done":
+                saved = self.sessions.get_or_create(session.key)
+                self.assertGreater(saved.last_consolidated, 0)
+                self.assertTrue(saved.metadata.get("_last_summary"))
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=600), urgent_only=True,
+            on_progress=report,
+        ))
+        self.assertEqual(events[-1]["state"], "done")
+        self.assertEqual(events[-1]["percent"], 100)
+        self.assertLessEqual(events[-1]["tokens_after"], 350 * self.consolidator.consolidation_ratio)
+        self.assertTrue(all(event.get("percent", 0) < 100 for event in events[:-1]))
+
+    def test_replay_archived_without_post_estimate_does_not_claim_100_percent(self) -> None:
+        session = self._session()
+        self.consolidator._estimate_cache[session.key] = (
+            100, self.consolidator._unconsolidated_chars(session), "fake",
+        )
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=20_000), urgent_only=True,
+            replay_max_messages=8, on_progress=report,
+        ))
+        self.assertGreater(self.sessions.get_or_create(session.key).last_consolidated, 0)
+        self.assertEqual(events[-1]["state"], "done")
+        self.assertNotIn("percent", events[-1])
+
+    def test_progress_reports_real_estimates_and_finishes_after_saving(self) -> None:
+        session = self._session()
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+            if event["state"] == "done":
+                self.assertGreater(self.sessions.get_or_create(session.key).last_consolidated, 0)
+                self.assertTrue(self.sessions.get_or_create(session.key).metadata.get("_last_summary"))
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=600), urgent_only=True,
+            on_progress=report,
+        ))
+        states = [event["state"] for event in events]
+        self.assertEqual(states[0], "start")
+        self.assertIn("summarizing", states)
+        self.assertIn("archived", states)
+        self.assertIn("measuring", states)
+        self.assertIn("handoff", states)
+        # A legal suffix may leave a few tokens above target. Saved, but
+        # partial - never invent a complete 100% result.
+        self.assertEqual(states[-1], "partial")
+        self.assertLess(events[-1]["percent"], 100)
+        self.assertIn("safe message boundary", events[-1]["step"])
+        self.assertTrue(all(event.get("percent", 0) < 100 for event in events[:-1]))
+        before = [e["tokens_before"] for e in events if e.get("tokens_before")]
+        after = [e["tokens_after"] for e in events if e.get("tokens_after")]
+        self.assertTrue(before and after)
+        self.assertGreater(max(before), min(after))
+        self.assertTrue(all(0 <= e["percent"] <= 95 for e in events[:-1] if "percent" in e))
+
+    def test_progress_does_not_start_without_an_overflow(self) -> None:
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+
+        session = self.sessions.get_or_create("small")
+        session.messages = self._conversation(1)
+        self.sessions.save(session)
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=100_000), urgent_only=True,
+            on_progress=report,
+        ))
+        self.assertEqual(events, [])
+
+    def test_a_failed_progress_callback_does_not_cancel_archiving(self) -> None:
+        session = self._session()
+        states: list[str] = []
+
+        async def disconnected(event: dict) -> None:
+            states.append(event["state"])
+            raise RuntimeError("UI connection lost")
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=600), urgent_only=True,
+            on_progress=disconnected,
+        ))
+        self.assertGreater(self.sessions.get_or_create(session.key).last_consolidated, 0)
+        self.assertEqual(states[-1], "partial")
+
+    def test_a_failed_summary_is_reported_partial_not_100_percent(self) -> None:
+        class Unavailable(_FakeProvider):
+            async def chat_with_retry(self, *, messages, **_kwargs):
+                if "handover note" not in messages[0]["content"]:
+                    return LLMResponse(content="unavailable", finish_reason="error")
+                return await super().chat_with_retry(messages=messages)
+
+        session = self._session()
+        self.provider = Unavailable()
+        events: list[dict] = []
+
+        async def report(event: dict) -> None:
+            events.append(event)
+
+        _run(self.consolidator.maybe_consolidate_by_tokens(
+            session, runtime=self._runtime(window=600), urgent_only=True,
+            on_progress=report,
+        ))
+        self.assertEqual(events[-1]["state"], "partial")
+        self.assertNotEqual(events[-1].get("percent"), 100)
+        self.assertIn("raw archive", events[-1]["step"])
+        self.assertGreater(self.sessions.get_or_create(session.key).last_consolidated, 0)
+
 
 class ResumeLabelTest(unittest.TestCase):
     """The carried notes must be framed as settled work, not as background.

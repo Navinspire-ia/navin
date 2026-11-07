@@ -1553,6 +1553,10 @@ class _StreamEndRecorder(AgentHook):
     def __init__(self) -> None:
         super().__init__()
         self.ends: list[tuple[bool, bool]] = []
+        self.deltas: list[str] = []
+
+    async def on_stream(self, context: Any, delta: str) -> None:
+        self.deltas.append(delta)
 
     def wants_streaming(self) -> bool:
         return True
@@ -1645,4 +1649,11 @@ class BackgroundClaimNudgeTest(unittest.IsolatedAsyncioTestCase):
             [self._CLAIM, self._DONE], hook=hook, provider_cls=_StreamingFakeProvider,
         )
         self.assertEqual(result.final_content, self._DONE)
-        self.assertEqual(hook.ends, [(True, True), (False, False)])
+        # The stale candidate is now held back altogether, rather than painted
+        # then removed. Nothing needs discarding because it never reached a UI.
+        self.assertEqual(hook.deltas, [self._DONE])
+        self.assertEqual(hook.ends, [(True, False), (False, False)])
+        from navin.session.history_visibility import is_hidden_history_message
+
+        visible = [m for m in result.messages if not is_hidden_history_message(m)]
+        self.assertNotIn(self._CLAIM, [m.get("content") for m in visible])

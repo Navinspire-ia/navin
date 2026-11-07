@@ -5,6 +5,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createInstance } from "i18next";
+import { I18nextProvider } from "react-i18next";
+import { removeDiscardedAnswer } from "@/hooks/useNavinStream";
+import { normalizeActivityTimeline } from "@/lib/activity-timeline";
+import { MessageBubble } from "@/components/MessageBubble";
+import { isValidationPendingMessage } from "./ValidationPendingCard";
+import ar from "@/i18n/locales/ar/common.json";
 
 import en from "@/i18n/locales/en/common.json";
 import fr from "@/i18n/locales/fr/common.json";
@@ -168,3 +177,51 @@ describe("ThreadMessages scroll memo wiring", () => {
   });
 });
 
+
+describe("validated conclusion and rejected candidate", () => {
+  it("keeps narration and failed late tools before one final answer in live and restored history", () => {
+    const base = { role: "assistant", kind: "message", turnId: "turn-final", createdAt: 1 } as const;
+    const narration: UIMessage = { ...base, id: "narration", content: "Checking the changes now." };
+    const candidate: UIMessage = { ...base, id: "candidate", content: "Premature success", reasoning: "Inspecting results", isStreaming: true };
+    const withdrawn = removeDiscardedAnswer([narration, candidate], 1);
+    expect(withdrawn[1]).toMatchObject({ content: "", reasoning: "Inspecting results", isStreaming: false });
+    const failed: UIMessage = { ...base, id: "failed", kind: "trace", content: "Tests failed: assertion error" };
+    const answer: UIMessage = { ...base, id: "answer", content: "Validation remains blocked." };
+    // A late tool completion may follow the accepted answer on the wire.
+    const units = normalizeActivityTimeline([...withdrawn, answer, failed]);
+    const restored = normalizeActivityTimeline([narration, { ...withdrawn[1], id: "history-reasoning" }, answer, failed]);
+    for (const timeline of [units, restored]) {
+      expect(timeline.at(-1)).toMatchObject({ type: "message", message: { id: "answer" } });
+      expect(JSON.stringify(timeline)).not.toContain("Premature success");
+      expect(JSON.stringify(timeline)).toContain("Tests failed: assertion error");
+      expect(JSON.stringify(timeline)).toContain("Checking the changes now.");
+      expect(timeline.filter((unit) => unit.type === "message" && unit.message.id === "answer")).toHaveLength(1);
+    }
+    expect(unitKeysForDisplay(units)).toEqual(unitKeysForDisplay(restored));
+    expect(removeDiscardedAnswer([candidate, failed], 0)).not.toContain(candidate);
+  });
+
+  it("renders a localized compact failure with closed details, raw logs and a visible full-copy action", async () => {
+    const content = "## Validation pending\n\nChanges are saved. The task is not validated yet.\n\n### Why it stopped\n\nA verification failed.\n\n### Test failure\n\n```text\nAssertionError: expected 1, received 0\n```\n\n### Next step\n\nFix the failing test.";
+    expect(isValidationPendingMessage(content)).toBe(true);
+    expect(isValidationPendingMessage("I will explain Validation pending next.")).toBe(false);
+    for (const [lng, common] of Object.entries({ en, fr, ar })) {
+      const i18n = createInstance();
+      await i18n.init({ lng, resources: { [lng]: { translation: common } } });
+      const html = renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(MessageBubble, {
+        message: { id: "blocked", role: "assistant", kind: "message", content, createdAt: 1 },
+      })));
+      expect(html).toContain(common.validationPending.title);
+      expect(html).toContain('data-testid="validation-pending-card"');
+      expect(html).toContain("A verification failed.");
+      expect(html).toContain("AssertionError: expected 1, received 0");
+      expect(html).toContain("Fix the failing test.");
+      expect(html).toContain("<details");
+      expect(html).not.toMatch(/<details[^>]*\bopen/);
+      expect(html).toContain('data-testid="message-copy"');
+      expect(html).not.toContain("opacity-0 transition-opacity");
+    }
+    const source = readFileSync(resolve(__dirname, "../MessageBubble.tsx"), "utf8");
+    expect(source).toContain("<MessageCopyButton content={message.content}");
+  });
+});

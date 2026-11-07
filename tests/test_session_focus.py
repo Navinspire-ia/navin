@@ -41,6 +41,15 @@ class SessionFocusPersistenceTest(unittest.TestCase):
                 ["t1", "t2"],
             )
 
+    def test_replace_starts_new_plan_and_survives_reload(self) -> None:
+        with patch("navin.config.paths.get_webui_dir", return_value=self.root):
+            session_focus.remember("websocket:chat-1", ["old-1", "old-2"])
+            session_focus.replace("websocket:chat-1", ["new-1", "new-1"])
+            with session_focus._guard:
+                session_focus._focus.clear()
+                session_focus._loaded = False
+            self.assertEqual(session_focus.touched("websocket:chat-1"), ["new-1"])
+
     def test_forget_updates_disk(self) -> None:
         with patch("navin.config.paths.get_webui_dir", return_value=self.root):
             session_focus.remember("websocket:chat-1", ["t1"])

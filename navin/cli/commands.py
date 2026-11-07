@@ -753,11 +753,30 @@ async def _maybe_print_interactive_progress(
         and isinstance(agent_ui, dict)
         and agent_ui.get("kind") == "task_progress"
     ):
-        # "Compacting context…": say it next to the spinner instead of a
-        # silent "Working…" while the summary model runs.
-        label = str((agent_ui.get("data") or {}).get("label") or "").strip()
-        if label and renderer:
-            renderer.set_status(f"Working… {label}" if label.startswith("Compacting") else label)
+        data = agent_ui.get("data")
+        data = data if isinstance(data, dict) else {}
+        if data.get("phase") == "compacting":
+            from navin.utils.task_progress import progress_bar
+
+            state = str(data.get("state") or "start")
+            step = str(data.get("step") or "Summarizing the conversation")
+            raw_percent = data.get("percent")
+            percent = (
+                raw_percent if isinstance(raw_percent, (int, float))
+                and not isinstance(raw_percent, bool) and 0 <= raw_percent <= 100
+                else None
+            )
+            gauge = progress_bar(percent, width=14) if percent is not None else "[···━━·········] measuring"
+            marker = "✓" if state == "done" else "!" if state in {"partial", "failed", "cancelled"} else "⠋"
+            label = f"{marker} Compacting context  {gauge}  {step}"
+            if renderer:
+                renderer.set_status("Working…" if state in {"done", "partial", "failed", "cancelled"} else label)
+            if state in {"done", "partial", "failed", "cancelled"}:
+                await _print_interactive_progress_line(label, thinking, renderer)
+        else:
+            label = str(data.get("label") or "").strip()
+            if label and renderer:
+                renderer.set_status(label)
         return True
 
     if event.reasoning_end:
@@ -3339,11 +3358,33 @@ def agent(
 
             agent_ui = _kwargs.get("agent_ui")
             if isinstance(agent_ui, dict) and agent_ui.get("kind") == "task_progress" and not content:
-                # Live "what is happening now" line: update the spinner in
-                # place instead of printing a row per update.
-                label = str((agent_ui.get("data") or {}).get("label") or "").strip()
-                if label and renderer:
-                    renderer.set_status(label)
+                # Reuse the interactive CLI's in-place compaction bar; tools
+                # keep their own status and never inherit its percentage.
+                data = agent_ui.get("data")
+                data = data if isinstance(data, dict) else {}
+                if data.get("phase") == "compacting":
+                    from navin.utils.task_progress import progress_bar
+
+                    state = str(data.get("state") or "start")
+                    step = str(data.get("step") or "Summarizing the conversation")
+                    raw_percent = data.get("percent")
+                    percent = (
+                        raw_percent if isinstance(raw_percent, (int, float))
+                        and not isinstance(raw_percent, bool) and 0 <= raw_percent <= 100
+                        else None
+                    )
+                    gauge = progress_bar(percent, width=14) if percent is not None else "[···━━·········] measuring"
+                    label = f"Compacting context  {gauge}  {step}"
+                    if renderer:
+                        renderer.set_status("Working…" if state in {"done", "partial", "failed", "cancelled"} else label)
+                    if state in {"done", "partial", "failed", "cancelled"}:
+                        _print_cli_progress_line(
+                            f"{'✓' if state == 'done' else '!'} {label}", _thinking, renderer,
+                        )
+                else:
+                    label = str(data.get("label") or "").strip()
+                    if label and renderer:
+                        renderer.set_status(label)
                 return
 
             if _kwargs.get("reasoning_end"):

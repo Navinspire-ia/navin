@@ -20,6 +20,7 @@ from textual.widgets import Button, DataTable, Input, Static
 
 
 def _event_lines(event: dict[str, Any]) -> list[str]:
+    """Keep every recorded field available in the expanded and copied log."""
     payload = event.get("payload", {})
     kind = event.get("kind", "")
     label = payload.get("name") or payload.get("role") or kind
@@ -38,6 +39,34 @@ def _event_lines(event: dict[str, Any]) -> list[str]:
     if payload.get("tool_calls"):
         lines.append(json.dumps(payload["tool_calls"], ensure_ascii=False, indent=2))
     return lines
+
+
+def _event_summary(event: dict[str, Any]) -> str:
+    """One readable line instead of printing every JSON payload in the viewport."""
+    payload = event.get("payload") or {}
+    if not isinstance(payload, dict):
+        return f"[{event.get('seq', '')}] {event.get('kind', 'event')}"
+    kind = str(event.get("kind") or "event")
+    label = str(payload.get("name") or payload.get("role") or kind)
+    state = str(payload.get("status") or "")
+    text = payload.get("status_line") or payload.get("result") or payload.get("content")
+    first = next((part.strip() for part in str(text or "").splitlines() if part.strip()), "")
+    if kind == "tool_start":
+        first = "Started"
+    elif kind == "tool_done" and state:
+        first = f"{state.upper()}  {first}" if first else state.upper()
+    first = first[:116] + ("..." if len(first) > 116 else "")
+    return f"[{event.get('seq', '')}] {label}  {first}".rstrip()
+
+
+def _error_excerpt(error: str) -> list[str]:
+    """Show the actual reason from a validation report, not its Markdown table."""
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    if "### Why it stopped" in lines:
+        start = lines.index("### Why it stopped") + 1
+        lines = lines[start:] or lines
+    useful = [line for line in lines if not line.startswith(("#", "|", "- "))]
+    return useful[:3] if useful else lines[:3]
 
 
 # How an agent ended, read the same way as the desktop journal (subagentState).
@@ -76,6 +105,7 @@ _UI_SELECTOR = ", ".join(f"#{name}" for name in (
     "agents-heading", "agent-filter", "agent-table", "agent-detail",
     "agents-more", "agents-resume", "agents-relaunch",
     "agents-cancel", "agents-dismiss", "agents-dismiss-finished",
+    "agents-toggle-log", "agents-copy-log",
     "agents-show-all", "agents-show-running", "agents-show-succeeded", "agents-show-errors",
 ))
 _UI_COUNT = _UI_SELECTOR.count("#")
@@ -88,20 +118,24 @@ class AgentsScreen(ModalScreen[None]):
         width: 96%; height: 94%; border: solid $primary;
         background: $surface; padding: 1 2;
     }
-    AgentsScreen #agents-heading { height: 1; }
+    AgentsScreen #agents-heading { height: 2; color: $text; text-style: bold; }
+    AgentsScreen #agent-table { border: round $primary-muted; }
+    AgentsScreen #agent-detail-scroll { border: round $primary-muted; padding: 0 1; }
     AgentsScreen Input { height: 3; }
     AgentsScreen #agents-filters { height: 3; }
     AgentsScreen #agents-filters Button { margin-right: 1; min-width: 12; }
-    AgentsScreen DataTable { height: 2fr; min-height: 4; }
-    AgentsScreen #agent-detail-scroll { height: 1fr; min-height: 4; }
+    AgentsScreen DataTable { height: auto; max-height: 40%; min-height: 5; }
+    AgentsScreen #agent-detail-scroll { height: 1fr; min-height: 10; }
     AgentsScreen #agent-detail { height: auto; }
-    AgentsScreen #agents-actions { height: 3; }
+    AgentsScreen #agents-actions { height: 6; }
+    AgentsScreen #agents-actions Horizontal { height: 3; }
     AgentsScreen #agents-actions Button { margin-right: 1; }
     """
     BINDINGS = [
         Binding("escape", "close", "Close", priority=True),
         # The filter field keeps the focus: a plain letter would be typed there.
         Binding("ctrl+r", "restart_selected", "Resume or relaunch", priority=True),
+        Binding("ctrl+shift+c", "copy_log", "Copy agent log", priority=True),
     ]
 
     def __init__(
@@ -129,12 +163,13 @@ class AgentsScreen(ModalScreen[None]):
         self._cursor = 0
         self._has_more = False
         self._history_error = ""
+        self._full_log = False
         self._state_filter = "all"
         self._notice = ""
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Agents - Escape to close", id="agents-heading", markup=False)
+            yield Static("AGENTS  /  THIS CONVERSATION", id="agents-heading", markup=False)
             yield Input(placeholder="Filter by name, task or ID", id="agent-filter")
             with Horizontal(id="agents-filters"):
                 for suffix, label, _states in _FILTERS:
@@ -143,18 +178,22 @@ class AgentsScreen(ModalScreen[None]):
             yield DataTable(id="agent-table", cursor_type="row", zebra_stripes=True)
             with VerticalScroll(id="agent-detail-scroll"):
                 yield Static("Select an agent to inspect its recent actions.", id="agent-detail", markup=False)
-            with Horizontal(id="agents-actions"):
-                yield Button("Back to chat", id="agents-back", variant="primary")
-                yield Button("Load more actions", id="agents-more")
-                yield Button("Resume agent", id="agents-resume")
-                yield Button("Relaunch agent", id="agents-relaunch")
-                yield Button("Cancel agent", id="agents-cancel", variant="error")
-                yield Button("Dismiss", id="agents-dismiss")
-                yield Button("Dismiss finished", id="agents-dismiss-finished")
+            with Vertical(id="agents-actions"):
+                with Horizontal():
+                    yield Button("Back", id="agents-back", variant="primary")
+                    yield Button("Resume", id="agents-resume")
+                    yield Button("Relaunch", id="agents-relaunch")
+                    yield Button("Cancel", id="agents-cancel", variant="error")
+                    yield Button("Dismiss", id="agents-dismiss")
+                with Horizontal():
+                    yield Button("More actions", id="agents-more")
+                    yield Button("Show full log", id="agents-toggle-log")
+                    yield Button("Copy loaded log", id="agents-copy-log")
+                    yield Button("Dismiss finished", id="agents-dismiss-finished")
 
     def on_mount(self) -> None:
-        self.query_one(DataTable).add_columns("ID", "Agent", "State", "Current action", "Tokens")
-        for button in ("agents-more", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
+        self.query_one(DataTable).add_columns("Agent", "State", "Current action", "Tokens", "ID")
+        for button in ("agents-more", "agents-toggle-log", "agents-copy-log", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
             self.query_one(f"#{button}", Button).display = False
         self.query_one("#agents-dismiss-finished", Button).display = self._dismiss_finished is not None
         self._refresh_rows()
@@ -239,9 +278,12 @@ class AgentsScreen(ModalScreen[None]):
         selected = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value if table.row_count else None
         table.clear()
         for key, row in rows:
-            table.add_row(Text(key), Text(str(row.get("label", key))),
-                          Text(_STATE_LABELS[states[key]]), Text(str(row.get("status", ""))),
-                          str(row.get("tokens", 0)), key=key)
+            state = states[key]
+            badge = Text(_STATE_LABELS[state],
+                         style="cyan" if state == "running" else "green" if state == "succeeded" else "red")
+            table.add_row(Text(str(row.get("label", key)), style="bold"), badge,
+                          Text(str(row.get("status", "")).splitlines()[0][:90]),
+                          str(row.get("tokens", 0)), Text(key, style="dim"), key=key)
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
         if self._select and self._select in table.rows:
@@ -259,7 +301,7 @@ class AgentsScreen(ModalScreen[None]):
             self._show_detail(str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))
         else:
             self._selected = None
-            for button in ("agents-more", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
+            for button in ("agents-more", "agents-toggle-log", "agents-copy-log", "agents-resume", "agents-relaunch", "agents-cancel", "agents-dismiss"):
                 self.query_one(f"#{button}", Button).display = False
             self.query_one("#agent-detail", Static).update("No matching agents.")
 
@@ -278,19 +320,52 @@ class AgentsScreen(ModalScreen[None]):
             self._cursor = 0
             self._has_more = False
             self._history_error = ""
+            self._full_log = False
             self._request_history()
-        lines = [f"{row.get('label', key)} [{key}] - {_STATE_LABELS[agent_state(row)]}", str(row.get("task", "")),
-                 f"Model: {row.get('model') or '-'}", str(row.get("status", "")), "Recent actions:"]
-        for step in row.get("steps", []):
-            lines.append(f"[{step.get('status', '')}] {step.get('verb', '')} {step.get('target', '')}".strip())
+        lines = [f"{row.get('label', key)}  /  {_STATE_LABELS[agent_state(row)]}",
+                 f"ID {key}    Model {row.get('model') or '-'}", ""]
+        error = row.get("error")
+        if isinstance(error, str) and error.strip() and error.lower() not in {"cancelled", "canceled"}:
+            # The reason comes first: it is what a failed row is opened for.
+            lines.extend(["VALIDATION / ERROR", *(
+                [error] if self._full_log else _error_excerpt(error)
+            ), ""])
+        lines.extend(["TASK", str(row.get("task") or "No task description"), "",
+                      "CURRENT", str(row.get("status") or row.get("phase") or "-"), ""])
+        steps = row.get("steps") or []
+        lines.append(f"STEPS  /  {len(steps)} recorded")
+        if not steps:
+            lines.append("No steps recorded yet.")
+        for index, step in enumerate(steps, 1):
+            if not isinstance(step, dict):
+                continue
+            if not self._full_log and index <= len(steps) - 8:
+                if index == 1:
+                    lines.append(f"{len(steps) - 8} earlier steps - show full log to inspect")
+                continue
+            lines.append(f"{index:02}  {str(step.get('status') or 'pending').upper():<9} {step.get('verb', '')} {str(step.get('target') or '')[:120]}".rstrip())
+            if step.get("error"):
+                lines.append(f"     {step['error']}")
         if self._events:
-            lines.extend(["", "Saved conversation and actions:"])
-            for event in self._events:
-                lines.extend(_event_lines(event))
+            completed = {event.get("payload", {}).get("id") for event in self._events
+                         if event.get("kind") == "tool_done" and isinstance(event.get("payload"), dict)}
+            actions = [event for event in self._events
+                       if event.get("kind") != "tool_start"
+                       or not isinstance(event.get("payload"), dict)
+                       or event["payload"].get("id") not in completed]
+            lines.extend(["", f"JOURNAL  /  {len(actions)} actions loaded"])
+            if not self._full_log and len(actions) > 10:
+                lines.append(f"{len(actions) - 10} earlier actions - show full log to inspect")
+            for event in self._events if self._full_log else actions[-10:]:
+                lines.extend(_event_lines(event) if self._full_log else [_event_summary(event)])
         elif self._history_loader is not None:
             lines.extend(["", self._history_error or "Loading saved actions..."])
         self.query_one("#agent-detail", Static).update("\n".join(lines))
         self.query_one("#agents-more", Button).display = self._has_more
+        self.query_one("#agents-toggle-log", Button).display = True
+        self.query_one("#agents-toggle-log", Button).label = "Show summary" if self._full_log else "Show full log"
+        # Even a newly started agent has a task and state worth copying.
+        self.query_one("#agents-copy-log", Button).display = True
         self.query_one("#agents-resume", Button).display = bool(self._operation_loader and row.get("recoverable"))
         self.query_one("#agents-relaunch", Button).display = bool(self._operation_loader and row.get("requires_relaunch"))
         state = agent_state(row)
@@ -314,7 +389,7 @@ class AgentsScreen(ModalScreen[None]):
         if self._selected != task_id:
             return
         agent = page.get("agent")
-        if isinstance(agent, dict):
+        if isinstance(agent, dict) and task_id in self._rows:
             saved = {**agent, "task": agent.get("task_description", ""),
                      "status": agent.get("status_line", agent.get("phase", ""))}
             self._durable_rows[task_id] = saved
@@ -329,6 +404,38 @@ class AgentsScreen(ModalScreen[None]):
     @on(Button.Pressed, "#agents-more")
     def _more(self) -> None:
         self._request_history()
+
+    @on(Button.Pressed, "#agents-toggle-log")
+    def _toggle_log(self) -> None:
+        if self._selected is not None and not self._leaving():
+            self._full_log = not self._full_log
+            self._show_detail(self._selected)
+
+    def action_copy_log(self) -> None:
+        """Copy complete loaded records, not the abbreviated on-screen summary."""
+        if self._selected is None or self._leaving():
+            return
+        row = self._rows.get(self._selected, {})
+        lines = [f"Agent: {row.get('label', self._selected)} [{self._selected}]",
+                 f"Task: {row.get('task') or '-'}", f"State: {row.get('status') or row.get('phase') or '-'}"]
+        if isinstance(row.get("error"), str) and row["error"].strip():
+            lines.extend(["", "Validation / error:", row["error"]])
+        if row.get("steps"):
+            lines.extend(["", "Steps:", *(
+                f"{step.get('status', '')} {step.get('verb', '')} {step.get('target', '')} {step.get('error', '')}"
+                for step in row["steps"] if isinstance(step, dict)
+            )])
+        if self._events:
+            lines.extend(["", "Saved actions:"])
+            for event in self._events:
+                lines.extend(_event_lines(event))
+        if self.app.copy_to_clipboard("\n".join(lines)):
+            self._notice = "Loaded log copied"
+            self.query_one("#agents-heading", Static).update(self._notice)
+
+    @on(Button.Pressed, "#agents-copy-log")
+    def _copy_log(self) -> None:
+        self.action_copy_log()
 
     @on(Button.Pressed, "#agents-back")
     def _back(self) -> None:

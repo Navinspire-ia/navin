@@ -6,7 +6,7 @@
 import asyncio
 
 from textual import events
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from navin.tui.frame_scheduler import FrameScheduler, frame_scheduler
 from navin.tui.settled import SettledMarkdown, render_markdown_lines
@@ -175,9 +175,21 @@ def test_finished_turn_comes_back_as_one_settled_answer_with_working_tools(tmp_p
             assert isinstance(body, SettledMarkdown) and body.display
             assert len(list(rebuilt.walk_children())) < len(list(block.walk_children()))
             assert rebuilt.text == block.text and rebuilt.copy_text() == copied
+            # The finished task turn comes back as it was left: its answer under
+            # "Final result", its steps folded behind one control that names them.
+            assert block._activity_folded and rebuilt._activity_folded
+            assert rebuilt.query_one(".assistant-result-rule", Static).display
+            assert not list(rebuilt.query(ToolCall))
+            show = rebuilt.query_one(".assistant-history", Button)
+            assert show.display and str(show.label) == "▸ Show activity · 2 steps"
+            show.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click(show)
+            await pilot.pause()
             tools = list(rebuilt.query(ToolCall))
             assert [tool.tool_name for tool in tools] == [tool.tool_name for tool in block.query(ToolCall)]
-            assert all(tool.phase == "end" for tool in tools)
+            assert all(tool.display and tool.phase == "end" for tool in tools)
+            assert str(rebuilt.query_one(".assistant-recent", Button).label) == "▾ Hide activity"
             run_row = next(tool for tool in tools if tool.tool_name == "exec")
             opened = run_row._open
             run_row.toggle()

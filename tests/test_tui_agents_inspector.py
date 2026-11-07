@@ -201,7 +201,7 @@ def test_f8_filters_by_state_and_ctrl_r_resumes_or_relaunches(tmp_path):
             await pilot.click(screen.query_one("#agents-show-errors", Button))
             await pilot.pause()
             assert shown() == ["bad", "cut"]
-            assert str(table.get_row("bad")[2]) == "Failed"
+            assert str(table.get_row("bad")[1]) == "Failed"
 
             # Ctrl+R from the filter field: relaunch the failed one ...
             screen.query_one(Input).focus()
@@ -418,5 +418,81 @@ def test_clicking_a_failed_row_opens_f8_on_it(tmp_path):
             await pilot.pause()
             assert isinstance(app.screen, AgentsScreen)
             assert app.screen._selected == "bad"
+
+    asyncio.run(run())
+
+
+def test_inspector_displays_exact_error_and_numbered_steps(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            screen = AgentsScreen(lambda: {"task-1": {
+                "label": "Build agent", "phase": "error", "done_at": 1,
+                "error": "Changes not validated: tests/test_example.py::test_one failed\nAssertionError: expected 2",
+                "task": "Repair tests", "status": "Validation failed",
+                "steps": [{"verb": "Test", "target": "tests/test_example.py", "status": "failed",
+                           "error": "exit code 1"}],
+            }})
+            app.push_screen(screen)
+            await pilot.pause()
+            detail = str(screen.query_one("#agent-detail", Static).content)
+            assert "VALIDATION / ERROR" in detail
+            assert "AssertionError: expected 2" in detail
+            assert "01  FAILED" in detail and "exit code 1" in detail
+            assert screen.query_one(DataTable).row_count == 1
+            await pilot.press("escape")
+    asyncio.run(run())
+
+
+def test_compact_log_expands_and_copies_unshortened_validation_and_output(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+
+        async def saved(task, after):
+            assert task == "failed"
+            if after:
+                return {"events": [], "next_cursor": after, "has_more": False}
+            return {"agent": None, "events": [
+                {"seq": 1, "kind": "tool_done", "payload": {
+                    "id": "call-1", "name": "exec", "status": "failed",
+                    "arguments": {"command": "python -m pytest tests/test_charts.py"},
+                    "result": "1 failed\nAssertionError: real failed assertion in the long output",
+                }},
+            ], "next_cursor": 1, "has_more": False}
+
+        async with app.run_test(size=(140, 44)) as pilot:
+            screen = AgentsScreen(lambda: {"failed": {
+                "label": "Charts data prod", "phase": "error", "done_at": 1,
+                "status": "Validation checks failed", "task": "Repair charts",
+                "error": "## Validation pending\n\n### Why it stopped\nA verification failed.\nFull diagnostic follows.",
+                "steps": [{"verb": "Test", "target": "tests/test_charts.py", "status": "failed"}],
+            }}, history_loader=saved)
+            app.push_screen(screen)
+            await pilot.pause()
+            detail = str(screen.query_one("#agent-detail", Static).content)
+            assert "A verification failed." in detail and "## Validation pending" not in detail
+            assert "1 failed" in detail and "real failed assertion" not in detail
+            full = screen.query_one("#agents-toggle-log", Button)
+            await pilot.click(full)
+            assert "real failed assertion in the long output" in str(screen.query_one("#agent-detail", Static).content)
+            assert "## Validation pending" in str(screen.query_one("#agent-detail", Static).content)
+            await pilot.click(full)
+            # Never the developer's real clipboard: this fixture once landed
+            # there and was pasted back as if an agent had really failed.
+            from unittest.mock import patch as _patch
+
+            with _patch("navin.tui.clipboard.write_os_clipboard", return_value=True) as host_write, \
+                    _patch("navin.tui.clipboard.osc52_allowed", return_value=False):
+                await pilot.click(screen.query_one("#agents-copy-log", Button))
+                for _ in range(100):
+                    await pilot.pause(0.02)
+                    if not app._copy_running:
+                        break
+            assert not app._copy_running
+            host_write.assert_called()
+            assert "real failed assertion in the long output" in app._clipboard
+            assert "Full diagnostic follows." in app._clipboard
+            assert "python -m pytest tests/test_charts.py" in app._clipboard
+            await pilot.press("escape")
 
     asyncio.run(run())

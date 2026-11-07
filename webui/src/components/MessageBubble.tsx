@@ -33,6 +33,7 @@ import {
   QuotaLimitCard,
 } from "@/components/thread/QuotaLimitCard";
 import { ImageLightbox } from "@/components/ImageLightbox";
+import { isValidationPendingMessage, ValidationPendingCard } from "@/components/thread/ValidationPendingCard";
 import { MarkdownText } from "@/components/MarkdownText";
 import { ReasoningCard } from "@/components/thread/activity/ReasoningRow";
 import { RevertPromptDialog } from "@/components/RevertPromptDialog";
@@ -475,6 +476,8 @@ export const MessageBubble = memo(function MessageBubble({
     && !message.isStreaming
     && !empty
     && isQuotaLimitMessage(message.content);
+  const validationPending = message.role === "assistant"
+    && isValidationPendingMessage(message.content);
   const providerCredit =
     message.role === "assistant"
     && !message.isStreaming
@@ -546,6 +549,8 @@ export const MessageBubble = memo(function MessageBubble({
             />
           ) : quotaLimit ? (
             <QuotaLimitCard compact={superseded} />
+          ) : validationPending ? (
+            <ValidationPendingCard content={message.content} onOpenFilePreview={onOpenFilePreview} />
           ) : (
             <MarkdownText
               streaming={!!message.isStreaming}
@@ -565,7 +570,7 @@ export const MessageBubble = memo(function MessageBubble({
                   <span
                     className={cn(
                       "flex items-center text-muted-foreground/75",
-                      "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100",
+                      validationPending ? "opacity-100" : "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100",
                       "[@media(hover:none)]:opacity-100",
                     )}
                     data-testid="assistant-message-actions"

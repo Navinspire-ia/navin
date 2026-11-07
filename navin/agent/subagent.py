@@ -12,7 +12,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Collection
+from collections.abc import Awaitable, Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -44,6 +44,7 @@ from navin.agent.run_policy import TurnPolicy, current_turn_policy
 from navin.agent.runner import (
     AgentLoopGuard,
     AgentRunner,
+    AgentRunResult,
     AgentRunSpec,
     without_model_error_placeholder,
 )
@@ -482,6 +483,7 @@ _ERROR_REASONS = {
     # The validation gate ended the run: its edits are kept, but their checks
     # failed or never passed. Not an error of the model or of the run itself.
     "unvalidated": "Changes not validated",
+    "validation_failed": "Validation checks failed",
     "other": "Stopped on an error",
 }
 
@@ -506,8 +508,8 @@ def _humanize_error(err: str | None, kind: str | None = None) -> tuple[str, str]
         if low.startswith(_TIME_LIMIT_PREFIX):
             return "time_limit", _ERROR_REASONS["time_limit"]
         return "limit", _ERROR_REASONS["limit"]
-    if kind == "unvalidated":
-        return "unvalidated", _ERROR_REASONS["unvalidated"]
+    if kind in {"unvalidated", "validation_failed"}:
+        return kind, _ERROR_REASONS[kind]
     return "other", _ERROR_REASONS["other"]
 
 
@@ -586,6 +588,9 @@ class _QueuedSpawn:
     # File states of the chat that asked (read when the spawn is accepted, as
     # a queued spawn starts after that turn's context is gone).
     parent_file_states: Any = None
+    # Normalized explicit restrictions, persisted before admission and restored
+    # when the queued or recovered run starts, not just held in a process map.
+    workspace_policy_spec: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -655,6 +660,36 @@ def _saved_checkout(checkpoint: dict[str, Any] | None) -> dict[str, Any] | None:
     if not all(isinstance(saved.get(k), str) and saved.get(k) for k in ("path", "origin", "base")):
         return None
     return saved if Path(saved["path"]).is_dir() else None
+
+
+def _saved_final_result(checkpoint: dict[str, Any] | None) -> AgentRunResult | None:
+    """A durable final answer still needs settlement and delivery, not another model call."""
+    checkpoint = checkpoint or {}
+    phase = checkpoint.get("phase")
+    if phase == "final_response":
+        return AgentRunResult(
+            final_content=str((checkpoint.get("assistant_message") or {}).get("content") or "Task completed."),
+            messages=[],
+        )
+    if phase not in {"finalizing", "settled"}:
+        return None
+    saved = checkpoint.get("final_result")
+    if not isinstance(saved, dict) or not isinstance(saved.get("stop_reason"), str):
+        raise ValueError("the saved final result is invalid; review the run before relaunching")
+    return AgentRunResult(
+        final_content=saved.get("final_content"), messages=[],
+        stop_reason=saved["stop_reason"], error=saved.get("error"),
+        tool_events=saved.get("tool_events") or [],
+    )
+
+
+def _saved_settlement(checkpoint: dict[str, Any] | None) -> str | None:
+    checkpoint = checkpoint or {}
+    if checkpoint.get("phase") == "settled" and isinstance(checkpoint.get("final_result"), dict):
+        note = checkpoint.get("settlement_note")
+        if isinstance(note, str):
+            return note
+    return None
 
 
 _INTERRUPTED_CALL_NOTICE = (
@@ -1060,7 +1095,8 @@ class SubagentManager:
         self._outcome_flush_scheduled = False
         self._journal_instance: SubagentJournal | None = None
         self._recovered_messages: dict[str, list[dict[str, Any]]] = {}
-        self._recovered_final_results: dict[str, str] = {}
+        self._recovered_final_results: dict[str, AgentRunResult] = {}
+        self._recovered_settlements: dict[str, str] = {}
         self._admission_lock = asyncio.Lock()
         self._reserved_slots: dict[str, int] = {}
         self._session_generations: dict[str, int] = {}
@@ -1108,11 +1144,17 @@ class SubagentManager:
             for pair in [p for p in pairs if p[0] == session and key in p[1:]]:
                 del pairs[pair]
         for name in ("_running_tasks", "_task_statuses", "_agent_sessions", "_task_members",
-                     "_spawn_depths", "_spawn_parents", "_collab_budget", "_sent_counts"):
+                     "_spawn_depths", "_spawn_parents", "_collab_budget", "_sent_counts",
+                     "_recovered_messages", "_recovered_validation", "_recovered_final_results",
+                     "_recovered_settlements"):
             table = getattr(self, name, None)
             if isinstance(table, dict):
                 table.pop(task_id, None)
         self.forget_client_spawn(task_id)
+        from navin.agent import workspace_policy
+
+        workspace_policy.clear_policy(task_id)
+        self._untrack_worktree(task_id)
         announced = getattr(self, "_announced_results", None)
         if isinstance(announced, set):
             announced.discard(task_id)
@@ -1278,7 +1320,8 @@ class SubagentManager:
         if temperature is not None:
             runtime = runtime.with_generation_overrides(temperature=temperature)
         task_id = str(uuid.uuid4())[:8]
-        if workspace_policy_spec:
+        normalized_workspace_policy = None
+        if workspace_policy_spec is not None:
             if not isolate:
                 return (
                     f"{SPAWN_REFUSED_PREFIX} subagent: a workspace policy needs isolate=true."
@@ -1286,9 +1329,9 @@ class SubagentManager:
             from navin.agent import workspace_policy
 
             try:
-                workspace_policy.set_policy(
-                    task_id, workspace_policy.policy_from_dict(workspace_policy_spec),
-                )
+                explicit_policy = workspace_policy.policy_from_dict(workspace_policy_spec)
+                normalized_workspace_policy = asdict(explicit_policy)
+                workspace_policy.set_policy(task_id, explicit_policy)
             except (TypeError, ValueError) as exc:
                 logger.warning("Invalid workspace policy for [{}]: {}", task_id, exc)
                 return f"{SPAWN_REFUSED_PREFIX} subagent: invalid workspace policy ({exc})."
@@ -1340,6 +1383,7 @@ class SubagentManager:
             approval_gate=current_approval_gate() or self._approval_gate,
             choice_broker=current_choice_broker() or self._choice_broker,
             parent_file_states=bound_file_states(),
+            workspace_policy_spec=normalized_workspace_policy,
         )
 
         # Count this session's subagents, not every session's: the limit exists
@@ -1457,6 +1501,8 @@ class SubagentManager:
             "task": pending.task, "label": pending.label, "agent": pending.agent_name,
             "origin": pending.origin, "origin_message_id": pending.origin_message_id,
             "isolate": pending.isolate, "scope_paths": pending.scope_paths,
+            "workspace_policy": pending.workspace_policy_spec,
+            "workspace_policy_required": pending.workspace_policy_spec is not None,
             "workspace": str(pending.workspace_scope.project_path
                              if pending.workspace_scope else self.workspace),
             "restrict_to_workspace": bool(
@@ -1507,7 +1553,10 @@ class SubagentManager:
         isolated = record["descriptor"].get("isolate", False)
         # An isolated run can continue where it stopped while its checkout is
         # still on disk; without it the work has to be reviewed and relaunched.
-        if isolated and _saved_checkout(record.get("checkpoint")) is not None:
+        if isolated and (
+            _saved_checkout(record.get("checkpoint")) is not None
+            or _saved_settlement(record.get("checkpoint")) is not None
+        ):
             isolated = False
         # A run cut during a tool batch resumes too: the pending calls get an
         # "effect unknown" result (see _resume_after_interrupted_batch) and
@@ -1556,8 +1605,14 @@ class SubagentManager:
             return "Cannot resume: agent is still active or finishing."
         metadata = self._stored_metadata(record)
         descriptor = record["descriptor"]
+        checkpoint = record.get("checkpoint") or {}
+        try:
+            final_result = _saved_final_result(checkpoint)
+        except ValueError as exc:
+            return f"Cannot resume: {exc}."
+        settled_note = _saved_settlement(checkpoint)
         resume_checkout = None
-        if descriptor["isolate"]:
+        if descriptor["isolate"] and settled_note is None:
             resume_checkout = _saved_checkout(record.get("checkpoint"))
             if resume_checkout is None:
                 return "Cannot resume: isolated workspace needs explicit review and relaunch."
@@ -1565,6 +1620,12 @@ class SubagentManager:
             return "Cannot resume: this run needs review; inspect its effects and explicitly relaunch."
         if not metadata["recoverable"]:
             return "Cannot resume: agent is active or already finished."
+        from navin.agent import workspace_policy
+
+        try:
+            explicit_policy = workspace_policy.policy_from_descriptor(descriptor)
+        except ValueError as exc:
+            return f"Cannot resume: {exc}."
         saved_model = metadata.get("model")
         if saved_model and runtime.model != saved_model:
             return "Cannot resume: select the original model before continuing this agent."
@@ -1622,6 +1683,7 @@ class SubagentManager:
             approval_gate=current_approval_gate() or self._approval_gate,
             choice_broker=current_choice_broker() or self._choice_broker,
             resume_checkout=resume_checkout,
+            workspace_policy_spec=asdict(explicit_policy) if explicit_policy is not None else None,
         )
         if descriptor.get("member"):
             self._task_members[task_id] = dict(descriptor["member"])
@@ -1661,10 +1723,10 @@ class SubagentManager:
             self._task_statuses[task_id] = status
             self._recovered_messages[task_id] = messages
             self._recovered_validation[task_id] = checkpoint.get("validation_state") or {}
-            if checkpoint.get("phase") == "final_response":
-                self._recovered_final_results[task_id] = str(
-                    (checkpoint.get("assistant_message") or {}).get("content") or "Task completed.",
-                )
+            if final_result is not None:
+                self._recovered_final_results[task_id] = final_result
+            if settled_note is not None:
+                self._recovered_settlements[task_id] = settled_note
             self._event_loop = asyncio.get_running_loop()
             self._ensure_watchdog()
             if started:
@@ -1733,6 +1795,12 @@ class SubagentManager:
         ):
             return "Cannot relaunch: agent is still active."
         descriptor = record["descriptor"]
+        from navin.agent import workspace_policy
+
+        try:
+            explicit_policy = workspace_policy.policy_from_descriptor(descriptor)
+        except ValueError as exc:
+            return f"Cannot relaunch: {exc}."
         if descriptor.get("generation"):
             from navin.providers.base import GenerationSettings
             runtime = replace(runtime, generation=GenerationSettings(**descriptor["generation"]))
@@ -1766,6 +1834,7 @@ class SubagentManager:
                 workspace_scope=workspace_scope, isolate=descriptor["isolate"],
                 scope_paths=descriptor["scope_paths"], runtime=runtime,
                 member=descriptor.get("member"),
+                workspace_policy_spec=asdict(explicit_policy) if explicit_policy is not None else None,
             )
         finally:
             reset_turn_policy(token)
@@ -1849,6 +1918,12 @@ class SubagentManager:
         """Turn an accepted spawn into a running task."""
         task_id = pending.task_id
         session_key = pending.session_key
+        if pending.workspace_policy_spec is not None:
+            from navin.agent import workspace_policy
+
+            workspace_policy.set_policy(
+                task_id, workspace_policy.policy_from_dict(pending.workspace_policy_spec),
+            )
         if pending.status.phase == "queued":
             pending.status.phase = "initializing"
             # The clock starts when the work does, not when it was asked for:
@@ -1882,6 +1957,8 @@ class SubagentManager:
                 **({"choice_broker": pending.choice_broker} if pending.choice_broker else {}),
                 **({"resume_checkout": pending.resume_checkout}
                    if pending.resume_checkout else {}),
+                **({"workspace_policy_spec": pending.workspace_policy_spec}
+                   if pending.workspace_policy_spec is not None else {}),
             ),
             context=context,
         )
@@ -2534,6 +2611,7 @@ class SubagentManager:
         approval_gate: Any = None,
         choice_broker: Any = None,
         resume_checkout: dict[str, Any] | None = None,
+        workspace_policy_spec: dict[str, Any] | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         policy = inherited_policy or TurnPolicy()
@@ -2605,15 +2683,121 @@ class SubagentManager:
             _emit_progress(status)
 
         checkout: worktree.Worktree | None = None
-        isolation_note = ""
+
+        async def _finish_result(
+            result: AgentRunResult, *, resumed: int = 0, settled_note: str | None = None,
+        ) -> None:
+            nonlocal checkout
+            from navin.agent import workspace_policy, worktree_merge
+
+            if result.stop_reason == "max_iterations" and not result.error:
+                result.error = "Subagent reached its iteration limit before completing the task."
+            if result.stop_reason == "no_progress" and not result.error:
+                result.error = result.final_content or "The subagent repeated blocked tool calls."
+            gate_note = None
+            if settled_note is None:
+                status.phase = "finalizing"
+                self._publish_progress(status, force=True)
+                if checkout is not None and result.stop_reason not in worktree_merge.FAILED_STOPS:
+                    expected = (workspace_policy.policy_from_dict(workspace_policy_spec)
+                                if workspace_policy_spec is not None else None)
+                    if expected is not None and workspace_policy.get_policy(task_id) != expected:
+                        gate_note = "Merge blocked: the required workspace policy is missing or changed."
+                    else:
+                        gate_note = await asyncio.to_thread(
+                            workspace_policy.guarded_pre_merge_gate, checkout, task_id,
+                        )
+                if gate_note:
+                    result.stop_reason = "validation_failed"
+                    result.error = gate_note
+                conflict_note = ""
+                if checkout is not None:
+                    conflict_note = await asyncio.to_thread(self._conflict_note, task_id, checkout)
+                # Persist the verdict before settlement; a restart must not turn
+                # a rejected final answer into success or repeat a failed test.
+                final_result = {
+                    "final_content": result.final_content, "stop_reason": result.stop_reason,
+                    "error": result.error, "tool_events": result.tool_events,
+                }
+                await _on_checkpoint({"phase": "finalizing", "final_result": final_result})
+                recorded_note: str | None = None
+
+                async def _record_settlement(note: str) -> None:
+                    nonlocal recorded_note
+                    recorded_note = note + (f"\n\n{gate_note}" if gate_note else "") + conflict_note
+                    await _on_checkpoint({
+                        "phase": "settled", "final_result": final_result,
+                        "settlement_note": recorded_note,
+                    })
+
+                # Record the note before releasing/removing an isolated checkout.
+                # A crash after merging can then replay delivery without needing
+                # a checkout that is gone or already reused by another task.
+                note = await worktree_merge.settle_after_run(
+                    self, checkout, ok=result.stop_reason not in worktree_merge.FAILED_STOPS,
+                    task_id=task_id, label=label, origin=origin, on_settled=_record_settlement,
+                )
+                if recorded_note is None:
+                    await _record_settlement(note)
+                settled_note = recorded_note or ""
+                checkout = None
+                self._untrack_worktree(task_id)
+                workspace_policy.clear_policy(task_id)
+
+            status.stop_reason = result.stop_reason
+            if result.stop_reason in {"tool_error", "max_iterations", "no_progress", "validation_failed"}:
+                terminal_phase = "error"
+                status.error = result.error or "Tool execution failed."
+                status.error_kind = {
+                    "max_iterations": "limit",
+                    "validation_failed": (
+                        "validation_failed" if loop_guard.validation.failed or gate_note else "unvalidated"
+                    ),
+                }.get(result.stop_reason, "other")
+                status.tool_events = list(result.tool_events)
+                content = (self._format_partial_progress(result)
+                           + _changed_files_note(loop_guard.validation, partial=True) + settled_note)
+                outcome = "error"
+            elif result.stop_reason == "error":
+                terminal_phase = "error"
+                status.error = result.error or "subagent execution failed"
+                content = ((result.error or "Error: subagent execution failed.") + _resume_note(resumed)
+                           + _changed_files_note(loop_guard.validation, partial=True) + settled_note)
+                outcome = "error"
+            else:
+                terminal_phase = "done"
+                status.error = None
+                status.error_kind = None
+                content = ((result.final_content or "Task completed but no final response was generated.")
+                           + _changed_files_note(loop_guard.validation, partial=False) + settled_note)
+                outcome = "ok"
+            # A full inbound queue defers delivery so /stop cannot deadlock.
+            # Capture the session: the run may be forgotten before this callback.
+            session = self._agent_sessions.get(task_id)
+            status.phase = "settled"
+            self._publish_progress(status, force=True)
+
+            async def _delivered() -> None:
+                status.phase = terminal_phase
+                self._publish_progress(status, force=True, done=True)
+                if session is not None and self._agent_sessions.get(task_id) != session:
+                    await asyncio.get_running_loop().run_in_executor(
+                        _journal_executor(), self._journal_io, "status", session, task_id,
+                        self._journal_metadata(status, done=True),
+                    )
+                await self.flush_journal()
+
+            await self._announce_result(
+                task_id, label, task, content, origin, outcome, origin_message_id,
+                on_delivered=_delivered,
+            )
+
         try:
             recovered_final = self._recovered_final_results.pop(task_id, None)
-            if recovered_final is not None:
+            settled_note = self._recovered_settlements.pop(task_id, None)
+            if recovered_final is not None and settled_note is not None:
                 self._recovered_messages.pop(task_id, None)
-                status.phase = "done"
-                self._publish_progress(status, force=True, done=True)
-                await self._announce_result(task_id, label, task, recovered_final, origin,
-                                            "ok", origin_message_id)
+                await _finish_result(recovered_final, settled_note=settled_note)
                 return
             root = workspace_scope.project_path if workspace_scope is not None else self.workspace
             if isolate and resume_checkout:
@@ -2650,21 +2834,19 @@ class SubagentManager:
                     if workspace_scope is not None:
                         workspace_scope = replace(workspace_scope, project_path=root)
                 else:
-                    # A log line is not enough here: the parent asked for
-                    # isolation and will otherwise keep believing the edits sit
-                    # in a checkout waiting to be merged, when they are already
-                    # in the user's tree. The announcement has to say so.
-                    isolation_note = (
-                        "\n\nNote: isolation was requested but this project is "
-                        "not a usable git repository (not a repo, or it has no "
-                        "commit yet), so the subagent worked in the shared "
-                        "working tree. Any edits it made are already in the "
-                        "user's tree."
+                    raise RuntimeError(
+                        "Execution stopped: isolation was requested but the isolated checkout "
+                        "could not be created. No task tools or model were run and no task edits "
+                        "were made in the shared working tree. Check Git and the workspace; "
+                        "running without isolation requires an explicit new request."
                     )
-                    logger.info(
-                        "Subagent [{}] could not be isolated; running in the shared tree",
-                        task_id,
-                    )
+            if recovered_final is not None:
+                self._recovered_messages.pop(task_id, None)
+                if (policy.requires_verify_before_done or policy.validate_code_changes) and loop_guard.validation.pending:
+                    recovered_final.stop_reason = "validation_failed"
+                    recovered_final.error = "The saved final response still has unvalidated changes; review its checks."
+                await _finish_result(recovered_final)
+                return
             cfg = None
             if workspace_scope is not None:
                 cfg = self._subagent_tools_config()
@@ -2951,80 +3133,7 @@ class SubagentManager:
                     await asyncio.get_running_loop().run_in_executor(
                         _persist_executor(), self._publish_edits, sess_key, recorder,
                     )
-            status.stop_reason = result.stop_reason
-            # Settled before the announcement, and on every branch: a run that
-            # fails halfway is exactly when the parent most needs to be told
-            # where the half-finished work is sitting. The two notes are
-            # mutually exclusive - one exists only without a checkout, the
-            # other only with one. A successful isolated run is merged into the
-            # user's tree when that is conflict-free (navin.agent.worktree_merge).
-            from navin.agent import workspace_policy, worktree_merge
-            # Opt-in per-task policy: paths + targeted tests before merging.
-            gate_note = None
-            if checkout is not None and result.stop_reason not in worktree_merge.FAILED_STOPS:
-                gate_note = await asyncio.to_thread(
-                    workspace_policy.guarded_pre_merge_gate, checkout, task_id,
-                )
-            workspace_policy.clear_policy(task_id)
-            conflict_note = ""
-            if checkout is not None:
-                conflict_note = await asyncio.to_thread(
-                    self._conflict_note, task_id, checkout,
-                )
-            self._untrack_worktree(task_id)
-            note = await worktree_merge.settle_after_run(
-                self, checkout,
-                ok=gate_note is None and result.stop_reason not in worktree_merge.FAILED_STOPS,
-                task_id=task_id, label=label, origin=origin,
-            ) + (f"\n\n{gate_note}" if gate_note else "") + conflict_note + isolation_note
-            checkout = None
-
-            if result.stop_reason == "max_iterations" and not result.error:
-                result.error = "Subagent reached its iteration limit before completing the task."
-            if result.stop_reason == "no_progress" and not result.error:
-                result.error = result.final_content or "The subagent repeated blocked tool calls."
-
-            if result.stop_reason in {"tool_error", "max_iterations", "no_progress", "validation_failed"}:
-                status.phase = "error"
-                status.error = result.error or "Tool execution failed."
-                # Known from the stop reason. The text is not consulted: for
-                # no_progress it is the model's own prose, which can say
-                # "timed out" or "cancelled" about anything.
-                status.error_kind = {
-                    "max_iterations": "limit",
-                    "validation_failed": "unvalidated",
-                }.get(result.stop_reason, "other")
-                status.tool_events = list(result.tool_events)
-                self._publish_progress(status, force=True, done=True)
-                await self._announce_result(
-                    task_id, label, task,
-                    self._format_partial_progress(result)
-                    + _changed_files_note(loop_guard.validation, partial=True) + note,
-                    origin, "error", origin_message_id,
-                )
-            elif result.stop_reason == "error":
-                status.phase = "error"
-                status.error = result.error or "subagent execution failed"
-                self._publish_progress(status, force=True, done=True)
-                await self._announce_result(
-                    task_id, label, task,
-                    (result.error or "Error: subagent execution failed.")
-                    + _resume_note(resumed)
-                    + _changed_files_note(loop_guard.validation, partial=True) + note,
-                    origin, "error", origin_message_id,
-                )
-            else:
-                status.phase = "done"
-                status.error = None
-                status.error_kind = None
-                self._publish_progress(status, force=True, done=True)
-                final_result = result.final_content or "Task completed but no final response was generated."
-                logger.info("Subagent [{}] completed successfully", task_id)
-                await self._announce_result(
-                    task_id, label, task,
-                    final_result + _changed_files_note(loop_guard.validation, partial=False) + note,
-                    origin, "ok", origin_message_id,
-                )
+            await _finish_result(result, resumed=resumed)
 
         except asyncio.CancelledError as cancel_error:
             # Nothing git here on purpose. Every await would raise straight
@@ -3083,7 +3192,7 @@ class SubagentManager:
             status.error_kind = "other"
             logger.exception("Subagent [{}] failed", task_id)
             self._publish_progress(status, force=True, done=True)
-            note = await self._settle_worktree(checkout) + isolation_note
+            note = await self._settle_worktree(checkout)
             checkout = None
             await self._announce_result(
                 task_id, label, task,
@@ -3118,6 +3227,8 @@ class SubagentManager:
                 # A model silent for minutes is told apart from one that just started.
                 return f"Waiting for the model ({int(waited // 60)} min)"
             return "Waiting for model response..."
+        if status.phase in {"finalizing", "settled"}:
+            return "Finalizing delivery..."
         if status.phase in {"final_response", "responding"}:
             return "Writing response…"
         if status.phase == "thinking":
@@ -3371,7 +3482,10 @@ class SubagentManager:
             return ""
         return "\n\n" + report.render()
 
-    async def _settle_worktree(self, checkout: "worktree.Worktree | None") -> str:
+    async def _settle_worktree(
+        self, checkout: "worktree.Worktree | None", *,
+        on_settled: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
         """Keep a checkout that holds work, drop one that does not.
 
         Returns the note appended to the subagent's result. Deleting a
@@ -3400,6 +3514,8 @@ class SubagentManager:
                 f"it with `git worktree remove --force {checkout.path}`."
             )
         if changes.empty:
+            if on_settled is not None:
+                await on_settled("")
             pooled = await asyncio.to_thread(
                 worktree.release,
                 checkout,
@@ -3430,6 +3546,7 @@ class SubagentManager:
         *,
         spawner: str | None | object = _AUTO_SPAWNER,
         record: bool = True,
+        on_delivered: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus.
 
@@ -3483,6 +3600,8 @@ class SubagentManager:
             }
             self._mark_announced(task_id)
             spawner_box.append(message)
+            if on_delivered is not None:
+                await on_delivered()
             return
 
         announce_body = render_template(
@@ -3521,8 +3640,8 @@ class SubagentManager:
             metadata=metadata,
         )
         self._mark_announced(task_id)
-        await self._publish_inbound(msg)
-        logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+        await self._publish_inbound(msg, on_delivered=on_delivered)
+        logger.debug("Subagent [{}] handed result to {}:{}", task_id, origin['channel'], origin['chat_id'])
 
     def _wave_note(self, task_id: str) -> str:
         """Tell the parent whether this result closes the wave or more follow.
@@ -3561,7 +3680,9 @@ class SubagentManager:
             " work: say so in its row and ask that question yourself with ask_user."
         )
 
-    async def _publish_inbound(self, msg: InboundMessage) -> None:
+    async def _publish_inbound(
+        self, msg: InboundMessage, *, on_delivered: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Hand a result to the parent loop without ever blocking on a full queue.
 
         The agent loop is the only reader of the inbound queue, and /stop has it
@@ -3569,17 +3690,32 @@ class SubagentManager:
         blocking put on a full queue would deadlock both, so a full queue gets
         the put from a tracked background task instead.
         """
+        async def publish() -> None:
+            await self.bus.publish_inbound(msg)
+            if on_delivered is not None:
+                await on_delivered()
+
+        def report_failure(done: asyncio.Future[Any]) -> None:
+            if done.cancelled():
+                logger.info("Deferred subagent delivery cancelled; its saved result remains pending")
+            elif (error := done.exception()) is not None:
+                logger.error("Deferred subagent delivery failed; its saved result remains pending: {}", error)
+
         inbound = getattr(self.bus, "inbound", None)
         if isinstance(inbound, asyncio.Queue):
             try:
                 inbound.put_nowait(msg)
-                return
             except asyncio.QueueFull:
                 if hasattr(self.bus, "inbound_backpressure_count"):
                     self.bus.inbound_backpressure_count += 1
-                self._keep_task(asyncio.ensure_future(self.bus.publish_inbound(msg)))
+                deferred = asyncio.create_task(publish())
+                deferred.add_done_callback(report_failure)
+                self._keep_task(deferred)
                 return
-        await self.bus.publish_inbound(msg)
+            if on_delivered is not None:
+                await on_delivered()
+            return
+        await publish()
 
     async def _save_outcome(
         self, task_id: str, label: str, task: str, result: str, status: str, override: str,

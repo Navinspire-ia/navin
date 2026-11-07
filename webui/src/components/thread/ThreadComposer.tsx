@@ -1012,6 +1012,22 @@ function ThreadComposerImpl({
   );
   const { t } = useTranslation();
   const [value, setValue] = useState("");
+  const historyRef = useRef<string[]>(readPromptHistory(sessionKey));
+  const historyIndexRef = useRef<number | null>(null);
+  const historyDraftRef = useRef("");
+  useEffect(() => {
+    historyRef.current = readPromptHistory(sessionKey);
+    historyIndexRef.current = null;
+    historyDraftRef.current = "";
+  }, [sessionKey]);
+  const rememberPrompt = (prompt: string) => {
+    const history = historyRef.current;
+    const next = history[history.length - 1] === prompt ? history : [...history, prompt].slice(-PROMPT_HISTORY_LIMIT);
+    historyRef.current = next;
+    historyIndexRef.current = null;
+    historyDraftRef.current = "";
+    try { localStorage.setItem(promptHistoryKey(sessionKey), JSON.stringify(next)); } catch { /* storage unavailable */ }
+  };
   const [pastes, setPastes] = useState<PastedContentMap>({});
   const [internalTurnMode, setInternalTurnMode] =
     useState<ComposerTurnMode>("agent");
@@ -2233,6 +2249,7 @@ function ThreadComposerImpl({
     const isSlashSideChannel = isSideChannelLifecycle(slashLifecycle);
     const finalizeActiveTurn =
       slashLifecycle === "finalize_active_turn";
+    rememberPrompt(expanded);
     onSend(
       content,
       payload,
@@ -2330,6 +2347,26 @@ function ThreadComposerImpl({
       if (e.key === "Escape") {
         e.preventDefault();
         setSlashMenuDismissed(true);
+        return;
+      }
+    }
+    // Preserve normal cursor navigation inside multiline prompts and menu navigation above.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const input = e.currentTarget;
+      const history = historyRef.current;
+      const index = historyIndexRef.current;
+      const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+      const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+      if (history.length && ((e.key === "ArrowUp" && (index !== null || atStart)) || (e.key === "ArrowDown" && index !== null && atEnd))) {
+        e.preventDefault();
+        if (index === null) historyDraftRef.current = input.value;
+        const nextIndex = e.key === "ArrowUp" ? Math.max(0, (index ?? history.length) - 1) : Math.min(history.length, index! + 1);
+        historyIndexRef.current = nextIndex === history.length ? null : nextIndex;
+        const next = nextIndex === history.length ? historyDraftRef.current : history[nextIndex];
+        setValue(next);
+        setPastes({});
+        setCursorPosition(next.length);
+        requestAnimationFrame(() => input.setSelectionRange(next.length, next.length));
         return;
       }
     }
@@ -2792,6 +2829,7 @@ function ThreadComposerImpl({
             value={value}
             onChange={(e) => {
               secondEnterPromptIdRef.current = null;
+              historyIndexRef.current = null;
               const next = absorbLongInsertion(value, e.target.value);
               setValue(next);
               setSlashMenuDismissed(false);
@@ -4991,4 +5029,17 @@ function AttachmentChip({
       </button>
     </div>
   );
+}
+
+const PROMPT_HISTORY_LIMIT = 100;
+function promptHistoryKey(sessionKey: string | null): string {
+  return `navin:prompt-history:${sessionKey ?? "new-chat"}`;
+}
+function readPromptHistory(sessionKey: string | null): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(promptHistoryKey(sessionKey)) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(-PROMPT_HISTORY_LIMIT) : [];
+  } catch {
+    return [];
+  }
 }

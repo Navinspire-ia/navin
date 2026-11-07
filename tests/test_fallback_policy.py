@@ -663,6 +663,265 @@ class TestLadderAndChainCompose:
         assert result.finish_reason == "error"
         assert primary.calls == len(LLMProvider._CHAT_RETRY_DELAYS) + 1
 
+    def test_silent_primary_switches_before_the_whole_chain_times_out(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.04")
+
+        class Silent(FakeProvider):
+            async def chat_stream(self, **_kwargs):
+                self.calls += 1
+                await asyncio.Future()
+
+        primary = Silent([])
+        fallback = FakeProvider([Err(finish_reason="stop", content="relayed")])
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream(model="gemini-3.6"), 0.4)
+
+        result = asyncio.run(run())
+        assert result.content == "relayed"
+        assert primary.calls == fallback.calls == 1
+
+    def test_a_silent_fallback_does_not_block_the_next_ready_model(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.04")
+
+        class Silent(FakeProvider):
+            async def chat_stream(self, **_kwargs):
+                self.calls += 1
+                await asyncio.Future()
+
+        primary = FakeProvider([Err(error_status_code=429, content="rate limit")])
+        silent = Silent([])
+        ready = FakeProvider([Err(finish_reason="stop", content="ready")])
+        models = {"silent-relay": silent, "ready-relay": ready}
+        provider = FallbackProvider(
+            primary, [Preset(model="silent-relay"), Preset(model="ready-relay")],
+            lambda preset: models[preset.model], relay_on_limit=True,
+        )
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream(model="gemini-3.6"), 0.4)
+
+        result = asyncio.run(run())
+        assert result.content == "ready"
+        assert primary.calls == silent.calls == ready.calls == 1
+
+    def test_real_stream_progress_keeps_the_slow_model_alive(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.045")
+        primary = FakeProvider([])
+        fallback = FakeProvider([])
+        deltas: list[str] = []
+
+        async def slow_stream(**kwargs):
+            primary.calls += 1
+            for _ in range(6):
+                await asyncio.sleep(0.02)
+                await kwargs["on_thinking_delta"]("thinking")
+            return Err(finish_reason="stop", content="delivered")
+
+        primary.chat_stream = slow_stream
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def progress(_chunk):
+            deltas.append("thinking")
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream(
+                model="gemini-3.6", on_thinking_delta=progress,
+            ), 0.5)
+
+        result = asyncio.run(run())
+        assert result.content == "delivered"
+        assert deltas == ["thinking"] * 6
+        assert fallback.calls == 0
+
+    def test_streamed_partial_is_recovered_before_a_silent_model_is_replaced(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.04")
+
+        async def partial_then_stall(**kwargs):
+            await kwargs["on_content_delta"]("incomplete")
+            await asyncio.Future()
+
+        primary = FakeProvider([])
+        primary.chat_stream = partial_then_stall
+        fallback = StreamFakeProvider([Err(finish_reason="stop", content="complete")])
+        seen: list[str] = []
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def recover():
+            seen.append("recovered")
+
+        async def delta(chunk):
+            seen.append(chunk)
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream(
+                model="gemini-3.6", on_content_delta=delta,
+                on_stream_recover=recover,
+            ), 0.4)
+
+        result = asyncio.run(run())
+        assert result.content == "complete"
+        assert seen == ["incomplete", "recovered", "partial"]
+
+    def test_late_deltas_from_a_cancel_resistant_provider_are_discarded(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.04")
+
+        async def late_stream(**kwargs):
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.08)
+                await kwargs["on_content_delta"]("obsolete")
+                return Err(finish_reason="stop", content="obsolete")
+
+        primary = FakeProvider([])
+        primary.chat_stream = late_stream
+        fallback = FakeProvider([Err(finish_reason="stop", content="new")])
+        seen: list[str] = []
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def delta(chunk):
+            seen.append(chunk)
+
+        async def run():
+            result = await asyncio.wait_for(provider.chat_stream(
+                model="gemini-3.6", on_content_delta=delta,
+            ), 0.4)
+            await asyncio.sleep(0.09)
+            return result
+
+        result = asyncio.run(run())
+        assert result.content == "new"
+        assert seen == []
+
+    def test_a_long_active_stream_is_never_cut_while_it_progresses(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.05")
+        primary = FakeProvider([])
+        fallback = FakeProvider([])
+        received: list[str] = []
+
+        async def slow_progress(**kwargs):
+            primary.calls += 1
+            for _ in range(7):
+                await asyncio.sleep(0.02)
+                await kwargs["on_thinking_delta"]("still working")
+            return Err(finish_reason="stop", content="actual answer")
+
+        primary.chat_stream = slow_progress
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def progress(chunk):
+            received.append(chunk)
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream(
+                model="gemini-3.6", on_thinking_delta=progress,
+            ), 0.5)
+
+        result = asyncio.run(run())
+        assert result.finish_reason == "stop"
+        assert result.content == "actual answer"
+        assert received == ["still working"] * 7
+        assert primary.calls == 1
+        assert fallback.calls == 0
+
+    def test_a_silent_relay_ends_on_the_timeout_sentence_and_stays_resumable(self, monkeypatch):
+        # Every model silent: the chain hops, the outer ladder gives it its one
+        # extra pass, and the error is the dedicated sentence, still transient
+        # so a subagent resumes on it instead of ending on the generic error.
+        from navin.providers.base import LLMProvider
+        from navin.providers.fallback_provider import FallbackProvider
+        from navin.providers.user_facing_errors import user_facing_llm_error
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.04")
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+
+        class Silent(FakeProvider):
+            async def chat_stream(self, **_kwargs):
+                self.calls += 1
+                await asyncio.Future()
+
+        primary = Silent([])
+        fallback = Silent([])
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+
+        async def run():
+            return await asyncio.wait_for(provider.chat_stream_with_retry(
+                messages=[{"role": "user", "content": "hello"}], model="gemini-3.6",
+                max_tokens=256, temperature=0.4, reasoning_effort=None,
+            ), 1.5)
+
+        result = asyncio.run(run())
+        assert result.finish_reason == "error"
+        assert result.error_kind == "timeout"
+        assert primary.calls == fallback.calls == 2
+        assert LLMProvider._is_transient_response(result)
+        assert "stopped answering" in user_facing_llm_error(result.content)
+
+    def test_a_non_streamed_call_keeps_its_provider_timeout(self, monkeypatch):
+        # Summaries and compaction do not stream: nothing could show progress,
+        # so only the provider's own request timeout applies there.
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0.03")
+        primary = FakeProvider([])
+        fallback = FakeProvider([])
+
+        async def slow_chat(**_kwargs):
+            primary.calls += 1
+            await asyncio.sleep(0.09)
+            return Err(finish_reason="stop", content="long summary")
+
+        primary.chat = slow_chat
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+        result = asyncio.run(provider.chat(model="gemini-3.6"))
+        assert result.content == "long summary"
+        assert primary.calls == 1 and fallback.calls == 0
+
+    def test_the_watch_follows_the_stream_idle_setting(self, monkeypatch):
+        from navin.providers.fallback_provider import _relay_idle_timeout_s
+
+        monkeypatch.delenv("NAVIN_MODEL_RELAY_IDLE_S", raising=False)
+        monkeypatch.setenv("NAVIN_STREAM_IDLE_TIMEOUT_S", "45")
+        assert _relay_idle_timeout_s() == 45.0
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "not-a-number")
+        assert _relay_idle_timeout_s() == 45.0
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "20")
+        assert _relay_idle_timeout_s() == 20.0
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0")
+        assert _relay_idle_timeout_s() is None
+
+    def test_disabled_candidate_watchdog_keeps_the_long_call(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setenv("NAVIN_MODEL_RELAY_IDLE_S", "0")
+        primary = FakeProvider([])
+        fallback = FakeProvider([])
+
+        async def slow(**_kwargs):
+            primary.calls += 1
+            await asyncio.sleep(0.06)
+            return Err(finish_reason="stop", content="slow but valid")
+
+        primary.chat_stream = slow
+        provider = FallbackProvider(primary, [Preset()], lambda _preset: fallback)
+        result = asyncio.run(provider.chat_stream(model="gemini-3.6"))
+        assert result.content == "slow but valid"
+        assert fallback.calls == 0
+
     def test_a_stalled_provider_gets_one_retry_not_the_whole_ladder(self, monkeypatch):
         """Each timeout already cost a full request window (two minutes).
 

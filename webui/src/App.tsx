@@ -4481,10 +4481,16 @@ function Shell({
 
   const sidebarProps = {
     sessions,
+    token,
     activeKey,
     loading,
     onNewChat,
     onSelect: onSelectChat,
+    onRelaunchPlan: (key: string, text: string) => {
+      onSelectChat(key);
+      // Reuse the selected thread's composer send path, not the currently open chat.
+      setChatAutoSendRequest((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
+    },
     onRequestDelete,
     onTogglePin,
     onMoveChat,

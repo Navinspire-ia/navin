@@ -660,7 +660,16 @@ class BoardTool(Tool):
             return ToolResult.error(f"Error: {e.message}")
         if action in _MUTATING_ACTIONS and getattr(result, "made_progress", None) is not False:
             session_key = current_request_session_key()
-            session_focus.remember(session_key, touched)
+            # A new plan after a completed one must not inherit the previous
+            # checklist (which otherwise reappears after a gateway restart).
+            previous = session_focus.touched(session_key)
+            if action == "create" and touched and previous and all(
+                task.get("status") == "done"
+                for task in store.read_tasks() if task.get("id") in previous
+            ):
+                session_focus.replace(session_key, touched)
+            else:
+                session_focus.remember(session_key, touched)
             notes = self._auto_advance(
                 store, session_key, action=action, task_id=task_id,
                 status=status, who_type=who_type, touched=touched,

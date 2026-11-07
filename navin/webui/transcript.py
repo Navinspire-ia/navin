@@ -801,8 +801,28 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
     return lines
 
 
-# Enough for the prompt list's preview and search; a pasted file stays out.
-_PROMPT_INDEX_TEXT_CHARS = 4000
+def _prompt_turn_status(rows: list[dict[str, Any]]) -> str:
+    """Use only persisted final answers, never progress or discarded streams."""
+    error = any(
+        row.get("event") in {"error", "turn_error"}
+        or (row.get("event") == "message" and row.get("kind") == "error")
+        or (row.get("event") == "message" and row.get("kind") == "progress"
+            and isinstance(row.get("tool_events"), list)
+            and any(isinstance(tool, dict) and tool.get("phase") == "error"
+                    for tool in row["tool_events"]))
+        for row in rows
+    )
+    if error:
+        return "error"
+    answered = any(
+        (row.get("event") == "message"
+         and row.get("kind") not in {"progress", "tool_hint", "reasoning", "error"}
+         and isinstance(row.get("text"), str) and bool(row["text"].strip()))
+        or (row.get("event") == "stream_end" and not row.get("discarded")
+            and isinstance(row.get("text"), str) and bool(row["text"].strip()))
+        for row in rows
+    )
+    return "done" if answered and any(row.get("event") == "turn_end" for row in rows) else "unfinished"
 
 
 def transcript_user_prompts(session_key: str) -> list[dict[str, Any]]:
@@ -815,16 +835,20 @@ def transcript_user_prompts(session_key: str) -> list[dict[str, Any]]:
     prompts: list[dict[str, Any]] = []
     for chunk in _chunk_turn_refs(session_key):
         for turn in _read_chunk_turns(session_key, chunk.chunk_id):
-            for row in turn:
-                if not _is_user_transcript_row(row):
-                    continue
+            user_rows = [i for i, row in enumerate(turn) if _is_user_transcript_row(row)]
+            for position, start in enumerate(user_rows):
+                row = turn[start]
+                end = user_rows[position + 1] if position + 1 < len(user_rows) else len(turn)
                 raw = row.get("text")
                 if not isinstance(raw, str):
                     raw = row.get("content") if isinstance(row.get("content"), str) else ""
+                timestamp = _valid_created_at_ms(row.get("created_at_ms"))
                 prompts.append({
                     "index": len(prompts),
-                    "text": raw[:_PROMPT_INDEX_TEXT_CHARS],
-                    "created_at": _valid_created_at_ms(row.get("created_at_ms")),
+                    "text": raw,
+                    "created_at": timestamp,
+                    "timestamp": timestamp,
+                    "status": _prompt_turn_status(turn[start + 1:end]),
                 })
     return prompts
 

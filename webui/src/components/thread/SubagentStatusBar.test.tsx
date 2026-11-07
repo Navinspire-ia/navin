@@ -43,6 +43,8 @@ describe("SubagentStatusBar", () => {
     const { container } = render(<SubagentStatusBar store={store} onAction={() => undefined} />);
     const chips = Array.from(container.querySelectorAll("[data-chip]")).map((el) => el.getAttribute("data-chip"));
     expect(chips).toEqual(["running", "approval", "failed", "done"]);
+    expect(screen.queryByTestId("subagent-status-row-bad")).toBeNull();
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     const rows = Array.from(container.querySelectorAll("[data-testid^='subagent-status-row-']")).map((el) => el.getAttribute("data-testid"));
     expect(rows).toEqual(["subagent-status-row-bad", "subagent-status-row-wait", "subagent-status-row-run"]);
     expect(screen.getByText(/Answer the request in the chat/)).toBeTruthy();
@@ -55,6 +57,7 @@ describe("SubagentStatusBar", () => {
     for (const id of ["a", "b", "c", "d", "e"]) store.upsert(frame({ taskId: id }));
     const onOpenPanel = vi.fn();
     render(<SubagentStatusBar store={store} onOpenPanel={onOpenPanel} />);
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     const more = screen.getByTestId("subagent-status-more");
     expect(more.getAttribute("data-hidden-count")).toBe("2");
     fireEvent.click(more);
@@ -66,6 +69,7 @@ describe("SubagentStatusBar", () => {
     store.upsert(frame({ taskId: "bad", label: "Audit", done: true, phase: "error", error: "boom" }));
     const onAction = vi.fn(async () => ({ ok: true }));
     render(<SubagentStatusBar store={store} onAction={onAction} />);
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     await act(async () => fireEvent.click(gAction("retry", "bad")));
     expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ taskId: "bad" }), "retry");
   });
@@ -74,6 +78,7 @@ describe("SubagentStatusBar", () => {
     const store = createSubagentCardStore();
     store.upsert(frame({ taskId: "a", label: "Audit" }));
     render(<SubagentStatusBar store={store} />);
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     fireEvent.click(screen.getByRole("button", { name: "Audit" }));
     expect(store.getSnapshot().expanded.has("a")).toBe(true);
   });
@@ -92,9 +97,11 @@ describe("SubagentStatusBar", () => {
       </>,
     );
     act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service", model: "anthropic/claude-opus-5.5" })));
-    expect(screen.getAllByText("pm-install-service")).toHaveLength(1);
+    expect(screen.queryByText("pm-install-service")).toBeNull();
     expect(screen.queryByTestId("subagent-card-pm")).toBeNull();
     expect(screen.queryByText("Waiting for subagent")).toBeNull();
+    expect(screen.queryByTestId("subagent-status-row-pm")).toBeNull();
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     expect(screen.getByTestId("subagent-status-meta-pm").textContent).toMatch(/^anthropic\/claude-opus-5\.5 · \d+s$/);
     expect(gAction("cancel", "pm")).toBeTruthy();
     const name = screen.getByRole("button", { name: "pm-install-service" });
@@ -132,9 +139,10 @@ describe("SubagentStatusBar", () => {
       </>,
     );
     act(() => store.upsert(frame({ taskId: "pm", label: "pm-install-service", done: true, phase: "error", error: "boom" })));
-    expect(screen.getAllByText("pm-install-service")).toHaveLength(1);
+    expect(screen.queryByText("pm-install-service")).toBeNull();
     expect(screen.queryByTestId("subagent-card-pm")).toBeNull();
     expect(screen.getByTestId("subagent-status-bar").querySelector("[data-chip='failed']")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("subagent-status-toggle"));
     await act(async () => fireEvent.click(gAction("retry", "pm")));
     expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ taskId: "pm" }), "retry");
 

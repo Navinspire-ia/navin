@@ -22,6 +22,8 @@ import {
   GitFork,
   Share2,
   GripVertical,
+  History,
+  ListChecks,
   Mail,
   MailOpen,
   MoreHorizontal,
@@ -69,6 +71,7 @@ import type {
   SidebarSortMode,
 } from "@/lib/types";
 import { projectNameFromPath } from "@/lib/workspace";
+import { ChatHistoryDialog, ChatPlansDialog } from "@/components/ChatSessionDialogs";
 
 const ACTION_MENU_CONTENT_CLASS = "w-56 min-w-56";
 const ACTION_MENU_ITEM_CLASS = "grid w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2";
@@ -92,6 +95,8 @@ interface ChatListProps {
   sessions: ChatSummary[];
   activeKey: string | null;
   onSelect: (key: string) => void;
+  token?: string;
+  onRelaunchPlan?: (key: string, text: string) => void;
   onRequestDelete: (key: string, label: string) => void;
   onTogglePin: (key: string) => void;
   onMoveChat?: (
@@ -144,6 +149,8 @@ export const ChatList = memo(function ChatList({
   sessions,
   activeKey,
   onSelect,
+  token = "",
+  onRelaunchPlan,
   onRequestDelete,
   onTogglePin,
   onMoveChat,
@@ -186,6 +193,7 @@ export const ChatList = memo(function ChatList({
   const { t } = useTranslation();
   const sessionMenu = useContextMenu();
   const [extraByGroup, setExtraByGroup] = useState<Record<string, number>>({});
+  const [dialog, setDialog] = useState<{ kind: "history" | "plans"; key: string } | null>(null);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const didDragRef = useRef(false);
@@ -519,6 +527,8 @@ export const ChatList = memo(function ChatList({
                     isUnread,
                     opensInWindow,
                     onTogglePin: () => onTogglePin(s.key),
+                    onHistory: () => setDialog({ kind: "history", key: s.key }),
+                    onPlans: () => setDialog({ kind: "plans", key: s.key }),
                     onForkChat: onForkChat ? () => onForkChat(s.key) : undefined,
                     onShareChat: onShareChat ? () => onShareChat(s.chatId, title) : undefined,
                     onExportChat: onExportChat ? () => onExportChat(s.chatId, title) : undefined,
@@ -712,6 +722,8 @@ export const ChatList = memo(function ChatList({
         );
       })}
       <ContextMenu state={sessionMenu.state} onClose={sessionMenu.close} />
+      <ChatHistoryDialog open={dialog?.kind === "history"} onOpenChange={(open) => { if (!open) setDialog(null); }} sessionKey={dialog?.key ?? null} token={token} />
+      <ChatPlansDialog open={dialog?.kind === "plans"} onOpenChange={(open) => { if (!open) setDialog(null); }} sessionKey={dialog?.key ?? null} token={token} onRelaunch={(text) => { if (dialog) onRelaunchPlan?.(dialog.key, text); }} />
     </div>
   );
 });
@@ -723,6 +735,8 @@ export function sessionActionEntries({
   isUnread,
   opensInWindow = false,
   onTogglePin,
+  onHistory,
+  onPlans,
   onForkChat,
   onShareChat,
   onExportChat,
@@ -741,6 +755,8 @@ export function sessionActionEntries({
   /** Desktop app: "Open in new window" (a second Navin) instead of a tab. */
   opensInWindow?: boolean;
   onTogglePin: () => void;
+  onHistory?: () => void;
+  onPlans?: () => void;
   onForkChat?: () => void;
   onShareChat?: () => void;
   onExportChat?: () => void;
@@ -759,6 +775,18 @@ export function sessionActionEntries({
       icon: isPinned ? <PinOff className={iconClass} /> : <Pin className={iconClass} />,
       onSelect: onTogglePin,
     },
+    ...(onHistory ? [{
+      id: "history",
+      label: t("chat.history.title"),
+      icon: <History className={iconClass} />,
+      onSelect: onHistory,
+    }] : []),
+    ...(onPlans ? [{
+      id: "plans",
+      label: t("chat.plans.title"),
+      icon: <ListChecks className={iconClass} />,
+      onSelect: onPlans,
+    }] : []),
     ...(onForkChat
       ? [{
           id: "fork",

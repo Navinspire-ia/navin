@@ -322,7 +322,9 @@ export function ThreadMessages({
         const prev = units[index - 1];
         const marginTop =
           index > 0
-            ? marginAfterPrevUnit(prev)
+            ? unit.type === "activity" && prev?.type === "message" && prev.message.role === "assistant"
+              ? "mt-8"
+              : marginAfterPrevUnit(prev)
             : "";
         const next = units[index + 1];
         const hasBodyBelow =

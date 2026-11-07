@@ -122,6 +122,27 @@ describe("team picker in the model menu", () => {
   });
 });
 
+describe("prompt history in the composer", () => {
+  it("recalls sent prompts with arrows and restores the unsent draft", () => {
+    const send = vi.fn();
+    render(<ThreadComposer onSend={send} sessionKey="history-demo" />);
+    enter("first prompt");
+    enter("second prompt");
+    const input = screen.getByRole("textbox", { name: "thread.composer.inputAria" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "draft" } });
+    input.setSelectionRange(0, 0);
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("second prompt");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("first prompt");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input.value).toBe("second prompt");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input.value).toBe("draft");
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("configuration commands in the chat composer", () => {
   it.each([
     ["/settings", "overview"], ["/models", "models"], ["/model", "models"],

@@ -267,9 +267,8 @@ def create(
 ) -> Worktree | None:
     """Check the repository out again for ``task_id``, or return None.
 
-    None is not an error the caller should report: a workspace that is not a git
-    repository simply cannot be isolated this way, and the subagent still has to
-    run.
+    None means isolation could not be established. A caller that requires an
+    isolated checkout must stop rather than silently use the shared workspace.
 
     When ``pool_size > 0``, an idle clean checkout for this repository is
     reused (reset to current HEAD) instead of paying another ``worktree add``.

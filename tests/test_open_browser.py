@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
 from navin.utils import wsl
-from navin.utils.open_browser import open_external_url, unavailable_reason
+from navin.utils.open_browser import open_external_url, open_local_file, unavailable_reason
 
 
 class OpenExternalUrlTest(unittest.TestCase):
@@ -85,18 +86,36 @@ class OpenExternalUrlTest(unittest.TestCase):
             self.assertNotIn("env", popen.call_args.kwargs)
             browser.assert_not_called()
 
-    def test_windows_still_uses_startfile(self):
+    def test_windows_opens_url_with_the_native_shell(self):
+        shell = mock.Mock(ShellExecuteW=mock.Mock(return_value=42))
         with (
             mock.patch("navin.utils.wsl.is_wsl_guest", return_value=False),
             mock.patch("sys.platform", "win32"),
-            mock.patch("os.startfile", create=True) as startfile,
+            mock.patch("ctypes.windll", create=True, **{"shell32": shell}),
             mock.patch("subprocess.Popen") as popen,
             mock.patch("webbrowser.open") as browser,
         ):
             self.assertTrue(open_external_url("https://navin.live/pricing"))
-            startfile.assert_called_once_with("https://navin.live/pricing")
-            popen.assert_not_called()
-            browser.assert_not_called()
+        shell.ShellExecuteW.assert_called_once_with(
+            None, "open", "https://navin.live/pricing", None, None, 1,
+        )
+        popen.assert_not_called()
+        browser.assert_not_called()
+
+    def test_windows_shell_failure_does_not_claim_a_file_opened(self):
+        shell = mock.Mock(ShellExecuteW=mock.Mock(return_value=2))
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=False),
+            mock.patch("sys.platform", "win32"),
+            mock.patch("ctypes.windll", create=True, **{"shell32": shell}),
+            mock.patch("subprocess.Popen") as popen,
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            report = os.path.join(directory, "report.html")
+            with open(report, "w", encoding="utf-8") as handle:
+                handle.write("<h1>Audit</h1>")
+            self.assertFalse(open_local_file(report))
+        popen.assert_not_called()
 
     def test_uses_host_open_inside_wsl(self):
         with (
@@ -168,3 +187,45 @@ class OpenExternalUrlTest(unittest.TestCase):
         popen.assert_not_called()
         browser.assert_not_called()
         self.assertEqual(unavailable_reason("notes/plan.md"), "Only web links open in the browser.")
+
+
+class OpenLocalFileTest(unittest.TestCase):
+    """A report the terminal cannot show opens with the system's default app."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.report = os.path.join(folder.name, "report.html")
+        with open(self.report, "w", encoding="utf-8") as handle:
+            handle.write("<h1>Audit</h1>")
+
+    def test_a_missing_file_starts_nothing(self):
+        with (
+            mock.patch("navin.utils.wsl.open_path_on_host") as host,
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertFalse(open_local_file(self.report + ".gone"))
+            self.assertFalse(open_local_file(""))
+        host.assert_not_called()
+        popen.assert_not_called()
+
+    def test_linux_hands_the_file_to_xdg_open(self):
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=False),
+            mock.patch("sys.platform", "linux"),
+            mock.patch("shutil.which", side_effect=lambda n: n if n == "/usr/bin/xdg-open" else None),
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertTrue(open_local_file(self.report))
+        self.assertEqual(popen.call_args.args[0], ["/usr/bin/xdg-open", self.report])
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_wsl_opens_the_file_with_its_windows_default_app(self):
+        with (
+            mock.patch("navin.utils.wsl.is_wsl_guest", return_value=True),
+            mock.patch("navin.utils.wsl.open_path_on_host", return_value=True) as host,
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            self.assertTrue(open_local_file(self.report))
+        host.assert_called_once_with(self.report)
+        popen.assert_not_called()

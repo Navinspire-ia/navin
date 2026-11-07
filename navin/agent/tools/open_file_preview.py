@@ -131,7 +131,8 @@ class OpenFilePreviewTool(Tool):
             )
 
         if channel == "cli":
-            # The TUI consumes this event and opens its own preview screen.
+            # The TUI consumes this event: the browser or the system viewer for
+            # HTML, PDF and images, its own preview screen for text.
             try:
                 self._bus.outbound.put_nowait(
                     outbound_message_for_event(
@@ -142,7 +143,10 @@ class OpenFilePreviewTool(Tool):
                 )
             except Exception as exc:
                 return ToolResult.error(f"Error: could not reach the terminal preview: {exc}")
-            return f"{target} opened in the terminal preview."
+            return (
+                f"{target} sent to the terminal preview: HTML, PDF and image files "
+                "open in the user's browser or viewer, other files in the terminal."
+            )
 
         # Under the workspace restriction the preview panel refuses anything
         # above the root, so sending it would be reported as opened and then

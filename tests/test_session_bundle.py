@@ -206,3 +206,45 @@ def test_git_inside_wsl_gets_the_temp_bundle_path_it_can_write(monkeypatch):
         mod._git_path(PureWindowsPath("relative/repo.bundle"), repo)
     monkeypatch.setattr(mod, "git_route", lambda root: GitRoute(argv=("git", "-C", str(root)), root=str(root)))
     assert mod._git_path(Path("/tmp/x/repo.bundle"), repo) == "/tmp/x/repo.bundle"
+
+
+@pytest.mark.parametrize("manifest", [[], {"format": "navin-session", "version": "broken"}])
+def test_invalid_manifest_is_a_bundle_error(tmp_path, manifest):
+    bundle = tmp_path / "broken.navin-session"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(BundleError):
+        read_manifest(bundle)
+
+
+@pytest.mark.parametrize("conversation", [None, "not-json", "[]", "null"])
+def test_invalid_conversation_is_rejected_before_creating_project(tmp_path, conversation):
+    bundle = tmp_path / "broken.navin-session"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("manifest.json", json.dumps({"format": "navin-session", "version": 1}))
+        if conversation is not None:
+            archive.writestr("session.jsonl", conversation)
+    into = tmp_path / "opened"
+    with pytest.raises(BundleError, match="conversation"):
+        import_session_bundle(bundle, into)
+    assert not into.exists()
+
+
+def test_paths_rewritten_to_windows_keep_conversation_and_tool_arguments_valid():
+    from navin.session.bundle import _rewrite_paths
+
+    source = "/home/sender/projet partagé"
+    destination = r"C:\Users\receiver\Navin\projet partagé"
+    message = {
+        "role": "assistant",
+        "content": f"Edit {source}/app.py\nKeep the conversation.",
+        "metadata": {"workspace_scope": {"project_path": source}},
+        "tool_calls": [{"function": {"name": "read_file", "arguments": json.dumps({
+            "path": source + "/app.py",
+        })}}],
+    }
+    restored = json.loads(_rewrite_paths(json.dumps(message, ensure_ascii=False), source, destination))
+    assert restored["content"] == f"Edit {destination}/app.py\nKeep the conversation."
+    assert restored["metadata"]["workspace_scope"]["project_path"] == destination
+    arguments = json.loads(restored["tool_calls"][0]["function"]["arguments"])
+    assert arguments == {"path": destination + "/app.py"}

@@ -1307,7 +1307,7 @@ class CodeValidationState:
                     "Run pytest directly without the output filter."
                 )
                 return
-            self.record(VerificationEvidence(tests_ok=ok and outcome is True, summary=text[-800:]), revision=revision)
+            self.record(VerificationEvidence(tests_ok=ok and outcome is True, summary=_test_failure_summary(text) if not ok or outcome is False else text[-800:]), revision=revision)
             return
         if standalone_script and ok and not _script_tests_ran(text):
             # Importing a file full of uncalled test functions exits zero too.
@@ -1316,7 +1316,7 @@ class CodeValidationState:
         skipped_only = re.search(r"\b[1-9]\d* skipped\b", text) and not re.search(r"\b[1-9]\d* (?:passed|passing)\b", text)
         if ok and (_NO_TESTS.search(text) or skipped_only):
             return
-        self.record(VerificationEvidence(tests_ok=ok, summary=text[-800:]), revision=revision)
+        self.record(VerificationEvidence(tests_ok=ok, summary=text[-800:] if ok else _test_failure_summary(text)), revision=revision)
 
     @property
     def pending(self) -> bool:
@@ -1487,3 +1487,15 @@ class CodeValidationState:
         self.last_nudge_key = key
         self.total_nudges += 1
         return self.ignored_nudges
+
+
+def _test_failure_summary(text: str) -> str:
+    """Keep the actual pytest assertion even when a long log ends in boilerplate."""
+    tail = text[-800:]
+    if len(text) <= 800:
+        return tail
+    match = re.search(r"(?m)^_{3,}\s+.+\s+_{3,}\s*$|^E\s+(?:AssertionError|[A-Za-z_]+Error):.*$", text)
+    if match is None or match.start() >= len(text) - 800:
+        return tail
+    diagnostic = text[match.start():match.start() + 1600].strip()
+    return diagnostic + "\n...\n" + tail

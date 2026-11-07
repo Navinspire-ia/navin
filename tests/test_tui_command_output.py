@@ -44,6 +44,8 @@ def test_warning_wall_collapses_and_full_output_remains_accessible(theme, width)
             row.toggle()
             for chunk in [output[:83], output[83:]]:
                 row.apply(phase="output", output=chunk)
+            # The running label is laid out before the finished one replaces it.
+            await pilot.pause()
             row.apply(phase="end", result=output)
             await pilot.pause()
             body = row.query_one(".tool-body", Static)
@@ -59,6 +61,8 @@ def test_warning_wall_collapses_and_full_output_remains_accessible(theme, width)
             assert all(cell_len(line) <= body.size.width for line in preview.splitlines())
             more = row.query_one(".tool-more", Button)
             assert more.display
+            # A label changed after layout is measured again, never cut.
+            assert more.region.width >= cell_len(str(more.label))
             await pilot.click(more)
             assert "@pytest.mark.asyncio" in str(body.content)
             assert output.splitlines()[1].strip() in row.copy_text()
@@ -212,13 +216,68 @@ def test_final_response_accents_preserve_the_message_in_both_renderers(monkeypat
     message = "**Terminé.**\n\n- Tests validés.\n- Fichier `src/app.ts` mis à jour."
     async def run():
         app = ActivityHost()
-        async with app.run_test(size=(100, 24)) as pilot:
+        async with app.run_test(size=(100, 80)) as pilot:
+            candidate = "Premature candidate: everything passed."
+            await app.block.delta(candidate)
+            await app.block._paint_body(force=True)
+            assert candidate in app.block.copy_text()
+            await app.block.stream_end(resuming=True, discarded=True)
+            assert not app.block.text and not app.block._painted_markdown
+            assert candidate not in app.block.copy_text()
+            assert app.block.query_one(".assistant-body", Markdown).source == ""
+            assert not app.block.query(".-interim")
+
+            output = warning_output() + "\n6 passed, 40 warnings in 1.2s\nExit code: 0"
+            await app.block.tool_event("check", "exec", "end", {"command": "pytest -q"}, output, None, None)
+            row = app.block.query_one(ToolCall)
+            row.toggle()
+            await pilot.pause()
+            row.action_show_full()
+            await pilot.pause()
+            assert "@pytest.mark.asyncio" in str(row.query_one(".tool-body", Static).content)
+            assert output.splitlines()[1].strip() in row.copy_text()
+            row.collapse()
+
+            pending = (
+                "## Validation pending\n\nChanges are saved. The task is not validated yet.\n\n"
+                "| Item | Status |\n| --- | --- |\n| Changes | Saved |\n| Tests | Failed |\n\n"
+                "### Why it stopped\n\nA verification failed.\n\n"
+                "### Test failure\n\n```text\nAssertionError: expected value\nfull diagnostic tail\n```\n\n"
+                "### Next step\n\nFix the failure and rerun the tests.\n\n"
+                "### Changed files (1)\n\n- `src/app.ts`"
+            )
+            await app.block.set_text(pending)
+            await app.block.reveal()
+            body = app.block.query_one(".assistant-body", Markdown)
+            assert "AssertionError: expected value" in body.source
+            assert "full diagnostic tail" not in body.source
+            assert "| Item |" not in body.source
+            assert app.block.copy_text() == pending
+            details = app.block.query_one(".assistant-validation-details", Button)
+            assert details.display
+            details.press()
+            await pilot.pause()
+            assert body.source == pending
+            details.press()
+            await pilot.pause()
+            assert "full diagnostic tail" not in body.source
             await app.block.set_text(message)
             await app.block.finish(latency_ms=1, model=None, preset=None)
             await pilot.pause()
-            paragraph = app.block.query_one(MarkdownParagraph)
+            paragraph = app.block.query_one(".assistant-body").query_one(MarkdownParagraph)
             assert paragraph.get_component_styles("strong").text_style.bold
-            assert app.block.query_one(Markdown).source == message
+            assert app.block.query_one(".assistant-body", Markdown).source == message
+            assert not details.display
+            activity = row
+            while activity.parent is not app.block:
+                activity = activity.parent
+            assert list(app.block.children).index(activity) < list(app.block.children).index(body)
+            record = app.block.snapshot_record()
+            assert record is not None
+            assert record.state["text"] == record.state["body"] == message
+            assert candidate not in repr(record.state)
+            restored = app.block._from_record(record)
+            assert restored.copy_text() == message
             assert app.block.copy_text() == message
             assert "Terminé." in app.export_screenshot()
     asyncio.run(run())

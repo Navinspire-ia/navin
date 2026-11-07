@@ -165,7 +165,7 @@ def test_full_output_button_keyboard_and_selection_work(theme, width):
             row = block.query_one(ToolCall)
             await pilot.pause()
             # Short heading; the exact command stays in the details and copy.
-            assert row._head_text() == "✓ Ran python 3 files"
+            assert row._head_text() == "✓ Ran pytest 2 files"
             assert command in row.copy_text()
             assert row.added == row.removed == 0
             more = row.query_one(".tool-more", Button)

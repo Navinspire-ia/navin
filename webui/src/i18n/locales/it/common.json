@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Validazione in sospeso",
+    "summary": "Le modifiche sono salvate. L'attività non è ancora validata.",
+    "details": "Dettagli, registri e prossimi passi"
+  },
   "actions": {
     "cancel": "Cancel"
   },

@@ -5,14 +5,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from loguru import logger
 
-from navin.providers.base import LLMProvider, LLMResponse
+from navin.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    resolve_stream_idle_timeout_s,
+    wait_stream_idle,
+)
 from navin.providers.fallback_policy import (
     QUOTA_CEILING_KIND,
     circuit_cooldown_s,
@@ -30,6 +37,35 @@ _MISSING = object()
 #: of the list takes the step. Only failures that clear in seconds use the
 #: budget; a definitive refusal or a timeout switches at once (fallback_policy).
 PRIMARY_STICKY_RETRIES = 3
+
+# A streamed model that shows no progress hands the step to the next model of
+# the relay. The provider's own idle timer also counts keep-alive chunks, so a
+# model sending nothing useful held the step until the runner's wall clock cut
+# the whole relay (ten minutes) without any other model being asked. Content,
+# reasoning and tool-call deltas reset the window. Unset, it follows
+# NAVIN_STREAM_IDLE_TIMEOUT_S (two minutes by default: reasoning models often
+# think silently for more than one); 0 disables it.
+_MODEL_RELAY_IDLE_ENV = "NAVIN_MODEL_RELAY_IDLE_S"
+
+
+def _positive_env_timeout(name: str, default: float) -> float | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid {}={!r}", name, raw)
+        return default
+    if not math.isfinite(value) or value < 0:
+        logger.warning("Ignoring invalid {}={!r}", name, raw)
+        return default
+    return value or None
+
+
+def _relay_idle_timeout_s() -> float | None:
+    """Seconds a streamed model may go without progress; None turns the watch off."""
+    return _positive_env_timeout(_MODEL_RELAY_IDLE_ENV, resolve_stream_idle_timeout_s())
 
 
 #: Why a model is left aside: its provider refused it, or it reached a ceiling.
@@ -263,6 +299,114 @@ class FallbackProvider(LLMProvider):
             on_stream_recover=on_stream_recover,
         )
 
+    @staticmethod
+    def _observe_abandoned_call(task: asyncio.Task[LLMResponse]) -> None:
+        """Report a late exception if a timed-out provider ignored cancellation."""
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.opt(exception=True).warning("Cancelled model call failed after its relay moved on")
+
+    async def _call_model(
+        self,
+        call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
+        provider: LLMProvider,
+        kwargs: dict[str, Any],
+        model: str,
+        *,
+        streaming: bool,
+    ) -> LLMResponse:
+        """Bound a streamed model's silence, not the work it is visibly doing.
+
+        Content, reasoning and tool-call deltas reset the window; transport
+        keep-alives and retry notices do not. ``wait_stream_idle`` grants a
+        fresh window after a frozen event loop, where a plain wait_for would
+        cancel a healthy reply on WSL wake-up. A call that does not stream
+        shows no progress (summaries, compaction), so it keeps its provider's
+        own request timeout.
+        """
+        idle_s = _relay_idle_timeout_s() if streaming else None
+        if idle_s is None:
+            try:
+                return await call(provider, kwargs)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Model '{}' call raised before failover: {}", model, exc)
+                return self._unexpected_error_response(exc)
+
+        activity = asyncio.Queue[None](maxsize=1)
+        last_activity = time.monotonic()
+        last_signal = 0.0
+        active = True
+        call_kwargs = dict(kwargs)
+
+        def _watch(callback: Any) -> Callable[[Any], Awaitable[None]]:
+            async def _tracked(value: Any) -> None:
+                nonlocal last_activity, last_signal
+                # A transport can ignore cancellation (e.g. a thread-backed
+                # stream). Its late deltas must not reach the new model's UI.
+                if not active:
+                    return
+                if value:
+                    now = time.monotonic()
+                    last_activity = now
+                    # High-rate token streams do not need one waiter per token.
+                    if now - last_signal >= 1.0 and activity.empty():
+                        last_signal = now
+                        activity.put_nowait(None)
+                if callback is not None:
+                    await callback(value)
+            return _tracked
+
+        for name in ("on_content_delta", "on_thinking_delta", "on_tool_call_delta"):
+            call_kwargs[name] = _watch(call_kwargs.get(name))
+
+        async def _invoke() -> LLMResponse:
+            try:
+                return await call(provider, call_kwargs)
+            finally:
+                # Completion must wake the watchdog even if no delta was sent.
+                if active and activity.empty():
+                    activity.put_nowait(None)
+
+        task = asyncio.create_task(_invoke())
+        try:
+            while not task.done():
+                remaining = max(0.0, idle_s - (time.monotonic() - last_activity))
+                try:
+                    await wait_stream_idle(activity.get(), remaining)
+                except asyncio.TimeoutError:
+                    if task.done() or time.monotonic() - last_activity < idle_s:
+                        continue
+                    logger.warning(
+                        "Model '{}' made no progress for {:.0f}s; trying the next relay",
+                        model, idle_s,
+                    )
+                    # "stream stalled" gives the chat the dedicated sentence
+                    # (the provider stopped answering), never the generic one.
+                    return LLMResponse(
+                        content=f"Error calling LLM: stream stalled ({model} made no progress for {idle_s:g}s)",
+                        finish_reason="error",
+                        error_kind="timeout",
+                        error_detail=f"{model} sent no content, reasoning or tool call for {idle_s:g}s",
+                    )
+            return await task
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Model '{}' call raised before failover: {}", model, exc)
+            return self._unexpected_error_response(exc)
+        finally:
+            active = False
+            if not task.done():
+                # Do not await a provider that ignores cancellation. Its late
+                # exception is still logged, never treated as a second answer.
+                task.cancel()
+                task.add_done_callback(self._observe_abandoned_call)
+
     async def _try_with_fallback(
         self,
         call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
@@ -420,7 +564,10 @@ class FallbackProvider(LLMProvider):
             if fallback.reasoning_effort is not None and not effort_chosen_in_chat():
                 kwargs["reasoning_effort"] = fallback.reasoning_effort
             try:
-                fallback_response = await call(fallback_provider, kwargs)
+                fallback_response = await self._call_model(
+                    call, fallback_provider, kwargs, fallback_model,
+                    streaming=has_streamed is not None,
+                )
             finally:
                 for name, value in original_values.items():
                     if value is _MISSING:
@@ -499,7 +646,10 @@ class FallbackProvider(LLMProvider):
             sticky_retry_budget,
         )
 
-        response = await call(self._primary, kwargs)
+        response = await self._call_model(
+            call, self._primary, kwargs, primary_model,
+            streaming=has_streamed is not None,
+        )
         attempt = 0
         while response.finish_reason == "error":
             if has_streamed is not None and has_streamed[0]:
@@ -522,7 +672,10 @@ class FallbackProvider(LLMProvider):
             )
             if delay > 0:
                 await asyncio.sleep(delay)
-            response = await call(self._primary, kwargs)
+            response = await self._call_model(
+                call, self._primary, kwargs, primary_model,
+                streaming=has_streamed is not None,
+            )
         return response
 
     @staticmethod

@@ -142,3 +142,17 @@ def _as_ids(value: object) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return [item.strip() for item in value if isinstance(item, str)]
     return []
+
+
+def replace(session_key: str | None, task_ids: object) -> None:
+    """Start a new plan for this chat, discarding its previous plan's task ids."""
+    key = (session_key or "").strip()
+    if not key:
+        return
+    ids = list(dict.fromkeys(_as_ids(task_ids)))[-_MAX_TASKS_PER_SESSION:]
+    with _guard:
+        _ensure_loaded()
+        _focus.pop(key, None)
+        if ids:
+            _focus[key] = ids
+        _persist_unlocked()

@@ -1,7 +1,8 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Open an https URL in the user's real system browser.
+"""Open an https URL in the user's real system browser, or a local file with
+its default app (an HTML report, a PDF, an image the terminal cannot show).
 
 The desktop shell is a WebView: ``window.open`` from the WebUI often does
 nothing there. The gateway (host process) must open the OS browser instead.
@@ -70,15 +71,71 @@ def open_external_url(url: str) -> bool:
     except Exception as exc:
         logger.debug("WSL browser open skipped: {}", exc)
 
-    if sys.platform == "win32":
-        try:
-            os.startfile(target)  # type: ignore[attr-defined]
-            return True
-        except OSError as exc:
-            logger.debug("os.startfile failed: {}", exc)
+    if sys.platform == "win32" and _start_with_windows_shell(target):
+        return True
+    return _start_first(launchers or _launchers(target), target)
 
+
+def open_local_file(path: str) -> bool:
+    """Open a local file with the system's default app. True when a launcher started.
+
+    For what a terminal cannot show: an HTML report opens in the browser, a
+    PDF in the PDF reader. The same launchers as :func:`open_external_url`;
+    under WSL the file goes to its Windows default app by its Windows path.
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return False
+    target = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isfile(target):
+        return False
+
+    from navin.utils import wsl
+
+    launchers: list[list[str]] | None = None
+    if wsl.is_wsl_guest():
+        if wsl.open_path_on_host(target):
+            return True
+        if not wsl.host_interop_available():
+            # Same as for a link: the Linux openers of a stock WSL are wslview.
+            browser = _wslg_browser()
+            if browser is None:
+                logger.warning("could not open {}: {}", target, wsl.INTEROP_OFF)
+                return False
+            launchers = [[browser, target]]
+
+    if sys.platform == "win32":
+        return _start_with_windows_shell(target)
+    return _start_first(launchers or _launchers(target), target)
+
+
+def file_unavailable_reason() -> str:
+    """Why a local file did not open, in a sentence the user can act on."""
+    from navin.utils import wsl
+
+    if wsl.is_wsl_guest() and not wsl.host_interop_available():
+        return wsl.INTEROP_OFF
+    return "No browser or file viewer could be opened from here."
+
+
+def _start_with_windows_shell(target: str) -> bool:
+    """Use the native Windows ShellExecute entry point for URL or file."""
+    import ctypes
+
+    try:
+        result = ctypes.windll.shell32.ShellExecuteW(None, "open", target, None, None, 1)
+        if result <= 32:
+            raise OSError(f"ShellExecuteW failed with code {result} for {target}")
+        return True
+    except (AttributeError, OSError) as exc:
+        logger.debug("Windows shell opener failed: {}", exc)
+        return False
+
+
+def _start_first(launchers: list[list[str]], target: str) -> bool:
+    """Start the first launcher that exists, detached and silent."""
     linux = sys.platform.startswith("linux")
-    for argv in launchers or _launchers(target):
+    for argv in launchers:
         if shutil.which(argv[0]) is None and not os.path.isfile(argv[0]):
             continue
         try:
@@ -102,7 +159,7 @@ def open_external_url(url: str) -> bool:
         except OSError as exc:
             logger.debug("browser launcher {} failed: {}", argv[0], exc)
 
-    logger.warning("no browser launcher could open {}", target)
+    logger.warning("no system launcher could open {}", target)
     return False
 
 

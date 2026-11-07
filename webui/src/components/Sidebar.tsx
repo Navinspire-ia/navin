@@ -75,6 +75,8 @@ interface SidebarProps {
   loading: boolean;
   onNewChat: () => void;
   onSelect: (key: string) => void;
+  token?: string;
+  onRelaunchPlan?: (key: string, text: string) => void;
   onRequestDelete: (key: string, label: string) => void;
   onTogglePin: (key: string) => void;
   onMoveChat?: (
@@ -515,6 +517,8 @@ export function Sidebar(props: SidebarProps) {
             loading={props.loading}
             emptyLabel={t("chat.noSessions")}
             onSelect={props.onSelect}
+            token={props.token}
+            onRelaunchPlan={props.onRelaunchPlan}
             onRequestDelete={props.onRequestDelete}
             onTogglePin={props.onTogglePin}
             onMoveChat={props.onMoveChat}

@@ -63,6 +63,9 @@ def test_uploaded_slices_rebuild_the_session(tmp_path):
         payload = json.loads(response.body)
         assert payload["chat_id"]
         assert (into / "main.py").read_text().startswith("print('ok')")
+        restored = SessionManager(tmp_path / "home").get_or_create(f"websocket:{payload['chat_id']}")
+        assert [message["content"] for message in restored.messages] == ["hello"]
+        assert restored.metadata["workspace_scope"]["project_path"] == str(into)
         # The reassembled upload does not linger.
         assert not (tmp_path / "rt" / "tmp" / "bundle-uploads" / f"{upload}.navin-session").exists()
 
@@ -73,3 +76,20 @@ def test_out_of_order_slices_are_refused(tmp_path):
         response = asyncio.run(handler._handle_webui_session_bundle(
             None, _Request("/api/webui/sessions/bundle/upload?upload_id=ffffffffffffffff&index=3", _headers(b"x")), "upload"))
     assert response.status_code == 400
+
+
+def test_malformed_conversation_returns_actionable_error_without_project(tmp_path):
+    import zipfile
+
+    bundle = tmp_path / "broken.navin-session"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("manifest.json", json.dumps({
+            "format": "navin-session", "version": 1, "project_mode": "files",
+        }))
+        archive.writestr("session.jsonl", "{unfinished")
+    into = tmp_path / "opened"
+    response = asyncio.run(_handler(tmp_path / "home")._handle_webui_session_bundle(
+        None, _Request(f"/api/webui/sessions/bundle/open?path={bundle}&into={into}"), "open"))
+    assert response.status_code == 400
+    assert b"conversation" in response.body
+    assert not into.exists()

@@ -332,9 +332,12 @@ def read_manifest(bundle: Path | str) -> dict[str, Any]:
             manifest = json.loads(zf.read("manifest.json"))
     except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
         raise BundleError(f"not a Navin session bundle: {exc}") from exc
-    if manifest.get("format") != BUNDLE_FORMAT:
+    if not isinstance(manifest, dict) or manifest.get("format") != BUNDLE_FORMAT:
         raise BundleError("not a Navin session bundle")
-    if int(manifest.get("version") or 0) > BUNDLE_VERSION:
+    version = manifest.get("version", 0)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+        raise BundleError("invalid Navin session bundle version")
+    if version > BUNDLE_VERSION:
         raise BundleError("this bundle was made by a newer Navin: update Navin to open it")
     return manifest
 
@@ -357,9 +360,32 @@ def _rewrite_paths(text: str, old_root: str, new_root: str) -> str:
     """Point paths of the sender's machine at the receiver's folder."""
     if not old_root or old_root == new_root:
         return text
-    for old, new in ((old_root, new_root), (json.dumps(old_root)[1:-1], json.dumps(new_root)[1:-1])):
-        text = text.replace(old, new)
-    return text
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key.replace(old_root, new_root): rewrite(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, str):
+            # Tool arguments can themselves be JSON inside a message string.
+            if value.lstrip().startswith(("{", "[")):
+                try:
+                    nested = json.loads(value)
+                except json.JSONDecodeError:
+                    # Ordinary message text need not be a complete JSON value.
+                    return value.replace(old_root, new_root)
+                rewritten = rewrite(nested)
+                if rewritten != nested:
+                    return json.dumps(rewritten, ensure_ascii=False)
+                return value
+            return value.replace(old_root, new_root)
+        return value
+
+    # Rewrite decoded values, not JSON source: Windows backslashes and quotes
+    # must be escaped by the encoder, including in nested tool arguments.
+    return "\n".join(
+        json.dumps(rewrite(json.loads(line)), ensure_ascii=False)
+        for line in text.splitlines() if line.strip()
+    ) + "\n"
 
 
 def _free_session_key(workspace: Path, key: str) -> str:
@@ -391,6 +417,29 @@ def import_session_bundle(
     """
     bundle = Path(bundle).expanduser().resolve()
     manifest = read_manifest(bundle)
+    # Validate the payload before creating/cloning a project. A missing member
+    # or malformed conversation used to escape as an internal HTTP error.
+    mode = manifest.get("project_mode") or "none"
+    if mode not in ("git", "files", "none"):
+        raise BundleError("unsupported session bundle project mode")
+    media = manifest.get("media") or {}
+    if not isinstance(media, dict) or any(
+        not isinstance(ref, str) or not isinstance(member, str)
+        for ref, member in media.items()
+    ):
+        raise BundleError("invalid session bundle media index")
+    try:
+        with zipfile.ZipFile(bundle) as zf:
+            text = zf.read("session.jsonl").decode("utf-8")
+            for line in text.splitlines():
+                if line.strip() and not isinstance(json.loads(line), dict):
+                    raise BundleError("invalid conversation record in session bundle")
+            if mode == "git" and "project/repo.bundle" not in zf.namelist():
+                raise BundleError("session bundle is missing its Git history")
+    except BundleError:
+        raise
+    except (KeyError, ValueError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise BundleError(f"cannot read session bundle conversation: {exc}") from exc
     project_dir = Path(into).expanduser() if into else Path.cwd() / str(manifest.get("project_name") or "navin-session")
     project_dir = project_dir.resolve()
     if project_dir.exists() and any(project_dir.iterdir()):
@@ -398,7 +447,6 @@ def import_session_bundle(
     project_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     files = 0
-    mode = str(manifest.get("project_mode") or "none")
 
     with zipfile.ZipFile(bundle) as zf, tempfile.TemporaryDirectory(prefix="navin-bundle-") as tmp:
         names = zf.namelist()
@@ -446,13 +494,12 @@ def import_session_bundle(
 
         media_dir = workspace / ".navin" / "imported-media"
         media_map: dict[str, str] = {}
-        for ref, arcname in (manifest.get("media") or {}).items():
+        for ref, arcname in media.items():
             if arcname in names:
                 extracted = _safe_extract(zf, arcname, media_dir, PurePosixPath(arcname).name)
                 if extracted:
                     media_map[ref] = str(extracted)
 
-        text = zf.read("session.jsonl").decode("utf-8")
         for old, new in media_map.items():
             text = text.replace(json.dumps(old)[1:-1], json.dumps(new)[1:-1])
         old_root = str(manifest.get("source_root") or "")

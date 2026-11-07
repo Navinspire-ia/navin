@@ -373,3 +373,49 @@ def test_a_cancelled_subagent_says_what_stopped_it(tmp_path, monkeypatch):
     assert len(texts) == 2
     assert sum("Reason: stopped from the agents panel." in text for text in texts) == 1
     assert sum("Reason: the conversation was stopped (Stop, /stop or /new)." in text for text in texts) == 1
+
+
+def test_validation_failure_status_distinguishes_missing_from_failed_checks(tmp_path, monkeypatch):
+    from navin.agent.subagent import _humanize_error
+
+    assert _humanize_error("No successful check", "unvalidated") == (
+        "unvalidated", "Changes not validated",
+    )
+    assert _humanize_error("A verification failed", "validation_failed") == (
+        "validation_failed", "Validation checks failed",
+    )
+
+    class Runner:
+        def __init__(self, failed):
+            self.failed = failed
+
+        async def run(self, spec):
+            validation = spec.loop_guard.validation
+            validation.edited({"tests/test_service.py"}, require_tests=True)
+            if self.failed:
+                validation.test_failure = "ModuleNotFoundError: missing dependency"
+            return AgentRunResult(
+                final_content=None, messages=[], stop_reason="validation_failed",
+                error="Check did not pass",
+            )
+
+    async def run(failed):
+        manager = _manager(tmp_path, monkeypatch, runner=Runner(failed))
+        seen = []
+        original = manager._publish_progress
+        def capture(status, **kwargs):
+            seen.append((status.phase, status.error_kind))
+            return original(status, **kwargs)
+        manager._publish_progress = capture
+        await manager.spawn(task="Check", runtime=Mock(), session_key="cli:one")
+        for _ in range(200):
+            if manager.bus.published:
+                break
+            await asyncio.sleep(0.01)
+        assert manager.bus.published
+        kind = next(kind for phase, kind in seen if phase == "error")
+        await _stop(manager, "cli:one")
+        return kind
+
+    assert asyncio.run(run(False)) == "unvalidated"
+    assert asyncio.run(run(True)) == "validation_failed"

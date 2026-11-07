@@ -273,7 +273,7 @@ export function removeDiscardedAnswer(prev: UIMessage[], index: number | null): 
   const target = prev[index];
   if (!target || target.role !== "assistant" || target.kind === "trace") return prev;
   if (target.reasoning) {
-    return replaceMessageAt(prev, index, { ...target, content: "" });
+    return replaceMessageAt(prev, index, { ...target, content: "", isStreaming: false });
   }
   return [...prev.slice(0, index), ...prev.slice(index + 1)];
 }
@@ -1121,14 +1121,12 @@ export function useNavinStream(
       streamFrameRef.current = null;
     }
     setMessages((prev) => {
-      let next = kept.length > 0 ? applyPendingStreamEvents(prev, kept) : prev;
-      next = removeDiscardedAnswer(
-        next,
-        resolveActiveAssistantIndex(next, turn)
-          ?? findStreamingAssistantIndex(next, closedAssistantStreamIdsRef.current, turn),
-      );
+      // Resolve the answer before queued reasoning can advance the cursor.
+      const targetIndex = resolveActiveAssistantIndex(prev, turn)
+        ?? findStreamingAssistantIndex(prev, closedAssistantStreamIdsRef.current, turn);
+      const next = removeDiscardedAnswer(prev, targetIndex);
       closeActiveAssistantStream();
-      return next;
+      return kept.length > 0 ? applyPendingStreamEvents(next, kept) : next;
     });
   }, [applyPendingStreamEvents, closeActiveAssistantStream, resolveActiveAssistantIndex]);
 

@@ -3481,6 +3481,8 @@ export interface WebuiPromptEntry {
   index: number;
   text: string;
   created_at?: number | null;
+  timestamp?: number | null;
+  status?: "done" | "unfinished" | "error";
 }
 
 export interface WebuiPromptsPayload {

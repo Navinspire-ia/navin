@@ -24,12 +24,15 @@ from navin.agent.tools.quality import VerifyTool
 from navin.agent.tools.shell import ExecTool
 from navin.board.store import ProjectBoardStore
 from navin.bus.events import InboundMessage
-from navin.bus.outbound_events import StreamDeltaEvent, StreamedResponseEvent
+from navin.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamedResponseEvent
 from navin.bus.queue import MessageBus
 from navin.providers.base import LLMResponse
 from navin.quality.evidence import VerificationEvidence
 from navin.quality.evidence import test_evidence as suite_evidence
 from navin.quality.testing import TestOutcome as SuiteOutcome
+from navin.session.history_visibility import is_hidden_history_message
+from navin.session.manager import SessionManager
+from navin.tui.history import visible_chat_rows
 from navin.utils.llm_runtime import LLMRuntime
 from tests.test_long_task_continuation import (
     ScriptedProvider,
@@ -63,7 +66,9 @@ def test_invalid_input_is_rejected(price, percent):
 
 @pytest.mark.parametrize("surface", ["cli", "desktop", "desktop_stream"])
 @pytest.mark.parametrize("premature_board_closures", [False, True])
-def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, surface, premature_board_closures):
+def test_default_entry_point_creates_and_executes_acceptance_tests(
+    tmp_path, surface, premature_board_closures, monkeypatch,
+):
     """No Build metadata: a premature final must still lead to real validation."""
     async def run():
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
@@ -88,11 +93,35 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
         loop.tools.register(BoardTool(workspace=tmp_path))
         task = None
         deltas = []
+        timeline = []
         key = "cli:direct" if surface == "cli" else "websocket:acceptance-tests"
+        expected = "Done: discounts and invalid input verified by 5 passing tests."
+        save = loop.sessions.save_async
+
+        async def saved_before_delivery(session, **kwargs):
+            await save(session, **kwargs)
+            if session.messages and session.messages[-1].get("content") == expected:
+                timeline.append("saved")
+
+        monkeypatch.setattr(loop.sessions, "save_async", saved_before_delivery)
+
+        async def streamed(text):
+            deltas.append(text)
+            timeline.append("answer")
+            assert timeline.count("saved") >= 1, "The final answer must follow its durable save"
+
+        async def progress(content, **_kwargs):
+            timeline.append("activity")
+
+        async def stream_end(**_kwargs):
+            return None
+
         request = "Implement discounted_total: round to cents and reject negative prices or percentages outside 0..100."
         try:
             if surface == "cli":
-                response = await asyncio.wait_for(loop.process_direct(request), 45)
+                response = await asyncio.wait_for(loop.process_direct(
+                    request, on_stream=streamed, on_stream_end=stream_end, on_progress=progress,
+                ), 45)
             else:
                 task = asyncio.create_task(loop.run())
                 await loop.bus.publish_inbound(InboundMessage(
@@ -103,7 +132,9 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
                     while True:
                         response = await loop.bus.consume_outbound()
                         if isinstance(response.event, StreamDeltaEvent):
-                            deltas.append(response.event.content)
+                            await streamed(response.event.content)
+                        if isinstance(response.event, ProgressEvent):
+                            await progress(response.content)
                         if response.event is None or isinstance(response.event, StreamedResponseEvent):
                             break
             assert response.content == "Done: discounts and invalid input verified by 5 passing tests."
@@ -118,9 +149,19 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
             assert key not in loop._loop_guards
             if surface != "cli" and not premature_board_closures:
                 assert session.metadata["_turn_budget_continuation_rounds"] == 2
-            if surface == "desktop_stream":
-                assert "The function is done." not in "".join(deltas)
-                assert "5 passing tests" in "".join(deltas)
+            if surface in {"cli", "desktop_stream"}:
+                assert deltas == [expected], "Only the accepted final answer is streamed, once"
+                assert timeline[-1] == "answer", "No task activity may follow the conclusion"
+            # A fresh reader must show the same conclusion, without the rejected
+            # candidate becoming permanent narration above the tool activity.
+            restored = SessionManager(tmp_path).get_or_create(key)
+            rows, _ = visible_chat_rows(restored.messages)
+            assert rows[-1]["content"] == expected
+            assert "The function is done." not in [row["content"] for row in rows]
+            assert sum(row["content"] == expected for row in rows) == 1
+            if not premature_board_closures:
+                candidate = next(m for m in restored.messages if m.get("content") == "The function is done.")
+                assert is_hidden_history_message(candidate)
         finally:
             loop.stop()
             if task:
@@ -145,6 +186,25 @@ def edited_state():
         {"path": "src/service.py"}, {"path": "src/store.py"}, {"path": "src/api.py"},
     ]}, "Patched")
     return state
+
+
+def test_env_prefixed_pytest_records_real_exit_and_rejects_masked_failure():
+    command = "env KUBECONFIG=/tmp/empty python3 -m pytest -q tests/test_schema_render.py"
+    assert _is_test_command(command)
+    state = edited_state()
+    observe(state, "exec", {"command": command}, "1 passed in 0.43s\nExit code: 0")
+    assert state.tests_revision == state.revision
+    assert not state.pending
+
+    failed = edited_state()
+    observe(failed, "exec", {"command": command}, "1 error in 0.39s\nExit code: 2")
+    assert failed.pending and failed.test_failure
+    # A later printf zero cannot turn the original failed test into proof.
+    masked = command + "; printf 'status=%s\\n' \"$?\""
+    assert not _is_test_command(masked)
+    untrusted = edited_state()
+    observe(untrusted, "exec", {"command": masked}, "1 error\nstatus=2\nExit code: 0")
+    assert untrusted.pending and untrusted.tests_revision != untrusted.revision
 
 
 def test_completion_report_distinguishes_missing_failed_running_and_stale_results():
@@ -522,6 +582,9 @@ def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path,
         assert "Done, everything works" not in result.final_content
         assert "pricing.py" in result.final_content
         assert not published, "Unverified success claims must not leak into a streamed answer"
+        visible = [m for m in messages if not is_hidden_history_message(m)]
+        assert not any(m.get("content") == "Done, everything works." for m in visible)
+        assert visible[-1]["content"] == result.final_content
         assert (tmp_path / "pricing.py").read_text() == _PRICING
     asyncio.run(run())
 
@@ -921,3 +984,75 @@ def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monk
     missing = state.missing()
     assert "final delivery check" in missing
     assert "test_paste.py" in missing and "test_menu.py" in missing
+
+
+def test_green_candidate_waits_for_late_work_before_streaming_or_history(tmp_path):
+    """No pending validation is needed to reject a premature conclusion."""
+    async def run():
+        (tmp_path / "evidence.txt").write_text("verified detail\n")
+        events = []
+        checkpoints = []
+        injected = False
+        candidate = "Everything is complete before the late result."
+        final = "The late result was checked; delivery is complete."
+        provider = ScriptedProvider([
+            LLMResponse(content=candidate),
+            tool_call("read_file", path="evidence.txt"),
+            LLMResponse(content=final),
+        ])
+
+        async def stream(text):
+            events.append(("answer", text))
+
+        async def progress(text, **_kwargs):
+            events.append(("activity", text))
+
+        async def stream_end(**_kwargs):
+            return None
+
+        async def inject(**_kwargs):
+            nonlocal injected
+            if provider.calls == 1 and not injected:
+                injected = True
+                return [{"role": "user", "content": "Read evidence.txt before concluding."}]
+            return []
+
+        async def checkpoint(payload):
+            checkpoints.append(payload)
+
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Summarize the verified result."}],
+            tools=registry(tmp_path), workspace=tmp_path, max_iterations=4, max_tool_result_chars=4000,
+            runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            hook=AgentProgressHook(on_stream=stream, on_stream_end=stream_end, on_progress=progress),
+            injection_callback=inject, checkpoint_callback=checkpoint,
+        ))
+        assert result.stop_reason == "completed"
+        assert result.final_content == final
+        assert [text for kind, text in events if kind == "answer"] == [final]
+        assert events[-1] == ("answer", final)
+        assert any(kind == "activity" for kind, _ in events)
+        assert provider.calls == 3
+        rejected = next(m for m in result.messages if m.get("content") == candidate)
+        assert is_hidden_history_message(rejected)
+        assert [cp["assistant_message"]["content"] for cp in checkpoints if cp["phase"] == "final_response"] == [final]
+        assert any(cp["phase"] == "continuing" for cp in checkpoints)
+        rows, _ = visible_chat_rows(result.messages)
+        assert candidate not in [row["content"] for row in rows]
+        assert rows[-1]["content"] == final
+
+    asyncio.run(run())
+
+
+def test_long_pytest_failure_retains_assertion_in_completion_report():
+    state = edited_state()
+    output = (
+        "_____ test_charts_data_prod _____\n"
+        "E   AssertionError: expected 4 production chart series, got 3\n"
+        + "unrelated log output\n" * 150
+        + "1 failed\nExit code: 1"
+    )
+    observe(state, "exec", {"command": "python -m pytest tests/test_charts.py"}, output)
+    report = state.completion_message()
+    assert "expected 4 production chart series, got 3" in report
+    assert "1 failed\nExit code: 1" in report

@@ -3,12 +3,9 @@
 
 """Isolation that silently fails is worse than isolation that never existed.
 
-When a workspace cannot be isolated - not a git repository, or one with no
-commit - the subagent still runs, in the shared tree. That fallback is fine;
-what is not fine is the parent never hearing about it: it asked for isolation,
-so it believes the edits are parked in a checkout waiting to be merged, when
-they already landed in the user's tree. These assert the completion
-announcement says so.
+When a workspace cannot be isolated, the task must stop before tools or the
+model can write into the shared tree. An explicitly shared run still works,
+and every outcome tells the parent where the work is, without false success.
 """
 
 from __future__ import annotations
@@ -34,13 +31,18 @@ class _Bus:
 
 
 class _Runner:
-    """A runner that finishes immediately; only the announcement matters here."""
+    """A runner whose write proves whether task execution was allowed."""
+
+    def __init__(self) -> None:
+        self.calls = 0
 
     async def run(self, spec) -> AgentRunResult:
+        self.calls += 1
+        Path(spec.workspace, "task-edit.txt").write_text("did the work\n")
         return AgentRunResult(final_content="did the work", messages=[])
 
 
-class IsolationFallbackNoteTest(unittest.IsolatedAsyncioTestCase):
+class IsolationRequiredTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -53,6 +55,15 @@ class IsolationFallbackNoteTest(unittest.IsolatedAsyncioTestCase):
             max_tool_result_chars=4000,
         )
         self.manager.runner = _Runner()
+        patcher = mock.patch("navin.agent.subagent._outcomes_dir", lambda: self.workspace / "history")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def asyncTearDown(self) -> None:
+        await self.manager.flush_journal()
+        if self.manager._watchdog_task is not None:
+            self.manager._watchdog_task.cancel()
+            await asyncio.gather(self.manager._watchdog_task, return_exceptions=True)
 
     async def _run(self, isolate: bool) -> str:
         await self.manager.spawn(
@@ -72,19 +83,26 @@ class IsolationFallbackNoteTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("isolation was requested", announcement)
         self.assertIn("shared working tree", announcement)
 
-    async def test_the_note_says_the_edits_are_in_the_users_tree(self) -> None:
-        # The whole point: the parent must not go looking for a checkout to
-        # merge, because there is none.
+    async def test_failed_isolation_never_runs_or_writes_in_the_users_tree(self) -> None:
         announcement = await self._run(isolate=True)
-        self.assertIn("already in the user's tree", announcement)
+        self.assertIn("No task tools or model were run", announcement)
+        self.assertEqual(self.manager.runner.calls, 0)
+        self.assertFalse((self.workspace / "task-edit.txt").exists())
 
-    async def test_the_result_itself_is_still_delivered(self) -> None:
+    async def test_the_failure_is_delivered_instead_of_a_false_success(self) -> None:
         announcement = await self._run(isolate=True)
-        self.assertIn("did the work", announcement)
+        self.assertIn("failed", announcement)
+        self.assertIn("explicit new request", announcement)
+        self.assertNotIn("completed successfully", announcement)
+        self.assertNotIn("did the work", announcement)
 
     async def test_a_run_that_never_asked_for_isolation_gets_no_note(self) -> None:
         announcement = await self._run(isolate=False)
         self.assertNotIn("isolation was requested", announcement)
+        self.assertIn("completed successfully", announcement)
+        self.assertIn("did the work", announcement)
+        self.assertEqual(self.manager.runner.calls, 1)
+        self.assertEqual((self.workspace / "task-edit.txt").read_text(), "did the work\n")
 
 
 if __name__ == "__main__":

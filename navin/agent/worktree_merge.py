@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -512,6 +513,7 @@ async def settle_after_run(
     task_id: str,
     label: str,
     origin: dict[str, Any],
+    on_settled: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     """Land a finished isolated run, or fall back to keeping its checkout.
 
@@ -521,23 +523,32 @@ async def settle_after_run(
     """
     if checkout is None:
         return ""
-    if not ok:
+
+    async def keep() -> str:
+        if on_settled is not None:
+            return await manager._settle_worktree(checkout, on_settled=on_settled)
         return await manager._settle_worktree(checkout)
+
+    if not ok:
+        return await keep()
     try:
         changes = await asyncio.to_thread(checkout.inspect)
     except Exception:  # noqa: BLE001
         changes = None
     if changes is None or changes.empty:
-        return await manager._settle_worktree(checkout)
+        return await keep()
     try:
         landed = await asyncio.to_thread(land, checkout, label)
     except Exception:  # noqa: BLE001 - never lose the work over a merge bug
         logger.exception("worktree_merge: landing [{}] failed", task_id)
         landed = None
     if landed is None:
-        return await manager._settle_worktree(checkout)
+        return await keep()
     result, commit = landed
     if result.status in {"merged", "nothing"}:
+        note = merged_note(result) if result.landed else ""
+        if on_settled is not None:
+            await on_settled(note)
         if result.landed:
             logger.info("worktree_merge: [{}] merged {} file(s)", task_id, len(result.files))
             _publish(manager.bus, origin, event_for(
@@ -547,13 +558,16 @@ async def settle_after_run(
             worktree.release, checkout,
             pool_size=getattr(manager, "max_concurrent_subagents", 0),
         )
-        return merged_note(result) if result.landed else ""
+        return note
 
     branch = await asyncio.to_thread(_keep_branch, checkout, commit)
     if branch and result.reason in _AGENT_INTEGRATES:
         # The commit is safe on its branch: the checkout can go, and the
         # parent agent integrates the work in its next step. No card, no
-        # question to the user.
+        # question to the user. Preserve that handoff before removing its tree.
+        note = integrate_note(label, branch, result.files, result.conflicts, result.reason)
+        if on_settled is not None:
+            await on_settled(note)
         await asyncio.to_thread(worktree.remove, checkout)
         logger.info(
             "worktree_merge: [{}] handed to the agent ({}): {} file(s) on {}",
@@ -563,7 +577,7 @@ async def settle_after_run(
             task_id, label, "resolving", files=list(result.files),
             conflicts=list(result.conflicts), reason=result.reason, branch=branch,
         ))
-        return integrate_note(label, branch, result.files, result.conflicts, result.reason)
+        return note
     pending = PendingMerge(
         task_id=task_id,
         label=label,

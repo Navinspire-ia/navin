@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import os
 import time
 from dataclasses import dataclass, field, replace
@@ -122,6 +123,20 @@ class UiFilePreview(UiEvent):
 class UiProgress(UiEvent):
     text: str
     tool_hint: bool = False
+
+
+@dataclass(frozen=True)
+class UiCompactionProgress(UiEvent):
+    """A measured archive update belonging to exactly one session and project."""
+
+    state: str
+    step: str
+    percent: float | None = None
+    messages_archived: int = 0
+    tokens_before: int | None = None
+    tokens_after: int | None = None
+    session_key: str | None = None
+    workspace: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1697,10 +1712,28 @@ class TuiRuntime:
                     self.status.relay_model = str(data.get("relay_model") or "").strip()
                     return
                 label = str(data.get("label") or "").strip()
-                if label.startswith("Compacting context"):
-                    # Long model-backed summarization: say so instead of a
-                    # silent "Working…" under a 100% context gauge.
-                    await self._emit(UiProgress(label, tool_hint=True))
+                if data.get("phase") == "compacting" or label.startswith("Compacting context"):
+                    # Own row above Working; never post a second transient
+                    # progress line into the transcript on each token estimate.
+                    raw_percent = data.get("percent")
+                    percent = (
+                        float(raw_percent)
+                        if isinstance(raw_percent, (int, float))
+                        and not isinstance(raw_percent, bool)
+                        and math.isfinite(raw_percent)
+                        and 0 <= raw_percent <= 100
+                        else None
+                    )
+                    await self._emit(UiCompactionProgress(
+                        state=str(data.get("state") or "start"),
+                        step=str(data.get("step") or "Summarizing the conversation"),
+                        percent=percent,
+                        messages_archived=int(data.get("messages_archived") or 0),
+                        tokens_before=data.get("tokens_before"),
+                        tokens_after=data.get("tokens_after"),
+                        session_key=f"{msg.channel}:{msg.chat_id}",
+                        workspace=str(self.workspace),
+                    ))
             return
         if event.tool_hint:
             if ch is not None and not getattr(ch, "send_tool_hints", True):

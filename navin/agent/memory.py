@@ -1162,6 +1162,7 @@ class Consolidator:
         replay_max_messages: int | None,
         *,
         runtime: LLMRuntime,
+        on_before_archive: Callable[[], Awaitable[None]] | None = None,
     ) -> str | None:
         """Archive messages that would be hidden by the replay message window."""
         end_idx = self._replay_overflow_boundary(session, replay_max_messages)
@@ -1170,6 +1171,10 @@ class Consolidator:
         chunk = session.messages[session.last_consolidated:end_idx]
         if not chunk:
             return None
+        if on_before_archive is not None:
+            # Replay overflow can call the summary model before the token
+            # estimate. Show progress before that first potentially slow call.
+            await on_before_archive()
         logger.info(
             "Replay-window consolidation for {}: chunk={} msgs, replay_max={}",
             session.key,
@@ -1299,6 +1304,7 @@ class Consolidator:
         session: Session,
         *,
         runtime: LLMRuntime,
+        use_last_peak: bool = True,
     ) -> tuple[int, str]:
         """Same result as ``estimate_session_prompt_tokens``, counted off the loop.
 
@@ -1323,7 +1329,10 @@ class Consolidator:
             )
 
         estimated, source = await asyncio.to_thread(count)
-        return self._prefer_last_peak(peak, estimated, source)
+        # An archived tail really did shrink. The previous turn's peak may be
+        # higher than today's prompt and would pin every post-archive estimate
+        # to the original number, leaving progress at 0% despite a saved drop.
+        return self._prefer_last_peak(peak, estimated, source) if use_last_peak else (estimated, source)
 
     @staticmethod
     def _last_peak_tokens(session: Session) -> int:
@@ -1542,6 +1551,7 @@ class Consolidator:
         replay_max_messages: int | None = None,
         urgent_only: bool = False,
         on_start: Callable[[], Awaitable[None]] | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         """Loop: archive old messages until prompt fits within safe budget.
 
@@ -1562,6 +1572,29 @@ class Consolidator:
             )
             return
 
+        started = False
+
+        async def report(data: dict[str, Any]) -> None:
+            if on_progress is None:
+                return
+            try:
+                await on_progress({"phase": "compacting", "label": "Compacting context…", **data})
+            except Exception:
+                # A disconnected UI must never lose the archived conversation.
+                logger.exception("Compaction progress notification failed for {}", session.key)
+
+        async def begin() -> None:
+            nonlocal started
+            if started:
+                return
+            started = True
+            if on_start is not None:
+                try:
+                    await on_start()
+                except Exception:
+                    logger.exception("Compaction start notice failed for {}", session.key)
+            await report({"state": "start", "step": "Preparing the archive"})
+
         lock = self.get_lock(session.key)
         async with lock:
             self._token_consolidating.add(session.key)
@@ -1571,8 +1604,17 @@ class Consolidator:
                     runtime=runtime,
                     replay_max_messages=replay_max_messages,
                     urgent_only=urgent_only,
-                    on_start=on_start,
+                    on_start=begin,
+                    on_progress=report,
                 )
+            except asyncio.CancelledError:
+                if started:
+                    await report({"state": "cancelled", "step": "Compaction interrupted"})
+                raise
+            except Exception:
+                if started:
+                    await report({"state": "failed", "step": "Compaction stopped before saving"})
+                raise
             finally:
                 self._token_consolidating.discard(session.key)
 
@@ -1584,6 +1626,7 @@ class Consolidator:
         replay_max_messages: int | None,
         urgent_only: bool,
         on_start: Callable[[], Awaitable[None]] | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         # Refresh session reference: AutoCompact may have replaced it.
         fresh = self.sessions.get_or_create(session.key)
@@ -1594,11 +1637,38 @@ class Consolidator:
 
         budget = self._input_token_budget(runtime)
         target = int(budget * self.consolidation_ratio)
+        replay_start = session.last_consolidated
         last_summary = await self._consolidate_replay_overflow(
             session,
             replay_max_messages,
             runtime=runtime,
+            on_before_archive=on_start,
         )
+        replay_archived = session.last_consolidated - replay_start
+        if replay_archived and on_progress is not None:
+            await on_progress({
+                "state": "archived", "step": f"{replay_archived} messages archived",
+                "messages_archived": replay_archived,
+            })
+
+        async def finish_replay(*, tokens_after: int | None = None) -> None:
+            if not replay_archived or on_progress is None:
+                return
+            archived_with_summary = bool(last_summary)
+            await on_progress({
+                "state": "done" if archived_with_summary else "partial",
+                "step": (
+                    f"{replay_archived} messages archived and saved"
+                    if archived_with_summary else "Messages raw-archived; summary unavailable"
+                ),
+                "messages_archived": replay_archived,
+                # A cached projection is not a measured post-archive token
+                # count. Never display 100% unless a fresh estimate confirms
+                # the new context fits the target and the archive is saved.
+                **({"percent": 100} if archived_with_summary
+                   and tokens_after is not None and tokens_after <= target else {}),
+            })
+
         # Fast path: when the cached projection proves the session is far
         # below budget, skip the probe-prompt rebuild and tiktoken pass
         # that otherwise tax every BUILD of a healthy session.
@@ -1609,6 +1679,7 @@ class Consolidator:
                 int(self._LAZY_ESTIMATE_HEADROOM * 100),
             )
             self._persist_last_summary(session, last_summary)
+            await finish_replay()
             return
         try:
             estimated, source = await self.estimate_session_prompt_tokens_async(
@@ -1621,6 +1692,7 @@ class Consolidator:
         self._remember_estimate(session, runtime=runtime, estimated=estimated)
         if estimated <= 0:
             self._persist_last_summary(session, last_summary)
+            await finish_replay()
             return
         proactive = int(budget * self._PROACTIVE_CONSOLIDATION_RATIO)
         tool_heavy = sum(
@@ -1643,17 +1715,21 @@ class Consolidator:
                 consolidate_floor,
             )
             self._persist_last_summary(session, last_summary)
+            await finish_replay(tokens_after=estimated)
             return
 
         tokens_before = estimated
         if on_start is not None:
-            # Summarizing takes model calls (often minutes on a full context):
-            # tell the UI so a 100% gauge does not look like a frozen turn.
-            try:
-                await on_start()
-            except Exception:
-                logger.debug("Compaction start notice failed for {}", session.key)
+            await on_start()
         archived_messages = 0
+        measured_percent = 0
+        stop_reason = ""
+        if on_progress is not None:
+            await on_progress({
+                "state": "measuring", "step": "Estimating messages to archive",
+                "percent": measured_percent, "tokens_before": tokens_before,
+                "messages_archived": replay_archived,
+            })
         # Collected across rounds so the handoff brief is written once, over
         # everything this call dropped, instead of once per round.
         dropped: list[dict] = []
@@ -1668,14 +1744,23 @@ class Consolidator:
                     session.key,
                     round_num,
                 )
+                stop_reason = "No safe message boundary available"
                 break
 
             end_idx = boundary[0]
 
             chunk = session.messages[session.last_consolidated:end_idx]
             if not chunk:
+                stop_reason = "No messages left to archive"
                 break
 
+            if on_progress is not None:
+                await on_progress({
+                    "state": "summarizing",
+                    "step": f"Summarizing {len(chunk)} messages (pass {round_num + 1})",
+                    "percent": measured_percent, "messages_archived": replay_archived + archived_messages,
+                    "tokens_before": tokens_before,
+                })
             logger.info(
                 "Token consolidation round {} for {}: {}/{} via {}, chunk={} msgs",
                 round_num,
@@ -1700,7 +1785,16 @@ class Consolidator:
             archived_messages += len(chunk)
             session.last_consolidated = end_idx
             await self.sessions.save_async(session)
+            if on_progress is not None:
+                await on_progress({
+                    "state": "archived",
+                    "step": f"{replay_archived + archived_messages} messages archived - measuring the new context",
+                    "percent": measured_percent,
+                    "messages_archived": replay_archived + archived_messages,
+                    "tokens_before": tokens_before,
+                })
             if not summary:
+                stop_reason = "Summary model unavailable; messages saved in the raw archive"
                 # LLM is degraded - stop hammering it this call;
                 # the next invocation can retry a fresh chunk.
                 break
@@ -1709,12 +1803,31 @@ class Consolidator:
                 estimated, source = await self.estimate_session_prompt_tokens_async(
                     session,
                     runtime=runtime,
+                    use_last_peak=False,
                 )
             except Exception:
                 logger.exception("Token estimation failed for {}", session.key)
                 estimated, source = 0, "error"
             if estimated <= 0:
+                stop_reason = "Could not measure the remaining context"
                 break
+            # Only a fresh token estimate can advance this percentage. It is
+            # the measured reduction towards the target, never elapsed time.
+            to_remove = max(1, tokens_before - target)
+            measured_percent = max(
+                measured_percent,
+                min(95, max(0, int(95 * (tokens_before - estimated) / to_remove))),
+            )
+            if on_progress is not None:
+                await on_progress({
+                    "state": "measuring",
+                    "step": f"{replay_archived + archived_messages} messages archived; "
+                            f"{max(0, tokens_before - estimated):,}/{to_remove:,} tokens reduced",
+                    "percent": measured_percent,
+                    "messages_archived": replay_archived + archived_messages,
+                    "tokens_before": tokens_before,
+                    "tokens_after": estimated,
+                })
         self._remember_estimate(session, runtime=runtime, estimated=estimated)
 
         # Persist a summary to session metadata so it can be injected into
@@ -1723,6 +1836,14 @@ class Consolidator:
         # memory-fact archive is only a fallback, since it is written for
         # long-term recall rather than for resuming the task.
         if dropped:
+            if on_progress is not None:
+                await on_progress({
+                    "state": "handoff", "step": "Writing the handoff brief",
+                    "percent": measured_percent,
+                    "messages_archived": replay_archived + archived_messages,
+                    "tokens_before": tokens_before,
+                    **({"tokens_after": estimated} if estimated > 0 else {}),
+                })
             brief = await self.handoff_brief(
                 dropped, runtime=runtime, previous=self._previous_brief(session)
             )
@@ -1738,6 +1859,19 @@ class Consolidator:
                 "messages_archived": archived_messages,
                 "tokens_before": tokens_before,
                 "tokens_after": estimated,
+            })
+        if on_progress is not None:
+            complete = not stop_reason and bool(last_summary) and estimated > 0 and estimated <= target
+            await on_progress({
+                "state": "done" if complete else "partial",
+                "step": (
+                    f"Handoff saved; {replay_archived + archived_messages} messages archived"
+                    if complete else stop_reason or "Context still above the safe token target"
+                ),
+                "messages_archived": replay_archived + archived_messages,
+                "tokens_before": tokens_before,
+                **({"tokens_after": estimated} if estimated > 0 else {}),
+                "percent": 100 if complete else measured_percent,
             })
 
     async def compact_idle_session(

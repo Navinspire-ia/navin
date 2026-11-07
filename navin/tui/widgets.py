@@ -44,7 +44,11 @@ from navin.tui.brand import MARK, tide_text
 from navin.tui.copy_chip import CopyChip
 from navin.tui.frame_scheduler import FRAME_SECONDS, FrameRequest, note_input, schedule_paint
 from navin.tui.frames import paint_input
-from navin.tui.markdown import install_path_styles, readable_validation_report
+from navin.tui.markdown import (
+    compact_validation_report,
+    install_path_styles,
+    readable_validation_report,
+)
 from navin.tui.markdown_stream import TranscriptMarkdown
 from navin.tui.modes import display_user_text
 from navin.tui.nodelist_fix import install as install_nodelist_fix
@@ -133,6 +137,8 @@ def stream_paint_delay(widget: Any) -> float:
     return STREAM_PAINT_SECONDS + ratio * (STREAM_PAINT_SLOW_SECONDS - STREAM_PAINT_SECONDS)
 TOOL_OUTPUT_FRAME_SECONDS = 0.1
 ACTIVITY_PAGE_SIZE = 20
+#: Over the answer of a task turn, after its folded steps.
+RESULT_RULE_LABEL = "Final result"
 # One-cell spinner for running rows: aligned with the done/failed icons.
 ROW_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -1147,7 +1153,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                     # project's intelligence coming online: in the index colour,
                     # not greyed out like a line count.
                     notice = summary == index_notice_text(self.tool_name, self.result, self.output_lines)
-                    head.append(f"  {summary}", style=f"bold {palette['index']}" if notice else palette["muted"])
+                    first = summary.splitlines()[0] if summary else ""
+                    head.append(f"  {first}", style=f"bold {palette['index']}" if notice else palette["muted"])
                 head_widget = self.query_one(".tool-head", Static)
                 old = str(head_widget.content)
                 # A finished step swaps its spinner for a check: same row.
@@ -1156,7 +1163,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                     layout=not (animation_only or same_height_text(head_widget, old, head.plain)),
                 )
                 line = self.query_one(".tool-summary", Static)
-                below = "" if inline or not summary else f"  └ {summary}"
+                # A planned list keeps one step per line, aligned under the first.
+                below = "" if inline or not summary else "  └ " + summary.replace("\n", "\n    ")
                 if str(line.content) != below:
                     line.update(below)
                 line.display = bool(below)
@@ -1212,6 +1220,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                 path=self.file_path,
                 counts_known=not self.file_binary,
                 error=self.error,
+                result=self.result if self.phase == "end" else None,
             )
         if getattr(self, "_command_below", False):
             # The full command is printed under the heading: keep the heading
@@ -1644,6 +1653,9 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         )
         if more.label.plain != label:
             more.label = label
+            # A Button does not relayout when its label changes: the auto width
+            # measured for an earlier, shorter label cut this one ("Show output (11").
+            more.refresh(layout=True)
         more.tooltip = "F expands the full output. Enter folds this activity."
         copy = self.query_one(".tool-copy", CopyChip)
         copy.display = viewport.display
@@ -2016,27 +2028,48 @@ def running_exec_count() -> int:
 
 
 def format_working_line(
-    *, elapsed_s: float, background: int = 0, activity: str = "", relay: str = ""
+    *, elapsed_s: float, background: int = 0, activity: str = "", relay: str = "", step: str = "",
+    width: int = 0,
 ) -> str:
     """Status shown in chat while a turn runs: what the agent is doing now.
     Keys are Navin keys, not Cursor's. *relay* names the model that took over
-    the step when the chosen one could not answer, in front of the rest."""
+    the step when the chosen one could not answer, in front of the rest.
+    *step* is the plan step being worked on (``Step 2/3: Add the tests``).
+    *width* (cells, 0 when unknown) keeps the whole status on one row: the
+    step is shortened first, the plan panel above shows it in full."""
     clock = format_elapsed(elapsed_s)
-    label = " ".join((activity or "").split()) or "Working"
+    base = " ".join((activity or "").split()) or "Working"
     relay = " ".join((relay or "").split())
+    step = " ".join((step or "").split())
     if relay:
-        label = f"{relay} · {label}"
-    if cell_len(label) > 72:
-        # Cut by terminal cells: wide glyphs take two.
-        label = set_cell_size(label, 71).rstrip() + "…"
-    parts = [f"{label} ({clock} • esc to interrupt)"]
+        base = f"{relay} · {base}"
+    tail = f" ({clock} • esc to interrupt)"
+    extras: list[str] = []
     if background == 1:
-        parts.append("1 background terminal running")
-        parts.append("/ps to view")
+        extras = ["1 background terminal running", "/ps to view"]
     elif background > 1:
-        parts.append(f"{background} background terminals running")
-        parts.append("/ps to view")
-    return " • ".join(parts)
+        extras = [f"{background} background terminals running", "/ps to view"]
+    limit = 72
+    if width > 0:
+        extra_cells = sum(cell_len(part) + 3 for part in extras)
+        # Two cells for the spinner and its space.
+        limit = max(16, min(limit, width - 2 - cell_len(tail) - extra_cells))
+    label = base
+    if step:
+        room = min(40, max(12, limit - cell_len(base) - 3))
+        if cell_len(step) > room:
+            head, _, title = step.partition(": ")
+            if title and room - cell_len(head) - 2 < 16:
+                # "Step 1/3: Corrige…" says less than "Step 1/3": the plan
+                # panel just above shows the whole title.
+                step = head
+            else:
+                step = set_cell_size(step, room - 1).rstrip() + "…"
+        label = f"{step} · {base}"
+    if cell_len(label) > limit:
+        # Cut by terminal cells: wide glyphs take two.
+        label = set_cell_size(label, limit - 1).rstrip() + "…"
+    return " • ".join([f"{label}{tail}", *extras])
 
 
 class JumpToBottom(Static):
@@ -2127,6 +2160,106 @@ class LivePresenceLine(Static):
             self.add_class("-visible")
 
 
+class CompactionLine(Static):
+    """One animated row ahead of Working, with only measured percentages."""
+
+    DEFAULT_CSS = """
+    CompactionLine {
+        height: 0;
+        min-height: 0;
+        margin: 0;
+        padding: 0 1;
+        color: $text-muted;
+        background: $background;
+        display: none;
+    }
+    CompactionLine.-visible {
+        display: block;
+        height: 1;
+        min-height: 1;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("", **kwargs)
+        self._step = ""
+        self._percent: float | None = None
+        self._state = ""
+
+    @property
+    def active(self) -> bool:
+        return self._state not in {"", "done", "partial", "failed", "cancelled"}
+
+    def update_progress(
+        self, state: str, step: str, percent: float | None, *, frame: int = 0,
+    ) -> None:
+        """States are explicit; an unknown percentage never fills on a timer."""
+        if state not in {"start", "summarizing", "archived", "measuring", "handoff",
+                         "done", "partial", "failed", "cancelled"}:
+            return
+        self._state = state
+        self._step = " ".join(step.split()) or "Preparing the archive"
+        self._percent = percent if percent is not None and 0 <= percent <= 100 else None
+        self.tick(frame=frame)
+
+    def tick(self, *, frame: int) -> None:
+        if not self._state:
+            return
+        from navin.utils.task_progress import progress_bar
+
+        width = content_width(self)
+        cells = 12 if width <= 0 else min(20, max(6, width // 5))
+        if self._percent is None:
+            if self._state == "done":
+                # A replay-window archive can finish without a fresh token
+                # estimate: saved is known, a percentage is not.
+                bar = "[saved]"
+            else:
+                # Moving two-cell glint shows life, not pretend completed work.
+                offset = (frame // 2) % max(1, cells - 1)
+                bar = "[" + "·" * offset + "━━" + "·" * max(0, cells - offset - 2) + "]"
+            measured = "measuring"
+        else:
+            bar = progress_bar(self._percent, width=cells)
+            measured = ""
+            # Preserve the exact measured fill and percentage. A glint travels
+            # only through the unfilled part while the next model call runs.
+            filled = round(self._percent) * cells // 100
+            if self.active and filled < cells:
+                empty = cells - filled
+                glint = 1 + filled + (frame // 2) % empty
+                bar = bar[:glint] + "•" + bar[glint + 1:]
+        if self._state == "done":
+            icon = "✓"
+        elif self._state in {"partial", "failed", "cancelled"}:
+            icon = "!"
+        else:
+            icon = ROW_SPINNER[frame % len(ROW_SPINNER)]
+        name = "Compacting context" if self.active else "Context compaction"
+        # The phase and numeric gauge always survive a narrow terminal.
+        head = f"{icon} {name}  {bar}"
+        limit = width or 80
+        if self.active and self._percent is None:
+            suffix = f"  {measured}"
+        else:
+            suffix = ""
+        room = max(0, limit - cell_len(head) - cell_len(suffix) - 2)
+        detail = set_cell_size(self._step, room).rstrip() if room else ""
+        text = f"{head}{suffix}  {detail}".rstrip()
+        if str(self.content) != text:
+            self.update(text, layout=not (self.has_class("-visible") and same_height_text(self, str(self.content), text)))
+        self.display = True
+        self.add_class("-visible")
+
+    def reset(self) -> None:
+        self._state = ""
+        self._step = ""
+        self._percent = None
+        self.update("")
+        self.display = False
+        self.remove_class("-visible")
+
+
 class WorkingLine(Static):
     """Live turn status, pinned under the transcript like Cursor's Working row."""
 
@@ -2167,14 +2300,11 @@ class WorkingLine(Static):
         self.remove_class("-visible")
 
 class AgentsPanel(Static):
-    """Agents working in parallel, under the chat: ``main`` then one row each.
+    """One collapsed Sub-agents row under the chat with live outcome counts.
 
-    ``● main``, then per agent its own name, what it is doing now, and on the
-    right how long it has run and the tokens it has used. Six agents at most;
-    finished agents (succeeded, failed, cancelled) stay with their outcome
-    until dismissed (F8 Dismiss, F9 dismiss finished), a new conversation, or
-    on their own: 10 minutes after a success, 15 minutes after a failure.
-    Each finished row carries its own hint ("· F9 dismiss" / "· F8 details").
+    Click or F7 expands the agents; clicking an expanded agent opens its F8
+    inspector. Completed agents stay until dismissed (F9), a new conversation,
+    or the existing grace period elapses. No separate ``main`` row.
     """
 
     DEFAULT_CSS = """
@@ -2188,9 +2318,7 @@ class AgentsPanel(Static):
     """
 
     MAX_VISIBLE_AGENTS = 6
-    # main, agents, optional More row, plus one spare: the bottom hint line is
-    # no longer painted (each finished row carries its own hint); kept for
-    # callers that size the panel from it.
+    # Header, visible agents, optional More row, plus one spare.
     MAX_ROWS = MAX_VISIBLE_AGENTS + 3
     # Legacy shared hint, not rendered any more; kept for compatibility.
     HINT = "  F8 relaunch, cancel or dismiss · F9 dismiss finished"
@@ -2207,7 +2335,7 @@ class AgentsPanel(Static):
         self._main: tuple[bool, float] = (False, 0.0)
         self._painted: tuple | None = None
         self._dismissed: set[str] = set()
-        # Task id of each painted line (None for main, more and hint lines).
+        # Task id of each expanded line (None for the header and More row).
         self._line_ids: list[str | None] = []
         self.expanded = False
 
@@ -2216,7 +2344,7 @@ class AgentsPanel(Static):
         return bool(self._agents)
 
     def toggle_expanded(self) -> None:
-        """Show every live agent, or fold back to the first six."""
+        """Open the agent details or return to the one-line summary."""
         self.expanded = not self.expanded
         self._painted = None
         self.tick(*self._main)
@@ -2263,6 +2391,7 @@ class AgentsPanel(Static):
         self._agents.clear()
         self._history.clear()
         self._dismissed.clear()
+        self.expanded = False
         self._painted = None
         self.display = False
         self.update("")
@@ -2305,6 +2434,9 @@ class AgentsPanel(Static):
     def on_click(self, event: Any = None) -> None:
         lines = str(self.content).splitlines()
         y = getattr(event, "y", None)
+        if y == 0:
+            self.toggle_expanded()
+            return
         if lines and y is not None and 0 <= y < len(lines) and (
                 "show more" in lines[y] or "show less" in lines[y]):
             self.toggle_expanded()
@@ -2346,7 +2478,7 @@ class AgentsPanel(Static):
         self.display = True
         width = content_width(self) or max(20, self.app.size.width - 2)
         key = (width, int(main_elapsed), main_active, int(now), self.expanded,
-               tuple((k, r["status"], r["tokens"], r.get("phase"), "done_at" in r) for k, r in self._agents.items()))
+               tuple((k, r["status"], r["tokens"], r.get("phase"), r.get("error"), "done_at" in r) for k, r in self._agents.items()))
         if key != self._painted:
             self.update(self._render_rows(width, main_active, main_elapsed, now))
             self._painted = key
@@ -2390,13 +2522,23 @@ class AgentsPanel(Static):
         if not self.app.current_theme.dark:
             palette = {"blue": "#3D82FF", "green": "#2D6A4F", "coral": "#914747", "muted": "#626262", "text": "#20242A"}
         out = Text(no_wrap=True, overflow="ellipsis")
-        out.append("● ", style=palette["blue"])
-        out.append("main", style=f"bold {palette['blue']}")
-        # The working line under the chat carries the live clock.
-        del main_elapsed
-        state = "working" if main_active else "waiting for agents"
-        out.append(f"  {state}", style=palette["muted"])
+        total = len(self._agents)
+        running = sum("done_at" not in row for row in self._agents.values())
+        failed = sum("done_at" in row and row["error"] for row in self._agents.values())
+        done = total - running - failed
+        out.append("▾ " if self.expanded else "▸ ", style=palette["blue"])
+        out.append("Sub-agents", style=f"bold {palette['blue']}")
+        out.append(f"  {total} total", style=palette["muted"])
+        if running:
+            out.append(f" · {running} running", style=palette["blue"])
+        if done:
+            out.append(f" · {done} done", style=palette["green"])
+        if failed:
+            out.append(f" · {failed} failed", style=palette["coral"])
+        del main_active, main_elapsed
         self._line_ids = [None]
+        if not self.expanded:
+            return out
 
         def rank(row: dict[str, Any]) -> int:
             if "done_at" in row:
@@ -2408,8 +2550,6 @@ class AgentsPanel(Static):
         overflow = bool(hidden)
         if self.expanded and hidden:
             shown, hidden = rows, []
-        elif not hidden:
-            self.expanded = False
         names = self._names()
         name_width = min(28, max((cell_len(names[k]) for k, _ in shown), default=8))
         for task_id, row in shown:
@@ -2456,14 +2596,10 @@ class AgentsPanel(Static):
                 out.append(hint, style=palette["muted"])
             out.append(" " * gap)
             out.append(meta, style=palette["muted"])
-        if hidden:
-            running = sum("done_at" not in row for _, row in hidden)
+        if overflow:
             out.append("\n")
-            out.append(f"  ▸ show more (+{len(hidden)}) · +{len(hidden)} more agents ({running} running)"
-                       " · F7 or click to expand, F8 to inspect", style=palette["muted"])
-        elif overflow:
-            out.append("\n")
-            out.append("  ▴ show less · F7 or click to collapse", style=palette["muted"])
+            self._line_ids.append(None)
+            out.append("  ▴ show less · F7 or click the header to collapse", style=palette["muted"])
         return out
 
 
@@ -2694,6 +2830,19 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         margin-top: 1;
     }
     AssistantMessage > .assistant-foot.-visible { display: block; }
+    /* Between a task turn's steps and its answer, like the desktop's
+       "Final result" heading: the outcome starts here. */
+    AssistantMessage > .assistant-result-rule {
+        display: none;
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0;
+        border-top: solid $foreground 18%;
+        color: $text-muted;
+        text-style: bold;
+        background: $background;
+    }
+    AssistantMessage.-has-result > .assistant-result-rule { display: block; }
     /* Under a finished answer: one click copies the whole report. */
     AssistantMessage > .assistant-copy { display: none; }
     AssistantMessage.-copyable > .assistant-copy { display: block; }
@@ -2825,6 +2974,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         self._paint_timer: FrameRequest | None = None
         self._paint_lock = asyncio.Lock()
         self._painted_markdown = ""
+        self._validation_expanded = False
         self._buffer: list[str] = []
         self._tools: dict[str, ToolCall] = {}
         self._file_tools: dict[tuple[str, str], ToolCall] = {}
@@ -2835,6 +2985,8 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         self._activity_blocks: list[Vertical] = []
         self._activity_start = 0
         self._activity_expanded = False
+        # A finished task turn shows its answer; its steps wait behind one control.
+        self._activity_folded = False
         self._pinned_activity: set[Vertical] = set()
         self.streamed = False
         self.finished = False
@@ -2848,12 +3000,21 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         with Horizontal(classes="assistant-history-controls"):
             yield Button("Earlier activity", classes="assistant-history", compact=True)
             yield Button("Recent only", classes="assistant-recent", compact=True)
+        details = Button(
+            "Hide validation details" if self._validation_expanded else "Validation details",
+            classes="assistant-validation-details", compact=True,
+        )
+        details.display = readable_assistant_markdown(self.text).startswith("## Validation pending\n")
+        # Mounted after the body below, including virtualized turns.
         settled, self._settled = self._settled, None
         if settled is not None:
             yield from self._compose_settled(*settled)
+            yield details
             return
         yield Static("", classes="assistant-preview", markup=True)
+        yield Static(RESULT_RULE_LABEL, classes="assistant-result-rule", markup=False)
         yield TranscriptMarkdown("", classes="assistant-body -answer")
+        yield details
         yield CopyChip(self.copy_text, classes="assistant-copy")
         yield Static("", classes="assistant-foot", markup=True)
 
@@ -2864,6 +3025,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         preview = Static(state["preview"], classes="assistant-preview", markup=True)
         preview.display = not self._open
         yield preview
+        yield Static(RESULT_RULE_LABEL, classes="assistant-result-rule", markup=False)
         body = SettledMarkdown(state["body"], classes="assistant-body -answer")
         body.display = self._open
         yield body
@@ -2923,8 +3085,10 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         state = {
             "bot_name": self.bot_name, "bot_icon": self.bot_icon, "show_head": self._show_head,
             "text": self.text, "body": self._painted_markdown, "open": self._open,
+            "validation_expanded": self._validation_expanded,
             "streamed": self.streamed, "activity": activity,
             "activity_start": self._activity_start, "activity_expanded": self._activity_expanded,
+            "activity_folded": self._activity_folded,
             "tools": [(key, tool_snapshot(tool)) for key, tool in self._tools.items()],
             "foot": foot.content if foot is not None else "",
             "foot_visible": foot is not None and foot.has_class("-visible"),
@@ -2942,6 +3106,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         block.from_record = True
         block._buffer = [state["text"]] if state["text"] else []
         block._painted_markdown = state["body"]
+        block._validation_expanded = state.get("validation_expanded", False)
         block._open = state["open"]
         block.finished = True
         block.streamed = state["streamed"]
@@ -2980,6 +3145,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         block._activity_blocks = activity
         block._activity_start = state["activity_start"]
         block._activity_expanded = state["activity_expanded"]
+        block._activity_folded = state.get("activity_folded", False)
         block._tools = {key: build_tool(data) for key, data in state["tools"]}
         block._settled = (mount, state)
         return block
@@ -3042,8 +3208,53 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         controls.display = bool(self._activity_start or self._activity_expanded)
         earlier = controls.query_one(".assistant-history", Button)
         earlier.display = self._activity_start > 0
-        earlier.label = f"Earlier activity ({self._activity_start})"
-        controls.query_one(".assistant-recent", Button).display = self._activity_expanded
+        folded = self._activity_folded and self._activity_start >= len(self._activity_blocks)
+        self._label_button(earlier, self._fold_label() if folded else f"Earlier activity ({self._activity_start})")
+        recent = controls.query_one(".assistant-recent", Button)
+        recent.display = self._activity_expanded
+        self._label_button(recent, "▾ Hide activity" if self._activity_folded else "Recent only")
+
+    @staticmethod
+    def _label_button(button: Button, label: str) -> None:
+        if button.label.plain != label:
+            button.label = label
+            # Labels do not relayout on their own: measure the new one.
+            button.refresh(layout=True)
+
+    def _fold_label(self) -> str:
+        """``▸ Show activity · 14 steps · 1 failed``: what the folded turn holds."""
+        tools = list(self._tools.values())
+        failed = sum(1 for tool in tools if tool.phase == "error" and not tool.validation_pending)
+        label = f"▸ Show activity · {len(tools)} step{'s' if len(tools) != 1 else ''}"
+        return label + (f" · {failed} failed" if failed else "")
+
+    def _fold_finished_activity(self) -> None:
+        """A finished task turn reads as its answer; its steps fold behind one control.
+
+        Kept open when the outcome needs them: a blocked validation (its report
+        or a completion row still pending), an interrupted step, or a reader
+        who scrolled up to look at them.
+        """
+        blocks = self._activity_blocks
+        answer = self.text.strip()
+        if not blocks or not self._tools or not answer:
+            return
+        if any(tool.phase == "cancelled" for tool in self._tools.values()):
+            return
+        self._set_child_state(True, "-has-result", "assistant-result-rule")
+        if readable_assistant_markdown(answer).startswith("## Validation pending\n") or any(
+            tool.validation_pending for tool in self._tools.values()
+        ):
+            return
+        if isinstance(self.parent, Transcript) and not self.parent.auto_follow:
+            return
+        self._activity_folded = True
+        self._activity_expanded = False
+        for block in blocks:
+            self._pinned_activity.discard(block)
+            block.display = False
+        self._activity_start = len(blocks)
+        self._refresh_history_controls()
 
     @on(Button.Pressed, ".assistant-history")
     async def _show_earlier_activity(self, event: Button.Pressed) -> None:
@@ -3080,7 +3291,8 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
     def _show_recent_activity(self, event: Button.Pressed) -> None:
         event.stop()
         self._activity_expanded = False
-        start = self._recent_activity_start()
+        # A folded turn folds back entirely, not to its last page.
+        start = len(self._activity_blocks) if self._activity_folded else self._recent_activity_start()
         for older in self._activity_blocks[:start]:
             if self._activity_running(older):
                 self._pinned_activity.add(older)
@@ -3560,6 +3772,12 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             self.toggle_body()
             event.stop()
 
+    @on(Button.Pressed, ".assistant-validation-details")
+    async def _toggle_validation_details(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._validation_expanded = not self._validation_expanded
+        await self._paint_body(force=True)
+
     async def _paint_body(self, *, force: bool = False) -> None:
         """Append only the changed markdown; serialize final and scheduled paints."""
         async with self._paint_lock:
@@ -3570,7 +3788,13 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             if body is None:
                 return
             text = readable_assistant_markdown(self.text) if force else self.text
-            self.set_class(text.startswith("## Validation pending\n"), "-validation-pending")
+            pending = text.startswith("## Validation pending\n")
+            self.set_class(pending, "-validation-pending")
+            details = self.query_one(".assistant-validation-details", Button)
+            details.display = pending
+            details.label = "Hide validation details" if self._validation_expanded else "Validation details"
+            if pending and not self._validation_expanded:
+                text = compact_validation_report(text)
             if text == self._painted_markdown:
                 return
             if text.startswith(self._painted_markdown):
@@ -3638,12 +3862,16 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             self._paint_timer.stop()
             self._paint_timer = None
         if discarded:
-            # A mid-stream retry streams the whole answer again: drop the
-            # partial text outright, it must not linger as narration above it.
+            # A retry or validation rejection invalidates this candidate:
+            # drop it outright, never preserve it as narration or copyable text.
             body = await self._ready_body()
             async with self._paint_lock:
                 self._buffer.clear()
                 self._painted_markdown = ""
+                self._validation_expanded = False
+                self.remove_class("-validation-pending")
+                self.query_one(".assistant-validation-details", Button).display = False
+                self._set_child_state(False, "-copyable", "assistant-copy")
                 self._open = False
                 self._set_open_class(False)
                 self._sync_layers()
@@ -3758,6 +3986,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
                 continue
             tool.collapse()
         self._release_finished_activity()
+        self._fold_finished_activity()
         foot = self._query_static(".assistant-foot")
         if foot is None:
             return

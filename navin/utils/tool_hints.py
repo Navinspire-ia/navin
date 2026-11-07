@@ -509,7 +509,12 @@ def short_run_target(command: str, *, limit: int = TOOL_LINE_LIMIT) -> str:
     if name in {"pytest", "python", "python3"}:
         if body or _HEREDOC_OPEN_RE.search((command or "").split("\n", 1)[0]):
             return "python" if name.startswith("python") else name
-        files = [tok for tok in tokens[1:] if not tok.startswith("-") and tok != "--"]
+        rest = tokens[1:]
+        if name.startswith("python") and len(rest) >= 2 and rest[0] == "-m":
+            # "python -m pytest tests/a.py" runs pytest on one file: name the
+            # program it runs, not the interpreter plus its module as a file.
+            name, rest = rest[1], rest[2:]
+        files = [tok for tok in rest if not tok.startswith("-") and tok != "--"]
         if len(files) == 1:
             return f"{name} {_path_name(files[0])}"
         if len(files) > 1:
@@ -638,7 +643,7 @@ def is_validation_pending(name: str, error: str | None) -> bool:
 def activity_label(
     name: str, arguments: dict | None, *, phase: str = "end",
     added: int = 0, removed: int = 0, operation: str = "", path: str = "",
-    counts_known: bool = True, error: str | None = None,
+    counts_known: bool = True, error: str | None = None, result: Any = None,
 ) -> str:
     """Describe actual activity without treating printed output as added code."""
     if phase == "error" and is_validation_pending(name, error):
@@ -704,7 +709,9 @@ def activity_label(
         text = _spawn_label(args)
     elif name == "board":
         # A failed or cancelled board call changed nothing: say what was asked.
-        text = _board_label(args, pending=pending or phase in {"error", "cancelled", "interrupted"})
+        text = _board_label(
+            args, pending=pending or phase in {"error", "cancelled", "interrupted"}, result=result,
+        )
     else:
         label = "Checking" if pending and verb == "check" else "Checked" if verb == "check" else verb.title()
         text = f"{label} {tool_target(args)}".rstrip()
@@ -736,18 +743,76 @@ def _spawn_label(args: dict[str, Any]) -> str:
 _BOARD_DONE = {"done", "completed", "complete", "closed"}
 
 
-def _board_label(args: dict[str, Any], *, pending: bool = False) -> str:
-    """Say what changed on the board: ``Completed task T3``, ``Updated plan``.
+# One task in a board tool result: "t-1a2b [done] (high) Title @agent(agent)".
+_BOARD_TASK_RE = re.compile(
+    r"\b(?P<id>t-[0-9A-Za-z]+)\s+\[(?P<status>[a-z_]+)\]\s+"
+    r"(?:\((?:low|medium|high|critical)\)\s+)?(?P<title>.+?)"
+    r"(?=\s+@\S|\s+Ledger progress|\s+Verified before|\s*$)"
+)
+
+
+def board_result_tasks(result: Any) -> list[dict[str, str]]:
+    """The tasks a board tool result names, in order: id, status and title."""
+    text = result if isinstance(result, str) else _human_result(result) if result is not None else ""
+    tasks = []
+    for line in text.splitlines():
+        match = _BOARD_TASK_RE.search(line)
+        if match and match["title"].strip():
+            tasks.append({"id": match["id"], "status": match["status"], "title": match["title"].strip()})
+    return tasks
+
+
+def _board_result_summary(text: str) -> str | None:
+    """The steps a board call planned, or the next step it claimed.
+
+    None when the result is not about tasks, so the generic outcome applies.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    if re.match(r"\d+ tasks? created", lines[0]):
+        titles = [task["title"] for task in board_result_tasks(text)]
+        if not titles:
+            return None
+        shown = [f"{index}. {_first_line(title, 64)}" for index, title in enumerate(titles[:6], 1)]
+        if len(titles) > 6:
+            shown.append(f"+{len(titles) - 6} more")
+        return "\n".join(shown)
+    for line in lines:
+        if line.startswith("Next task claimed:"):
+            claimed = board_result_tasks(line)
+            if claimed:
+                return f"Next: {_first_line(claimed[0]['title'], 64)}"
+    # "Task moved: t-1 [done] (high) Title": the row heading already names it.
+    return "" if board_result_tasks(lines[0]) else None
+
+
+def _board_label(args: dict[str, Any], *, pending: bool = False, result: Any = None) -> str:
+    """Say what changed on the board: ``Completed: Fix rounding``, ``Planned 3 steps``.
 
     While the call runs (or when it did not go through) the label says what
-    is asked, not what happened: ``Complete task T3``.
+    is asked, not what happened: ``Complete task T3``. Once it went through,
+    the task title from its result replaces the bare task id.
     """
     action = str(args.get("action") or "").strip().lower()
     task = _first_line(args.get("title"), 60) or str(args.get("task_id") or "").strip()
     status = str(args.get("status") or "").strip().lower()
     subject = f" {task}" if task else ""
+    named = ""
+    if not pending and result is not None:
+        tasks = board_result_tasks(result)
+        wanted = str(args.get("task_id") or "").strip()
+        found = next((item for item in tasks if item["id"] == wanted), tasks[0] if tasks else None)
+        named = _first_line(found["title"], 60) if found else ""
+    planned = args.get("tasks")
+    if action == "create" and isinstance(planned, list) and planned:
+        return f"{'Plan' if pending else 'Planned'} {_plural(len(planned), 'step')}"
     if action in {"update", "move"} and status in _BOARD_DONE:
+        if named:
+            return f"Completed: {named}"
         return f"{'Complete' if pending else 'Completed'} task{subject}"
+    if named and (action == "claim" or (action in {"update", "move"} and status == "in_progress")):
+        return f"Started: {named}"
     if action == "move" and status:
         return f"{'Move' if pending else 'Moved'} task{subject} to {status.replace('_', ' ')}"
     labels = {
@@ -958,6 +1023,10 @@ def result_summary(
         notice = index_notice_text(name, result, output_lines)
         if notice:
             return notice
+    if name == "board":
+        board = _board_result_summary(text)
+        if board is not None:
+            return board
     first = _first_line(text, 80)
     return first if len(text.splitlines()) == 1 else ""
 

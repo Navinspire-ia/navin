@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "Väntar på validering",
+    "summary": "Ändringarna är sparade. Uppgiften är ännu inte validerad.",
+    "details": "Detaljer, loggar och nästa steg"
+  },
   "actions": {
     "cancel": "Cancel"
   },

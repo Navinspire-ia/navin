@@ -66,7 +66,7 @@ from navin.agent.turn_timing import (
 from navin.config.schema import ToolResultClearing
 from navin.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from navin.providers.session_affinity import session_affinity
-from navin.session.history_visibility import is_hidden_history_message
+from navin.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
 from navin.utils.helpers import (
     IncrementalThinkExtractor,
     build_assistant_message,
@@ -408,7 +408,12 @@ def _is_test_command(command: str) -> bool:
         while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
             tokens.pop(0)  # FOO=bar prefixes
         while tokens and os.path.basename(tokens[0]) in _RUN_WRAPPERS:
-            tokens.pop(0)
+            wrapper = os.path.basename(tokens.pop(0))
+            # env accepts assignments after the executable; they are not the
+            # command being tested (env KUBECONFIG=x python -m pytest).
+            if wrapper == "env":
+                while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+                    tokens.pop(0)
             # ``timeout -k 5 600 pytest``, ``nice -n 10 pytest``: flags and
             # bare durations belong to the wrapper, not to the program.
             while tokens and (tokens[0].startswith("-") or re.fullmatch(r"\d+[smhd]?", tokens[0])):
@@ -933,6 +938,9 @@ class AgentRunSpec:
     provider_retry_mode: str = "standard"
     progress_callback: Any | None = None
     stream_progress_deltas: bool = True
+    # The entry point may have more work (board settlement, history save) after
+    # this runner. It then publishes the accepted answer at its delivery boundary.
+    defer_final_stream: bool = False
     retry_wait_callback: Any | None = None
     checkpoint_callback: Any | None = None
     injection_callback: Any | None = None
@@ -1178,20 +1186,21 @@ class AgentRunner:
         if real_injection:
             injection_cycles += 1
         if assistant_message is not None:
+            assistant_message[HIDDEN_HISTORY_META] = {"kind": "superseded_answer"}
             messages.append(assistant_message)
-            if iteration is not None:
-                await self._emit_checkpoint(
-                    spec,
-                    {
-                        "phase": "final_response",
-                        "iteration": iteration,
-                        "model": spec.runtime.model,
-                        "assistant_message": assistant_message,
-                        "completed_tool_results": [],
-                        "pending_tool_calls": [],
-                    },
-                )
         self._append_injected_messages(messages, injections)
+        if assistant_message is not None and iteration is not None:
+            await self._emit_checkpoint(
+                spec,
+                {
+                    "phase": "continuing",
+                    "iteration": iteration,
+                    "model": spec.runtime.model,
+                    "assistant_message": assistant_message,
+                    "completed_tool_results": [],
+                    "pending_tool_calls": [],
+                },
+            )
         if real_injection:
             logger.info(
                 "Injected {} follow-up message(s) {} ({}/{})",
@@ -1200,6 +1209,21 @@ class AgentRunner:
         else:
             logger.info("Injected sustained-goal continuation {}", phase)
         return True, injection_cycles
+
+    @staticmethod
+    async def _discard_candidate(
+        hook: AgentHook, context: AgentHookContext, message: dict[str, Any] | None,
+    ) -> None:
+        """Keep rejected text for reasoning, never as a public conclusion."""
+        if message is not None:
+            message[HIDDEN_HISTORY_META] = {"kind": "superseded_answer"}
+        if hook.wants_streaming():
+            context.stream_discarded = context.streamed_content
+            try:
+                await hook.on_stream_end(context, resuming=True)
+            finally:
+                context.stream_discarded = False
+                context.streamed_content = False
 
     @staticmethod
     def _watched_iterations(
@@ -1535,7 +1559,6 @@ class AgentRunner:
         # "X is still running" once nothing runs any more: corrected once, and
         # the false answer is withdrawn from the screen.
         background_claim_nudged = False
-        withdraw_answer = False
         # A screen written but imported by nothing passes every test and build,
         # so it is checked once at the final answer (git dates are wall clock).
         integration_nudged = False
@@ -2036,13 +2059,13 @@ class AgentRunner:
                         length_recovery_count,
                         spec.max_length_recoveries,
                     )
-                    if hook.wants_streaming():
-                        await hook.on_stream_end(context, resuming=True)
-                    messages.append(build_assistant_message(
+                    fragment = build_assistant_message(
                         clean,
                         reasoning_content=response.reasoning_content,
                         thinking_blocks=response.thinking_blocks,
-                    ))
+                    )
+                    await self._discard_candidate(hook, context, fragment)
+                    messages.append(fragment)
                     messages.append(build_length_recovery_message())
                     # The cut often falls on a space that cleaning strips
                     # from the seam: keep it so the joined text reads right.
@@ -2079,8 +2102,7 @@ class AgentRunner:
                     iteration,
                     spec.session_key or "default",
                 )
-                if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=True)
+                await self._discard_candidate(hook, context, assistant_message)
                 messages.append(assistant_message)
                 messages.append(build_delivery_continue_message())
                 delivery_nudged_text = clean
@@ -2108,8 +2130,7 @@ class AgentRunner:
                 and announces_work(clean)
             ):
                 soft_nudges += 1
-                if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=True)
+                await self._discard_candidate(hook, context, assistant_message)
                 messages.append(assistant_message)
                 messages.append(build_remaining_work_continue_message())
                 await hook.after_iteration(context)
@@ -2134,10 +2155,12 @@ class AgentRunner:
                 if stop_reason_text:
                     stop_hook_rounds += 1
                     logger.info("Stop hook asked to continue for {}", spec.session_key or "default")
-                    if hook.wants_streaming():
-                        await hook.on_stream_end(context, resuming=True)
+                    await self._discard_candidate(hook, context, assistant_message)
                     messages.append(assistant_message)
-                    messages.append({"role": "user", "content": f"[Stop hook] {stop_reason_text}"})
+                    messages.append({
+                        "role": "user", "content": f"[Stop hook] {stop_reason_text}",
+                        HIDDEN_HISTORY_META: {"kind": "stop_hook"},
+                    })
                     await hook.after_iteration(context)
                     continue
 
@@ -2169,6 +2192,7 @@ class AgentRunner:
                 # also stops a loop whose state keeps moving without progress
                 # (a test rewriting a tracked file made one run 496 turns).
                 if attempts > limit or validation.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES:
+                    await self._discard_candidate(hook, context, assistant_message)
                     final_content = validation.completion_message(
                         reason="repeated" if attempts > limit else "no_progress",
                     )
@@ -2186,8 +2210,7 @@ class AgentRunner:
                     "Validation pending after edits on turn {}; continuing for {}",
                     iteration, spec.session_key or "default",
                 )
-                if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=True)
+                await self._discard_candidate(hook, context, assistant_message)
                 messages.append(assistant_message)
                 if validation.failed:
                     spec.effort_escalations += 1
@@ -2403,7 +2426,6 @@ class AgentRunner:
                 # live, yet the answer says the work is still going: it was
                 # written from a picture that is out of date.
                 background_claim_nudged = True
-                withdraw_answer = True
                 logger.info(
                     "Final answer says background work is still running, but none is, on turn {};"
                     " correcting once for {}",
@@ -2416,15 +2438,7 @@ class AgentRunner:
                     "before any edit" if not acted else "with work left",
                     iteration, spec.session_key or "default",
                 )
-                if hook.wants_streaming():
-                    # A false "still running" is not left on screen above the
-                    # corrected answer (same withdrawal as a mid-stream retry).
-                    context.stream_discarded = withdraw_answer and context.streamed_content
-                    try:
-                        await hook.on_stream_end(context, resuming=True)
-                    finally:
-                        context.stream_discarded = False
-                withdraw_answer = False
+                await self._discard_candidate(hook, context, assistant_message)
                 messages.append(assistant_message)
                 messages.append(continue_prompt)
                 await hook.after_iteration(context)
@@ -2441,13 +2455,12 @@ class AgentRunner:
             )
             if should_continue:
                 had_injections = True
-
-            if hook.wants_streaming():
-                await hook.on_stream_end(context, resuming=should_continue)
-
-            if should_continue:
+                await self._discard_candidate(hook, context, assistant_message)
                 await hook.after_iteration(context)
                 continue
+
+            if hook.wants_streaming() and context.streamed_content:
+                await hook.on_stream_end(context, resuming=False)
 
             if response.finish_reason == "error":
                 from navin.providers.fallback_policy import is_exhausted_account
@@ -2507,6 +2520,7 @@ class AgentRunner:
                     spec.session_key or "default",
                 )
                 messages.pop()
+                messages[-1].pop(HIDDEN_HISTORY_META, None)
                 await self._emit_checkpoint(
                     spec,
                     {
@@ -2545,11 +2559,18 @@ class AgentRunner:
                     continue
                 break
 
-            messages.append(assistant_message or build_assistant_message(
-                clean,
-                reasoning_content=response.reasoning_content,
-                thinking_blocks=response.thinking_blocks,
-            ))
+            # Joined output-limit fragments are one accepted answer in history
+            # as well as on the wire, not several apparent conclusions.
+            if length_parts:
+                seam = " " if raw_content[:1].isspace() and not length_parts[-1].endswith(" ") else ""
+                final_content = "".join(length_parts) + seam + clean
+                assistant_message = build_assistant_message(
+                    final_content, reasoning_content=response.reasoning_content,
+                    thinking_blocks=response.thinking_blocks,
+                )
+            else:
+                final_content = clean
+            messages.append(assistant_message or build_assistant_message(final_content))
             await self._emit_checkpoint(
                 spec,
                 {
@@ -2561,14 +2582,7 @@ class AgentRunner:
                     "pending_tool_calls": [],
                 },
             )
-            # A reply continued after an output-limit cut is delivered whole:
-            # non-streaming channels only receive final_content.
-            if length_parts:
-                seam = " " if raw_content[:1].isspace() and not length_parts[-1].endswith(" ") else ""
-                final_content = "".join(length_parts) + seam + clean
-            else:
-                final_content = clean
-            final_streamed = context.streamed_content and not finalized
+            final_streamed = context.streamed_content and not finalized and not length_parts
             context.final_content = final_content
             context.stop_reason = stop_reason
             await hook.after_iteration(context)
@@ -2607,6 +2621,7 @@ class AgentRunner:
         if (
             final_content
             and not final_streamed
+            and not spec.defer_final_stream
             and stop_reason in ("completed", "no_progress")
             and hook.wants_streaming()
         ):
@@ -2752,12 +2767,16 @@ class AgentRunner:
         )
 
         progress_state: dict[str, bool] | None = None
-        # A premature "done" must not reach CLI/desktop as a visible final
-        # while the completion gate is still waiting for tests. Tool-bound
-        # commentary is released as soon as the response contains real calls.
+        # Every task answer is a candidate until ALL completion gates pass,
+        # including plan/hooks/injections after green tests. Keep live thinking,
+        # tool drafts and genuine tool-bound commentary; do not paint a rejected
+        # conclusion and then turn it into permanent narration.
         defer_unverified_text = bool(
-            spec.loop_guard and spec.loop_guard.validation.pending
-            and not spec.read_only_tools and not spec.plan_read_only
+            spec.defer_final_stream
+            or not spec.conversational_turn
+            or (spec.loop_guard and spec.loop_guard.validation.pending)
+            or spec.requires_verify_before_done
+            or spec.requires_tool_delivery
         )
         deferred_text: list[str] = []
 
@@ -4083,6 +4102,7 @@ class AgentRunner:
             and not messages[-1].get("tool_calls")
         ):
             if messages[-1].get("content") == content:
+                messages[-1].pop(HIDDEN_HISTORY_META, None)
                 return
             messages[-1] = build_assistant_message(content)
             return

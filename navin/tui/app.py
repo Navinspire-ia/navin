@@ -78,6 +78,7 @@ from navin.tui.hubs import (
 from navin.tui.live_share_line import LiveShareLine
 from navin.tui.models import ModelPickerScreen, model_pick_items
 from navin.tui.modes import MODES, ROUTING_COMMANDS, display_user_text, get_mode, inbound_for_submit
+from navin.tui.plan_panel import PlanPanel, load_cli_plan
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
     TuiRuntime,
@@ -88,6 +89,7 @@ from navin.tui.runtime import (
     UiCheckpointSaved,
     UiChoiceClosed,
     UiChoiceRequested,
+    UiCompactionProgress,
     UiContextCompacted,
     UiDisplayError,
     UiEngineError,
@@ -135,6 +137,7 @@ from navin.tui.widgets import (
     AssistantMessage,
     ChatColumn,
     ChoiceCard,
+    CompactionLine,
     Composer,
     ComposerMeta,
     ComposerShell,
@@ -156,6 +159,7 @@ from navin.tui.widgets import (
     UserMessage,
     WorkingLine,
     account_side_text,
+    content_width,
     format_elapsed,
     format_working_line,
     running_exec_count,
@@ -1010,6 +1014,9 @@ class NavinApp(App[None]):
         # running tool rows by call id (newest last) and live thinking.
         self._running_steps: dict[str, str] = {}
         self._thinking = False
+        # Compaction stays outside chat bubbles so model waits do not look
+        # like a frozen tool result. Only the currently visible turn owns it.
+        self._compaction_session: tuple[str, str] | None = None
         # Live voice call (see navin/tui/live_voice.py); None when hung up.
         self._live: Any = None
         self._live_frame = 0
@@ -1077,7 +1084,9 @@ class NavinApp(App[None]):
             with ChatColumn(id="column"):
                 yield Transcript(id="transcript")
                 yield JumpToBottom(id="jump-bottom")
+                yield PlanPanel(id="plan")
                 yield AgentsPanel(id="agents")
+                yield CompactionLine(id="compaction")
                 yield WorkingLine(id="working")
                 yield LivePresenceLine(id="live-presence")
                 yield LiveShareLine(id="live-share")
@@ -1198,6 +1207,9 @@ class NavinApp(App[None]):
                 self._place_composer()
                 tick_running_rows(self)
                 self._refresh_working_line()
+            compaction = self.query("#compaction")
+            if compaction and isinstance(compaction.first(), CompactionLine) and compaction.first().active:
+                compaction.first().tick(frame=self._spin)
             # The prompt's stars are always on screen: they keep drifting
             # (one small widget) while the layout checks wait.
             self._drift_stars()
@@ -1595,6 +1607,23 @@ class NavinApp(App[None]):
                 )
         self._maybe_kick_queue()
 
+    def _clear_compaction(self) -> None:
+        self._compaction_session = None
+        try:
+            self.query_one("#compaction", CompactionLine).reset()
+        except NoMatches:
+            return
+
+    def _clear_compaction_if(
+        self, owner: tuple[str, str], line: CompactionLine, state: str,
+    ) -> None:
+        if (
+            self._compaction_session == owner
+            and line.is_attached
+            and line._state == state
+        ):
+            self._clear_compaction()
+
     def _refresh_working_line(self) -> None:
         try:
             line = self.query_one("#working", WorkingLine)
@@ -1603,6 +1632,8 @@ class NavinApp(App[None]):
         if not self.runtime.status.turn_active:
             self._running_steps.clear()
             self._thinking = False
+            if self._compaction_session is not None:
+                self._clear_compaction()
             line.set_line("")
             return
         line.set_line(
@@ -1611,6 +1642,8 @@ class NavinApp(App[None]):
                 background=running_exec_count(),
                 activity=self._current_step(),
                 relay=self.runtime.status.relay_model,
+                step=self._plan_step(),
+                width=content_width(line),
             ),
             frame=self._spin,
         )
@@ -1620,6 +1653,47 @@ class NavinApp(App[None]):
         if self._running_steps:
             return next(reversed(self._running_steps.values()))
         return "Working…" if self._thinking else ""
+
+    def _plan_panel(self) -> PlanPanel | None:
+        cached = getattr(self, "_plan_panel_cache", None)
+        if cached is not None and cached.is_attached:
+            return cached
+        try:
+            self._plan_panel_cache = self.query_one("#plan", PlanPanel)
+        except NoMatches:
+            return None
+        return self._plan_panel_cache
+
+    def _plan_step(self) -> str:
+        """``Step 2/3: Add the tests`` while this chat has a plan in progress."""
+        panel = self._plan_panel()
+        return panel.step_label() if panel is not None else ""
+
+    def _refresh_plan(self) -> None:
+        """Read this chat's plan off the UI loop: a board file can be large."""
+        if self._plan_panel() is not None:
+            # The method, not a coroutine: a refresh superseded before it ran
+            # (exclusive group) leaves no never-awaited coroutine behind.
+            self.run_worker(self._load_plan, group="plan-panel", exclusive=True)
+
+    async def _load_plan(self) -> None:
+        from navin.board.store import BoardError
+
+        key = self.runtime.session_key
+        error = ""
+        try:
+            plan = await asyncio.to_thread(load_cli_plan, self.runtime.workspace, key)
+        except (BoardError, OSError, ValueError) as exc:
+            from loguru import logger
+
+            # Shown in the panel as well: the plan is unknown, not empty.
+            logger.warning("CLI plan panel could not read the board: {}", exc)
+            plan, error = None, str(exc)
+        panel = self._plan_panel()
+        if panel is None or key != self.runtime.session_key:
+            return
+        panel.apply(plan, turn_active=self.runtime.status.turn_active, error=error)
+        self._refresh_working_line()
 
     def _track_step(self, event: Any) -> None:
         if event.call_id:
@@ -1652,6 +1726,7 @@ class NavinApp(App[None]):
         self._engine_ready = True
         await self._refresh_queue()
         await self._render_history()
+        self._refresh_plan()
         self._refresh_side()
         self._set_status()
         if live_modules_available():
@@ -2800,12 +2875,14 @@ class NavinApp(App[None]):
                 self._display_error_timer = self.set_timer(5, self._expire_display_error_note)
             return
         if isinstance(event, UiTurnStarted):
+            self._clear_compaction()
             self._stop_pending = False
             self._awaiting_reply = True
             self._stop_awaiting_grace_timer()
             await self._retire_retry_wait_note()
             self._set_status()
             self._refresh_working_line()
+            self._refresh_plan()
             return
         if isinstance(event, UiStreamDelta):
             self._thinking = False
@@ -2843,6 +2920,8 @@ class NavinApp(App[None]):
                 output_mode=event.output_mode,
             )
             self._track_step(event)
+            if event.name == "board" and event.phase in {"end", "error"}:
+                self._refresh_plan()
             if event.phase == "start":
                 self._activity_push(f"⟳ {escape(event.name)}")
             elif event.phase in {"end", "error"}:
@@ -2874,6 +2953,28 @@ class NavinApp(App[None]):
                     ))
                 )
             self.transcript.follow()
+            return
+        if isinstance(event, UiCompactionProgress):
+            owner = (str(self.runtime.workspace), self.runtime.session_key)
+            if (
+                not self.runtime.turn_active
+                or (event.session_key is not None and event.session_key != owner[1])
+                or (event.workspace is not None and event.workspace != owner[0])
+            ):
+                return
+            if event.state in {"start", "measuring", "summarizing", "archived", "handoff"}:
+                self._compaction_session = owner
+            elif self._compaction_session != owner:
+                return
+            candidates = self.query("#compaction")
+            if not candidates or not isinstance(candidates.first(), CompactionLine):
+                return
+            line = candidates.first()
+            line.update_progress(event.state, event.step, event.percent, frame=self._spin)
+            if event.state in {"done", "partial", "failed", "cancelled"}:
+                # The saved completion is visible briefly, then disappears;
+                # Working stays intact for the actual next model request.
+                self.set_timer(2, lambda: self._clear_compaction_if(owner, line, event.state))
             return
         if isinstance(event, UiProgress):
             if self.prefs.show_tools:
@@ -2928,8 +3029,10 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiTurnEnd):
+            self._clear_compaction()
             self._stop_pending = False
             self._refresh_working_line()
+            self._refresh_plan()
             if self._awaiting_reply:
                 # The turn ended but no final assistant message arrived (stop,
                 # error path, empty answer). Give the answer a short grace
@@ -3229,6 +3332,10 @@ class NavinApp(App[None]):
         self._last_speaker = None
         self._activity.clear()
         self._refresh_side()
+        # A new chat has no plan yet: the previous chat's steps leave with it.
+        panel = self._plan_panel()
+        if panel is not None:
+            panel.apply(None, turn_active=False)
 
     async def action_clear_transcript(self) -> None:
         self._invalidate_history()
@@ -3540,6 +3647,8 @@ class NavinApp(App[None]):
                 title or "Session",
                 [
                     PickItem("open", "Open"),
+                    PickItem("history", "History", "prompts, dates and processing state"),
+                    PickItem("plans", "My plans", "project tasks and unfinished work"),
                     PickItem("fork", "Fork", "a copy of this chat to go on from here"),
                     PickItem("rename", "Rename"),
                     PickItem("pin", "Unpin" if pinned else "Pin"),
@@ -3560,6 +3669,10 @@ class NavinApp(App[None]):
             live = getattr(self.runtime.agent_loop, "sessions", None)
         if choice == "open":
             await self._open_project_session(path, key)
+        elif choice == "history":
+            await self._show_session_history(path, key, live)
+        elif choice == "plans":
+            await self._show_session_plans(path, key)
         elif choice == "fork":
             await self._fork_session(path, key, title, live)
         elif choice == "rename":
@@ -3610,6 +3723,56 @@ class NavinApp(App[None]):
                 await self._switch_session(projects.new_session_key())
             self._reload_projects(force=True)
             await self._flash("session deleted", "success")
+
+    async def _show_session_history(self, path: str, key: str, live: Any = None) -> None:
+        """Every prompt of a chat with its date and whether a reply was saved."""
+        from datetime import datetime
+
+        from navin.session.manager import SessionManager
+
+        def collect() -> list[dict[str, Any]]:
+            manager = live if live is not None else SessionManager(Path(path))
+            session = manager.peek(key)
+            return list(session.messages) if session else []
+
+        messages = await asyncio.to_thread(collect)
+        prompts: list[str] = []
+        for index, message in enumerate(messages):
+            if message.get("role") != "user" or message.get("injected_event") or message.get("_channel_delivery"):
+                continue
+            content = message.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            stamp = str(message.get("timestamp") or "")
+            try:
+                date = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+            except ValueError:
+                date = "Date unavailable"
+            following = messages[index + 1:]
+            turn = following[:next((n for n, row in enumerate(following) if row.get("role") == "user"), len(following))]
+            completed = any(row.get("role") == "assistant" and row.get("content") and not row.get("tool_calls") for row in turn)
+            state = "🟢 Response recorded (task completion not verified)" if completed else "🟠 No completed response recorded"
+            prompts.append(f"### {date} - {state}\n\n{content.strip()}\n")
+        await self.push_screen(MarkdownScreen("# Session history\n\n" + ("\n---\n\n".join(prompts) if prompts else "No prompts saved in this session.")))
+
+    async def _show_session_plans(self, path: str, key: str) -> None:
+        """The project's plan: finished tasks, what is left, and how to resume it."""
+        from navin.board.store import ProjectBoardStore
+
+        tasks = await asyncio.to_thread(ProjectBoardStore(Path(path)).read_tasks)
+        done = sum(task.get("status") == "done" for task in tasks)
+        lines = [f"# My plans - {done}/{len(tasks)} tasks complete", ""]
+        for task in tasks:
+            state = str(task.get("status") or "planned")
+            icon = "🟢" if state == "done" else "⚪" if state == "cancelled" else "🟠"
+            lines.append(f"## {icon} {task.get('title') or 'Untitled'} - {state}")
+            if task.get("description"):
+                lines.append(str(task["description"]))
+            if state not in {"done", "cancelled"}:
+                lines.append(f"\nTo resume: open this session and ask to continue task `{task.get('id')}`. Dependencies: {', '.join(task.get('depends_on') or []) or 'none'}.\n")
+        if not tasks:
+            lines.append("No project tasks saved yet.")
+        await self.push_screen(MarkdownScreen("\n\n".join(lines)))
 
     async def _fork_session(self, path: str, key: str, title: str, live: Any = None) -> None:
         """Copy a chat and open the copy, like Fork chat in the desktop."""
@@ -3897,31 +4060,45 @@ class NavinApp(App[None]):
         self.transcript.nudge(event.delta)
 
     def _open_file_preview(self, raw_path: str) -> None:
-        """Show a file the agent asked to preview (open_file_preview tool)."""
-        from pathlib import Path as _Path
+        """Show a file the agent asked to preview (open_file_preview tool).
 
-        path = _Path(raw_path)
+        HTML reports, PDFs and images open in the user's browser or viewer,
+        rendered, the way the desktop File Preview panel shows them: their
+        source in a terminal box was unreadable. Markdown and other text open
+        in the terminal viewer. Reading and opening run off the UI thread.
+        """
+        self.run_worker(self._show_file_preview(Path(raw_path)), group="file-preview")
+
+    async def _show_file_preview(self, path: Path) -> None:
+        from navin.tui import file_preview
+        from navin.utils.open_browser import file_unavailable_reason, open_local_file
+
+        if not await asyncio.to_thread(path.is_file):
+            self.notify(f"Cannot preview {path.name}: file not found: {path}", severity="error", timeout=5)
+            return
+        note = ""
+        if file_preview.opens_outside(path):
+            if await asyncio.to_thread(open_local_file, str(path)):
+                where = file_preview.outside_app_name(path)
+                self.notify(f"{path.name} opened in your {where}.", timeout=4)
+                return
+            note = await asyncio.to_thread(file_unavailable_reason)
+            if not file_preview.readable_in_terminal(path):
+                # A PDF or an image has no text to fall back on: the path is
+                # one paste away instead.
+                self.copy_to_clipboard(str(path), quiet=True)
+                self.notify(f"{note} Path copied: {path}", severity="warning", timeout=6)
+                return
         try:
-            data = path.read_bytes()
+            data = await asyncio.to_thread(path.read_bytes)
         except OSError as exc:
             self.notify(f"Cannot preview {path.name}: {exc}", severity="error", timeout=3)
             return
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            self.notify(
-                f"{path} is binary - open it with a desktop viewer.",
-                timeout=3,
-            )
+        markdown = await asyncio.to_thread(file_preview.terminal_markdown, path, data, note=note)
+        if markdown is None:
+            self.notify(f"{path} is binary - open it with a desktop viewer.", timeout=3)
             return
-        if len(text) > 60000:
-            text = text[:60000] + "\n\n... (truncated)"
-        suffix = path.suffix.lower()
-        if suffix in {".md", ".markdown"}:
-            body = text
-        else:
-            body = f"**{path}**\n\n```\n{text}\n```"
-        self.call_later(self._push_preview_screen, body)
+        self._push_preview_screen(markdown)
 
     def _push_preview_screen(self, markdown: str) -> None:
         self.run_worker(self._push_preview_wait(markdown), exclusive=True, group="picker")
@@ -4580,6 +4757,7 @@ class NavinApp(App[None]):
 
     async def _show_session(self, key: str) -> None:
         """Body of :meth:`_switch_session`, under the history lock."""
+        self._clear_compaction()
         await self.runtime.switch_session(key)
         # The cards on screen belong to the session left; the ones this
         # session still waits on are drawn again below.
@@ -4608,6 +4786,7 @@ class NavinApp(App[None]):
         if replay_requests is not None:
             await replay_requests()
         self._refresh_side()
+        self._refresh_plan()
         await self._flash(f"session → [b]{escape(key)}[/b]")
 
     async def _replay_off_screen(self, release: Any) -> bool:

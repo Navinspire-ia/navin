@@ -410,6 +410,32 @@ class HostOpenTest(unittest.TestCase):
         self.assertEqual(command[:3], ["/init", "/mnt/c/bin/powershell.exe", "powershell.exe"])
         self.assertEqual(command[-1], "Start-Process 'http://x/?a=1&b=2'")
 
+    def test_a_file_reaches_windows_by_its_windows_path(self) -> None:
+        with mock.patch.dict(wsl.os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
+            self.assertEqual(
+                wsl.wsl_path_to_windows("/home/me/docs/report.html"),
+                "\\\\wsl.localhost\\Ubuntu\\home\\me\\docs\\report.html",
+            )
+            self.assertEqual(wsl.wsl_path_to_windows("/mnt/c/Users/me/report.pdf"), "C:\\Users\\me\\report.pdf")
+            self.assertIsNone(wsl.wsl_path_to_windows("docs/report.html"))
+
+    def test_a_report_opens_with_its_windows_default_app(self) -> None:
+        """Without wslview, PowerShell gets the Windows path, its quote doubled."""
+        run = mock.Mock(return_value=mock.Mock(returncode=0))
+        with (
+            mock.patch.dict(wsl.os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}),
+            mock.patch.object(wsl.shutil, "which", side_effect=lambda n: None if n == "wslview" else f"/mnt/c/bin/{n}"),
+            mock.patch.object(wsl.subprocess, "run", run),
+        ):
+            self.assertTrue(wsl.open_path_on_host("/home/me/O'Brien/report.html"))
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], "/mnt/c/bin/powershell.exe")
+        self.assertEqual(
+            command[-1],
+            "Start-Process -FilePath '\\\\wsl.localhost\\Ubuntu\\home\\me\\O''Brien\\report.html'",
+        )
+
 
 class InteropRegistryTest(unittest.TestCase):
     def _registry(self, entries: dict[str, str]) -> str:

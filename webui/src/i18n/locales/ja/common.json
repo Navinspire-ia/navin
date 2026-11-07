@@ -1,4 +1,9 @@
 {
+  "validationPending": {
+    "title": "検証待ち",
+    "summary": "変更は保存されています。タスクはまだ検証されていません。",
+    "details": "詳細、ログ、次の手順"
+  },
   "actions": {
     "cancel": "Cancel"
   },
