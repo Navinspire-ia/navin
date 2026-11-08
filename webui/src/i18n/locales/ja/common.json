@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "チームモード",
+      "modeHint": "どのモードでもチームメンバーが参加します",
+      "openSettings": "チーム設定",
+      "noMembers": "メンバーがまだいません：設定 > チームで追加してください",
+      "roomLabel": "チームビュー",
+      "toggleFailed": "チームモードを切り替えられませんでした。接続を確認して再試行してください。"
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "コネクタ",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "プランを非表示",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} 完了",
+      "toValidate": "確認待ち {{count}} 件",
+      "blockedCount_one": "ブロック中 {{count}} 件",
+      "blockedCount_other": "ブロック中 {{count}} 件",
       "md": {
+        "review": "確認待ち",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

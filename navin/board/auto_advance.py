@@ -304,6 +304,30 @@ def owned_tasks(session_key: str | None) -> dict[str, dict[str, bool]]:
     return {tid: {"auto": o.auto, "worked": o.worked} for tid, o in _owned_for(key).items()}
 
 
+def adopt_tasks(session_key: str | None, task_ids: list[str]) -> None:
+    """Own the steps still to do of a plan the chat brings back.
+
+    Ownership follows the plan the chat shows: a plan set aside for a newer
+    request lost it, and once brought back its next step was then neither
+    claimed nor named when a step was closed.
+    """
+    key = (session_key or "").strip()
+    ids = [tid for tid in task_ids if isinstance(tid, str) and tid]
+    if not key or not ids:
+        return
+    with _auto_guard:
+        _ensure_loaded()
+        entries = _owned.pop(key, None) or {}
+        for tid in ids:
+            entries.setdefault(tid, _Owned())
+        while len(entries) > _MAX_TASKS_PER_SESSION:
+            entries.pop(next(iter(entries)))
+        _owned[key] = entries
+        while len(_owned) > _MAX_SESSIONS:
+            _owned.popitem(last=False)
+        _persist()
+
+
 # -- Per-turn log (memory only) ------------------------------------------------
 
 
@@ -331,16 +355,19 @@ def open_plan_steps(
     session_key: str | None,
     *,
     request_drives_plan: bool = False,
+    request_id: str | None = None,
 ) -> list[dict[str, str]]:
     """Steps of this conversation's plan still to do and workable right now.
 
     Only while the current request drives the plan (it called the board, in
     this turn or, with ``request_drives_plan``, in an earlier slice of the
     same request): a turn about something else must not be pushed back onto
-    an old plan. Counted: the session's steps in progress, and the planned or
-    backlog steps it owns whose dependencies are done. Blocked steps, steps
-    held by someone else and steps still waiting on a dependency are not the
-    agent's to finish now.
+    an old plan. With ``request_id``, a plan that belongs to another request
+    of the chat does not count either: a new request that only looked at the
+    board was sent back to finish the previous request's plan. Counted: the
+    session's steps in progress, and the planned or backlog steps it owns
+    whose dependencies are done. Blocked steps, steps held by someone else and
+    steps still waiting on a dependency are not the agent's to finish now.
     """
     key = (session_key or "").strip()
     if not key or workspace is None:
@@ -351,6 +378,10 @@ def open_plan_steps(
     if not drives_plan:
         return []
     try:
+        if request_id is not None:
+            owner = session_focus.plan_owner(key)
+            if owner is not None and owner != request_id:
+                return []
         store = ProjectBoardStore(Path(workspace).expanduser())
         focus, by_id, tasks = _focused(store, key)
     except Exception:
@@ -850,6 +881,12 @@ def _finish_turn(
     if not key or workspace is None or not working_mode(composer_mode):
         return None, False
     if unrelated_turn(metadata, sender_id, key):
+        return None, False
+    request = session_focus.plan_request(metadata)
+    owner = session_focus.plan_owner(key) if request else None
+    if owner is not None and owner != request:
+        # The chat's plan belongs to another request: this turn did not work
+        # on it, so its steps are neither closed nor parked here.
         return None, False
     root = Path(workspace).expanduser()
     if not (root / ".navin" / "board").is_dir():

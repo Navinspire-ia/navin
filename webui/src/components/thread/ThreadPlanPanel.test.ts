@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildHeldByPlanGaps, missionControlState, planItemTone, planQualityVerdict } from "./ThreadPlanPanel";
+import { buildHeldByPlanGaps, missionControlState, planCurrentStep, planItemTone, planQualityVerdict } from "./ThreadPlanPanel";
 import type { BoardTaskStatus, SessionPlanQuality } from "@/lib/api";
 
 const ready: SessionPlanQuality = { status: "ready", gaps: [] };
@@ -158,10 +158,33 @@ describe("planItemTone", () => {
     expect(planItemTone(planItem({ status: "review" }), false)).toBe("review");
     expect(planItemTone(planItem({ status: "fix" }), false)).toBe("fix");
     expect(planItemTone(planItem(), false)).toBe("pending");
+    // Someone is on it: in progress, even while a dependency is open.
+    expect(planItemTone(planItem({ status: "in_progress", blocked: true }), true)).toBe("active");
   });
 
   it("keeps cancelled above other statuses", () => {
     expect(planItemTone(planItem({ cancelled: true, done: true }), true)).toBe("cancelled");
+  });
+});
+
+describe("planCurrentStep", () => {
+  // Seen live: the first step handed over at dawn stayed "Now" all day.
+  const step = (id: string, overrides: Parameters<typeof planItem>[0] = {}) =>
+    ({ id, title: `Task ${id}`, priority: "medium", ...planItem(overrides) });
+  const plan = (current: Parameters<typeof planItem>[0], complete = false) =>
+    ({ current_id: "t-1", complete, items: [step("t-1", current), step("t-2")] });
+
+  it("names the step worked on or the next one that can start", () => {
+    expect(planCurrentStep(plan({ status: "in_progress", active: true }))?.id).toBe("t-1");
+    expect(planCurrentStep(plan({ status: "planned" }))?.id).toBe("t-1");
+  });
+
+  it("names no step handed over for review, blocked, finished or in a finished plan", () => {
+    expect(planCurrentStep(plan({ status: "review", active: true }))).toBeNull();
+    expect(planCurrentStep(plan({ status: "audit", active: true }))).toBeNull();
+    expect(planCurrentStep(plan({ status: "blocked", blocked: true }))).toBeNull();
+    expect(planCurrentStep(plan({ status: "done", done: true }))).toBeNull();
+    expect(planCurrentStep(plan({ status: "in_progress" }, true))).toBeNull();
   });
 });
 

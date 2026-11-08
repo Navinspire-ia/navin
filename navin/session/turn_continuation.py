@@ -744,8 +744,12 @@ def _board_continuation_available(
     from navin.board.auto_advance import open_plan_steps
 
     # The same steps the end-of-answer reminder names: in progress for this
-    # chat, or owned and ready. A board that cannot be read lists none.
-    return bool(open_plan_steps(project, session_key, request_drives_plan=True))
+    # chat, or owned and ready. A board that cannot be read lists none. A plan
+    # another request of the chat filed is not this run's to resume.
+    return bool(open_plan_steps(
+        project, session_key, request_drives_plan=True,
+        request_id=session_focus.plan_request(message_metadata),
+    ))
 
 
 def _increment_continuation_round(

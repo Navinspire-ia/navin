@@ -22,7 +22,7 @@ from filelock import Timeout
 from loguru import logger
 
 from navin.agent.tools.base import Tool, ToolResult
-from navin.agent.tools.context import current_request_session_key
+from navin.agent.tools.context import current_request_context, current_request_session_key
 from navin.board import session_focus
 from navin.board.autonomy import (
     should_auto_branch,
@@ -84,24 +84,95 @@ def _parallel_hint(ready: int) -> str:
         "only tasks that depend on each other sequential."
     )
 def _record_session_focus(
-    store: ProjectBoardStore, session_key: str | None, action: str, touched: list[str],
+    store: ProjectBoardStore,
+    session_key: str | None,
+    action: str,
+    touched: list[str],
+    *,
+    request: str | None = None,
+    subagent: bool = False,
+    new_plan: bool = False,
 ) -> None:
     """Add the tasks of this call to the chat's plan (run in a worker thread).
 
-    A new plan after a finished one replaces it, so the previous checklist
-    does not come back. Finished means: its tasks are found on this board and
-    all done. A session key can be shared by two projects (``cli:direct``):
-    ids of the other project's plan are not on this board, and "all done" over
-    nothing found used to wipe that project's plan, which was still active.
+    One plan per user request: the request that filed the current plan, and
+    its later slices, add to it. Another request that files work starts its
+    own plan, and the previous one is kept in the chat's earlier plans ("My
+    plans"); every new request used to pile its tasks onto the same plan. A
+    new request that works on a task of the current plan, or files a task that
+    depends on one, takes that plan over; one that works on a task of an
+    earlier plan brings that plan back. ``new_plan`` (create) files separate
+    work of the same request as a plan of its own.
+
+    An older request still at work once a newer one filed its plan (a late
+    slice, its subagent) adds to its own earlier plan: the chat keeps showing
+    the newest one. Subagents never start or swap a plan. A turn without a
+    request id (a background result, a turn from an older version) keeps the
+    former rule, where a new plan only replaces a finished one.
+
+    A session key can be shared by two projects (``cli:direct``): ids of the
+    other project's plan are not on this board. They stay where they are, and
+    "all done" over nothing found must not wipe that project's active plan.
     """
+    if not touched:
+        return
     previous = session_focus.touched(session_key)
-    if action == "create" and touched and previous:
-        wanted = set(previous)
-        found = [task for task in store.read_tasks() if task.get("id") in wanted]
-        if found and all(task.get("status") == "done" for task in found):
-            session_focus.replace(session_key, touched)
-            return
-    session_focus.remember(session_key, touched)
+    owner = session_focus.plan_owner(session_key) if request is not None else None
+    if request is not None and owner != request and session_focus.remember_earlier(
+        session_key, request, touched,
+    ):
+        return
+    if subagent:
+        current = set(previous)
+        earlier = session_focus.earlier_task_ids(session_key)
+        session_focus.remember(
+            session_key, [tid for tid in touched if tid in current or tid not in earlier],
+        )
+        return
+    if not previous:
+        # The first plan of the chat (remember keeps any earlier plans listed).
+        session_focus.remember(session_key, touched, owner=request)
+        return
+    if request is not None and owner == request and not new_plan:
+        session_focus.remember(session_key, touched)
+        return
+    if request is None and action != "create":
+        session_focus.remember(session_key, touched)
+        return
+    by_id = {task["id"]: task for task in store.read_tasks() if task.get("id")}
+    here = {tid for tid in previous if tid in by_id}
+    elsewhere = [tid for tid in previous if tid not in by_id]
+    if action == "create" and new_plan:
+        session_focus.start_plan(session_key, touched, owner=request, keep=elsewhere)
+        return
+    if request is None:
+        if here and all(by_id[tid].get("status") == "done" for tid in here):
+            session_focus.start_plan(session_key, touched, keep=elsewhere)
+        else:
+            session_focus.remember(session_key, touched)
+        return
+    extends = any(tid in here for tid in touched) or (
+        action == "create"
+        and any(
+            dep in here
+            for tid in touched
+            for dep in (by_id.get(tid) or {}).get("depends_on") or []
+        )
+    )
+    if extends:
+        session_focus.remember(session_key, touched, owner=request)
+        return
+    if action != "create" and session_focus.resume_earlier_plan(
+        session_key, touched, owner=request, keep=elsewhere,
+    ):
+        from navin.board.auto_advance import adopt_tasks
+
+        adopt_tasks(session_key, [
+            tid for tid in session_focus.touched(session_key)
+            if (by_id.get(tid) or {}).get("status") in ("backlog", "planned")
+        ])
+        return
+    session_focus.start_plan(session_key, touched, owner=request, keep=elsewhere)
 
 
 def _with_note(result: Any, note: str) -> Any:
@@ -232,7 +303,10 @@ class BoardTool(Tool):
             "(the chat plan panel advances on these; send them in the same reply "
             "as the step's real work, never alone), 'update'/'comment' to "
             "track, 'create' files new "
-            "work (depends_on/acceptance/validation). Marking done with "
+            "work (depends_on/acceptance/validation). Each user request has its "
+            "own chat plan: a create in a new request starts it, and a task "
+            "filed with depends_on on a step of the current plan extends that "
+            "plan instead. Marking done with "
             "validation=test|lint|verify requires evidence AND a real passing "
             "verify/test_run recorded in the last 30 minutes - run "
             "`verify action=check` right before the move; prose alone is "
@@ -393,6 +467,13 @@ class BoardTool(Tool):
                     "description": (
                         "move to done: also claim the best ready task and return it, "
                         "so closing one step and starting the next is one call"
+                    ),
+                },
+                "new_plan": {
+                    "type": "boolean",
+                    "description": (
+                        "create: file these tasks as a separate plan of this chat "
+                        "(unrelated work) instead of adding them to the current plan"
                     ),
                 },
                 "goal": {
@@ -682,8 +763,14 @@ class BoardTool(Tool):
             return ToolResult.error(f"Error: {e.message}")
         if action in _MUTATING_ACTIONS and getattr(result, "made_progress", None) is not False:
             session_key = current_request_session_key()
+            request_ctx = current_request_context()
             try:
-                await run_off_loop(_record_session_focus, store, session_key, action, touched)
+                await run_off_loop(
+                    _record_session_focus, store, session_key, action, touched,
+                    request=session_focus.plan_request(request_ctx.metadata if request_ctx else None),
+                    subagent=in_subagent,
+                    new_plan=bool(kwargs.get("new_plan")) and action == "create",
+                )
             except (OSError, Timeout) as exc:
                 # The board change above is saved; only this chat's plan view
                 # was not updated. Reported as a failed call, it made the

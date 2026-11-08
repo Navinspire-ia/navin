@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "Modalità team",
+      "modeHint": "I compagni di team lavorano in ogni modalità",
+      "openSettings": "Impostazioni del team",
+      "noMembers": "Nessun compagno di team: aggiungili in Impostazioni > Team",
+      "roomLabel": "Vista team",
+      "toggleFailed": "Impossibile cambiare la modalità team. Controlla la connessione e riprova."
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "Connettore",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "Nascondi il piano",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} completati",
+      "toValidate": "{{count}} da convalidare",
+      "blockedCount_one": "{{count}} bloccato",
+      "blockedCount_other": "{{count}} bloccati",
       "md": {
+        "review": "Da convalidare",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

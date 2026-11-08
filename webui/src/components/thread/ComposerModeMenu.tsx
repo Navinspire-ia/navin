@@ -11,12 +11,18 @@ import {
   MessageCircle,
   ScanSearch,
   SearchCode,
+  Settings2,
   ShieldCheck,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { commitOnPointerDown, commitOnSelect } from "@/components/thread/menuChoice";
+import {
+  commitOnPointerDown,
+  commitOnSelect,
+  commitOnSelectKeepOpen,
+} from "@/components/thread/menuChoice";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -286,6 +292,26 @@ const MODE_ITEMS: ModeMeta[] = [
 ];
 
 /**
+ * Team mode as the mode menu offers it. It is not one more turn mode:
+ * teammates join whichever mode is picked, so this is a switch under the
+ * modes plus a way to Settings > Team (shown before any team exists).
+ */
+export interface ComposerModeTeam {
+  /** Team mode on (Settings > Team, saved for every chat). */
+  enabled: boolean;
+  /** The last on/off could not be saved; the switch shows the saved value. */
+  failed?: boolean;
+  /** A team or a teammate exists; otherwise the menu says where to add them. */
+  ready?: boolean;
+  onToggle: (enabled: boolean) => void;
+  /** Open Settings > Team. */
+  onOpenSettings: () => void;
+  /** Open (or close) the Team view beside the chat, once teammates work here. */
+  onOpenView?: () => void;
+  viewOpen?: boolean;
+}
+
+/**
  * Compact mode switcher next to the composer (names only, Cursor-style).
  * Investigate modes tint the trigger and shell; Agent stays neutral.
  */
@@ -295,6 +321,7 @@ export function ComposerModeMenu({
   isHero,
   compact = false,
   modes,
+  team,
   onChange,
 }: {
   mode: ComposerTurnMode;
@@ -304,6 +331,8 @@ export function ComposerModeMenu({
   compact?: boolean;
   /** Only these modes are offered (a live-share guest has no Montage). */
   modes?: readonly ComposerTurnMode[];
+  /** Team mode switch under the modes (null: not offered here). */
+  team?: ComposerModeTeam | null;
   onChange: (mode: ComposerTurnMode) => void;
 }) {
   const { t } = useTranslation();
@@ -311,6 +340,7 @@ export function ComposerModeMenu({
   const ModeIcon = current.icon;
   const accent = current.accent;
   const modeLabel = t(current.labelKey, { defaultValue: current.labelDefault });
+  const teamLabel = t("thread.team.switch", { defaultValue: "Team mode" });
 
   return (
     <DropdownMenu modal={false}>
@@ -318,7 +348,7 @@ export function ComposerModeMenu({
         <Button
           type="button"
           variant="ghost"
-          title={modeLabel}
+          title={team?.enabled ? `${modeLabel} · ${teamLabel}` : modeLabel}
           aria-label={t("thread.composer.mode.aria", {
             defaultValue: "Turn mode",
           })}
@@ -343,6 +373,13 @@ export function ComposerModeMenu({
             aria-hidden
           />
           <span className="truncate">{modeLabel}</span>
+          {team?.enabled ? (
+            <Users
+              className="h-3 w-3 shrink-0 opacity-80"
+              aria-hidden
+              data-testid="composer-mode-team-on"
+            />
+          ) : null}
           <ChevronDown className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
@@ -352,6 +389,7 @@ export function ComposerModeMenu({
         className="min-w-[8.5rem] p-1"
       >
         <ComposerModeItems mode={mode} modes={modes} onChange={onChange} />
+        {team ? <ComposerModeTeamItems team={team} /> : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -398,6 +436,81 @@ function ComposerModeItems({
   );
 }
 
+/** Team mode under the modes: the switch, then Team view and Settings > Team. */
+function ComposerModeTeamItems({ team }: { team: ComposerModeTeam }) {
+  const { t } = useTranslation();
+  const toggle = () => team.onToggle(!team.enabled);
+  return (
+    <>
+      <DropdownMenuSeparator className="my-1" />
+      <p className="px-2 pb-0.5 pt-0.5 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/80">
+        {t("thread.team.modeHint", { defaultValue: "Teammates join every mode" })}
+      </p>
+      <DropdownMenuItem
+        // Commit on press and keep the menu open, like the model menu's switch:
+        // the user sees it move, and WebKit cannot land the click elsewhere.
+        onPointerDown={(event) => {
+          commitOnPointerDown(event, toggle);
+        }}
+        onSelect={(event) => {
+          commitOnSelectKeepOpen(event, toggle);
+        }}
+        className="flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 py-0 text-[13px]"
+        data-testid="composer-mode-team-toggle"
+      >
+        <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {t("thread.team.switch", { defaultValue: "Team mode" })}
+        </span>
+        <span
+          role="switch"
+          aria-checked={team.enabled}
+          className={cn(
+            "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+            team.enabled ? "bg-[#1d6af0]" : "bg-foreground/20",
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block h-3 w-3 rounded-full bg-white shadow transition-transform",
+              team.enabled ? "translate-x-3.5" : "translate-x-0.5",
+            )}
+          />
+        </span>
+      </DropdownMenuItem>
+      {team.failed ? (
+        <p
+          role="alert"
+          data-testid="composer-mode-team-failed"
+          className="px-2 pb-1 text-[11px] leading-4 text-destructive"
+        >
+          {t("thread.team.toggleFailed", {
+            defaultValue: "Team mode could not be switched. Check the connection and try again.",
+          })}
+        </p>
+      ) : null}
+      {team.enabled && team.onOpenView ? (
+        <ModeItem
+          icon={<Users className="h-3.5 w-3.5" />}
+          label={t("thread.team.roomLabel", { defaultValue: "Team view" })}
+          selected={Boolean(team.viewOpen)}
+          onSelect={team.onOpenView}
+        />
+      ) : null}
+      <ModeItem
+        icon={<Settings2 className="h-3.5 w-3.5" />}
+        label={t("thread.team.openSettings", { defaultValue: "Team settings" })}
+        hint={team.ready
+          ? undefined
+          : t("thread.team.noMembers", { defaultValue: "No teammate yet: add them in Settings > Team" })}
+        selected={false}
+        testId="composer-mode-team-settings"
+        onSelect={team.onOpenSettings}
+      />
+    </>
+  );
+}
+
 /**
  * The turn mode as a submenu row, for the narrow composer's More menu. The
  * shell keeps the mode's tint, so the choice stays visible once the menu
@@ -406,10 +519,13 @@ function ComposerModeItems({
 export function ComposerModeSubmenu({
   mode,
   disabled,
+  team,
   onChange,
 }: {
   mode: ComposerTurnMode;
   disabled?: boolean;
+  /** Team mode switch under the modes, as on the wide row. */
+  team?: ComposerModeTeam | null;
   onChange: (mode: ComposerTurnMode) => void;
 }) {
   const { t } = useTranslation();
@@ -438,6 +554,7 @@ export function ComposerModeSubmenu({
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="min-w-[8.5rem] p-1">
         <ComposerModeItems mode={mode} onChange={onChange} />
+        {team ? <ComposerModeTeamItems team={team} /> : null}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );
@@ -446,18 +563,25 @@ export function ComposerModeSubmenu({
 function ModeItem({
   icon,
   label,
+  hint,
   selected,
   accent,
+  testId,
   onSelect,
 }: {
   icon: React.ReactNode;
   label: string;
+  /** Second line under the label (Team settings before any teammate). */
+  hint?: string;
   selected: boolean;
   accent?: ComposerModeAccent | null;
+  testId?: string;
   onSelect: () => void;
 }) {
   return (
     <DropdownMenuItem
+      data-testid={testId}
+      title={hint}
       onPointerDown={(event) => {
         commitOnPointerDown(event, onSelect);
       }}
@@ -465,7 +589,8 @@ function ModeItem({
         commitOnSelect(onSelect);
       }}
       className={cn(
-        "flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 py-0 text-[13px]",
+        "flex cursor-pointer items-center gap-2 rounded-md px-2 text-[13px]",
+        hint ? "min-h-8 py-1" : "h-8 py-0",
         accent && `composer-mode-${accent}`,
         selected && accent && "bg-[hsl(var(--composer-mode-soft))]",
         selected && !accent && "bg-foreground/[0.06]",
@@ -487,6 +612,11 @@ function ModeItem({
         )}
       >
         {label}
+        {hint ? (
+          <span className="block max-w-[13rem] text-[11px] font-normal leading-4 text-muted-foreground">
+            {hint}
+          </span>
+        ) : null}
       </span>
       {selected ? (
         <Check

@@ -4,11 +4,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ChatHistoryDialog, ChatPlansDialog } from "./ChatSessionDialogs";
+import { ChatCurrentPlanDialog, ChatHistoryDialog, ChatPlansDialog } from "./ChatSessionDialogs";
 
-const mock = vi.hoisted(() => ({ prompts: vi.fn(), board: vi.fn() }));
-vi.mock("@/lib/api", () => ({ fetchWebuiPrompts: mock.prompts }));
+const mock = vi.hoisted(() => ({ prompts: vi.fn(), board: vi.fn(), update: vi.fn() }));
+vi.mock("@/lib/api", () => ({ fetchWebuiPrompts: mock.prompts, updateBoard: mock.update }));
 vi.mock("@/lib/board-fetch", () => ({ fetchBoardShared: mock.board }));
+// The plan document as plain text: the lazy Markdown renderer is not under test.
+vi.mock("@/components/MarkdownText", () => ({
+  MarkdownText: ({ children }: { children: string }) => children,
+  preloadMarkdownText: vi.fn(),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, values?: { done?: number; total?: number; title?: string; id?: string }) => {
   const labels: Record<string, string> = {
     "chat.history.title": "History", "chat.history.empty": "No prompts sent in this chat yet",
@@ -21,6 +26,9 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, valu
     "chat.plans.relaunchAll": "Relaunch all unfinished", "chat.plans.status.done": "Done",
     "chat.plans.status.active": "In progress", "chat.plans.status.blocked": "Blocked", "chat.plans.status.pending": "Planned",
     "chat.plans.status.cancelled": "Stopped",
+    "chat.plans.current": "Current plan", "chat.plans.earlier": "Earlier plans of this chat",
+    "chat.plans.hiddenBadge": "Hidden", "chat.plans.hide": "Hide from chat", "chat.plans.show": "Show in chat",
+    "chat.plans.actionFailed": "Could not update the plan. Please try again.",
   };
   if (key === "chat.plans.progress") return `${values?.done}/${values?.total} tasks complete`;
   if (key === "chat.history.copyAria") return `Copy prompt: ${values?.title}`;
@@ -125,5 +133,60 @@ describe("chat session dialogs", () => {
     history.unmount();
     render(<ChatPlansDialog {...props} onRelaunch={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Could not load the plan."));
+  });
+
+  it("lists the earlier plans apart and shows a hidden plan in the chat again", async () => {
+    const onRelaunch = vi.fn();
+    const current = { current_id: "t-new", hidden: true, items: [
+      { id: "t-new", title: "Fix the login", status: "in_progress", done: false, active: true, blocked: false },
+    ] };
+    const earlier = { current_id: "t-old", items: [
+      { id: "t-api", title: "Connect the API", status: "done", done: true, active: false, blocked: false },
+      { id: "t-old", title: "Document the API", status: "planned", done: false, active: false, blocked: false },
+    ] };
+    mock.board.mockResolvedValue({ session_plan: current, session_plans: [earlier] });
+    render(<ChatPlansDialog {...props} onRelaunch={onRelaunch} />);
+    expect(await screen.findByText("Current plan")).toBeTruthy();
+    expect(screen.getByText("Hidden")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Earlier plans of this chat" })).toBeTruthy();
+    // Each plan keeps its own progress: they are not merged into one list.
+    expect(screen.getAllByRole("progressbar").map((bar) => bar.getAttribute("aria-valuemax"))).toEqual(["1", "2"]);
+    expect(screen.getByText("1/2 tasks complete")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Relaunch Document the API (t-old)" }));
+    expect(onRelaunch).toHaveBeenCalledWith("Continue board task t-old: Document the API");
+
+    mock.update.mockRejectedValueOnce(Error("offline"));
+    fireEvent.click(screen.getByText("Show in chat"));
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not update the plan. Please try again.");
+    mock.update.mockResolvedValueOnce({ session_plan: { ...current, hidden: false }, session_plans: [earlier] });
+    fireEvent.click(screen.getByText("Show in chat"));
+    expect(await screen.findByText("Hide from chat")).toBeTruthy();
+    expect(mock.update).toHaveBeenLastCalledWith("tok", "websocket:sample", { action: "show_plan", plan_id: "t-new" });
+    expect(screen.queryByText("Hidden")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("opens the current plan with all its detail and hides it from the chat", async () => {
+    const current = { current_id: "t-new", goal: "Ship SSO", items: [
+      { id: "t-new", title: "Fix the login", status: "in_progress", done: false, active: true, blocked: false,
+        description: "Short", acceptance: "Login works with SSO", validation: "test" },
+    ] };
+    mock.board.mockResolvedValue({
+      session_plan: current,
+      tasks: [{ id: "t-new", title: "Fix the login", description: "Use the OIDC flow end to end" }],
+      mission: { goal: "Ship SSO", constraints: ["No force-push"] },
+    });
+    render(<ChatCurrentPlanDialog {...props} />);
+    const detail = await screen.findByTestId("chat-current-plan-detail");
+    for (const text of ["Ship SSO", "Fix the login", "Use the OIDC flow end to end", "Login works with SSO", "No force-push"]) {
+      expect(detail.textContent).toContain(text);
+    }
+    mock.update.mockResolvedValueOnce({ session_plan: { ...current, hidden: true } });
+    fireEvent.click(screen.getByText("Hide from chat"));
+    expect(await screen.findByText("Hidden")).toBeTruthy();
+    expect(mock.update).toHaveBeenCalledWith("tok", "websocket:sample", { action: "hide_plan", plan_id: "t-new" });
+    // Hidden from the chat, still read in full here.
+    expect(screen.getByTestId("chat-current-plan-detail").textContent).toContain("Use the OIDC flow end to end");
+    expect(screen.getByText("Show in chat")).toBeTruthy();
   });
 });

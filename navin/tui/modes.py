@@ -113,6 +113,57 @@ def inbound_for_submit(mode_id: str, text: str, *, turn_active: bool) -> tuple[s
     return routed, True
 
 
+# Team mode in the composer mode picker. It is not one more mode: teammates
+# join whatever mode is picked (Chat, Agent, Plan...), so these rows switch
+# Collaboration Mode on or off and open Settings > Team, through ``/team``.
+TEAM_PICK_PREFIX = "__team__:"
+TEAM_TOGGLE_ID = f"{TEAM_PICK_PREFIX}toggle"
+TEAM_SETTINGS_ID = f"{TEAM_PICK_PREFIX}settings"
+TEAM_PICK_GROUP = "Team mode · works with every mode"
+
+
+def team_pick_rows(state: dict | None) -> list[tuple[str, str, str, str]]:
+    """``(id, title, subtitle, badge)`` of the Team rows under the modes.
+
+    Shown even before a team or a teammate exists: the switch is saved
+    anyway, and the settings row says where to add them.
+    """
+    state = state or {}
+    on = bool(state.get("enabled"))
+    has_people = bool(state.get("teams") or state.get("members"))
+    team_name = str(state.get("team_name") or "")
+    if on:
+        where = f"this chat: {team_name}" if team_name else "this chat: no team"
+        toggle = (
+            TEAM_TOGGLE_ID,
+            "Team mode: on",
+            f"Teammates join every mode · {where} · Enter turns it off",
+            "/team off",
+        )
+    else:
+        toggle = (
+            TEAM_TOGGLE_ID,
+            "Team mode: off",
+            "Enter turns it on: teammates join every mode",
+            "/team on",
+        )
+    settings_hint = (
+        "Teammates, teams, rules and the manager"
+        if has_people
+        else "No teammate yet: add them in Settings > Team"
+    )
+    return [toggle, (TEAM_SETTINGS_ID, "Team settings", settings_hint, "/team settings")]
+
+
+def team_pick_argument(choice: str | None, state: dict | None) -> str | None:
+    """The ``/team`` argument a Team row of the mode picker stands for."""
+    if choice == TEAM_TOGGLE_ID:
+        return "off" if (state or {}).get("enabled") else "on"
+    if choice == TEAM_SETTINGS_ID:
+        return "settings"
+    return None
+
+
 def display_user_text(text: str) -> str:
     """Transcript text: drop a leading mode-routing slash, keep the prompt.
 

@@ -106,6 +106,7 @@ import {
   composerModeAccent,
   isSimpleStartNowPrompt,
   modeFromOutgoingContent,
+  type ComposerModeTeam,
   type ComposerTurnMode,
 } from "@/components/thread/ComposerModeMenu";
 import {
@@ -2476,6 +2477,17 @@ function ThreadComposerImpl({
     && teamMode.members.length > 0
     ? teamMode
     : null;
+  // Team mode in the mode menu: a switch beside the modes (it works with all of
+  // them) and the way to Settings > Team, shown before any team exists.
+  const modeMenuTeam = useMemo<ComposerModeTeam | null>(() => (teamMode ? {
+    enabled: teamMode.enabled,
+    failed: teamMode.toggleFailed,
+    ready: teamMode.teams.length > 0 || teamMode.members.length > 0,
+    onToggle: teamMode.onToggle,
+    onOpenSettings: () => openSettingsDialog("team"),
+    onOpenView: teamMode.teamId !== "off" && teamMode.members.length > 0 ? teamMode.onOpenTeam : undefined,
+    viewOpen: teamMode.teamOpen,
+  } : null), [teamMode]);
   const showVoiceButton = Boolean(onTranscribeAudio) && !liveVoiceActive;
   const liveVoiceLabel = liveVoiceActive
     ? t("thread.composer.liveVoice.toggleOff", { defaultValue: "End voice conversation" })
@@ -2895,6 +2907,7 @@ function ThreadComposerImpl({
                 disabled={disabled || isStreaming}
                 isHero={isHero}
                 compact={toolbarCompact}
+                team={modeMenuTeam}
                 onChange={setTurnMode}
               />
             )}
@@ -3110,6 +3123,7 @@ function ThreadComposerImpl({
                 disabled={disabled}
                 mode={turnMode}
                 modeDisabled={disabled || isStreaming}
+                modeTeam={modeMenuTeam}
                 onModeChange={setTurnMode}
                 attach={workspaceRowVisible ? null : {
                   label: t("thread.composer.attachImage"),

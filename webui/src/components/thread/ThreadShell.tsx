@@ -1200,7 +1200,8 @@ export function ThreadShell({
     );
     if (!hidden) return null;
     const pct = account?.usage?.used_percent;
-    return typeof pct === "number" && pct > 0 ? pct : 80;
+    // Big models are paused from 95 % (navin/usage_mode.py PREMIUM_MODEL_CUTOFF_PERCENT).
+    return typeof pct === "number" && pct > 0 ? pct : 95;
   }, [account?.usage?.used_percent, settings]);
 
   const healAccountChatDefault = useCallback(() => {
@@ -1654,7 +1655,7 @@ export function ThreadShell({
       }
       const toLabel = presetLabelForSlug(settings, modelName, modelPreset);
       const fromLabel = presetLabelForSlug(settings, meta?.previousModel);
-      const percent = meta?.usedPercent ?? budgetFilterPercent ?? 80;
+      const percent = meta?.usedPercent ?? budgetFilterPercent ?? 95;
       notify({
         level: "info",
         source: "session",
@@ -2323,7 +2324,9 @@ export function ThreadShell({
     const teams = teamInfo?.teams.length
       ? teamInfo.teams
       : (settings?.collab_teams ?? []).map((team) => ({ id: team.id, name: team.name }));
-    if (!teams.length && !(settings?.collab_members?.length)) return null;
+    // Offered as soon as the state is known, even with no team or teammate
+    // yet: the switch is saved anyway and the menus lead to Settings > Team.
+    if (!teamInfo && !settings) return null;
     return {
       enabled: collabEnabled,
       teamId: chatId

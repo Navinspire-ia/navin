@@ -52,6 +52,134 @@ class ModeListTests(unittest.TestCase):
         self.assertEqual(get_mode("explore").id, "chat")
 
 
+class TeamPickRowsTests(unittest.TestCase):
+    """Team mode is a switch under the modes, never one more mode."""
+
+    def test_team_is_not_a_mode(self) -> None:
+        from navin.tui.modes import TEAM_PICK_PREFIX
+
+        self.assertFalse(any(m.id.startswith(TEAM_PICK_PREFIX) for m in MODES))
+        self.assertNotIn("/team", {m.command for m in MODES})
+
+    def test_rows_show_before_any_team_exists(self) -> None:
+        from navin.tui.modes import TEAM_SETTINGS_ID, TEAM_TOGGLE_ID, team_pick_rows
+
+        rows = team_pick_rows({"enabled": False, "teams": [], "members": []})
+        self.assertEqual([row[0] for row in rows], [TEAM_TOGGLE_ID, TEAM_SETTINGS_ID])
+        self.assertEqual(rows[0][1], "Team mode: off")
+        self.assertEqual(rows[0][3], "/team on")
+        self.assertIn("Settings > Team", rows[1][2])
+        # An unreadable state still offers the switch.
+        self.assertEqual(team_pick_rows(None)[0][1], "Team mode: off")
+
+    def test_on_row_names_this_chats_team(self) -> None:
+        from navin.tui.modes import team_pick_rows
+
+        rows = team_pick_rows({"enabled": True, "team_name": "Dev", "teams": [{"id": "dev"}]})
+        self.assertEqual(rows[0][1], "Team mode: on")
+        self.assertIn("this chat: Dev", rows[0][2])
+        self.assertEqual(rows[0][3], "/team off")
+        self.assertNotIn("No teammate", rows[1][2])
+
+    def test_rows_map_to_team_command_arguments(self) -> None:
+        from navin.tui.modes import TEAM_SETTINGS_ID, TEAM_TOGGLE_ID, team_pick_argument
+
+        self.assertEqual(team_pick_argument(TEAM_TOGGLE_ID, {"enabled": False}), "on")
+        self.assertEqual(team_pick_argument(TEAM_TOGGLE_ID, {"enabled": True}), "off")
+        self.assertEqual(team_pick_argument(TEAM_TOGGLE_ID, None), "on")
+        self.assertEqual(team_pick_argument(TEAM_SETTINGS_ID, {}), "settings")
+        self.assertIsNone(team_pick_argument("agent", {"enabled": True}))
+        self.assertIsNone(team_pick_argument(None, {}))
+
+
+class PickModeTeamTests(unittest.IsolatedAsyncioTestCase):
+    """The CLI composer mode picker offers Team mode and keeps the mode."""
+
+    def _host(self, chosen: str | None, state: dict | Exception):
+        from types import SimpleNamespace
+
+        shown: list = []
+        applied: list[str] = []
+
+        def team_state() -> dict:
+            if isinstance(state, Exception):
+                raise state
+            return state
+
+        async def push_screen_wait(screen):
+            shown.append(screen)
+            return chosen
+
+        async def apply_mode(mode_id: str) -> None:
+            applied.append(mode_id)
+
+        host = SimpleNamespace(
+            runtime=SimpleNamespace(team_state=team_state),
+            prefs=SimpleNamespace(mode="agent"),
+            push_screen_wait=push_screen_wait,
+            _apply_mode=apply_mode,
+        )
+        return host, shown, applied
+
+    async def _run(self, chosen: str | None, state: dict | Exception):
+        from unittest import mock
+
+        from navin.tui import app as app_mod
+
+        host, shown, applied = self._host(chosen, state)
+        calls: list[str] = []
+
+        async def fake_team(_app, argument: str) -> None:
+            calls.append(argument)
+
+        with mock.patch.object(app_mod, "run_team_command", fake_team):
+            await app_mod.NavinApp._pick_mode(host)
+        return shown, applied, calls
+
+    async def test_picker_lists_team_rows_without_any_team(self) -> None:
+        from navin.tui.modes import TEAM_PICK_GROUP, TEAM_SETTINGS_ID, TEAM_TOGGLE_ID
+
+        shown, applied, calls = await self._run(None, {"enabled": False, "teams": [], "members": []})
+        items = shown[0]._items
+        ids = [item.id for item in items]
+        self.assertIn(TEAM_TOGGLE_ID, ids)
+        self.assertIn(TEAM_SETTINGS_ID, ids)
+        self.assertEqual(ids[: len(MODES)], [m.id for m in MODES])
+        self.assertTrue(all(item.group == TEAM_PICK_GROUP for item in items[len(MODES):]))
+        self.assertEqual((applied, calls), ([], []))
+
+    async def test_toggle_runs_team_on_and_keeps_the_mode(self) -> None:
+        from navin.tui.modes import TEAM_TOGGLE_ID
+
+        _shown, applied, calls = await self._run(TEAM_TOGGLE_ID, {"enabled": False})
+        self.assertEqual(calls, ["on"])
+        self.assertEqual(applied, [])
+        _shown, applied, calls = await self._run(TEAM_TOGGLE_ID, {"enabled": True, "team_name": "Dev"})
+        self.assertEqual(calls, ["off"])
+        self.assertEqual(applied, [])
+
+    async def test_settings_row_opens_team_settings(self) -> None:
+        from navin.tui.modes import TEAM_SETTINGS_ID
+
+        _shown, applied, calls = await self._run(TEAM_SETTINGS_ID, OSError("unreadable"))
+        self.assertEqual(calls, ["settings"])
+        self.assertEqual(applied, [])
+
+    async def test_a_mode_is_still_applied(self) -> None:
+        _shown, applied, calls = await self._run("plan", {"enabled": True})
+        self.assertEqual(applied, ["plan"])
+        self.assertEqual(calls, [])
+
+    def test_the_footer_names_the_chats_team_only(self) -> None:
+        from navin.tui.team_view import footer_label
+
+        self.assertEqual(footer_label({"enabled": False, "team_name": "Dev"}), "")
+        # A chat set to no team keeps the footer clear (tests/test_tui_team.py);
+        # the mode menu's "Team mode: on" row says the switch is on.
+        self.assertEqual(footer_label({"enabled": True, "team_name": ""}), "")
+        self.assertEqual(footer_label({"enabled": True, "team_name": "Dev"}), "Team: Dev")
+
+
 class RouteTextTests(unittest.TestCase):
     def test_agent_prefixes_free_text(self) -> None:
         self.assertEqual(route_text("agent", "salut ca va ?"), "/forge salut ca va ?")

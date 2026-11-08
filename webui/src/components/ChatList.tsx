@@ -25,6 +25,7 @@ import {
   History,
   ListChecks,
   Mail,
+  ClipboardList,
   MailOpen,
   MoreHorizontal,
   Pencil,
@@ -71,7 +72,7 @@ import type {
   SidebarSortMode,
 } from "@/lib/types";
 import { projectNameFromPath } from "@/lib/workspace";
-import { ChatHistoryDialog, ChatPlansDialog } from "@/components/ChatSessionDialogs";
+import { ChatCurrentPlanDialog, ChatHistoryDialog, ChatPlansDialog } from "@/components/ChatSessionDialogs";
 
 const ACTION_MENU_CONTENT_CLASS = "w-56 min-w-56";
 const ACTION_MENU_ITEM_CLASS = "grid w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2";
@@ -193,7 +194,7 @@ export const ChatList = memo(function ChatList({
   const { t } = useTranslation();
   const sessionMenu = useContextMenu();
   const [extraByGroup, setExtraByGroup] = useState<Record<string, number>>({});
-  const [dialog, setDialog] = useState<{ kind: "history" | "plans"; key: string } | null>(null);
+  const [dialog, setDialog] = useState<{ kind: "history" | "current-plan" | "plans"; key: string } | null>(null);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const didDragRef = useRef(false);
@@ -528,6 +529,7 @@ export const ChatList = memo(function ChatList({
                     opensInWindow,
                     onTogglePin: () => onTogglePin(s.key),
                     onHistory: () => setDialog({ kind: "history", key: s.key }),
+                    onCurrentPlan: () => setDialog({ kind: "current-plan", key: s.key }),
                     onPlans: () => setDialog({ kind: "plans", key: s.key }),
                     onForkChat: onForkChat ? () => onForkChat(s.key) : undefined,
                     onShareChat: onShareChat ? () => onShareChat(s.chatId, title) : undefined,
@@ -723,6 +725,7 @@ export const ChatList = memo(function ChatList({
       })}
       <ContextMenu state={sessionMenu.state} onClose={sessionMenu.close} />
       <ChatHistoryDialog open={dialog?.kind === "history"} onOpenChange={(open) => { if (!open) setDialog(null); }} sessionKey={dialog?.key ?? null} token={token} />
+      <ChatCurrentPlanDialog open={dialog?.kind === "current-plan"} onOpenChange={(open) => { if (!open) setDialog(null); }} sessionKey={dialog?.key ?? null} token={token} />
       <ChatPlansDialog open={dialog?.kind === "plans"} onOpenChange={(open) => { if (!open) setDialog(null); }} sessionKey={dialog?.key ?? null} token={token} onRelaunch={(text) => { if (dialog) onRelaunchPlan?.(dialog.key, text); }} />
     </div>
   );
@@ -736,6 +739,7 @@ export function sessionActionEntries({
   opensInWindow = false,
   onTogglePin,
   onHistory,
+  onCurrentPlan,
   onPlans,
   onForkChat,
   onShareChat,
@@ -756,6 +760,8 @@ export function sessionActionEntries({
   opensInWindow?: boolean;
   onTogglePin: () => void;
   onHistory?: () => void;
+  /** "Current plan": the chat's current plan with all its detail. */
+  onCurrentPlan?: () => void;
   onPlans?: () => void;
   onForkChat?: () => void;
   onShareChat?: () => void;
@@ -780,6 +786,12 @@ export function sessionActionEntries({
       label: t("chat.history.title"),
       icon: <History className={iconClass} />,
       onSelect: onHistory,
+    }] : []),
+    ...(onCurrentPlan ? [{
+      id: "current-plan",
+      label: t("chat.plans.current"),
+      icon: <ClipboardList className={iconClass} />,
+      onSelect: onCurrentPlan,
     }] : []),
     ...(onPlans ? [{
       id: "plans",

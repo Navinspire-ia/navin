@@ -120,6 +120,44 @@ describe("team picker in the model menu", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(onToggle).toHaveBeenCalledWith(true);
   });
+
+  it("offers Team mode before any team or teammate exists", async () => {
+    const onToggle = vi.fn();
+    renderPicker({ onToggle, enabled: false, teamId: "off", teams: [], members: [] });
+    // The model menu keeps its switch.
+    expect(await screen.findByTestId("composer-team-toggle")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("composer-team-toggle"));
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("team mode in the turn mode menu", () => {
+  beforeEach(() => resetMenuChoiceForTests());
+
+  it("switches Team mode and opens Settings > Team without changing the mode", async () => {
+    const onToggle = vi.fn();
+    const onTurnModeChange = vi.fn();
+    const opened = captureSettingsDialog();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        turnMode="agent"
+        onTurnModeChange={onTurnModeChange}
+        teamMode={{ enabled: false, teamId: "off", teams: [], members: [], onToggle, onSelectTeam: vi.fn() }}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Turn mode" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    const toggle = await screen.findByTestId("composer-mode-team-toggle");
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByTestId("composer-mode-team-settings"));
+    expect(opened()).toEqual(["team"]);
+    expect(onTurnModeChange).not.toHaveBeenCalled();
+    // No team view to open while no teammate works here.
+    expect(screen.queryByRole("menuitem", { name: "Team view" })).toBeNull();
+  });
 });
 
 describe("prompt history in the composer", () => {
@@ -435,6 +473,9 @@ describe("narrow composer toolbar", () => {
 
     await openMore();
     fireEvent.click(screen.getByTestId("composer-tools-mode"));
+    // Team mode sits under the modes in the narrow submenu too.
+    expect(await screen.findByTestId("composer-mode-team-toggle")).toBeTruthy();
+    expect(screen.getByTestId("composer-mode-team-settings")).toBeTruthy();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Plan" }));
     expect(onTurnModeChange).toHaveBeenCalledWith("plan");
 

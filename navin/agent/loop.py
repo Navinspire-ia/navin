@@ -2300,6 +2300,25 @@ class AgentLoop:
         was_deleted = getattr(getattr(self, "sessions", None), "was_deleted", None)
         return bool(callable(was_deleted) and was_deleted(key))
 
+    @staticmethod
+    def _mark_plan_request(msg: InboundMessage, session_key: str) -> None:
+        """Give a message the user typed the request id its whole run carries.
+
+        The board files this request's tasks as its own plan in the chat; its
+        continuation slices and a replay after a restart copy the metadata, so
+        they keep adding to that plan. A background result, a cron or heartbeat
+        turn or a subagent's answer is not a new request and carries none.
+        """
+        from navin.board import session_focus
+        from navin.board.auto_advance import unrelated_turn
+
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else None
+        if metadata is None or msg.channel == "system" or metadata.get("injected_event"):
+            return
+        if unrelated_turn(metadata, msg.sender_id, session_key):
+            return
+        session_focus.begin_plan_request(metadata)
+
     async def _drop_for_deleted_chat(self, msg: InboundMessage, key: str) -> bool:
         """Whether ``msg`` comes for a chat the user deleted and must be dropped.
 
@@ -4247,6 +4266,7 @@ class AgentLoop:
         if not turn_continuation.internal_continuation_inbound(msg.metadata):
             turn_continuation.reset_budget_continuation_rounds(ctx.session.metadata)
             self._loop_guards.pop(ctx.session_key, None)
+            self._mark_plan_request(msg, ctx.session_key)
         self._persist_model_pin(ctx.session, msg)
         await self._runtime_events().session_turn_started(msg, ctx.session_key)
         # Tell the WebUI the turn is live as soon as it is accepted - not only

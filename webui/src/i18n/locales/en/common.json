@@ -104,7 +104,15 @@
       "relaunch": "Relaunch",
       "relaunchAria": "Relaunch {{title}} ({{id}})",
       "relaunchAll": "Relaunch all unfinished",
-      "status": { "done": "Done", "active": "In progress", "blocked": "Blocked", "cancelled": "Stopped", "pending": "Planned" }
+      "current": "Current plan",
+      "currentEmpty": "No plan in progress in this chat yet",
+      "earlier": "Earlier plans of this chat",
+      "hiddenBadge": "Hidden",
+      "hide": "Hide from chat",
+      "show": "Show in chat",
+      "hideHint": "Hidden from this chat only. Find it again in Current plan or My plans.",
+      "actionFailed": "Could not update the plan. Please try again.",
+      "status": { "done": "Done", "active": "In progress", "blocked": "Blocked", "cancelled": "Stopped", "pending": "Planned", "review": "To validate" }
     },
     "activity": {
       "complete": "Agent finished",
@@ -10561,7 +10569,12 @@
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} done",
+      "toValidate": "{{count}} to validate",
+      "blockedCount_one": "{{count}} blocked",
+      "blockedCount_other": "{{count}} blocked",
       "md": {
+        "review": "To validate",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",
@@ -10571,6 +10584,7 @@
         "missingInfo": "Missing information",
         "overview": "Overview",
         "pending": "Pending",
+        "pendingSteps": "{{count}} steps",
         "status": "Status",
         "steps": "Plan",
         "validation": "Validation"
@@ -10889,6 +10903,8 @@
     },
     "team": {
       "switch": "Team mode",
+      "modeHint": "Teammates join every mode",
+      "openSettings": "Team settings",
       "noMembers": "No teammate yet: add them in Settings > Team",
       "thisChat": "Team for this chat",
       "switchFailed": "The team could not be changed. Check the connection and pick it again.",

@@ -34,6 +34,9 @@ CLOSED_STATUSES = DONE_STATUSES | CANCELLED_STATUSES
 PARKED_STATUSES = frozenset({"blocked"})
 # Statuses that mean "someone is on it", used for work-in-progress accounting.
 ACTIVE_STATUSES = frozenset({"in_progress", "review", "audit"})
+# Handed over for a check: finished on the worker's side, not done for the
+# board (a dependency still waits for ``done``).
+REVIEW_STATUSES = frozenset({"review", "audit"})
 
 _PRIORITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -554,6 +557,28 @@ def mission_concerns(mission: dict[str, Any] | None, focus_ids: list[str]) -> bo
     return bool(steps & {str(i) for i in focus_ids})
 
 
+def _current_entry(entries: list[dict[str, Any]], tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """The step the plan's heading names: the one worked on, else the next to do.
+
+    A step in progress wins, the most recently updated one when there are
+    several. A step handed over for review is no longer in flight: naming the
+    first one kept a step finished at dawn "in progress" for a whole day while
+    the run went on with the next ones. With nothing in progress, the first
+    step still to do leads, one that can start before a blocked one. Once only
+    finished or handed-over steps remain, the last one does.
+    """
+    updated = {task["id"]: str(task.get("updated_at") or "") for task in tasks}
+    working = [entry for entry in entries if entry["status"] == "in_progress"]
+    if working:
+        # max() keeps the first of equal stamps: touch order breaks ties.
+        return max(working, key=lambda entry: updated.get(entry["id"], ""))
+    to_do = [
+        entry for entry in entries
+        if not entry["done"] and not entry["cancelled"] and entry["status"] not in REVIEW_STATUSES
+    ]
+    return next((entry for entry in to_do if not entry["blocked"]), to_do[0] if to_do else entries[-1])
+
+
 def session_plan(
     tasks: list[dict[str, Any]],
     focus_ids: list[str],
@@ -608,21 +633,24 @@ def session_plan(
         for task in items
     ]
     done_count = sum(1 for entry in entries if entry["done"])
-    # The heading names what is being worked on, so an in-flight task wins over
-    # the next one waiting; with none in flight the first unfinished item is the
-    # honest answer, and once everything is done the last one is.
-    current = next(
-        (entry for entry in entries if entry["active"]),
-        next(
-            (entry for entry in entries if not entry["done"] and not entry["cancelled"]),
-            entries[-1],
-        ),
+    # Handed over for a check: the agent's part is finished, the board's is
+    # not. Counted apart, so a run that ends its steps in review still shows
+    # how far it went instead of a plan stuck at 0 done for a whole day.
+    review_count = sum(1 for entry in entries if entry["status"] in REVIEW_STATUSES)
+    # A step someone is on is in progress, even while a dependency is open.
+    blocked_count = sum(
+        1 for entry in entries
+        if entry["blocked"] and not entry["done"] and not entry["cancelled"]
+        and entry["status"] not in REVIEW_STATUSES and entry["status"] != "in_progress"
     )
+    current = _current_entry(entries, items)
     plan: dict[str, Any] = {
         "items": entries,
         "current_id": current["id"],
         "title": current["title"],
         "done_count": done_count,
+        "review_count": review_count,
+        "blocked_count": blocked_count,
         "total_count": len(entries),
         # Only real completions - a /stop that cancels steps must not look like
         # "Plan complete".

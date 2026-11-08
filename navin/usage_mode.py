@@ -8,21 +8,24 @@ monthly spend (see ``site/src/lib/plans.ts``). This module mirrors that policy
 locally so the IDE throttles **Navin subscription** (managed-key) turns
 without a gateway restart. BYOK / Free keys are never clamped.
 
-From 80 % monthly usage, only the expensive flagships are paused:
+Two separate thresholds:
 
-- Claude Opus 5 and newer
-- Claude Fable 5 and newer
-- GPT 5.6 (Sol / Terra / Luna and the same family)
+- the global mode thresholds (``USAGE_THRESHOLDS``): ``reduced`` from
+  80 %, ``economy`` from 95 %, ``exhausted`` at 100 %. They drive the
+  token caps and the tier cap;
+- the premium availability threshold (``PREMIUM_MODEL_CUTOFF_PERCENT``,
+  95 %): from there, and only from there, the expensive flagships are
+  paused, in chat and vision alike:
 
-Everything else (Grok, Gemini, DeepSeek, MiniMax, GLM, vision readers
-that are not those flagships) stays selectable. An allowlist that left
-only Nemotron + Flash created panic and hid useful models while vision
-rows slipped through. At 100 % the plan is empty: Nemotron only.
+  - Claude Opus 5 and newer
+  - Claude Fable 5 and newer
+  - GPT 5.6 (Sol / Terra / Luna and the same family) and GPT 6
 
-80 % matches the reduced-mode threshold, which already caps the tier
-at main from there, so the flagship pause and the tier cap agree.
-
-Token caps still follow the mode names (reduced / economy / exhausted).
+Between 80 % and 95 % (``reduced``) every model stays selectable, the
+expert tier included; only the answers get shorter. Everything that is
+not one of those flagships (Grok, Gemini, DeepSeek, MiniMax, GLM, vision
+readers) stays selectable up to 100 %. At 100 % the plan is empty:
+Nemotron only. BYOK and local models are never clamped.
 """
 
 from __future__ import annotations
@@ -38,10 +41,11 @@ USAGE_MODES = ("normal", "reduced", "economy", "exhausted")
 # Keep in sync with site/src/lib/plans.ts USAGE_THRESHOLDS.
 USAGE_THRESHOLDS = {"reduced": 0.8, "economy": 0.95}
 
-# Highest tier a mode may still use (inclusive).
+# Highest tier a mode may still use (inclusive). ``reduced`` keeps the
+# expert tier: big models stay available until PREMIUM_MODEL_CUTOFF_PERCENT.
 _MODE_TIER_CAP: dict[str, str] = {
     "normal": "expert",
-    "reduced": "main",
+    "reduced": "expert",
     "economy": "executor",
     "exhausted": "light",
 }
@@ -61,9 +65,10 @@ _GROK_46 = "x-ai/grok-4.6"
 _DS_FLASH = "deepseek/deepseek-v4.1-flash"
 _NEMOTRON_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
-# Hide these families from 80 % (chat and vision, same rule), aligned with
-# the reduced-mode threshold.
-_FLAGSHIP_CUTOFF_PERCENT = 80
+# Hide these families from 95 % (chat and vision, same rule). Distinct from
+# the reduced-mode threshold (80 %), which only shortens answers.
+# Keep in sync with site/back/src/lib/plans.ts PREMIUM_MODEL_CUTOFF.
+PREMIUM_MODEL_CUTOFF_PERCENT = 95
 _OPUS_VERSION = re.compile(r"opus[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _FABLE_VERSION = re.compile(r"fable[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _GPT_56 = re.compile(r"gpt[-_.]?5[-_.]?6\b", re.IGNORECASE)
@@ -112,7 +117,7 @@ def budget_used_percent(config: Any, mode: str | None = None) -> int:
     Takes the highest signal among: in-memory snapshot from the last
     validate/report, the on-disk percent, spent/budget, and the mode floor.
     A stale config.json at 70 % must not keep Opus runnable after the live
-    usage has already crossed 80 %.
+    usage has already crossed the premium cutoff (95 %).
     """
     candidates: list[int] = []
     if _live_percent is not None:
@@ -147,11 +152,15 @@ def budget_used_percent(config: Any, mode: str | None = None) -> int:
 
 
 def slug_allowed_for_budget(slug: str, percent: int) -> bool:
-    """Whether a managed slug may still run at this spend percentage."""
+    """Whether a managed slug may still run at this spend percentage.
+
+    Shared by chat and vision. Everything runs below 95 %; from 95 % the
+    expensive flagships are paused; at 100 % only Nemotron remains.
+    """
     s = (slug or "").strip()
     if not s:
         return False
-    if percent < _FLAGSHIP_CUTOFF_PERCENT:
+    if percent < PREMIUM_MODEL_CUTOFF_PERCENT:
         return True
     if _is_nemotron(s):
         return True
@@ -164,7 +173,7 @@ def preferred_budget_slugs(percent: int) -> tuple[str, ...]:
     """Fallback slugs when the live model is a paused flagship."""
     if percent >= 100:
         return (_NEMOTRON_ULTRA,)
-    if percent >= _FLAGSHIP_CUTOFF_PERCENT:
+    if percent >= PREMIUM_MODEL_CUTOFF_PERCENT:
         return (_GROK_46, _DS_FLASH, _GEMINI_37, _NEMOTRON_ULTRA)
     return ()
 
@@ -574,7 +583,8 @@ def apply_usage_mode_to_runtime(
     downgrade is required. No-op for BYOK / normal mode.
 
     ``user_pinned`` is honoured unless the pin is a paused flagship
-    (Opus 5+, Fable 5+, GPT 5.6). Grok and DeepSeek stay. BYOK /
+    (Opus 5+, Fable 5+, GPT 5.6, GPT 6, from 95 %). Grok and DeepSeek
+    stay. In ``reduced`` (80-95 %) the expert tier is kept. BYOK /
     third-party keys are never clamped, even on a paid Navin account:
     those turns are billed to the user, not Navin.
     """
@@ -596,7 +606,7 @@ def apply_usage_mode_to_runtime(
 
     mode = current_usage_mode(config)
     percent = budget_used_percent(config, mode)
-    if mode == "normal" and percent < _FLAGSHIP_CUTOFF_PERCENT:
+    if mode == "normal" and percent < PREMIUM_MODEL_CUTOFF_PERCENT:
         return runtime
     current_slug = str(getattr(runtime, "model", "") or "")
     presets = known_presets
@@ -604,9 +614,9 @@ def apply_usage_mode_to_runtime(
         owner = getattr(resolve_preset, "__self__", None)
         presets = getattr(owner, "model_presets", None)
 
-    # Pause only the expensive flagships. A pin on Grok stays; a pin on
-    # Opus 5 does not.
-    must_swap = percent >= _FLAGSHIP_CUTOFF_PERCENT and not slug_allowed_for_budget(
+    # Pause only the expensive flagships, and only from 95 %. A pin on Grok
+    # stays; a pin on Opus 5 does not once the premium cutoff is reached.
+    must_swap = percent >= PREMIUM_MODEL_CUTOFF_PERCENT and not slug_allowed_for_budget(
         current_slug, percent
     )
     if must_swap:

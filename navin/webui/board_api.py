@@ -88,11 +88,19 @@ def _with_session_plan(
     mission = _mission_for_store(store) if store is not None else None
     if mission is not None:
         payload["mission"] = mission
-    payload["session_plan"] = session_plan(
-        payload.get("tasks") or [],
-        session_focus.touched(session_key),
-        mission=mission,
-    )
+    tasks = payload.get("tasks") or []
+    plan = session_plan(tasks, session_focus.touched(session_key), mission=mission)
+    if plan is not None:
+        # Hidden by the user in this chat: the panels leave it out, "My plans"
+        # still lists it with a way to show it again.
+        plan["hidden"] = session_focus.plan_hidden(session_key)
+    payload["session_plan"] = plan
+    # The plans earlier requests of the chat filed, newest first.
+    payload["session_plans"] = [
+        earlier
+        for ids in session_focus.earlier_plans(session_key)
+        if (earlier := session_plan(tasks, ids, mission=mission)) is not None
+    ]
     return payload
 
 
@@ -489,6 +497,16 @@ def board_update_payload(
                 actor_type="human",
                 detail=", ".join(sorted(fields.keys())) or "edit",
             )
+    elif action in ("hide_plan", "show_plan"):
+        # A view choice of one chat: the tasks and the run working on them are
+        # untouched, so nothing is written to the board or its timeline.
+        if not session_key:
+            raise BoardError(f"{action} needs a chat")
+        plan_task = op.get("plan_id") if isinstance(op.get("plan_id"), str) else None
+        if not session_focus.set_plan_hidden(
+            session_key, action == "hide_plan", plan_task=plan_task or None,
+        ):
+            raise BoardError("this chat's plan changed meanwhile: reload it", status=409)
     elif action == "sync_github":
         # Import open forge issues as board tasks (idempotent by issue URL), so
         # a human can pull the repo's issues without going through the agent.

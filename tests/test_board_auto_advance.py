@@ -612,6 +612,27 @@ class OpenPlanStepsTest(_Base):
             [b, c],
         )
 
+    async def test_another_request_is_not_sent_back_onto_the_plan_of_the_previous_one(self) -> None:
+        token = bind_request_context(RequestContext(
+            channel="websocket", chat_id="c1", session_key=self.key,
+            metadata={session_focus.PLAN_REQUEST_META: "req-a"},
+        ))
+        self.addCleanup(lambda: reset_request_context(token))
+        a, _b = await self._plan("One", "Two")
+        self.assertEqual(session_focus.plan_owner(self.key), "req-a")
+        same = auto_advance.open_plan_steps(
+            self.project, self.key, request_drives_plan=True, request_id="req-a",
+        )
+        self.assertEqual(same[0]["id"], a)
+        # A new request that only read the board must not be told to finish
+        # the previous request's steps; a turn without a request id keeps them.
+        self.assertEqual(auto_advance.open_plan_steps(
+            self.project, self.key, request_drives_plan=True, request_id="req-b",
+        ), [])
+        self.assertEqual(len(auto_advance.open_plan_steps(
+            self.project, self.key, request_drives_plan=True,
+        )), 2)
+
     def test_a_failure_that_was_fixed_is_not_a_failed_step(self) -> None:
         self.assertFalse(auto_advance.reports_failure("Fixed the 2 failing tests, step 3 done."))
         self.assertFalse(auto_advance.reports_failure("Corrigé les tests en échec.\n\nÉtape 3 terminée."))

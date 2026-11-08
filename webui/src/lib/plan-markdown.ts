@@ -29,6 +29,10 @@ export type PlanMarkdownLabels = {
   blocked: string;
   cancelled: string;
   pending: string;
+  /** Handed over for a check (review, audit). */
+  review: string;
+  /** Overview line naming the steps still to do: "3 steps". */
+  pendingSteps: (count: number) => string;
 };
 
 const DEFAULT_LABELS: PlanMarkdownLabels = {
@@ -45,7 +49,33 @@ const DEFAULT_LABELS: PlanMarkdownLabels = {
   blocked: "Blocked",
   cancelled: "Cancelled",
   pending: "Pending",
+  review: "To validate",
+  pendingSteps: (count) => `${count} steps`,
 };
+
+/** Translates the plan document's labels (`thread.plan.md.*`). */
+export type PlanLabelTranslator = (key: string, fallback: string, values?: { count: number }) => string;
+
+/** The plan document's labels in the reader's language. */
+export function planMarkdownLabels(tx: PlanLabelTranslator): PlanMarkdownLabels {
+  return {
+    overview: tx("thread.plan.md.overview", DEFAULT_LABELS.overview),
+    steps: tx("thread.plan.md.steps", DEFAULT_LABELS.steps),
+    acceptance: tx("thread.plan.md.acceptance", DEFAULT_LABELS.acceptance),
+    constraints: tx("thread.plan.md.constraints", DEFAULT_LABELS.constraints),
+    facts: tx("thread.plan.md.facts", DEFAULT_LABELS.facts),
+    missingInfo: tx("thread.plan.md.missingInfo", DEFAULT_LABELS.missingInfo),
+    validation: tx("thread.plan.md.validation", DEFAULT_LABELS.validation),
+    status: tx("thread.plan.md.status", DEFAULT_LABELS.status),
+    done: tx("thread.plan.md.done", DEFAULT_LABELS.done),
+    active: tx("thread.plan.md.active", DEFAULT_LABELS.active),
+    blocked: tx("thread.plan.md.blocked", DEFAULT_LABELS.blocked),
+    cancelled: tx("thread.plan.cancelled", DEFAULT_LABELS.cancelled),
+    pending: tx("thread.plan.md.pending", DEFAULT_LABELS.pending),
+    review: tx("thread.plan.md.review", DEFAULT_LABELS.review),
+    pendingSteps: (count) => tx("thread.plan.md.pendingSteps", "{{count}} steps", { count }),
+  };
+}
 
 function bulletList(items: string[]): string {
   return items
@@ -58,6 +88,8 @@ function bulletList(items: string[]): string {
 function statusLabel(item: SessionPlanItem, labels: PlanMarkdownLabels): string {
   if (item.cancelled) return labels.cancelled;
   if (item.done) return labels.done;
+  // Handed over: finished on the agent's side, waiting for a check.
+  if (item.status === "review" || item.status === "audit") return labels.review;
   if (item.active) return labels.active;
   if (item.blocked) return labels.blocked;
   return labels.pending;
@@ -119,7 +151,7 @@ export function formatSessionPlanMarkdown(
     overviewBits.push(
       pendingTitles.length === 1
         ? pendingTitles[0]
-        : `${pendingTitles.length} steps: ${pendingTitles.slice(0, 4).join("; ")}${
+        : `${L.pendingSteps(pendingTitles.length)}: ${pendingTitles.slice(0, 4).join("; ")}${
             pendingTitles.length > 4 ? "…" : ""
           }`,
     );

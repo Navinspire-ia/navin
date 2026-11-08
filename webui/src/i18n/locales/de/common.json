@@ -10228,7 +10228,12 @@
       "budget": "Budget {{used}}/{{max}} tokens",
       "pauseMission": "Pausieren",
       "resumeMission": "Mission fortsetzen",
+      "doneShort": "{{done}}/{{total}} erledigt",
+      "toValidate": "{{count}} zu prüfen",
+      "blockedCount_one": "{{count}} blockiert",
+      "blockedCount_other": "{{count}} blockiert",
       "md": {
+        "review": "Zu prüfen",
         "acceptance": "Akzeptanzkriterien",
         "active": "In Arbeit",
         "blocked": "Blockiert",
@@ -10238,6 +10243,7 @@
         "missingInfo": "Fehlende Informationen",
         "overview": "Übersicht",
         "pending": "Ausstehend",
+        "pendingSteps": "{{count}} Schritte",
         "status": "Status",
         "steps": "Plan",
         "validation": "Validierung"
@@ -10538,6 +10544,8 @@
     },
     "team": {
       "switch": "Team-Modus",
+      "modeHint": "Teammitglieder arbeiten in jedem Modus mit",
+      "openSettings": "Team-Einstellungen",
       "noMembers": "Noch kein Teammitglied: Fügen Sie eines unter Einstellungen > Team hinzu",
       "thisChat": "Team für diesen Chat",
       "switchFailed": "Das Team konnte nicht gewechselt werden. Prüfen Sie die Verbindung und wählen Sie es erneut.",

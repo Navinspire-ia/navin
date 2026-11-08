@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "Teammodus",
+      "modeHint": "Teammedlemmene jobber i alle moduser",
+      "openSettings": "Teaminnstillinger",
+      "noMembers": "Ingen teammedlemmer ennå: legg dem til i Innstillinger > Team",
+      "roomLabel": "Teamvisning",
+      "toggleFailed": "Teammodus kunne ikke endres. Sjekk tilkoblingen og prøv igjen."
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "Kobling",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "Skjul planen",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} fullført",
+      "toValidate": "{{count}} til godkjenning",
+      "blockedCount_one": "{{count}} blokkert",
+      "blockedCount_other": "{{count}} blokkert",
       "md": {
+        "review": "Til godkjenning",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

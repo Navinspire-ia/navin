@@ -551,12 +551,26 @@ def test_the_cli_hears_which_model_took_over_and_when_the_chosen_one_is_back() -
     assert runtime.status.relay_model == ""
 
 
+def _plan_window_text(screen) -> str:
+    """Every step row of the plan's detail window, as plain text."""
+    return "\n".join(str(row.content) for row in screen.query("#plan-detail-steps Static"))
+
+
+async def _until(pilot, check) -> None:
+    """Let the app work (threads, mounts) until ``check`` holds, at most 3 s."""
+    for _ in range(60):
+        if check():
+            return
+        await pilot.pause(0.05)
+
+
 def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_one(tmp_path, monkeypatch) -> None:
     """A real board in the project, the app's own event path, no model."""
     from textual.worker import WorkerCancelled
 
     from navin.board import session_focus
     from navin.board.store import ProjectBoardStore
+    from navin.tui.plan_detail import PlanDetailScreen
     from navin.tui.plan_panel import PlanPanel, load_cli_plan
     from navin.tui.runtime import UiToolEvent
 
@@ -619,8 +633,162 @@ def test_the_chat_plan_shows_its_steps_and_the_working_line_names_the_current_on
             assert "\n" not in folded and "en cours : Add the tests" in folded
             await pilot.click(panel)
             assert "○" not in str(panel.content) and "✓ Fix the rounding" in str(panel.content)
+            # A step handed over for review moves the plan on and is no longer "en cours".
+            store.update_task(ids[1], actor="agent", actor_type="agent", fields={"status": "review"})
+            await app._render_runtime_event(UiToolEvent(
+                "b3", "board", "end", {"action": "move", "task_id": ids[1], "status": "review"},
+                result=f"Task moved: {ids[1]} [review] (medium) Add the tests @agent(agent)",
+            ))
+            await settle(app)
+            await pilot.pause()
+            text = str(panel.content)
+            assert "1/2 terminées · 1 à valider" in text and "◐ Add the tests  à valider" in text, text
+            assert panel.step_label() == ""
+            app._refresh_working_line()
+            assert "Étape" not in str(app.query_one(WorkingLine).content)
+            # Past five steps the plan stays on one line and a click opens its window.
+            more = [
+                store.create_task(title=f"Step {n}", actor="agent", actor_type="agent",
+                                  description=f"Everything about step {n}")["id"]
+                for n in range(3, 7)
+            ]
+            store.update_task(more[0], actor="agent", actor_type="agent",
+                              fields={"status": "blocked", "evidence": "Needs the Harbor robot account"})
+            session_focus.remember(key, more)
+            await app._render_runtime_event(UiToolEvent(
+                "b4", "board", "end", {"action": "create"}, result="4 tasks created:",
+            ))
+            await settle(app)
+            await pilot.pause()
+            text = str(panel.content)
+            assert "Plan  1/6 terminées · 1 bloquée · 1 à valider" in text and "\n" not in text, text
+            await pilot.click(panel)
+            await _until(pilot, lambda: isinstance(app.screen, PlanDetailScreen)
+                         and "step 6" in _plan_window_text(app.screen))
+            detail = app.screen
+            assert isinstance(detail, PlanDetailScreen) and "\n" not in str(panel.content)
+            heading = str(detail.query_one("#plan-detail-heading").content)
+            assert "1/6 terminées · 1 bloquée · 1 à valider" in heading and "en cours : Step 4" in heading, heading
+            steps = _plan_window_text(detail)
+            for part in ("✓ 1. Fix the rounding  Terminée", "◐ 2. Add the tests  À valider",
+                         "! 3. Step 3  Bloquée", "Motif du blocage : Needs the Harbor robot account",
+                         "◉ 4. Step 4  À suivre", "Everything about step 6"):
+                assert part in steps, steps
+            # A filter keeps the plan's numbering.
+            await pilot.click("#plan-detail-blocked")
+            await _until(pilot, lambda: "Step 4" not in _plan_window_text(detail))
+            steps = _plan_window_text(detail)
+            assert "! 3. Step 3  Bloquée" in steps and "Fix the rounding" not in steps, steps
+            await pilot.press("escape")
+            await _until(pilot, lambda: not isinstance(app.screen, PlanDetailScreen))
+            assert not isinstance(app.screen, PlanDetailScreen)
             # The plan is this chat's own.
             assert load_cli_plan(tmp_path, "cli:another-chat") is None
+
+    try:
+        asyncio.run(run())
+    finally:
+        session_focus.clear()
+
+
+def test_plan_hide_and_show_keep_the_tasks_and_plan_lists_the_plans_apart(tmp_path, monkeypatch) -> None:
+    """Hiding is a view choice of the chat; /plan lists the current and earlier plans apart."""
+    from rich.cells import cell_len
+    from textual.worker import WorkerCancelled
+
+    from navin.board import session_focus
+    from navin.board.store import ProjectBoardStore
+    from navin.tui.plan_detail import PlanDetailScreen
+    from navin.tui.plan_panel import PlanPanel
+    from navin.tui.session_overview import SessionOverviewScreen
+
+    monkeypatch.setattr(session_focus, "_store_path", lambda: tmp_path / "session-focus.json")
+    session_focus.clear()
+
+    async def settle(app, pilot) -> None:
+        for worker in [w for w in app.workers if w.group == "plan-panel"]:
+            try:
+                await worker.wait()
+            except WorkerCancelled:
+                continue
+        await pilot.pause()
+
+    async def run() -> None:
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = _InteractionApp(SimpleNamespace(workspace_path=tmp_path), prefs=prefs)
+        store = ProjectBoardStore(tmp_path)
+        async with app.run_test(size=(150, 30)) as pilot:
+            key = app.runtime.session_key
+            old = store.create_task(title="Connect the API", actor="agent", actor_type="agent")["id"]
+            new = store.create_task(
+                title="Fix the login", actor="agent", actor_type="agent",
+                acceptance="La connexion passe avec le SSO",
+            )["id"]
+            session_focus.remember(key, [old], owner="req-a")
+            session_focus.start_plan(key, [new], owner="req-b")
+            panel = app.query_one("#plan", PlanPanel)
+            app._refresh_plan()
+            await settle(app, pilot)
+            assert panel.display and "Connect the API" not in str(panel.content)
+
+            assert await app._run_tui_slash("/plan hide")
+            await settle(app, pilot)
+            assert not panel.display and session_focus.plan_hidden(key)
+            assert panel.step_label() == ""
+            # Only the view: the task keeps its status, nothing is cancelled.
+            assert store.get_task(new)["status"] == "backlog"
+            assert await app._run_tui_slash("/plan show")
+            await settle(app, pilot)
+            assert panel.display and not session_focus.plan_hidden(key)
+            # The panel's own "✕ masquer" hides it in one click.
+            first = str(panel.content).split("\n")[0]
+            await pilot.click("#plan", offset=(1 + cell_len(first[: first.index("✕")]), 0))
+            for _ in range(40):
+                if session_focus.plan_hidden(key):
+                    break
+                await pilot.pause(0.05)
+            await settle(app, pilot)
+            assert session_focus.plan_hidden(key) and not panel.display
+            assert store.get_task(new)["status"] == "backlog"
+            assert await app._run_tui_slash("/plan show")
+            await settle(app, pilot)
+            assert panel.display
+
+            assert await app._run_tui_slash("/plan")
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SessionOverviewScreen)
+            text = str(screen.query_one("#overview-text").content)
+            order = [text.index(part) for part in ("Plan en cours", "Fix the login", "Plan précédent 1", "Connect the API")]
+            assert order == sorted(order), text
+            await pilot.click("#overview-visibility")
+            for _ in range(40):
+                if session_focus.plan_hidden(key):
+                    break
+                await pilot.pause(0.05)
+            assert session_focus.plan_hidden(key)
+            assert "Plan en cours (masqué dans le chat)" in str(screen.query_one("#overview-text").content)
+
+            # Session menu > Plan en cours: the current plan alone in its window,
+            # with every detail, read even while it is hidden from the chat.
+            await pilot.press("escape")
+            await pilot.pause()
+            await app._show_current_plan(str(tmp_path), key)
+            current = app.screen
+            assert isinstance(current, PlanDetailScreen)
+            await _until(pilot, lambda: "Fix the login" in _plan_window_text(current))
+            heading = str(current.query_one("#plan-detail-heading").content)
+            assert "Plan en cours  ·  masqué dans le chat" in heading, heading
+            detail = _plan_window_text(current)
+            assert "Critères : La connexion passe avec le SSO" in detail, detail
+            assert "Connect the API" not in detail
+            # Shown again from the window: only the view changes.
+            await pilot.click("#plan-detail-visibility")
+            await _until(pilot, lambda: not session_focus.plan_hidden(key))
+            assert not session_focus.plan_hidden(key)
+            assert "masqué" not in str(current.query_one("#plan-detail-heading").content)
+            assert store.get_task(new)["status"] == "backlog"
 
     try:
         asyncio.run(run())
@@ -642,6 +810,14 @@ def test_a_step_taken_up_again_is_numbered_by_progress_not_by_its_place() -> Non
     # Never past the last step, even while the last one is still open.
     panel.plan = {**panel.plan, "done_count": 40}
     assert panel.step_label() == "Étape 40/40: CO P2 : backend"
+    # The steps handed over for review are behind the run too.
+    panel.plan = {**panel.plan, "done_count": 0, "review_count": 24}
+    items[0]["status"] = "in_progress"
+    assert panel.step_label() == "Étape 25/40: CO P2 : backend"
+    # A step handed over, or a blocked one, is not named as the step in progress.
+    for state in ({"status": "review"}, {"status": "blocked", "blocked": True}):
+        items[0].update(state)
+        assert panel.step_label() == "", state
 
 
 def test_the_working_line_stays_on_one_row_with_a_long_step() -> None:

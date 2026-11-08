@@ -104,7 +104,15 @@
       "relaunch": "إعادة التشغيل",
       "relaunchAria": "إعادة تشغيل {{title}} ({{id}})",
       "relaunchAll": "إعادة تشغيل جميع المهام غير المكتملة",
-      "status": { "done": "مكتمل", "active": "قيد التنفيذ", "blocked": "محظور", "cancelled": "متوقف", "pending": "مخطط" }
+      "current": "الخطة الحالية",
+      "currentEmpty": "لا توجد خطة قيد التنفيذ في هذه المحادثة حاليا",
+      "earlier": "الخطط السابقة لهذه المحادثة",
+      "hiddenBadge": "مخفية",
+      "hide": "إخفاء من المحادثة",
+      "show": "إظهار في المحادثة",
+      "hideHint": "مخفية من هذه المحادثة فقط. تجدها مجددا في الخطة الحالية وخططي.",
+      "actionFailed": "تعذر تحديث الخطة. حاول مجددا.",
+      "status": { "done": "مكتمل", "active": "قيد التنفيذ", "blocked": "محظور", "cancelled": "متوقف", "pending": "مخطط", "review": "بانتظار التحقق" }
     },
     "activity": {
       "complete": "انتهى الوكيل",
@@ -10717,7 +10725,16 @@
       "budget": "الميزانية {{used}}/{{max}} رمز",
       "pauseMission": "إيقاف مؤقت",
       "resumeMission": "استئناف المهمة",
+      "doneShort": "{{done}}/{{total}} مكتملة",
+      "toValidate": "{{count}} بانتظار التحقق",
+      "blockedCount_zero": "محظورة: {{count}}",
+      "blockedCount_one": "محظورة: {{count}}",
+      "blockedCount_two": "محظورة: {{count}}",
+      "blockedCount_few": "محظورة: {{count}}",
+      "blockedCount_many": "محظورة: {{count}}",
+      "blockedCount_other": "محظورة: {{count}}",
       "md": {
+        "review": "بانتظار التحقق",
         "acceptance": "معايير القبول",
         "active": "قيد التنفيذ",
         "blocked": "محجوب",
@@ -10727,6 +10744,7 @@
         "missingInfo": "معلومات ناقصة",
         "overview": "نظرة عامة",
         "pending": "معلق",
+        "pendingSteps": "{{count}} خطوات",
         "status": "الحالة",
         "steps": "الخطة",
         "validation": "التحقق"
@@ -11059,6 +11077,8 @@
     },
     "team": {
       "switch": "وضع الفريق",
+      "modeHint": "يعمل أعضاء الفريق في كل الأوضاع",
+      "openSettings": "إعدادات الفريق",
       "noMembers": "لا يوجد أعضاء بعد: أضفهم من الإعدادات > الفريق",
       "thisChat": "فريق هذه المحادثة",
       "switchFailed": "تعذّر تغيير الفريق. تحقّق من الاتصال واختره مرة أخرى.",

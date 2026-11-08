@@ -53,6 +53,7 @@ from navin.agent.tools.context import (
     RequestContext,
     ToolContext,
     bind_request_context,
+    current_request_context,
     reset_request_context,
 )
 from navin.agent.tools.file_state import FileStates, bind_file_states, bound_file_states
@@ -1338,6 +1339,14 @@ class SubagentManager:
         agent_name = (agent or "").strip() or None
         display_label = label or agent_name or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id, "session_key": session_key}
+        # The user request this subagent works for: its board tasks join that
+        # request's plan in the chat, not whichever plan is current when it ends.
+        from navin.board.session_focus import PLAN_REQUEST_META, plan_request
+
+        parent_ctx = current_request_context()
+        parent_request = plan_request(parent_ctx.metadata if parent_ctx is not None else None)
+        if parent_request:
+            origin[PLAN_REQUEST_META] = parent_request
         # Captured at spawn time, on purpose: this is the policy of the turn
         # that delegated the work. Delegation must not be an escape hatch from
         # the parent's verify gate or the module denylist.
@@ -2949,13 +2958,16 @@ class SubagentManager:
                 if self._llm_wall_timeout_for_session
                 else None
             )
+            subagent_meta: dict[str, Any] = {"subagent": True, "subagent_task_id": task_id}
+            if isinstance(origin.get("plan_request_id"), str) and origin["plan_request_id"]:
+                subagent_meta["plan_request_id"] = origin["plan_request_id"]
             request_token = bind_request_context(RequestContext(
                 channel=origin["channel"],
                 chat_id=origin["chat_id"],
                 message_id=origin_message_id,
                 session_key=sess_key,
                 runtime=runtime,
-                metadata={"subagent": True, "subagent_task_id": task_id},
+                metadata=subagent_meta,
             ))
             token = bind_workspace_scope(workspace_scope) if workspace_scope is not None else None
             live_restrict_token = bind_live_restrict_to_workspace(self.restrict_to_workspace)

@@ -15,7 +15,11 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { ComposerModeSubmenu, type ComposerTurnMode } from "@/components/thread/ComposerModeMenu";
+import {
+  ComposerModeSubmenu,
+  type ComposerModeTeam,
+  type ComposerTurnMode,
+} from "@/components/thread/ComposerModeMenu";
 import {
   ComposerPermissionSubmenu,
   useExecApprovalMode,
@@ -45,6 +49,8 @@ export interface ComposerToolsMenuProps {
   mode: ComposerTurnMode;
   modeDisabled?: boolean;
   onModeChange: (mode: ComposerTurnMode) => void;
+  /** Team mode switch inside the turn mode submenu. */
+  modeTeam?: ComposerModeTeam | null;
   attach?: ComposerToolAction | null;
   documentTemplate?: ComposerToolAction | null;
   connectors?: ComposerToolAction | null;
@@ -64,6 +70,7 @@ export function ComposerToolsMenu({
   mode,
   modeDisabled,
   onModeChange,
+  modeTeam,
   attach,
   documentTemplate,
   connectors,
@@ -107,7 +114,7 @@ export function ComposerToolsMenu({
         sideOffset={8}
         className="w-[min(16rem,calc(100vw-2rem))] p-1"
       >
-        <ComposerModeSubmenu mode={mode} disabled={modeDisabled} onChange={onModeChange} />
+        <ComposerModeSubmenu mode={mode} disabled={modeDisabled} team={modeTeam} onChange={onModeChange} />
         <ComposerPermissionSubmenu state={permission} disabled={disabled} />
         {shown.length > 0 ? <DropdownMenuSeparator className="my-1" /> : null}
         {shown.map(([id, Icon, action]) => (

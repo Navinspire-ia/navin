@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "Teamläge",
+      "modeHint": "Teammedlemmarna arbetar i alla lägen",
+      "openSettings": "Teaminställningar",
+      "noMembers": "Inga teammedlemmar ännu: lägg till dem i Inställningar > Team",
+      "roomLabel": "Teamvy",
+      "toggleFailed": "Teamläget kunde inte ändras. Kontrollera anslutningen och försök igen."
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "Anslutning",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "Dölj planen",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} klara",
+      "toValidate": "{{count}} att godkänna",
+      "blockedCount_one": "{{count}} blockerad",
+      "blockedCount_other": "{{count}} blockerade",
       "md": {
+        "review": "Att godkänna",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

@@ -77,7 +77,16 @@ from navin.tui.hubs import (
 )
 from navin.tui.live_share_line import LiveShareLine
 from navin.tui.models import ModelPickerScreen, model_pick_items
-from navin.tui.modes import MODES, ROUTING_COMMANDS, display_user_text, get_mode, inbound_for_submit
+from navin.tui.modes import (
+    MODES,
+    ROUTING_COMMANDS,
+    TEAM_PICK_GROUP,
+    display_user_text,
+    get_mode,
+    inbound_for_submit,
+    team_pick_argument,
+    team_pick_rows,
+)
 from navin.tui.plan_panel import PlanPanel, load_cli_plan
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
@@ -230,6 +239,13 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "arg_hint": "[mode]",
     },
     {"command": "/theme", "title": "Theme", "description": "Color theme"},
+    {
+        "command": "/plan",
+        "title": "Plans of this chat",
+        "description": "List this chat's plans; /plan hide hides the current one (its tasks go on), /plan show brings it back",
+        "accepts_args": True,
+        "arg_hint": "[hide|show]",
+    },
     {
         "command": "/title",
         "title": "Rename chat",
@@ -1743,6 +1759,8 @@ class NavinApp(App[None]):
         """Slash commands of this engine (a project can add its own)."""
         engine_rows = self.runtime.slash_commands()
         taken = {str(r["command"]) for r in engine_rows}
+        # A project command shadows the TUI's own command of the same name.
+        self._engine_command_names = frozenset(taken)
         self.slash_rows = [dict(r) for r in _tui_slash() if r["command"] not in taken] + engine_rows
 
     def _recheck_updates(self) -> None:
@@ -2741,6 +2759,10 @@ class NavinApp(App[None]):
         if head == "/update":
             await self.action_update()
             return True
+        if head == "/plan" and "/plan" not in getattr(self, "_engine_command_names", frozenset()):
+            # A project command named /plan keeps running in the engine.
+            await self._plan_command(arg)
+            return True
         if head == "/title":
             if not raw_arg:
                 await self._note("Usage: /title New chat name")
@@ -3652,7 +3674,8 @@ class NavinApp(App[None]):
                 [
                     PickItem("open", "Open"),
                     PickItem("history", "Historique", "messages et dates de cette conversation"),
-                    PickItem("plans", "Plan", "tâches, échecs et reprise de cette conversation"),
+                    PickItem("current-plan", "Plan en cours", "tout le détail du plan en cours, à masquer ou réafficher"),
+                    PickItem("plans", "Mes plans", "plan en cours et plans précédents, échecs et reprise"),
                     PickItem("agents", "Tâches parallèles", "échecs, reprise et relance (F8)"),
                     PickItem("fork", "Fork", "a copy of this chat to go on from here"),
                     PickItem("rename", "Rename"),
@@ -3676,6 +3699,8 @@ class NavinApp(App[None]):
             await self._open_project_session(path, key)
         elif choice == "history":
             await self._show_session_history(path, key, live)
+        elif choice == "current-plan":
+            await self._show_current_plan(path, key)
         elif choice == "plans":
             await self._show_session_plans(path, key)
         elif choice == "agents":
@@ -3747,11 +3772,95 @@ class NavinApp(App[None]):
         await self.push_screen(SessionOverviewScreen("history", prompts=prompts))
 
     async def _show_session_plans(self, path: str, key: str) -> None:
-        """Only this chat's board tasks, with an explicit failed-work tab."""
-        from navin.tui.session_overview import SessionOverviewScreen, collect_session_plan
+        """This chat's plans kept apart, the current one first, with a failed-work tab."""
+        from navin.tui.session_overview import SessionOverviewScreen, collect_session_plans
 
-        tasks = await asyncio.to_thread(collect_session_plan, Path(path), key)
-        await self.push_screen(SessionOverviewScreen("plan", tasks=tasks))
+        plans = await asyncio.to_thread(collect_session_plans, Path(path), key)
+
+        async def set_hidden(hidden: bool) -> bool:
+            return bool(await self._set_plan_hidden(key, hidden))
+
+        current = bool(plans["has_current"])
+        await self.push_screen(SessionOverviewScreen(
+            "plan", tasks=plans["tasks"],
+            hidden=bool(plans["hidden"]) if current else None,
+            on_visibility=set_hidden if current else None,
+        ))
+
+    async def _show_current_plan(self, path: str, key: str) -> None:
+        """This chat's current plan in its full-detail window, or a note when it has none.
+
+        Session menu > Plan en cours, and a click on a plan too long to unfold
+        under the chat. A board that cannot be read is said, never raised: the
+        click comes from the chat screen.
+        """
+        from navin.board.store import BoardError
+        from navin.tui.plan_detail import PlanDetailScreen, load_plan_detail
+
+        try:
+            plan = await asyncio.to_thread(load_plan_detail, Path(path), key)
+        except (BoardError, OSError, ValueError) as exc:
+            from loguru import logger
+
+            logger.warning("Plan of {} not readable: {}", key, exc)
+            await self._flash(f"Plan indisponible : {escape(str(exc))}", "error")
+            return
+        if plan is None:
+            await self._flash("Ce chat n'a pas de plan en cours.", "warning")
+            return
+
+        async def set_hidden(hidden: bool) -> bool:
+            return bool(await self._set_plan_hidden(key, hidden))
+
+        await self.push_screen(PlanDetailScreen(plan, on_visibility=set_hidden))
+
+    async def on_plan_panel_detail_requested(self, _message: PlanPanel.DetailRequested) -> None:
+        """A click on a plan of more than five steps opens its full-detail window."""
+        await self._show_current_plan(str(self.runtime.workspace), self.runtime.session_key)
+
+    async def on_plan_panel_dismissed(self, _message: PlanPanel.Dismissed) -> None:
+        """The ``✕ masquer`` of the plan panel: hide this chat's plan, its tasks go on."""
+        if await self._set_plan_hidden(self.runtime.session_key, True):
+            await self._flash("Plan masqué du chat, ses tâches continuent. /plan show le réaffiche.", "success")
+
+    async def _set_plan_hidden(self, key: str, hidden: bool) -> bool | None:
+        """Hide or show a chat's current plan. Only the view: its tasks and the run go on.
+
+        False when the chat has no plan; None when the change could not be saved.
+        """
+        from navin.board import session_focus
+
+        try:
+            changed = await asyncio.to_thread(session_focus.set_plan_hidden, key, hidden)
+        except OSError as exc:  # filelock.Timeout is an OSError too
+            from loguru import logger
+
+            logger.warning("Plan visibility of {} not saved: {}", key, exc)
+            await self._flash(f"Plan non modifié : {escape(str(exc))}", "error")
+            return None
+        if changed and key == self.runtime.session_key:
+            self._refresh_plan()
+        return changed
+
+    async def _plan_command(self, arg: str) -> None:
+        """``/plan`` lists this chat's plans; ``/plan hide`` and ``/plan show`` hide or show the current one."""
+        key = self.runtime.session_key
+        if arg in {"hide", "masquer"} or arg in {"show", "afficher"}:
+            hide = arg in {"hide", "masquer"}
+            changed = await self._set_plan_hidden(key, hide)
+            if changed:
+                await self._flash(
+                    "Plan masqué du chat, ses tâches continuent. /plan show le réaffiche." if hide
+                    else "Plan réaffiché dans le chat.",
+                    "success",
+                )
+            elif changed is False:
+                await self._flash("Ce chat n'a pas de plan en cours.", "warning")
+            return
+        if arg:
+            await self._note("Usage : /plan (plans de ce chat), /plan hide ou /plan show")
+            return
+        await self._show_session_plans(str(self.runtime.workspace), key)
 
     async def _fork_session(self, path: str, key: str, title: str, live: Any = None) -> None:
         """Copy a chat and open the copy, like Fork chat in the desktop."""
@@ -4581,9 +4690,23 @@ class NavinApp(App[None]):
 
     async def _pick_mode(self) -> None:
         items = [PickItem(m.id, m.label, m.description, m.command or "plain text") for m in MODES]
+        # Team mode sits under the modes: it works with every one of them, so
+        # it is a switch (+ Settings > Team), shown even before any team exists.
+        try:
+            team = await asyncio.to_thread(self.runtime.team_state)
+        except Exception:  # noqa: BLE001 - unreadable settings: still offer the switch
+            team = {}
+        items += [
+            PickItem(row_id, title, subtitle, badge, group=TEAM_PICK_GROUP)
+            for row_id, title, subtitle, badge in team_pick_rows(team)
+        ]
         chosen = await self.push_screen_wait(
             PickerScreen("Composer mode", items, current=self.prefs.mode)
         )
+        team_argument = team_pick_argument(chosen, team)
+        if team_argument is not None:
+            await run_team_command(self, team_argument)
+            return
         if chosen:
             await self._apply_mode(chosen)
 

@@ -10,6 +10,8 @@ from unittest import mock
 
 from navin.config.schema import Config, ModelPresetConfig
 from navin.usage_mode import (
+    PREMIUM_MODEL_CUTOFF_PERCENT,
+    USAGE_THRESHOLDS,
     apply_usage_from_response,
     apply_usage_mode_to_runtime,
     apply_usage_summary,
@@ -20,6 +22,7 @@ from navin.usage_mode import (
     effective_mode_from_usage,
     is_expensive_flagship_slug,
     max_tokens_for_mode,
+    preferred_budget_slugs,
     slug_allowed_for_budget,
     usage_mode_from_ratio,
 )
@@ -46,12 +49,18 @@ class UsageModeMathTest(unittest.TestCase):
         fable5 = "anthropic/claude-fable-5"
         gpt56 = "openai/gpt-5.6-sol"
         astra = "openai/gpt-6-astra"
-        self.assertTrue(slug_allowed_for_budget(opus5, 79))
-        self.assertFalse(slug_allowed_for_budget(opus5, 80))
-        self.assertFalse(slug_allowed_for_budget(fable5, 80))
-        self.assertFalse(slug_allowed_for_budget(gpt56, 80))
-        self.assertFalse(slug_allowed_for_budget(astra, 80))
+        # Premium flagships stay available through reduced mode (80-94 %).
+        for slug in (opus5, fable5, gpt56, astra):
+            self.assertTrue(slug_allowed_for_budget(slug, 79), slug)
+            self.assertTrue(slug_allowed_for_budget(slug, 80), slug)
+            self.assertTrue(slug_allowed_for_budget(slug, 94), slug)
+            # Premium cutoff: paused from 95 %, still paused at 100 %.
+            self.assertFalse(slug_allowed_for_budget(slug, 95), slug)
+            self.assertFalse(slug_allowed_for_budget(slug, 99), slug)
+            self.assertFalse(slug_allowed_for_budget(slug, 100), slug)
         self.assertTrue(slug_allowed_for_budget(opus48, 90))
+        self.assertTrue(slug_allowed_for_budget(opus48, 95))
+        self.assertFalse(slug_allowed_for_budget(opus48, 100))
         self.assertTrue(slug_allowed_for_budget(grok, 90))
         self.assertTrue(slug_allowed_for_budget(gemini, 95))
         self.assertTrue(slug_allowed_for_budget(pro, 95))
@@ -71,6 +80,61 @@ class UsageModeMathTest(unittest.TestCase):
         self.assertFalse(is_expensive_flagship_slug("anthropic/claude-opus-4-8"))
         self.assertFalse(is_expensive_flagship_slug("x-ai/grok-4.6"))
         self.assertFalse(is_expensive_flagship_slug("openai/gpt-5"))
+
+    def test_premium_cutoff_is_distinct_from_reduced_threshold(self):
+        self.assertEqual(USAGE_THRESHOLDS["reduced"], 0.8)
+        self.assertEqual(USAGE_THRESHOLDS["economy"], 0.95)
+        self.assertEqual(PREMIUM_MODEL_CUTOFF_PERCENT, 95)
+        self.assertEqual(usage_mode_from_ratio(94, 100), "reduced")
+        self.assertEqual(usage_mode_from_ratio(95, 100), "economy")
+
+    def test_chat_and_vision_rows_share_the_95_cutoff(self):
+        """Settings feeds chat and vision rows through the same pair:
+        budget_used_percent(config) then slug_allowed_for_budget(model, pct).
+        """
+        clear_live_usage_mode()
+        self.addCleanup(clear_live_usage_mode)
+        chat_flagship = "anthropic/claude-opus-5"
+        vision_flagship = "openai/gpt-5.6-sol"
+        vision_reader = "google/gemini-3.7-flash"
+
+        def config_at(mode: str, percent: int) -> Config:
+            return Config.model_validate(
+                {
+                    "license": {
+                        "activationToken": "tok",
+                        "device": "fp",
+                        "managedApiKey": "sk-or-v1-x",
+                        "managedProvider": "openrouter",
+                        "usageMode": mode,
+                        "usageUsedPercent": percent,
+                    }
+                }
+            )
+
+        at_94 = budget_used_percent(config_at("reduced", 94))
+        at_95 = budget_used_percent(config_at("economy", 95))
+        self.assertEqual(at_94, 94)
+        self.assertEqual(at_95, 95)
+        for slug in (chat_flagship, vision_flagship):
+            self.assertTrue(slug_allowed_for_budget(slug, at_94), slug)
+            self.assertFalse(slug_allowed_for_budget(slug, at_95), slug)
+        self.assertTrue(slug_allowed_for_budget(vision_reader, at_94))
+        self.assertTrue(slug_allowed_for_budget(vision_reader, at_95))
+        # Economy floor alone (no percent stored) already means 95 %.
+        self.assertFalse(
+            slug_allowed_for_budget(
+                vision_flagship, budget_used_percent(config_at("economy", 0))
+            )
+        )
+
+    def test_fallback_list_only_from_premium_cutoff(self):
+        self.assertEqual(preferred_budget_slugs(80), ())
+        self.assertEqual(preferred_budget_slugs(94), ())
+        self.assertIn("x-ai/grok-4.6", preferred_budget_slugs(95))
+        self.assertEqual(
+            preferred_budget_slugs(100), ("nvidia/nemotron-3-ultra-550b-a55b:free",)
+        )
 
     def test_daily_cap_elevates_to_economy(self):
         self.assertEqual(
@@ -94,9 +158,11 @@ class ClampPresetTest(unittest.TestCase):
         self.assertEqual(clamp_preset_for_mode("expert", "exhausted"), "light")
         self.assertEqual(clamp_preset_for_mode("main", "exhausted"), "light")
 
-    def test_reduced_caps_at_main(self):
-        self.assertEqual(clamp_preset_for_mode("expert", "reduced"), "main")
+    def test_reduced_keeps_the_expert_tier(self):
+        """80-94 % only shortens answers: big models stay until 95 %."""
+        self.assertEqual(clamp_preset_for_mode("expert", "reduced"), "expert")
         self.assertEqual(clamp_preset_for_mode("main", "reduced"), "main")
+        self.assertEqual(clamp_preset_for_mode("light", "reduced"), "light")
 
     def test_user_named_presets_untouched(self):
         self.assertEqual(clamp_preset_for_mode("primary", "exhausted"), "primary")
@@ -192,7 +258,8 @@ class PersistAndApplyTest(unittest.TestCase):
         self.assertIs(out, runtime)
 
     def test_byok_on_a_paid_account_is_not_clamped(self):
-        """Navin Plus + the user's own Anthropic key: Opus stays Opus."""
+        """Navin Plus + the user's own Anthropic key: Opus stays Opus,
+        even past the premium cutoff."""
         config = Config.model_validate(
             {
                 "license": {
@@ -200,8 +267,8 @@ class PersistAndApplyTest(unittest.TestCase):
                     "device": "fp",
                     "managedApiKey": "sk-or-v1-navin",
                     "managedProvider": "openrouter",
-                    "usageMode": "reduced",
-                    "usageUsedPercent": 85,
+                    "usageMode": "economy",
+                    "usageUsedPercent": 97,
                 },
                 "providers": {"openrouter": {"apiKey": "sk-or-v1-navin"}},
             }
@@ -238,8 +305,8 @@ class PersistAndApplyTest(unittest.TestCase):
                     "device": "fp",
                     "managedApiKey": "sk-or-v1-x",
                     "managedProvider": "openrouter",
-                    "usageMode": "reduced",
-                    "usageUsedPercent": 85,
+                    "usageMode": "economy",
+                    "usageUsedPercent": 95,
                 },
                 "providers": {"openrouter": {"apiKey": "sk-or-v1-x"}},
             }
@@ -326,21 +393,139 @@ class PersistAndApplyTest(unittest.TestCase):
         self.assertIs(out, runtime)
         runtime.with_generation_overrides.assert_called()
 
-    def test_pinned_opus_swaps_at_85(self):
-        """Opus is off the allowlist at 80 %; a pin must not keep it runnable."""
-        config = Config.model_validate(
+    def _managed_config(self, mode: str, percent: int) -> Config:
+        return Config.model_validate(
             {
                 "license": {
                     "activationToken": "tok",
                     "device": "fp",
                     "managedApiKey": "sk-or-v1-x",
                     "managedProvider": "openrouter",
-                    "usageMode": "reduced",
-                    "usageUsedPercent": 85,
+                    "usageMode": mode,
+                    "usageUsedPercent": percent,
                 },
                 "providers": {"openrouter": {"apiKey": "sk-or-v1-x"}},
             }
         )
+
+    @staticmethod
+    def _recording_resolver() -> mock.Mock:
+        """A resolver that would succeed, so any swap or clamp is visible.
+
+        A raising resolver is not enough: the router swallows resolve errors
+        and keeps the original runtime, which would hide a wrong clamp.
+        """
+        cheaper = mock.Mock()
+        cheaper.model = "x-ai/grok-4.6"
+        cheaper.model_preset = "main"
+        cheaper.generation = mock.Mock(max_tokens=32_000)
+        cheaper.with_generation_overrides = mock.Mock(return_value=cheaper)
+        return mock.Mock(return_value=cheaper)
+
+    def test_pinned_opus_stays_at_94(self):
+        """Reduced mode (80-94 %) keeps a pinned Opus 5: only answers shrink."""
+        config = self._managed_config("reduced", 94)
+        presets = {
+            "claude-opus-5": ModelPresetConfig(
+                provider="navin", model="anthropic/claude-opus-5"
+            ),
+            "grok-4-6": ModelPresetConfig(provider="navin", model="x-ai/grok-4.6"),
+        }
+        runtime = mock.Mock()
+        runtime.model = "anthropic/claude-opus-5"
+        runtime.model_preset = "claude-opus-5"
+        runtime.generation = mock.Mock(max_tokens=32_000)
+        runtime.with_generation_overrides = mock.Mock(return_value=runtime)
+        resolve = self._recording_resolver()
+
+        out = apply_usage_mode_to_runtime(
+            runtime,
+            config,
+            resolve_preset=resolve,
+            known_presets=presets,
+            uses_managed=True,
+            user_pinned=True,
+        )
+        self.assertIs(out, runtime)
+        resolve.assert_not_called()
+        # Reduced still shortens answers.
+        runtime.with_generation_overrides.assert_called_once()
+
+    def test_unpinned_expert_tier_is_not_clamped_in_reduced(self):
+        """Regression: reduced used to drop the expert tier to main from 80 %."""
+        presets = {
+            "expert": ModelPresetConfig(provider="navin", model="anthropic/claude-opus-5"),
+            "main": ModelPresetConfig(provider="navin", model="x-ai/grok-4.6"),
+        }
+        for percent in (80, 94):
+            with self.subTest(percent=percent):
+                config = self._managed_config("reduced", percent)
+                runtime = mock.Mock()
+                runtime.model = "anthropic/claude-opus-5"
+                runtime.model_preset = "expert"
+                runtime.generation = mock.Mock(max_tokens=32_000)
+                runtime.with_generation_overrides = mock.Mock(return_value=runtime)
+                resolve = self._recording_resolver()
+
+                out = apply_usage_mode_to_runtime(
+                    runtime,
+                    config,
+                    resolve_preset=resolve,
+                    known_presets=presets,
+                    uses_managed=True,
+                    user_pinned=False,
+                )
+                self.assertIs(out, runtime)
+                resolve.assert_not_called()
+
+    def test_unpinned_expert_tier_without_slug_is_not_clamped_in_reduced(self):
+        """No live slug (keep_slug false) must not fall back to a main clamp."""
+        config = self._managed_config("reduced", 90)
+        runtime = mock.Mock()
+        runtime.model = ""
+        runtime.model_preset = "expert"
+        runtime.generation = mock.Mock(max_tokens=32_000)
+        runtime.with_generation_overrides = mock.Mock(return_value=runtime)
+        resolve = self._recording_resolver()
+
+        out = apply_usage_mode_to_runtime(
+            runtime,
+            config,
+            resolve_preset=resolve,
+            known_presets={
+                "expert": ModelPresetConfig(provider="navin", model="anthropic/claude-opus-5"),
+                "main": ModelPresetConfig(provider="navin", model="x-ai/grok-4.6"),
+            },
+            uses_managed=True,
+        )
+        self.assertIs(out, runtime)
+        resolve.assert_not_called()
+
+    def test_unpinned_expert_opus_leaves_at_95(self):
+        """Boundary partner of the 94 % case: from 95 % Opus 5 is swapped off."""
+        config = self._managed_config("economy", 95)
+        runtime = mock.Mock()
+        runtime.model = "anthropic/claude-opus-5"
+        runtime.model_preset = "expert"
+        runtime.generation = mock.Mock(max_tokens=32_000)
+        resolve = self._recording_resolver()
+
+        out = apply_usage_mode_to_runtime(
+            runtime,
+            config,
+            resolve_preset=resolve,
+            known_presets={
+                "expert": ModelPresetConfig(provider="navin", model="anthropic/claude-opus-5"),
+                "main": ModelPresetConfig(provider="navin", model="x-ai/grok-4.6"),
+            },
+            uses_managed=True,
+        )
+        self.assertEqual(out.model, "x-ai/grok-4.6")
+        resolve.assert_called()
+
+    def test_pinned_opus_swaps_at_95(self):
+        """Opus is paused from the premium cutoff; a pin must not keep it runnable."""
+        config = self._managed_config("economy", 95)
         presets = {
             "claude-opus-5": ModelPresetConfig(
                 provider="navin", model="anthropic/claude-opus-5"
@@ -368,19 +553,7 @@ class PersistAndApplyTest(unittest.TestCase):
         self.assertIs(out, grok)
 
     def test_pinned_opus_swaps_to_flash_when_grok_missing(self):
-        config = Config.model_validate(
-            {
-                "license": {
-                    "activationToken": "tok",
-                    "device": "fp",
-                    "managedApiKey": "sk-or-v1-x",
-                    "managedProvider": "openrouter",
-                    "usageMode": "reduced",
-                    "usageUsedPercent": 85,
-                },
-                "providers": {"openrouter": {"apiKey": "sk-or-v1-x"}},
-            }
-        )
+        config = self._managed_config("economy", 95)
         presets = {
             "claude-opus-5": ModelPresetConfig(
                 provider="navin", model="anthropic/claude-opus-5"
@@ -410,15 +583,15 @@ class PersistAndApplyTest(unittest.TestCase):
         self.assertIs(out, flash)
 
     def test_stale_disk_percent_uses_live_snapshot(self):
-        """A 70 % config.json must not keep Opus after live usage hit 85 %."""
+        """A 70 % config.json must not keep Opus after live usage hit 95 %."""
         live = Config()
         apply_usage_summary(
             live,
             {
-                "mode": "reduced",
-                "usedPercent": 85,
+                "mode": "economy",
+                "usedPercent": 95,
                 "budgetMicroUsd": 100,
-                "spentMicroUsd": 85,
+                "spentMicroUsd": 95,
             },
         )
         stale = Config.model_validate(
@@ -434,7 +607,7 @@ class PersistAndApplyTest(unittest.TestCase):
                 "providers": {"openrouter": {"apiKey": "sk-or-v1-x"}},
             }
         )
-        self.assertGreaterEqual(budget_used_percent(stale), 80)
+        self.assertGreaterEqual(budget_used_percent(stale), 95)
         presets = {
             "claude-opus-5": ModelPresetConfig(
                 provider="navin", model="anthropic/claude-opus-5"

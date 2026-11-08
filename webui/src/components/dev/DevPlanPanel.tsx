@@ -11,7 +11,7 @@ import {
   type BoardTask,
   type SessionPlan,
 } from "@/lib/api";
-import { formatSessionPlanMarkdown } from "@/lib/plan-markdown";
+import { formatSessionPlanMarkdown, planMarkdownLabels } from "@/lib/plan-markdown";
 import { cn } from "@/lib/utils";
 import { fetchBoardShared } from "@/lib/board-fetch";
 import { setVisibleInterval } from "@/lib/visible-interval";
@@ -42,7 +42,8 @@ export function DevPlanPanel({
   const hasToken = Boolean(token);
   const { t } = useTranslation();
   const tx = useCallback(
-    (key: string, fallback: string) => t(key, { defaultValue: fallback }),
+    (key: string, fallback: string, values?: { count: number }) =>
+      t(key, { defaultValue: fallback, ...values }),
     [t],
   );
 
@@ -92,21 +93,7 @@ export function DevPlanPanel({
     if (!plan) return "";
     // The project ledger belongs to the chat that runs it: the server only
     // puts `goal` on this chat's plan when it works on that mission.
-    return formatSessionPlanMarkdown(plan, tasks, plan.goal ? mission : null, {
-      overview: tx("thread.plan.md.overview", "Overview"),
-      steps: tx("thread.plan.md.steps", "Plan"),
-      acceptance: tx("thread.plan.md.acceptance", "Acceptance criteria"),
-      constraints: tx("thread.plan.md.constraints", "Constraints"),
-      facts: tx("thread.plan.md.facts", "Facts"),
-      missingInfo: tx("thread.plan.md.missingInfo", "Missing information"),
-      validation: tx("thread.plan.md.validation", "Validation"),
-      status: tx("thread.plan.md.status", "Status"),
-      done: tx("thread.plan.md.done", "Done"),
-      active: tx("thread.plan.md.active", "In progress"),
-      blocked: tx("thread.plan.md.blocked", "Blocked"),
-      cancelled: tx("thread.plan.cancelled", "Cancelled"),
-      pending: tx("thread.plan.md.pending", "Pending"),
-    });
+    return formatSessionPlanMarkdown(plan, tasks, plan.goal ? mission : null, planMarkdownLabels(tx));
   }, [mission, plan, tasks, tx]);
 
   const title =

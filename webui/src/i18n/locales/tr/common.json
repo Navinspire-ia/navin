@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "Takım modu",
+      "modeHint": "Takım arkadaşları her modda çalışır",
+      "openSettings": "Takım ayarları",
+      "noMembers": "Henüz takım arkadaşı yok: Ayarlar > Takım bölümünden ekleyin",
+      "roomLabel": "Takım görünümü",
+      "toggleFailed": "Takım modu değiştirilemedi. Bağlantıyı kontrol edip tekrar deneyin."
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "Bağlayıcı",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "Planı gizle",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} tamamlandı",
+      "toValidate": "{{count}} onay bekliyor",
+      "blockedCount_one": "{{count}} engelli",
+      "blockedCount_other": "{{count}} engelli",
       "md": {
+        "review": "Onay bekliyor",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

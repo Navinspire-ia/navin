@@ -4419,6 +4419,10 @@ export type SessionPlan = {
   /** Title of the task the heading should name. */
   title: string;
   done_count: number;
+  /** Steps handed over for a check (review, audit): the run is past them. */
+  review_count?: number;
+  /** Steps still to do that cannot start: parked, or waiting on a dependency. */
+  blocked_count?: number;
   total_count: number;
   complete: boolean;
   /** Pre-Build quality judge: "ready" or the concrete gaps (P2-7). */
@@ -4435,6 +4439,11 @@ export type SessionPlan = {
   last_change?: { version?: number; reason?: string };
   token_budget?: number;
   tokens_used?: number;
+  /**
+   * The user hid this plan from the chat. Only the view: its tasks and the
+   * run working on them go on. "My plans" lists it with a way to show it.
+   */
+  hidden?: boolean;
 };
 
 /** Mission ledger (``.navin/board/mission.json``) when attached to a board fetch. */
@@ -4494,6 +4503,8 @@ export type BoardPayload = {
   plan?: BoardPlan;
   milestone_progress?: Record<string, BoardMilestoneProgress>;
   session_plan?: SessionPlan | null;
+  /** Plans earlier requests of this chat filed, newest first. */
+  session_plans?: SessionPlan[];
   mission?: BoardMission | null;
   autonomy?: BoardAutonomy | null;
   /** Present only when the project consented to automatic issue intake. */
@@ -4529,6 +4540,8 @@ export type BoardUpdateOp =
   | { action: "sync_github"; actor?: string; repo?: string | null }
   | { action: "pause_mission"; reason?: string; actor?: string }
   | { action: "resume_mission"; actor?: string }
+  /** Hide or show this chat's current plan; `plan_id` is one of its tasks. */
+  | { action: "hide_plan" | "show_plan"; plan_id?: string; actor?: string }
   | {
       action: "update_mission";
       fields: {

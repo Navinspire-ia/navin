@@ -196,6 +196,11 @@ describe("ChatList session export and drop import", () => {
     const ar = sessionActionEntries({ ...base, t: i18n.getFixedT("ar"), onExportChat: noop });
     expect(fr.find((entry) => entry.id === "export")?.label).toBe("Exporter la session");
     expect(ar.find((entry) => entry.id === "export")?.label).toBe("\u062a\u0635\u062f\u064a\u0631 \u0627\u0644\u062c\u0644\u0633\u0629");
+    // "Current plan" sits right before "My plans" in the chat actions menu.
+    const plans = sessionActionEntries({ ...base, t: i18n.getFixedT("fr"), onCurrentPlan: noop, onPlans: noop });
+    const ids = plans.map((entry) => entry.id);
+    expect(ids.indexOf("current-plan")).toBe(ids.indexOf("plans") - 1);
+    expect(plans.find((entry) => entry.id === "current-plan")?.label).toBe("Plan en cours");
   });
 
   it("offers a new tab on the web and a new Navin window in the desktop app", () => {

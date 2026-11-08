@@ -79,7 +79,9 @@ export function planItemTone(
 ): PlanItemTone {
   if (item.cancelled) return "cancelled";
   if (item.done) return "done";
-  if (item.blocked) return "blocked";
+  // A step someone is on reads in progress even while a dependency is open,
+  // like the plan's own blocked count.
+  if (item.blocked && item.status !== "in_progress") return "blocked";
   if (item.status === "fix") return "fix";
   if (item.status === "review" || item.status === "audit") return "review";
   if (current || item.active || item.status === "in_progress") return "active";
@@ -108,6 +110,24 @@ const PLAN_ROW_SURFACE_CLASS: Record<PlanItemTone, string> = {
   cancelled: "",
   pending: "",
 };
+
+/**
+ * The step being worked on, or the next one that can start; null otherwise.
+ *
+ * A step handed over for review, a blocked, finished or cancelled one is not
+ * "now": naming the first step handed over kept a step finished at dawn as
+ * the current one all day while the run went on with the next ones.
+ */
+export function planCurrentStep(
+  plan: Pick<SessionPlan, "items" | "current_id" | "complete">,
+): SessionPlanItem | null {
+  if (plan.complete) return null;
+  const item = plan.items.find((entry) => entry.id === plan.current_id);
+  if (!item) return null;
+  if (item.status === "in_progress") return item;
+  if (item.done || item.cancelled || item.blocked || item.status === "review" || item.status === "audit") return null;
+  return item;
+}
 
 /** Whether the chat panel can pause or resume the mission ledger. */
 export function missionControlState(
@@ -159,6 +179,7 @@ export function ThreadPlanPanel({
   const [requestedPage, setPage] = useState(0);
   const [gapsAcknowledged, setGapsAcknowledged] = useState(false);
   const [missionBusy, setMissionBusy] = useState(false);
+  const [hideBusy, setHideBusy] = useState(false);
   const [actionError, setActionError] = useState(false);
   const target = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
@@ -196,10 +217,7 @@ export function ThreadPlanPanel({
     ? `${plan.version ?? 0}|${JSON.stringify(plan.quality)}` : "";
   useEffect(() => { setGapsAcknowledged(false); }, [qualitySignature]);
 
-  const currentItem = useMemo(() => {
-    if (!plan || plan.complete) return null;
-    return plan.items.find((item) => item.id === plan.current_id && !item.cancelled) ?? null;
-  }, [plan]);
+  const currentItem = useMemo(() => (plan ? planCurrentStep(plan) : null), [plan]);
 
   const applyMissionAction = useCallback(async (action: "pause_mission" | "resume_mission") => {
     if (!token || !sessionKey || missionBusy) return;
@@ -216,7 +234,26 @@ export function ThreadPlanPanel({
     }
   }, [load, missionBusy, sessionKey, token]);
 
-  if (!plan || plan.items.length === 0) return null;
+  // Hides the plan from this chat only: its tasks and the run go on, and
+  // "My plans" lists it with a way to show it again.
+  const hidePlan = useCallback(async () => {
+    if (!token || !sessionKey || !plan || hideBusy) return;
+    setHideBusy(true);
+    setActionError(false);
+    try {
+      const board = await updateBoard(token, sessionKey, { action: "hide_plan", plan_id: plan.current_id });
+      // A refresh started before the change must not bring the plan back.
+      requestId.current += 1;
+      setPlan(board.session_plan ?? null);
+      setExpanded(false);
+    } catch {
+      setActionError(true);
+    } finally {
+      setHideBusy(false);
+    }
+  }, [hideBusy, plan, sessionKey, token]);
+
+  if (!plan || plan.items.length === 0 || plan.hidden) return null;
   const hasRemaining = plan.items.some((item) => !item.done);
   const started = plan.items.some((item) => item.done || item.active || item.cancelled);
   const canBuild = Boolean(onBuild) && !isStreaming && !plan.complete && hasRemaining;
@@ -228,14 +265,25 @@ export function ThreadPlanPanel({
   const page = Math.min(requestedPage, Math.ceil(plan.items.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1);
   const visibleItems = plan.items.slice(page * ACTIVITY_DETAIL_PAGE_SIZE, (page + 1) * ACTIVITY_DETAIL_PAGE_SIZE);
   const title = plan.goal || plan.title || tx("thread.plan.created", "Plan");
+  // Done, then what holds the run, then what it handed over for a check:
+  // without the last two a run that ends its steps in review read 0/40 all day.
+  const doneLabel = t("thread.plan.doneShort", {
+    defaultValue: "{{done}}/{{total}} done", done: plan.done_count, total: plan.total_count,
+  });
+  const blockedLabel = plan.blocked_count
+    ? t("thread.plan.blockedCount", { defaultValue: "{{count}} blocked", count: plan.blocked_count })
+    : "";
+  const reviewLabel = plan.review_count
+    ? t("thread.plan.toValidate", { defaultValue: "{{count}} to validate", count: plan.review_count })
+    : "";
   const status = plan.complete ? tx("thread.plan.complete", "Plan complete")
     : plan.ledger_status === "paused" ? tx("thread.planPaused", "Paused")
     : isStreaming ? tx("thread.plan.inProgress", "In progress")
     : tx("thread.plan.readyToResume", "Ready to continue");
 
   return (
-    <div ref={target} className="host-no-drag shrink-0" data-testid="thread-plan-panel">
-      {/* Same reading as the journal sections: state icon, title, count in the margin. */}
+    <div ref={target} className="host-no-drag inline-flex min-w-0 items-center" data-testid="thread-plan-panel">
+      {/* Same reading as the journal sections: state icon, title, counts in the margin. */}
       <button
         type="button"
         data-testid="thread-plan-toggle"
@@ -245,20 +293,41 @@ export function ThreadPlanPanel({
         aria-haspopup="dialog"
         onClick={() => setExpanded((open) => !open)}
         className={cn(
-          "inline-flex h-9 items-center gap-2 rounded-md px-2 text-[14px] font-semibold text-foreground/90",
+          "inline-flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-[14px] font-semibold text-foreground/90",
           "transition-colors hover:bg-foreground/[0.04]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
       >
         {plan.complete ? (
-          <CircleCheck aria-hidden className="h-[18px] w-[18px] text-[hsl(var(--tone-edit))]" strokeWidth={2} />
+          <CircleCheck aria-hidden className="h-[18px] w-[18px] shrink-0 text-[hsl(var(--tone-edit))]" strokeWidth={2} />
         ) : (
-          <ListChecks aria-hidden className="h-[18px] w-[18px] text-muted-foreground" strokeWidth={2} />
+          <ListChecks aria-hidden className="h-[18px] w-[18px] shrink-0 text-muted-foreground" strokeWidth={2} />
         )}
-        <span>{tx("thread.plan.created", "Plan")}</span>
-        <span className="text-[13.5px] font-normal tabular-nums text-muted-foreground">
-          {plan.done_count}/{plan.total_count}
+        <span className="shrink-0">{tx("thread.plan.created", "Plan")}</span>
+        {/* A narrow header cuts the counts, never the word Plan nor the dismiss button. */}
+        <span data-testid="thread-plan-counts" className="min-w-0 truncate text-[13px] font-normal tabular-nums text-muted-foreground">
+          <span data-testid="thread-plan-done-count">{doneLabel}</span>
+          {blockedLabel ? (
+            <span data-testid="thread-plan-blocked-count" className="text-amber-700 dark:text-amber-400/90"> · {blockedLabel}</span>
+          ) : null}
+          {reviewLabel ? <span data-testid="thread-plan-review-count"> · {reviewLabel}</span> : null}
         </span>
+      </button>
+      {/* Dismiss in one click, without opening the plan: only the view changes. */}
+      <button
+        type="button"
+        data-testid="thread-plan-dismiss-quick"
+        aria-label={tx("thread.plan.hide", "Hide plan")}
+        title={tx("chat.plans.hideHint", "Hidden from this chat only. Find it again in Current plan or My plans.")}
+        disabled={hideBusy}
+        onClick={() => void hidePlan()}
+        className={cn(
+          "inline-flex h-9 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground/70",
+          "transition-[background-color,color,transform] hover:bg-foreground/[0.04] hover:text-foreground active:scale-[0.96]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+        )}
+      >
+        <X aria-hidden className="h-3.5 w-3.5" strokeWidth={2} />
       </button>
       {expanded ? (
         <Callout
@@ -312,9 +381,9 @@ export function ThreadPlanPanel({
             <ul className="my-3 max-h-80 space-y-1 overflow-y-auto" aria-label={tx("thread.plan.steps", "Steps")}>
               {visibleItems.map((item) => (
                 <PlanRow key={item.id} item={item}
-                  current={item.id === plan.current_id && !plan.complete && !item.cancelled}
+                  current={item.id === currentItem?.id}
                   running={isStreaming && !reduceMotion}
-                  activity={item.id === plan.current_id && isStreaming ? activity : null}
+                  activity={item.id === currentItem?.id && isStreaming ? activity : null}
                   cancelledLabel={tx("thread.plan.cancelled", "Cancelled")}
                 />
               ))}
@@ -341,12 +410,23 @@ export function ThreadPlanPanel({
             ) : null}
             {actionError ? <MessageBar messageBarType={MessageBarType.error}>{tx("thread.plan.actionFailed", "The plan could not be updated. Please try again.")}</MessageBar> : null}
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
-              <DefaultButton data-testid="thread-plan-view"
-                onClick={() => { preloadMarkdownText(); requestOpenSessionPlan(); setExpanded(false); }}
-                className="shrink-0"
-                text={tx("thread.plan.view", "View plan")}
-                styles={COMMAND_STYLES}
-              />
+              <div className="flex flex-wrap items-center gap-1">
+                <DefaultButton data-testid="thread-plan-view"
+                  onClick={() => { preloadMarkdownText(); requestOpenSessionPlan(); setExpanded(false); }}
+                  className="shrink-0"
+                  text={tx("thread.plan.view", "View plan")}
+                  styles={COMMAND_STYLES}
+                />
+                <DefaultButton data-testid="thread-plan-dismiss"
+                  onClick={() => void hidePlan()}
+                  disabled={hideBusy}
+                  className="shrink-0"
+                  text={tx("thread.plan.hide", "Hide plan")}
+                  title={tx("chat.plans.hideHint", "Hidden from this chat only. Find it again in Current plan or My plans.")}
+                  ariaDescription={tx("chat.plans.hideHint", "Hidden from this chat only. Find it again in Current plan or My plans.")}
+                  styles={COMMAND_STYLES}
+                />
+              </div>
               <div className="flex items-center gap-1">
                 {canPause || canResume ? (
                   <IconButton

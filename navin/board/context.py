@@ -116,11 +116,15 @@ def board_digest(
     session_key: str | None = None,
     *,
     whole_board: bool = False,
+    request_id: str | None = None,
 ) -> list[str]:
     """Read the board (+ mission ledger + autonomy) and summarise. Never raises.
 
     With a ``session_key``, the mission ledger is only shown to the chat that
     works on it: a new chat must not be steered toward another chat's mission.
+    With ``request_id``, a plan filed by another request of the chat is named
+    as such: the model read it as the plan of the new request and kept adding
+    to it.
     """
     lines: list[str] = []
     try:
@@ -132,7 +136,18 @@ def board_digest(
 
             mine = set(session_focus.touched(session_key))
             tasks = [task for task in tasks if task.get("id") in mine]
-        lines.extend(board_summary_lines(tasks))
+            summary = board_summary_lines(tasks)
+            owner = session_focus.plan_owner(session_key) if request_id and summary else None
+            if owner is not None and owner != request_id:
+                lines.append(
+                    "These tasks are the plan of an earlier request in this chat. "
+                    "Resume it only if the user's message asks for it; otherwise "
+                    "file this request's own tasks with board action=create, which "
+                    "starts its own plan."
+                )
+            lines.extend(summary)
+        else:
+            lines.extend(board_summary_lines(tasks))
     except Exception:
         pass
     try:
@@ -221,11 +236,15 @@ async def board_context_provider(
     if await asyncio.to_thread(session_is_fresh, request):
         return None
     whole_board = wants_project_history(getattr(request, "original_user_text", None))
+    from navin.board.session_focus import plan_request
+
+    request_id = plan_request(getattr(request, "metadata", None))
     lines = await asyncio.to_thread(
         lambda: board_digest(
             workspace,
             getattr(request, "session_key", None) or "",
             whole_board=whole_board,
+            request_id=request_id,
         )
     )
     content = wrap_runtime_context_lines(lines)

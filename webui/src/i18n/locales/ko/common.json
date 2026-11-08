@@ -9093,6 +9093,14 @@
       "skip": "Skip Esc",
       "title": "Questions"
     },
+    "team": {
+      "switch": "팀 모드",
+      "modeHint": "모든 모드에서 팀원이 함께합니다",
+      "openSettings": "팀 설정",
+      "noMembers": "아직 팀원이 없습니다: 설정 > 팀에서 추가하세요",
+      "roomLabel": "팀 보기",
+      "toggleFailed": "팀 모드를 전환할 수 없습니다. 연결을 확인하고 다시 시도하세요."
+    },
     "composer": {
       "attachImage": "Attach files",
       "connectors": "커넥터",
@@ -9613,13 +9621,18 @@
       "cancelled": "Cancelled",
       "complete": "Plan complete",
       "created": "Plan",
-      "hide": "Hide plan",
+      "hide": "플랜 숨기기",
       "lastChange": "Last change",
       "loop": "loop detected",
       "budget": "budget {{used}}/{{max}} tokens",
       "pauseMission": "Pause",
       "resumeMission": "Resume mission",
+      "doneShort": "{{done}}/{{total}} 완료",
+      "toValidate": "검토 대기 {{count}}개",
+      "blockedCount_one": "차단됨 {{count}}개",
+      "blockedCount_other": "차단됨 {{count}}개",
       "md": {
+        "review": "검토 대기",
         "acceptance": "Acceptance criteria",
         "active": "In progress",
         "blocked": "Blocked",

@@ -21,7 +21,8 @@ from navin.agent.tools.board import BoardTool
 from navin.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from navin.board import session_focus
 from navin.board.plan import plan_quality, session_plan
-from navin.board.store import ProjectBoardStore
+from navin.board.store import BoardError, ProjectBoardStore
+from navin.security.workspace_access import WorkspaceScope, build_workspace_scope
 from navin.webui.board_api import board_payload, board_update_payload
 
 
@@ -56,6 +57,49 @@ class SessionFocusTest(unittest.TestCase):
 
     def test_a_session_starts_with_nothing(self) -> None:
         self.assertEqual(session_focus.touched("websocket:c1"), [])
+
+    def test_a_new_plan_keeps_the_previous_one_as_an_earlier_plan(self) -> None:
+        session_focus.remember("websocket:c1", ["t-1", "t-2"], owner="req-a")
+        session_focus.start_plan("websocket:c1", ["t-3"], owner="req-b")
+        self.assertEqual(session_focus.touched("websocket:c1"), ["t-3"])
+        self.assertEqual(session_focus.plan_owner("websocket:c1"), "req-b")
+        self.assertEqual(session_focus.earlier_plans("websocket:c1"), [["t-1", "t-2"]])
+        # Bringing the earlier plan back swaps the two.
+        self.assertTrue(session_focus.resume_earlier_plan("websocket:c1", ["t-2"], owner="req-c"))
+        self.assertEqual(session_focus.touched("websocket:c1"), ["t-1", "t-2"])
+        self.assertEqual(session_focus.plan_owner("websocket:c1"), "req-c")
+        self.assertEqual(session_focus.earlier_plans("websocket:c1"), [["t-3"]])
+        self.assertFalse(session_focus.resume_earlier_plan("websocket:c1", ["t-9"]))
+
+    def test_hiding_is_a_view_choice_of_the_current_plan_only(self) -> None:
+        self.assertFalse(session_focus.set_plan_hidden("websocket:c1", True))
+        session_focus.remember("websocket:c1", ["t-1"], owner="req-a")
+        self.assertTrue(session_focus.set_plan_hidden("websocket:c1", True, plan_task="t-1"))
+        self.assertTrue(session_focus.plan_hidden("websocket:c1"))
+        self.assertEqual(session_focus.touched("websocket:c1"), ["t-1"])
+        # A step added to the same plan keeps it hidden; a new plan shows again.
+        session_focus.remember("websocket:c1", ["t-2"])
+        self.assertTrue(session_focus.plan_hidden("websocket:c1"))
+        session_focus.start_plan("websocket:c1", ["t-3"], owner="req-b")
+        self.assertFalse(session_focus.plan_hidden("websocket:c1"))
+        # Hiding a plan the chat already moved away from changes nothing.
+        self.assertFalse(session_focus.set_plan_hidden("websocket:c1", True, plan_task="t-1"))
+        self.assertFalse(session_focus.plan_hidden("websocket:c1"))
+        self.assertTrue(session_focus.set_plan_hidden("websocket:c1", True))
+        self.assertTrue(session_focus.set_plan_hidden("websocket:c1", False))
+        self.assertFalse(session_focus.plan_hidden("websocket:c1"))
+
+    def test_an_older_version_replacing_the_focus_drops_the_view_state(self) -> None:
+        # A Navin that only knows session-focus.json swaps the plan: the hidden
+        # flag and the owner written for the old plan must not stick to the new one.
+        session_focus.remember("websocket:c1", ["t-1"], owner="req-a")
+        session_focus.set_plan_hidden("websocket:c1", True)
+        with session_focus._guard, session_focus._update_lock():
+            session_focus._ensure_loaded()
+            session_focus._focus["websocket:c1"] = ["t-7"]
+            session_focus._persist_unlocked()
+        self.assertFalse(session_focus.plan_hidden("websocket:c1"))
+        self.assertIsNone(session_focus.plan_owner("websocket:c1"))
 
     def test_touch_order_is_kept(self) -> None:
         session_focus.remember("websocket:c1", "t-1")
@@ -168,6 +212,36 @@ class SessionPlanTest(unittest.TestCase):
         plan = session_plan(tasks, ["t-1", "t-2", "t-3"])
         assert plan is not None
         self.assertEqual(plan["current_id"], "t-2")
+
+    def test_steps_handed_over_for_review_move_the_plan_and_are_not_current(self) -> None:
+        # Seen live: 24 steps in review and 16 blocked read "Plan 0/40, en cours :
+        # S60-Ollama" all day, the first step handed over at dawn.
+        tasks = [
+            _task("t-1", title="Qualify Ollama", status="review"),
+            _task("t-2", title="Qualify Redis", status="audit", depends_on=["t-1"]),
+            _task("t-3", title="Multi-node cluster", status="blocked"),
+            _task("t-4", title="Qualify Keycloak"),
+        ]
+        plan = session_plan(tasks, ["t-1", "t-2", "t-3", "t-4"])
+        assert plan is not None
+        # A step handed over is counted apart, never as blocked nor as done.
+        self.assertEqual((plan["done_count"], plan["review_count"], plan["blocked_count"]), (0, 2, 1))
+        self.assertFalse(plan["complete"])
+        # The next step that can start leads, not the step handed over nor the blocked one.
+        self.assertEqual(plan["current_id"], "t-4")
+        # The step worked on wins, the one touched last when several are.
+        tasks[3]["status"] = "in_progress"
+        tasks[3]["updated_at"] = "2026-11-08T09:00:00Z"
+        tasks[2].update(status="in_progress", updated_at="2026-11-08T14:00:00Z")
+        plan = session_plan(tasks, ["t-1", "t-2", "t-3", "t-4"])
+        assert plan is not None
+        self.assertEqual((plan["current_id"], plan["blocked_count"]), ("t-3", 0))
+        # A step someone is on is in progress, even while a dependency is open.
+        tasks.append(_task("t-5", status="in_progress", depends_on=["t-4"]))
+        plan = session_plan(tasks, ["t-1", "t-2", "t-3", "t-4", "t-5"])
+        assert plan is not None
+        self.assertTrue(plan["items"][4]["blocked"])
+        self.assertEqual(plan["blocked_count"], 0)
 
     def test_a_finished_plan_says_so(self) -> None:
         tasks = [_task("t-1", status="done"), _task("t-2", status="done")]
@@ -404,6 +478,60 @@ class BoardToolSessionTest(unittest.IsolatedAsyncioTestCase):
         await self._run(action="delete", task_id=task_id)
         self.assertIsNone(board_payload(self._scope(),  # type: ignore[arg-type]
                 self.key)["session_plan"])
+
+    def _as_request(self, request: str) -> None:
+        token = bind_request_context(RequestContext(
+            channel="websocket", chat_id="c1", session_key=self.key,
+            metadata={session_focus.PLAN_REQUEST_META: request},
+        ))
+        self.addCleanup(lambda: reset_request_context(token))
+
+    def _workspace(self) -> WorkspaceScope:
+        """A real scope of the test project, as the HTTP handlers pass it."""
+        return build_workspace_scope(self.project, "restricted")
+
+    async def test_each_request_files_its_own_plan_and_the_earlier_one_is_kept(self) -> None:
+        # Every new request used to pile its tasks onto the chat's one plan:
+        # "Plan 21/40" grew with unrelated work and never went away.
+        self._as_request("req-a")
+        await self._run(action="create", title="Connect the API")
+        first = session_focus.touched(self.key)
+        self._as_request("req-b")
+        await self._run(action="create", title="Fix the login")
+        payload = board_payload(self._workspace(), self.key)
+        self.assertEqual([item["title"] for item in payload["session_plan"]["items"]], ["Fix the login"])
+        self.assertFalse(payload["session_plan"]["hidden"])
+        self.assertEqual([plan["title"] for plan in payload["session_plans"]], ["Connect the API"])
+        # The next slice of the same request adds to its own plan.
+        await self._run(action="create", title="Add the login test")
+        self.assertEqual(len(session_focus.touched(self.key)), 2)
+        # A new request that works on a step of the earlier plan brings it back.
+        self._as_request("req-c")
+        await self._run(action="claim", task_id=first[0])
+        self.assertEqual(session_focus.touched(self.key), first)
+        self.assertEqual(len(board_payload(self._workspace(), self.key)["session_plans"]), 1)
+        # A task filed with depends_on on the current plan extends it.
+        self._as_request("req-d")
+        await self._run(action="create", title="Document the API", depends_on=[first[0]])
+        self.assertEqual(len(session_focus.touched(self.key)), 2)
+        self.assertEqual(session_focus.plan_owner(self.key), "req-d")
+
+    async def test_hide_plan_hides_only_the_view_and_show_plan_brings_it_back(self) -> None:
+        self._as_request("req-a")
+        await self._run(action="create", title="Ship the panel")
+        task_id = session_focus.touched(self.key)[0]
+        await self._run(action="claim", task_id=task_id)
+        hidden = board_update_payload(
+            self._workspace(), {"action": "hide_plan", "plan_id": task_id}, self.key,
+        )
+        self.assertTrue(hidden["session_plan"]["hidden"])
+        self.assertTrue(hidden["session_plan"]["items"][0]["active"], "hiding never stops the work")
+        self.assertEqual(ProjectBoardStore(self.project).get_task(task_id)["status"], "in_progress")
+        shown = board_update_payload(self._workspace(), {"action": "show_plan"}, self.key)
+        self.assertFalse(shown["session_plan"]["hidden"])
+        # Another chat has no plan to hide.
+        with self.assertRaises(BoardError):
+            board_update_payload(self._workspace(), {"action": "hide_plan"}, "websocket:other")
 
     def _scope(self) -> _FakeScope:
         return _FakeScope(self.project)

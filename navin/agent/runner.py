@@ -2544,9 +2544,14 @@ class AgentRunner:
                 )
 
                 if not asks_user(clean) and not reports_failure(clean):
+                    from navin.agent.tools.context import current_request_context
+                    from navin.board.session_focus import plan_request
+
+                    bound = current_request_context()
                     steps = await asyncio.to_thread(
                         open_plan_steps, spec.workspace, spec.session_key,
                         request_drives_plan=_request_called_board(messages),
+                        request_id=plan_request(bound.metadata if bound is not None else None),
                     )
                     mark = (
                         validation.revision,
