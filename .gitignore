@@ -190,6 +190,9 @@ meetily/
 # Transcripts de sessions du CLI lance a la racine du depot (runtime).
 sessions/
 
+# Fichiers locaux d'execution (kubeconfig de clusters de test...), jamais versionnes.
+.run/
+
 # Design systems generes par le skill ui-ux-pro-max quand un agent tourne
 # a la racine du depot : artefacts de session, jamais versionnes.
 design-system/
