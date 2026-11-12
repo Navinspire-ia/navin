@@ -4659,6 +4659,11 @@ class NavinApp(App[None]):
     async def _pick_model(self) -> None:
         if not self._engine_ready:
             return
+        # Models added to the plan on the site since the last sync join the
+        # list. A slow or absent network delays this open by 2.5 s at most;
+        # a sync still running then lands on the next open.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(asyncio.to_thread(self.runtime.refresh_model_catalog), 2.5)
         rows = await asyncio.to_thread(self.runtime.preset_details)
         items = model_pick_items(rows, self.runtime.status.model_preset)
         chosen = await self.push_screen_wait(

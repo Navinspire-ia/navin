@@ -171,6 +171,17 @@ def _unattended(request: ApprovalRequest, why: str) -> ApprovalDecision:
     return ApprovalDecision(allowed=False, reason=why)
 
 
+def exact_scope(kind: str, text: str) -> str:
+    """The scope an "allow every time" covers: the exact text the person read (command and folder).
+
+    One scope for every command meant that allowing ``ls`` once allowed ``find . -exec sh -c ... \\;``,
+    ``sed 's/x/y/e'`` or ``$(...)`` for the rest of the session (the confirmation bypass class of 2026).
+    """
+    import hashlib
+
+    return f"{kind}:{hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()[:32]}"
+
+
 class ApprovalGate(Protocol):
     """What a tool sees. Implementations decide how the user is reached."""
 
@@ -219,6 +230,10 @@ class ApprovalBroker:
         self._pending: dict[str, _Pending] = {}
         # session key -> scopes the user allowed for the rest of the session.
         self._remembered: dict[str, set[str]] = {}
+
+    @property
+    def config(self) -> ApprovalConfig:
+        return self._config
 
     def apply_config(self, config: ApprovalConfig) -> None:
         """Hot-apply a new approvals posture from Settings > Security."""
@@ -586,6 +601,10 @@ class SubagentApprovalGate:
         # Told when a request goes to the user and when it is answered, so the
         # subagent's card can say it waits for an approval instead of looking stuck.
         self._on_wait = on_wait
+
+    @property
+    def parent(self) -> ApprovalGate | None:
+        return self._parent
 
     async def ask(self, request: ApprovalRequest) -> ApprovalDecision:
         from dataclasses import replace as _replace

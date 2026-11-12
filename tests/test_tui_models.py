@@ -154,6 +154,31 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         names = [row["name"] for row in self.runtime.preset_details()]
         self.assertEqual(names.count("default"), 1)
 
+    async def test_catalog_refresh_at_startup_and_on_picker_open_brings_in_new_models(self):
+        from unittest.mock import patch
+
+        refresh = Mock(return_value=True)
+        on_disk = model_config(Path(self.directory.name))
+        on_disk.model_catalog.enabled = True
+        on_disk.model_presets["claude-fable-5-2"] = ModelPresetConfig(
+            model="anthropic/claude-fable-5.2", provider="navin", label="Claude Fable 5.2",
+        )
+        with (
+            patch("navin.providers.managed_catalog.refresh_managed_catalog", refresh),
+            patch("navin.config.loader.load_config", return_value=on_disk),
+        ):
+            # Catalog sync off (BYOK, free plan): no fetch at all.
+            self.assertIsNone(self.runtime.start_model_catalog_refresh())
+            self.assertFalse(self.runtime.refresh_model_catalog())
+            refresh.assert_not_called()
+            self.runtime.config.model_catalog.enabled = True
+            worker = self.runtime.start_model_catalog_refresh()  # CLI startup, in the background
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(self.runtime.refresh_model_catalog())  # model picker opening
+        self.assertEqual(refresh.call_count, 2)
+        self.assertIn("claude-fable-5-2", [row["name"] for row in self.runtime.preset_details()])
+
     async def test_provider_groups_capabilities_and_media_order(self):
         items = model_pick_items(self.runtime.preset_details())
         self.assertNotIn("hidden", [item.id for item in items])

@@ -493,9 +493,24 @@ class TestExtensionAgents:
                 f"---\nname: {name}\ndescription: d\npermissionMode: {raw}\n---\nWork.\n",
             )
             assert find_project_agent(tmp_path, name).permission_mode == expected
-            assert _agent_permission_mode(tmp_path, name) == expected
+            # A project file (maybe from a cloned repository) never grants itself edits or every permission.
+            granted = "default" if expected in ("acceptEdits", "bypassPermissions") else expected
+            assert _agent_permission_mode(tmp_path, name) == granted
         assert _agent_permission_mode(tmp_path, "missing") == "default"
         assert _agent_permission_mode(tmp_path, None) == "default"
+
+    def test_a_personal_agent_keeps_its_permission_mode(self, tmp_path, monkeypatch):
+        from navin.agent.subagent import _agent_permission_mode
+
+        home = tmp_path / "home"
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+        _write(home / ".navin/agents/mine.md",
+               "---\nname: mine\ndescription: d\npermissionMode: acceptEdits\n---\nWork.\n")
+        assert find_project_agent(project, "mine").scope == "personal"
+        assert _agent_permission_mode(project, "mine") == "acceptEdits"
 
     def test_an_isolated_run_is_resumable_while_its_checkout_exists(self, tmp_path):
         from navin.agent.subagent import SubagentManager, _saved_checkout

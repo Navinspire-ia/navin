@@ -650,7 +650,14 @@ def _agent_permission_mode(workspace: Path | None, agent_name: str | None) -> st
         definition = find_project_agent(Path(workspace), agent_name)
     except Exception:  # noqa: BLE001
         return "default"
-    return getattr(definition, "permission_mode", "default") if definition else "default"
+    mode = getattr(definition, "permission_mode", "default") if definition else "default"
+    if mode in ("bypassPermissions", "acceptEdits") and getattr(definition, "scope", "project") == "project":
+        # An agent file of the project folder (.claude/agents, .navin/agents) may come from a cloned repository:
+        # it never grants itself anything. Personal, plugin and built-in agents keep their mode.
+        logger.warning("Agent {}: permissionMode {} of a project file ignored, it asks as usual",
+                       agent_name, mode)
+        return "default"
+    return mode
 
 
 def _saved_checkout(checkpoint: dict[str, Any] | None) -> dict[str, Any] | None:

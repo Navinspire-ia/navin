@@ -21,9 +21,11 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from navin.agent.approval import (
+    NO_APPROVER,
     ApprovalDecision,
     ApprovalRequest,
     bind_approval_gate,
+    exact_scope,
     reset_approval_gate,
 )
 from navin.agent.tools.context import RequestContext, bind_request_context, reset_request_context
@@ -161,7 +163,8 @@ class ExecApprovalTest(_GateTest):
         tool = ExecTool(working_dir=str(self.root), ask_every_command=True)
         out = self._run(tool.execute(command="echo ok"), gate)
         self.assertEqual(len(gate.seen), 1)
-        self.assertEqual(gate.seen[0].scope, "exec:command")
+        cwd = gate.seen[0].detail.split("\nin ", 1)[1]
+        self.assertEqual(gate.seen[0].scope, exact_scope("exec:command", f"echo ok\0{cwd}"))
         self.assertIn("echo ok", gate.seen[0].detail)
         self.assertIn("refused", out.lower())
 
@@ -173,10 +176,28 @@ class ExecApprovalTest(_GateTest):
         self.assertIn("ok", out)
         self.assertNotIn("refused", out.lower())
 
-    def test_ask_every_command_unattended_still_runs(self) -> None:
+    def test_ask_every_command_unattended_is_refused(self) -> None:
+        """Asked at every command: a scheduled job or a planted cron entry never runs a command unapproved."""
         tool = ExecTool(working_dir=str(self.root), ask_every_command=True)
+        out = self._run(tool.execute(command="touch planted-marker"), None)
+        self.assertFalse((self.root / "planted-marker").exists())
+        self.assertIn(NO_APPROVER, out)
+
+    def test_destructive_mode_unattended_still_runs(self) -> None:
+        tool = ExecTool(working_dir=str(self.root), ask_every_command=False)
         out = self._run(tool.execute(command="echo ok"), None)
         self.assertIn("ok", out)
+
+    def test_allow_every_time_covers_the_exact_command_only(self) -> None:
+        """One "allow every time" for ls must not cover find -exec, sed e or $(...) afterwards."""
+        gate = _RecordingGate(allowed=True)
+        tool = ExecTool(working_dir=str(self.root), ask_every_command=True)
+        for command in ("ls", "find . -maxdepth 0 -exec echo found \\;", "echo $(echo sub)", "ls"):
+            self._run(tool.execute(command=command), gate)
+        scopes = [request.scope for request in gate.seen]
+        self.assertEqual(len(scopes), 4)
+        self.assertEqual(len(set(scopes)), 3, "the same command keeps its scope, every other one gets its own")
+        self.assertTrue(all(scope.startswith("exec:command:") for scope in scopes))
 
     def test_an_allow_pattern_still_short_circuits_without_asking(self) -> None:
         (self.root / "junk").mkdir()

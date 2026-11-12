@@ -16,6 +16,7 @@ never the real user config.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -52,6 +53,21 @@ import pytest  # noqa: E402
 
 from navin.config import loader  # noqa: E402
 from navin.providers import reasoning_control  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _git_hardening_env_restored():
+    """Building an AgentLoop hardens os.environ for every git the process runs (navin/agent/tool_hardening.py).
+
+    In the app that lasts for the process; here one test building a loop would refuse ``git -C <bare remote>``
+    to every later test, so the GIT_CONFIG_* variables are put back as they were after each test.
+    """
+    saved = {key: value for key, value in os.environ.items() if key.startswith("GIT_CONFIG_")}
+    yield
+    for key in [key for key in os.environ if key.startswith("GIT_CONFIG_")]:
+        if key not in saved:
+            del os.environ[key]
+    os.environ.update(saved)
 
 
 @pytest.fixture(autouse=True)

@@ -4,14 +4,13 @@
 #   - desktop/src-tauri/tauri.conf.json  (source lue par les builds)
 #   - desktop/src-tauri/Cargo.toml
 #   - desktop/package.json
-#   - desktop-electron/package.json
 #   - webui/package.json
 #   - pyproject.toml
 #   - navin/_version.py
 #
 # Usage :  scripts/set-version.sh 1.1.0
 # Idempotent : si la version est déjà la bonne, ne réécrit rien.
-# Appelé automatiquement par make linux/appimage/electron-linux/windows/macos/desktop-dmg
+# Appelé automatiquement par make linux/appimage/windows/macos/desktop-dmg
 # quand VERSION=x.y.z est passé (défaut : version Tauri courante = no-op).
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -58,11 +57,6 @@ stamp(
     r'^(\s*"version"\s*:\s*")[^"]+(")',
     rf"\g<1>{version}\g<2>",
 )
-stamp(
-    root / "desktop-electron/package.json",
-    r'^(\s*"version"\s*:\s*")[^"]+(")',
-    rf"\g<1>{version}\g<2>",
-)
 # La WebUI n'est pas publiée comme paquet npm, mais sa version se retrouve dans
 # le bundle et dans build-info.json : restée à 1.0.0 pendant que tout le reste
 # passait en 1.3.0, elle faisait mentir toute trace venant du front.
@@ -90,7 +84,7 @@ stamp(
 
 # Lockfiles : la version du paquet racine / du crate desktop, comme le commit
 # "stamp product version" les met à jour à la main. Absents : ignorés.
-for lock in ("webui/package-lock.json", "desktop/package-lock.json", "desktop-electron/package-lock.json"):
+for lock in ("webui/package-lock.json", "desktop/package-lock.json"):
     path = root / lock
     if not path.is_file():
         continue

@@ -445,31 +445,6 @@ class SecretAtRestTest(unittest.TestCase):
             self.assertEqual(unlock_stored_secret(stored, path), secret)
             self.assertEqual(unlocked_secret(stored), "")
             self.assertEqual(unlocked_secret(secret), secret)
-            self._assert_electron_unlocks(path, stored, secret)
-
-    def _assert_electron_unlocks(self, config_path: Path, stored: str, secret: str) -> None:
-        import shutil
-        import subprocess
-
-        node = shutil.which("node")
-        if not node:
-            self.skipTest("node is not installed")
-        script = Path(__file__).resolve().parent.parent / "desktop-electron" / "config-secrets.js"
-        result = subprocess.run(
-            [
-                node,
-                "-e",
-                "const {unlockStoredSecret}=require(process.argv[1]);"
-                "process.stdout.write(unlockStoredSecret(process.argv[2], process.argv[3]));",
-                str(script),
-                stored,
-                str(config_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.stdout, secret)
 
     def test_get_api_key_never_returns_ciphertext(self) -> None:
         config = Config()

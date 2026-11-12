@@ -4042,7 +4042,17 @@ class AgentRunner:
             from navin.agent.tool_deferral import mark_loaded
 
             mark_loaded(spec.session_key, (tool_call.name,))
+        from navin.agent.tool_hardening import process_tool_refusal
         from navin.agent.user_hooks import post_tool_use_feedback, pre_tool_use_block
+
+        # "Ask at every command": a tool that runs the project's programs asks like exec.
+        process_refused = await process_tool_refusal(tool_call.name, params)
+        if process_refused is not None:
+            return (
+                f"Error: '{tool_call.name}' was not run. {process_refused}",
+                {"name": tool_call.name, "status": "error", "detail": "not approved"},
+                None,
+            )
 
         hook_block = await pre_tool_use_block(
             spec.workspace, spec.session_key, tool_call.name, params, notify=hook.emit_user_notice,
@@ -4131,6 +4141,9 @@ class AgentRunner:
         # A run that never reached the test runner (missing binary/module,
         # bad path, missing browser) tested nothing: give the run back so a
         # setup slip does not exhaust the budget before any real test ran.
+        from navin.agent.tool_hardening import label_external
+
+        result = label_external(tool_call.name, result)
         if browser_budget is not None and _BROWSER_RUN_NEVER_STARTED.search(str(result)[:20000]):
             browser_budget.browser_test_runs = max(0, browser_budget.browser_test_runs - 1)
         if is_tool_error_result(tool_call.name, result):

@@ -299,17 +299,6 @@ describe("wiring", () => {
     expect(boundary).not.toContain("window.location.reload()");
   });
 
-  it("keeps the Electron shell on the Navin splash when a load or renderer fails", () => {
-    const electron = readFileSync(
-      resolve(__dirname, "../../../desktop-electron/main.js"),
-      "utf8",
-    );
-    expect(electron).toContain('"did-fail-load"');
-    expect(electron).toContain('"render-process-gone"');
-    expect(electron).toContain("recoverAfterFailedLoad(");
-    expect(electron).toContain("guardWebuiLoads(mainWindow)");
-  });
-
   it("makes the Tauri supervisor probe /health before reloading the WebUI", () => {
     const tauri = readFileSync(
       resolve(__dirname, "../../../desktop/src-tauri/src/main.rs"),

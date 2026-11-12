@@ -42,6 +42,7 @@ from navin.utils import longpath, text_decode
 from navin.utils.git_state import uncommitted_note
 from navin.utils.helpers import build_image_content_blocks, detect_image_mime
 from navin.utils.resolve_cache import resolve_root
+from navin.utils.safe_write import write_bytes_no_follow
 
 
 def _split_approved_paths() -> tuple[list[Path], list[Path]]:
@@ -56,8 +57,8 @@ def _split_approved_paths() -> tuple[list[Path], list[Path]]:
         if item.is_dir():
             dirs.append(item)
         else:
+            # One approved file opens that file only, never its whole folder (edits outside the project).
             files.append(item)
-            dirs.append(item.parent)
     return dirs, files
 
 
@@ -98,7 +99,7 @@ def _write_like_existing(fp: Path, content: str) -> None:
     encoding 20 MB of new text are each a visible stall on the event loop.
     """
     layout = _existing_layout(fp)
-    fp.write_bytes(encode_for(_match_line_endings(content, layout), layout))
+    write_bytes_no_follow(fp, encode_for(_match_line_endings(content, layout), layout))
 
 
 _SPLIT_CHUNK_CHARS = 1 << 20
@@ -369,6 +370,14 @@ class _FsTool(Tool):
             restrict_to_workspace=self._restrict_to_workspace,
             sandbox_restricts_workspace=self._sandbox_restricts_workspace,
         )
+        from navin.agent.tool_hardening import KERNEL_DENIED, kernel_secret_path
+
+        # /proc/<pid>/environ and the like: refused before any approval card is offered.
+        spelled = Path(path).expanduser()
+        if not spelled.is_absolute() and access.project_path is not None:
+            spelled = Path(access.project_path) / spelled
+        if kernel_secret_path(spelled):
+            raise PermissionError(KERNEL_DENIED)
         lifted_dirs, lifted_files = _split_approved_paths()
         # The OS temp dir is scratch space, like for exec: reading back
         # /tmp/out.json or writing a throwaway script must never stop on a
@@ -388,6 +397,9 @@ class _FsTool(Tool):
         io_resolved = longpath.io_path(resolved)
         if is_runtime_secret_path(io_resolved) or is_runtime_secret_path(resolved):
             raise PermissionError(RUNTIME_CONFIG_DENIED)
+        if kernel_secret_path(resolved):
+            # Reached through a link inside the project (env -> /proc/self/environ).
+            raise PermissionError(KERNEL_DENIED)
         return io_resolved
 
     def _resolve_read(self, path: str) -> Path:
@@ -1966,7 +1978,7 @@ class EditFileTool(_FsTool):
             # Re-encode the way the file was stored, so editing one line of a
             # cp1252 or BOM-prefixed file does not rewrite every other line.
             def encode_and_write() -> None:
-                fp.write_bytes(text_decode.encode(new_content, decoded))
+                write_bytes_no_follow(fp, text_decode.encode(new_content, decoded))
 
             await asyncio.to_thread(encode_and_write)
             await asyncio.to_thread(self._file_states.record_write, fp)

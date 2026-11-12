@@ -46,10 +46,50 @@ class PluginError(ValueError):
     pass
 
 
-def plugin_allowed(name: str) -> bool:
+def plugin_allowed(name: str, plugin_dir: Path | None = None) -> bool:
+    """The organization's word on this plugin; a hash-pinned entry is checked against the files of ``plugin_dir``."""
     from navin.agent.managed_policy import plugin_allowed as allowed
+    from navin.agent.managed_policy import plugin_pinned
 
-    return allowed(name)
+    digest = None
+    if plugin_dir is not None and plugin_pinned(name):
+        try:
+            digest = bundle_digest(plugin_dir)
+        except OSError:
+            digest = ""
+    return allowed(name, digest)
+
+
+# path -> (cheap stat signature, sha256): the bytes are hashed again only when a file changed.
+_DIGESTS: dict[str, tuple[tuple[Any, ...], str]] = {}
+
+
+def bundle_digest(plugin_dir: Path) -> str:
+    """SHA-256 over every file of an installed pack (path, kind, bytes; links by their target, never followed)."""
+    import hashlib
+
+    entries: list[tuple[str, Path, os.stat_result]] = []
+    for current, dirnames, filenames in os.walk(plugin_dir, followlinks=False):
+        dirnames.sort()
+        base = Path(current)
+        for name in sorted([*filenames, *(d for d in dirnames if (base / d).is_symlink())]):
+            path = base / name
+            entries.append((path.relative_to(plugin_dir).as_posix(), path, os.lstat(path)))
+    entries.sort(key=lambda entry: entry[0])
+    signature = tuple((rel, st.st_mode, st.st_size, st.st_mtime_ns) for rel, _path, st in entries)
+    cached = _DIGESTS.get(str(plugin_dir))
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    digest = hashlib.sha256()
+    for rel, path, st in entries:
+        digest.update(rel.encode("utf-8", "surrogateescape") + b"\0")
+        if stat.S_ISLNK(st.st_mode):
+            digest.update(b"L" + os.fsencode(os.readlink(path)) + b"\0")
+        else:
+            digest.update(b"F" + hashlib.sha256(path.read_bytes()).digest())
+    value = digest.hexdigest()
+    _DIGESTS[str(plugin_dir)] = (signature, value)
+    return value
 
 
 def mcp_server_allowed(name: str) -> bool:
@@ -430,6 +470,8 @@ class PluginManager:
                 mcp = self._mcp_servers(plugin_dir)
             except PluginError:
                 mcp = {}
+            # An allowedPlugins entry pinned to a hash admits these files only while they are the reviewed ones.
+            allowed = plugin_allowed(name, plugin_dir)
             rows.append({
                 "name": name,
                 "display_name": str(manifest.get("displayName") or manifest.get("name") or name),
@@ -443,8 +485,8 @@ class PluginManager:
                 "homepage": str(manifest.get("homepage") or ""),
                 "source": str(state.get(name, {}).get("source") or ""),
                 # Organization policy (allowManagedPluginsOnly) wins over the user's toggle.
-                "enabled": bool(state.get(name, {}).get("enabled", True)) and plugin_allowed(name),
-                "blocked_by_policy": not plugin_allowed(name),
+                "enabled": bool(state.get(name, {}).get("enabled", True)) and allowed,
+                "blocked_by_policy": not allowed,
                 "skills": skills,
                 "mcp_servers": sorted(mcp.keys()),
                 "agents": _md_names([plugin_dir / "agents", *(plugin_dir / p for p in _manifest_paths(manifest, "agents"))]),
@@ -685,6 +727,8 @@ class PluginManager:
         entry["enabled"] = enabled
         if source is not None:
             entry["source"] = source
+            # The SHA-256 of the files as installed: the value an administrator pins in allowedPlugins.
+            entry["sha256"] = bundle_digest(self.root / name)
         state[name] = entry
         self._save_state(state)
 

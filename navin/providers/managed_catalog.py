@@ -29,9 +29,10 @@ The sync is opt-in (``modelCatalog.enabled``) and never blocks startup: any
 network or payload problem is logged and the previously synced presets keep
 serving, since they were persisted into config.json by the last good sync.
 
-Refresh policy (intentionally lean):
-- once at gateway startup;
-- forced when the chat picker / Settings → Models open;
+Refresh policy (intentionally lean), the same on the desktop, the browser
+and the CLI:
+- once at gateway startup, and at CLI startup (in the background);
+- forced when the chat picker (desktop, browser and CLI) / Settings → Models open;
 - forced on license activate / plan change.
 No periodic catalog loop and no catalog fetch on every license poll.
 """

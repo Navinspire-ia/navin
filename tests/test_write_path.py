@@ -53,15 +53,17 @@ def _write(root: Path, rel: str, body: str) -> Path:
 def _fail_once_on(name: str, message: str = "disk full"):
     """Break the first write to `name`, then get out of the way.
 
-    The rollback restores backups through the same `write_bytes`, so a fake that
-    kept raising would break the recovery it is meant to observe.
+    The rollback restores backups through the same writer, so a fake that kept raising would break the
+    recovery it is meant to observe. Multi-file writes go through the no-follow writer
+    (navin/utils/safe_write.py), never Path.write_bytes.
     """
-    real = Path.write_bytes
+    from navin.utils.safe_write import write_bytes_no_follow as real
+
     fired = False
 
     def write_bytes(self_path, *args, **kwargs):
         nonlocal fired
-        if not fired and self_path.name == name:
+        if not fired and Path(self_path).name == name:
             fired = True
             raise OSError(message)
         return real(self_path, *args, **kwargs)
@@ -469,7 +471,7 @@ class ApplyPatchTest(_WorkspaceTest):
         self.states.record_read(self.root / "a.py")
         self.states.record_read(self.root / "b.py")
 
-        with mock.patch.object(Path, "write_bytes", _fail_once_on("b.py")):
+        with mock.patch("navin.agent.tools.atomic_write.write_bytes_no_follow", _fail_once_on("b.py")):
             out = self._apply([
                 {"path": "a.py", "action": "replace", "old_text": "original", "new_text": "patched"},
                 {"path": "b.py", "action": "replace", "old_text": "original", "new_text": "patched"},
@@ -483,7 +485,7 @@ class ApplyPatchTest(_WorkspaceTest):
     def test_a_failing_write_removes_files_it_had_created(self) -> None:
         _write(self.root, "existing.py", "kept\n")
         self.states.record_read(self.root / "existing.py")
-        with mock.patch.object(Path, "write_bytes", _fail_once_on("second.py")):
+        with mock.patch("navin.agent.tools.atomic_write.write_bytes_no_follow", _fail_once_on("second.py")):
             self._apply([
                 {"path": "created.py", "action": "add", "new_text": "new\n"},
                 {"path": "second.py", "action": "add", "new_text": "new\n"},
@@ -496,7 +498,7 @@ class ApplyPatchTest(_WorkspaceTest):
         _write(self.root, "a.py", "original\n")
         self.states.record_read(self.root / "a.py")
         before = self.states.get(self.root / "a.py")
-        with mock.patch.object(Path, "write_bytes", _fail_once_on("a.py", "nope")):
+        with mock.patch("navin.agent.tools.atomic_write.write_bytes_no_follow", _fail_once_on("a.py", "nope")):
             self._apply([
                 {"path": "a.py", "action": "replace", "old_text": "original", "new_text": "x"},
             ])

@@ -15,7 +15,7 @@ Requested version or bump: "$ARGUMENTS" (ask with `ask_user` when empty: patch r
 
 ## 2. Bump everywhere
 
-Find every file that pins the version (`grep` for the exact current version string) and update them all in one go. For Navin that is at least: `navin/_version.py`, `pyproject.toml`, `webui/package.json` and `package-lock.json`, `desktop/package.json` and `package-lock.json`, `desktop/src-tauri/Cargo.toml`, `Cargo.lock` and `tauri.conf.json`, `desktop-electron/package.json` and `package-lock.json`. Edit the lock files by hand only on the project's own entry (never regenerate them). Re-run the grep to prove no occurrence of the old version is left in those manifests.
+Find every file that pins the version (`grep` for the exact current version string) and update them all in one go. For Navin that is at least: `navin/_version.py`, `pyproject.toml`, `webui/package.json` and `package-lock.json`, `desktop/package.json` and `package-lock.json`, `desktop/src-tauri/Cargo.toml`, `Cargo.lock` and `tauri.conf.json`. Edit the lock files by hand only on the project's own entry (never regenerate them). Re-run the grep to prove no occurrence of the old version is left in those manifests.
 
 ## 3. Changelog and checks
 

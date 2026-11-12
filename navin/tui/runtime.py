@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import math
 import os
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -795,6 +796,7 @@ class TuiRuntime:
             except ImportError:
                 self._license_sync = None
         self._ensure_tasks()
+        self.start_model_catalog_refresh()
         self._start_freeze_watch()
         # Windows: same background ripgrep and Git installs as the desktop gateway.
         from navin.utils.path_env import ensure_git, ensure_ripgrep
@@ -2374,6 +2376,41 @@ class TuiRuntime:
                 pin,
                 self.agent_loop.model_preset or "default",
             )
+
+    def start_model_catalog_refresh(self) -> threading.Thread | None:
+        """Startup: the plan's model list from the site, in the background.
+
+        Same as the desktop gateway at startup (``_start_gateway_catalog_sync``):
+        models added on the site since the last run join the CLI without
+        delaying its first frame. None when the catalog sync is off.
+        """
+        if not getattr(getattr(self.config, "model_catalog", None), "enabled", False):
+            return None
+        worker = threading.Thread(target=self.refresh_model_catalog, name="navin-catalog-sync", daemon=True)
+        worker.start()
+        return worker
+
+    def refresh_model_catalog(self) -> bool:
+        """Fetch the plan's model list from the site, then reload the presets.
+
+        Run off the UI loop when the model picker opens. The CLI had no catalog
+        sync of its own: models added to the plan on the site (Claude Fable 5.2
+        and Kimi K3.1 Pro, 2026-11-10) only reached it after a desktop or
+        browser session. Same 30 s throttle as Settings; offline, the picker
+        keeps the models it has. True when the presets on disk changed.
+        """
+        if not getattr(getattr(self.config, "model_catalog", None), "enabled", False):
+            return False
+        from navin.providers.managed_catalog import refresh_managed_catalog
+
+        try:
+            changed = refresh_managed_catalog()
+            if changed:
+                self.reload_from_disk()
+        except Exception as exc:
+            logger.warning("Model catalog refresh skipped: {}", exc)
+            return False
+        return changed
 
     def reload_from_disk(self, config_path: Path | None = None) -> None:
         """Pick up provider / model / account edits without restarting the TUI."""

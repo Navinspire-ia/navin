@@ -1,5 +1,5 @@
 .PHONY: help check doctor install uninstall start stop restart status start-fg start-prod build
-.PHONY: linux appimage appimage-release pacman electron-linux electron-appimage electron-appimage-release electron-dev macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
+.PHONY: linux appimage appimage-release pacman macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
 .PHONY: publish-forgejo publish-github publish-github-dry publish-remotes publish-sm publish-sm-dry
 .PHONY: start-bg stop-bg restart-bg logs logs-clear _ensure_navin set-version
 .PHONY: lint clean clean-logs clean-all clean_python_cache native desktop-parity
@@ -91,10 +91,6 @@ help:
 	@echo "    appimage         Tout-en-un Linux : sidecar frais + AppImage + .deb + .rpm + .pkg.tar.zst (pacman) dans os/linux/"
 	@echo "    appimage-release Bundles Linux compatibles distros anciennes (via Docker)"
 	@echo "    pacman           Alias de appimage (produit aussi le .pkg.tar.zst Arch)"
-	@echo "    electron-linux    Sidecar Linux pour la coque Electron (même moteur que make linux)"
-	@echo "    electron-appimage Bundles Electron locaux : AppImage + .deb + .rpm dans os/linux/electron/"
-	@echo "    electron-appimage-release Bundles Electron via Docker (Ubuntu 24.04), pour distribution"
-	@echo "    electron-dev     Fenêtre Electron contre le backend du venv (pas de paquet)"
 	@echo "    windows          Tout-en-un Windows : prérequis + sidecar + .msi + setup .exe signés + vérif"
 	@echo "                     Signature Azure Trusted Signing si packaging/windows/signing.env existe"
 	@echo "    desktop-exe      App desktop Windows Tauri (.msi + setup .exe) dans os/windows/x64/"
@@ -115,7 +111,6 @@ help:
 	@echo "  Versionnage (VERSION=x.y.z sur n'importe quelle cible de build):"
 	@echo "    make windows VERSION=1.1.0     build Windows estampillé 1.1.0"
 	@echo "    make appimage VERSION=1.1.0    build Linux estampillé 1.1.0"
-	@echo "    make electron-linux VERSION=1.2.1 && make electron-appimage-release VERSION=1.2.1"
 	@echo "    make aws-upload VERSION=1.1.0  publie v1.1.0/ + manifeste site"
 	@echo "    make aws-upload VERSION=1.1.0 PLATFORM=linux  n'écrase que Linux"
 	@echo ""
@@ -175,30 +170,6 @@ pacman: appimage
 # distros too (glibc >= 2.35). Use this one for anything given to users.
 appimage-release: set-version
 	@sh packaging/linux/build-appimage-docker.sh
-
-# Option Electron / Chromium, parallèle à linux / appimage / appimage-release.
-# Tauri reste inchangé. VERSION=x.y.z tamponne desktop-electron/package.json
-# via set-version, comme pour Tauri.
-#
-#   make electron-linux VERSION=1.2.1 && make electron-appimage-release VERSION=1.2.1
-electron-linux: set-version
-	@sh packaging/linux/build-offline.sh
-
-electron-appimage: electron-linux
-	@sh packaging/linux/build-electron.sh
-
-electron-appimage-release: set-version
-	@sh packaging/linux/build-electron-docker.sh
-
-electron-dev:
-	@cd desktop-electron && { [ -x node_modules/.bin/electron ] || npm install; }
-	@# Session-wide ELECTRON_OZONE_PLATFORM_HINT=wayland (Omarchy/UWSM) is
-	# read by Chromium before main.js. NVIDIA GBM cannot paint Wayland buffers.
-	@if [ -n "$$WAYLAND_DISPLAY" ] && [ -n "$$DISPLAY" ] && { [ -e /proc/driver/nvidia/version ] || [ -e /dev/nvidia0 ]; }; then \
-		export ELECTRON_OZONE_PLATFORM_HINT=x11; \
-		echo "Navin desktop GPU: ELECTRON_OZONE_PLATFORM_HINT=x11 (NVIDIA Wayland)"; \
-	fi; \
-	NAVIN_DESKTOP_BIN="$(VENV)/bin/navin" $(CURDIR)/desktop-electron/node_modules/.bin/electron "$(CURDIR)/desktop-electron"
 
 # Tout-en-un Windows: installe les prérequis manquants via winget (Rust MSVC,
 # Node, Python, Build Tools C++), puis construit l'app desktop Tauri.

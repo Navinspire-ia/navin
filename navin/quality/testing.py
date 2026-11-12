@@ -1352,20 +1352,24 @@ def _run_one(
         cwd = wsl_route.launch_cwd()
 
     started = time.monotonic()
+    from navin.agent import host_jobs
+
     try:
         # Runners spawn workers (xdist, vitest threads, npx -> node): the
         # timeout must kill the whole tree, not only the launcher.
         execute = _run_streaming if on_output is not None else run_killing_tree
-        completed = execute(
-            argv,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=float(spec.get("timeout_s", 600)),
-            **({"on_output": on_output} if on_output is not None else {}),
-        )
+        # One machine-wide budget of builds and test runs for every agent (navin/agent/host_jobs.py).
+        with host_jobs.blocking_slot(host_jobs.argv_command(argv)):
+            completed = execute(
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=float(spec.get("timeout_s", 600)),
+                **({"on_output": on_output} if on_output is not None else {}),
+            )
     except subprocess.TimeoutExpired:
         wsl_route.note_launch(argv, timed_out=True)
         if report_path is not None:
@@ -1380,6 +1384,12 @@ def _run_one(
         if report_path is not None:
             report_path.unlink(missing_ok=True)
         return TestOutcome(runner=name, ran=False, skipped_reason=str(exc))
+    except (host_jobs.HostBusyError, MemoryError) as exc:
+        # Not started (no slot within the wait) or stopped before it exhausted the machine's memory.
+        if report_path is not None:
+            report_path.unlink(missing_ok=True)
+        return TestOutcome(runner=name, ran=False, skipped_reason=str(exc).removeprefix("Error: "),
+                           duration_ms=int((time.monotonic() - started) * 1000))
 
     wsl_route.note_launch(argv, timed_out=False, completed=completed)
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -1435,7 +1445,13 @@ def _run_one(
 
 
 def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwargs: Any):
-    """Drain runner output without pipes filling up, preserving the time limit."""
+    """Drain runner output without pipes filling up, preserving the time limit.
+
+    Watched like an agent command: stopped when it, or the machine, runs out of memory
+    (navin/utils/memory_guard.py), with a :class:`MemoryError` carrying the reason.
+    """
+    from navin.utils.memory_guard import MemoryGuard, lower_priority, raise_oom_priority
+
     timeout = kwargs.pop("timeout")
     # creationflags / start_new_session too: the Popen below spreads
     # detached_no_window_kwargs(). Passing one twice was a TypeError on every Windows run.
@@ -1450,6 +1466,10 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
             **detached_no_window_kwargs(),
         ) as process:
             tail = b""
+            lower_priority(process.pid)
+            raise_oom_priority(process.pid)
+            guard = MemoryGuard(process.pid)
+            next_check = time.monotonic() + 1.0
             try:
                 while True:
                     try:
@@ -1462,6 +1482,11 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
                         on_output(tail.decode("utf-8", errors="replace"))
                     if process.poll() is not None:
                         break
+                    if guard.limit > 0 and time.monotonic() >= next_check:
+                        next_check = time.monotonic() + 1.0
+                        if guard.check():
+                            process.wait(timeout=5)
+                            raise MemoryError(guard.message())
                     if time.monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(argv, timeout)
             finally:

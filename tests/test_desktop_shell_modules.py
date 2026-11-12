@@ -298,30 +298,18 @@ class DesktopShellModulesTest(unittest.TestCase):
         self.assertIn('"auto" | "expanded" | "compact" | "digest"', prefs)
 
 
-    def test_electron_and_tauri_mark_the_sidecar_as_desktop(self) -> None:
-        electron = (ROOT / "desktop-electron/main.js").read_text(encoding="utf-8")
-        self.assertIn("NAVIN_DESKTOP_PID", electron)
-        self.assertIn("NAVIN_DESKTOP_APP", electron)
-        self.assertIn("show: true", electron)
-        require_at = electron.index('require("electron")')
-        hint_at = electron.index('process.env.ELECTRON_OZONE_PLATFORM_HINT = "x11"')
-        self.assertLess(hint_at, require_at, "NVIDIA Wayland ozone must be set before requiring electron")
+    def test_tauri_marks_the_sidecar_as_desktop(self) -> None:
         rust = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
         self.assertIn("NAVIN_DESKTOP_PID", rust)
         self.assertIn("NAVIN_DESKTOP_APP", rust)
 
     def test_desktop_startup_recovers_after_an_update_without_terminal_advice(self) -> None:
         """After an update the first engine start can exit: relaunch it, never send users to a terminal."""
-        electron = (ROOT / "desktop-electron/main.js").read_text(encoding="utf-8")
         rust = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
-        for name, source in (("electron", electron), ("tauri", rust)):
-            with self.subTest(shell=name):
-                self.assertNotIn("in a terminal", source)
-                self.assertNotIn("to see the logs", source)
-                self.assertIn("STARTUP_RETRIES", source)
-                self.assertIn("desktop-engine.log", source)
-        self.assertIn("await waitPortsReleased(webui, gateway);", electron)
-        self.assertIn("attempts > STARTUP_RETRIES", electron)
+        self.assertNotIn("in a terminal", rust)
+        self.assertNotIn("to see the logs", rust)
+        self.assertIn("STARTUP_RETRIES", rust)
+        self.assertIn("desktop-engine.log", rust)
         self.assertIn("wait_ports_released(", rust)
         self.assertIn("startup_attempts > STARTUP_RETRIES", rust)
 

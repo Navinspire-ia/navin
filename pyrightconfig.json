@@ -13,7 +13,6 @@
     "build",
     "crates",
     "desktop",
-    "desktop-electron",
     "dist",
     "docs",
     "marketing",

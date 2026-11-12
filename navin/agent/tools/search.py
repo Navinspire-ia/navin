@@ -989,7 +989,11 @@ def _scandir_walk(target: Path, *, include_dirs: bool) -> list[tuple[str, bool]]
         for entry in entries:
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
+                # Like ripgrep: links are not followed, so env -> /proc/self/environ is never read.
+                linked = entry.is_symlink()
             except OSError:
+                continue
+            if linked:
                 continue
             if is_dir:
                 if entry.name in _SEARCH_SKIP_DIRS:

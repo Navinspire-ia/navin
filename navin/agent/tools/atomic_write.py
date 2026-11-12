@@ -17,6 +17,7 @@ from pathlib import Path
 
 from navin.agent.checkpoints import record_file_before
 from navin.utils import text_decode
+from navin.utils.safe_write import write_bytes_no_follow
 
 
 def encode_for(content: str, source: text_decode.DecodedText | None) -> bytes:
@@ -55,7 +56,7 @@ def write_all(
     try:
         for path, content in writes.items():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(encode_for(content, sources.get(path)))
+            write_bytes_no_follow(path, encode_for(content, sources.get(path)))
     except Exception:
         for path, data in backups.items():
             if data is None:
@@ -63,7 +64,7 @@ def write_all(
                     path.unlink()
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(data)
+                write_bytes_no_follow(path, data)
         raise
 
     if file_states is not None:

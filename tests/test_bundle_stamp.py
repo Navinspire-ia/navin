@@ -234,7 +234,6 @@ class ReleaseWiringTest(unittest.TestCase):
             "desktop/src-tauri/tauri.conf.json",
             "desktop/src-tauri/Cargo.toml",
             "desktop/package.json",
-            "desktop-electron/package.json",
             "webui/package.json",
             "pyproject.toml",
             "navin/_version.py",

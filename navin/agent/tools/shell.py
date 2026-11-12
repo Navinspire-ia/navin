@@ -902,17 +902,22 @@ class StdinCommandGuard:
             )
 
         if self.ask_every_command:
+            from navin.agent.approval import exact_scope
+
+            sent = chars.strip()
             decision = await request_approval(ApprovalRequest(
                 tool="write_stdin",
                 action="Send input to a running session",
                 reason="Settings require confirmation before every command.",
-                detail=f"into {where}",
+                # The person approves what is typed, not only where it goes.
+                detail=f"> {sent}\ninto {where}",
                 consequence=(
                     "The input is written to the live process with the agent's "
                     "permissions."
                 ),
-                scope="write_stdin:command",
-                allow_when_unattended=True,
+                scope=exact_scope("write_stdin:command", f"{sent}\0{where}"),
+                # Asked at every command: nobody to answer means not sent.
+                allow_when_unattended=False,
             ))
             if not decision.allowed:
                 return ToolResult.error(
@@ -1602,6 +1607,35 @@ class ExecTool(Tool):
         if waited.startswith("Error"):
             return ToolResult.error(waited)
 
+        # One machine-wide budget of builds, tests and installs for every agent and every Navin process:
+        # twelve at once swapped a WSL VM to death (navin/agent/host_jobs.py).
+        from navin.agent import host_jobs
+
+        async def tell_wait(message: str) -> None:
+            await emit_tool_meta(label=message, indeterminate=True)
+
+        try:
+            slot = await host_jobs.admit(command, on_wait=tell_wait)
+        except host_jobs.HostBusyError as busy:
+            return ToolResult.error(str(busy))
+        if slot is not None:
+            waited = slot.note() + waited
+        token = host_jobs.PENDING.set(slot)
+        try:
+            return await self._execute_admitted(prepared, command, yield_time_ms, max_output_chars, waited)
+        finally:
+            host_jobs.PENDING.reset(token)
+            if slot is not None and not slot.bound:
+                slot.release()
+
+    async def _execute_admitted(
+        self,
+        prepared: _PreparedCommand,
+        command: str,
+        yield_time_ms: int | None,
+        max_output_chars: int | None,
+        waited: str,
+    ) -> str:
         if yield_time_ms is not None:
             result = await self._execute_session(
                 prepared, yield_time_ms, max_output_chars, display_command=command
@@ -1844,7 +1878,10 @@ class ExecTool(Tool):
 
             root = ensure_dir(Path(self.working_dir) / ".navin" / "tool-results" / "exec")
             path = root / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}.log"
-            path.write_text(result, encoding="utf-8")
+            from navin.agent.tool_hardening import write_private_text
+
+            # Readable by this user only, and never written through a link planted at that name.
+            write_private_text(path, result)
             return str(path)
         except Exception as exc:  # noqa: BLE001 - best effort by design
             logger.debug("exec: could not spool full output: {}", exc)
@@ -2432,6 +2469,19 @@ class ExecTool(Tool):
         stdin: int = asyncio.subprocess.DEVNULL,
     ) -> asyncio.subprocess.Process:
         """Launch *command* in a platform-appropriate shell."""
+        process = await ExecTool._spawn_platform(command, cwd, env, shell_program, login, stdin=stdin)
+        # The machine-wide slot admitted for this command (if any) lives as long as the process.
+        from navin.agent.host_jobs import bind_pending
+
+        bind_pending(process)
+        return process
+
+    @staticmethod
+    async def _spawn_platform(
+        command: str, cwd: str, env: dict[str, str],
+        shell_program: str | None, login: bool,
+        *, stdin: int,
+    ) -> asyncio.subprocess.Process:
         if _IS_WINDOWS:
             location = wsl.parse_unc(cwd)
             if location is not None:
@@ -3001,7 +3051,7 @@ class ExecTool(Tool):
 
     async def _ask_to_run(self, command: str, cwd: str) -> str | None:
         """Ask before a command that already passed the deny / workspace guards."""
-        from navin.agent.approval import ApprovalRequest, request_approval
+        from navin.agent.approval import ApprovalRequest, exact_scope, request_approval
 
         decision = await request_approval(ApprovalRequest(
             tool="exec",
@@ -3011,9 +3061,11 @@ class ExecTool(Tool):
             consequence=(
                 "The command will run on this machine with the agent's permissions."
             ),
-            scope="exec:command",
-            # CLI, cron and tests used to run freely; do not take that away.
-            allow_when_unattended=True,
+            # "Allow every time" covers this exact command in this folder, never the next one.
+            scope=exact_scope("exec:command", f"{command.strip()}\0{cwd}"),
+            # The person chose to be asked at every command: a scheduled job, a background subagent or a
+            # lost card must not run it unasked (pick "destructive" or full access for unattended runs).
+            allow_when_unattended=False,
         ))
         if decision.allowed:
             return None

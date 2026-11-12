@@ -204,11 +204,33 @@ def tool_denied(tool_name: str) -> str | None:
     return f"{tool_name} is blocked by your organization's policy ({why})."
 
 
-def plugin_allowed(name: str) -> bool:
+def plugin_allowed(name: str, digest: str | None = None) -> bool:
+    """Whether the organization lets this plugin load.
+
+    ``allowedPlugins`` entries are a name (``kit``) or a name pinned to the SHA-256 of the plugin's files
+    (``kit@sha256:<64 hex>``, the value ``navin.plugins.manager.bundle_digest`` computes). A pinned entry admits
+    the plugin only while its files are exactly the ones the administrator reviewed (the plugin pin bypass class:
+    the hash is computed on the installed files, never taken from a branch or a tag name).
+    """
     policy = load()
     if not policy.allow_managed_plugins_only:
         return True
-    return name.strip().lower() in policy.allowed_plugins
+    wanted = name.strip().lower()
+    for entry in policy.allowed_plugins:
+        base, _, pinned = entry.partition("@sha256:")
+        if base != wanted:
+            continue
+        if not pinned or (digest is not None and digest.lower() == pinned):
+            return True
+    return False
+
+
+def plugin_pinned(name: str) -> bool:
+    """True when an ``allowedPlugins`` entry pins this plugin to a content hash."""
+    policy = load()
+    wanted = name.strip().lower()
+    return policy.allow_managed_plugins_only and any(
+        entry.partition("@sha256:")[0] == wanted and "@sha256:" in entry for entry in policy.allowed_plugins)
 
 
 def mcp_server_allowed(name: str) -> bool:

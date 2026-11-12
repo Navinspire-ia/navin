@@ -333,6 +333,14 @@ def build_exec_env(
     for key, value in NONINTERACTIVE_ENV_DEFAULTS.items():
         if key not in source:
             env.setdefault(key, value)
+    from navin.agent.tool_hardening import git_hardening_env, trusted_path
+
+    # A git typed in a command ignores a repository's fsmonitor and hidden bare repositories, and programs
+    # are found only on absolute PATH entries (no fake ./git or relative node_modules/.bin).
+    if source.get("NAVIN_GIT_HARDENING", "1") != "0":
+        env.update(git_hardening_env(env))
+    if env.get("PATH"):
+        env["PATH"] = trusted_path(env["PATH"])
     return env
 
 

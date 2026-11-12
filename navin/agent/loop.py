@@ -1127,6 +1127,11 @@ class AgentLoop:
         self._concurrency_gate: asyncio.Semaphore | None = (
             asyncio.Semaphore(_max) if _max > 0 else None
         )
+        from navin.agent.tool_hardening import harden_process_environment
+
+        # Every git the agent runs itself (status, diff, checkpoints) ignores a repository's fsmonitor program
+        # and never enters a bare repository hidden in a project (NAVIN_GIT_HARDENING=0 turns it off).
+        harden_process_environment()
         self.consolidator = Consolidator(
             store=self.context.memory,
             sessions=self.sessions,
