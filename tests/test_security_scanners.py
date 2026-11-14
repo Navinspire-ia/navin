@@ -243,7 +243,7 @@ class RegistryTest(unittest.TestCase):
     def test_every_scanner_is_described_and_planned_by_the_catalog(self):
         self.assertEqual(
             set(REGISTRY),
-            {"semgrep", "gitleaks", "trivy", "osv_scanner", "bandit", "pip_audit", "npm_audit", "cargo_audit"},
+            {"semgrep", "gitleaks", "gitleaks_history", "trivy", "osv_scanner", "bandit", "pip_audit", "npm_audit", "cargo_audit"},
         )
         l1_engines = set(catalog.level("L1").engines)
         for sid, spec in REGISTRY.items():

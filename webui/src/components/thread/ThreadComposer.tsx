@@ -104,6 +104,7 @@ import {
   applyComposerTurnMode,
   ComposerModeMenu,
   composerModeAccent,
+  isComposerTurnMode,
   isSimpleStartNowPrompt,
   modeFromOutgoingContent,
   type ComposerModeTeam,
@@ -1994,6 +1995,7 @@ function ThreadComposerImpl({
         text,
         ...(queuedImages.length > 0 ? { images: queuedImages } : {}),
         ...(collected.options ? { options: collected.options } : {}),
+        mode: turnMode,
       },
     ]);
     setSelectedDocumentTemplate(null);
@@ -2012,6 +2014,7 @@ function ThreadComposerImpl({
     t,
     textTooLargeMessage,
     pastes,
+    turnMode,
     value,
   ]);
 
@@ -2075,10 +2078,26 @@ function ThreadComposerImpl({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
+  // A queued prompt that starts its own turn carries the mode it was queued
+  // in (/fortify, /inspect, /blueprint...). Sent as plain text, a message
+  // queued in Security or Review ran as an ordinary chat turn. Into a live
+  // turn it stays raw: the agent takes it as guidance, like the CLI does.
+  const queuedPromptTurnContent = useCallback(
+    (prompt: QueuedPrompt) => {
+      const text = prompt.text.trim();
+      if (!text) return text;
+      const mode = isComposerTurnMode(prompt.mode) ? prompt.mode : turnMode;
+      return applyComposerTurnMode(text, mode, {
+        startNow: Boolean(prompt.options?.documentTemplate),
+      });
+    },
+    [turnMode],
+  );
+
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
       secondEnterPromptIdRef.current = null;
-      const text = prompt.text.trim();
+      const text = isStreaming ? prompt.text.trim() : queuedPromptTurnContent(prompt);
       const queuedImages = queuedImagesToSendImages(prompt.images);
       setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       if (text || queuedImages?.length) {
@@ -2086,7 +2105,7 @@ function ThreadComposerImpl({
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [onSend],
+    [isStreaming, onSend, queuedPromptTurnContent],
   );
 
   const sendNextQueuedPrompt = useCallback(() => {
@@ -2098,12 +2117,12 @@ function ThreadComposerImpl({
     }
     setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
     onSend(
-      nextPrompt.text.trim(),
+      queuedPromptTurnContent(nextPrompt),
       queuedImagesToSendImages(nextPrompt.images),
       nextPrompt.options,
     );
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts]);
+  }, [onSend, queuedPromptTurnContent, queuedPrompts]);
 
   // Multitask: dispatch every text-only queued prompt to a parallel subagent
   // right now instead of waiting for the current turn. Prompts carrying image

@@ -700,14 +700,6 @@ export interface ContextCompactionNotice {
   at: number;
 }
 
-export interface CheckpointNotice {
-  /** Checkpoint name in the store, e.g. "auto-2026-08-22-190412". */
-  name: string;
-  /** Message count when the notice arrived, used to anchor the divider. */
-  afterMessageCount: number;
-  at: number;
-}
-
 export function useNavinStream(
   chatId: string | null,
   initialMessages: UIMessage[] = [],
@@ -743,8 +735,6 @@ export function useNavinStream(
   dismissStreamError: () => void;
   /** Latest context compaction reported by the backend for this chat. */
   contextCompaction: ContextCompactionNotice | null;
-  /** Latest restore point snapshotted for this chat (one per user turn). */
-  checkpointNotice: CheckpointNotice | null;
   /** Approvals this chat is waiting on, oldest first. Each one holds a tool call. */
   pendingApprovals: PendingApproval[];
   /** Answer one, which releases the suspended tool call. */
@@ -768,7 +758,6 @@ export function useNavinStream(
 
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [contextCompaction, setContextCompaction] = useState<ContextCompactionNotice | null>(null);
-  const [checkpointNotice, setCheckpointNotice] = useState<CheckpointNotice | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [pendingChoices, setPendingChoices] = useState<PendingChoice[]>([]);
   // Settled cards are restated in the chat, so the answer handlers need the
@@ -834,7 +823,6 @@ export function useNavinStream(
 
   useEffect(() => {
     setContextCompaction(null);
-    setCheckpointNotice(null);
     setActivityText(null);
     setIsCompacting(false);
   }, [chatId]);
@@ -1430,13 +1418,8 @@ export function useNavinStream(
       }
 
       if (ev.event === "checkpoint_saved") {
-        // Only the latest restore point shows in the transcript; the
-        // Checkpoints panel in Code keeps the full history.
-        setCheckpointNotice({
-          name: typeof ev.name === "string" ? ev.name : "",
-          afterMessageCount: messagesLengthRef.current,
-          at: Date.now(),
-        });
+        // Restore points live in Code > Checkpoints. A divider in the chat
+        // at every message was noise, so an older engine's notice is dropped.
         return;
       }
 
@@ -1981,7 +1964,6 @@ export function useNavinStream(
     streamError,
     dismissStreamError,
     contextCompaction,
-    checkpointNotice,
     pendingApprovals,
     respondToApproval,
     pendingChoices,

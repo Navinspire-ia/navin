@@ -93,6 +93,66 @@ class DiscoveryTest(unittest.TestCase):
         with self.assertRaises(NotADirectoryError):
             discover(Path("/nonexistent/navin-security-root"))
 
+    def test_monorepo_fixture_reports_modules_git_entrypoints_and_surfaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "package.json", json.dumps({"name": "mono", "private": True, "workspaces": ["packages/*"]}))
+            _write(root, "packages/web/package.json", json.dumps({"dependencies": {"react": "18", "stripe": "1"}}))
+            _write(root, "packages/web/src/App.tsx", "export const App = () => null;\n")
+            _write(root, "packages/cli/package.json", json.dumps({"bin": {"mono": "index.js"}, "dependencies": {"commander": "1"}}))
+            _write(root, "packages/cli/index.js", "const { program } = require('commander');\n")
+            _write(root, "services/api/pyproject.toml", '[project]\nname = "api"\ndependencies = ["fastapi", "celery"]\n')
+            _write(root, "services/api/app/main.py",
+                   "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef h():\n    return {}\n"
+                   "@app.websocket('/ws')\nasync def ws(sock):\n    await sock.accept()\n")
+            _write(root, "services/api/app/tasks.py", "from celery import Celery\ncelery = Celery()\n@celery.task\ndef job(email):\n    return email\n")
+            _write(root, "services/api/app/jobs.py", "import schedule\nschedule.every(10).minutes.do(print)\n")
+            _write(root, "services/api/app/cli.py", "import argparse\nparser = argparse.ArgumentParser()\n")
+            _write(root, "services/api/app/pb/user_pb2.py", "# generated\n")
+            _write(root, "services/api/user.proto", 'syntax = "proto3";\n')
+            _write(root, "services/api/migrations/0001_init.sql", "CREATE TABLE users (id int, phone text);\n")
+            _write(root, "third_party/lib.min.js", "var a=1;\n")
+            _write(root, "k8s/ingress.yaml", "kind: Ingress\nspec:\n  rules:\n    - host: app.example.com\n")
+            _write(root, ".env.local", "X=1\n")
+            _write(root, "native/fast.c", "int main(void) { return 0; }\n")
+            _write(root, ".gitmodules", '[submodule "libs/x"]\n\tpath = libs/x\n\turl = https://bob:ghp_secret@github.com/org/x.git\n')
+            _write(root, ".git/HEAD", "ref: refs/heads/main\n")
+            _write(root, ".git/refs/heads/main", "0" * 40 + "\n")
+            _write(root, ".git/packed-refs", "# pack-refs\n" + "1" * 40 + " refs/heads/feature/a\n" + "2" * 40 + " refs/tags/v1\n")
+            found = discover(root)
+        data = found.to_dict()
+        paths = {m["path"]: m for m in data["modules"]}
+        self.assertEqual(paths["packages/web"]["kind"], "web")
+        self.assertEqual(paths["packages/cli"]["kind"], "cli")
+        self.assertEqual(paths["services/api"]["kind"], "api")
+        self.assertIn("python", paths["services/api"]["languages"])
+        self.assertTrue(data["monorepo"])
+        self.assertIn("packages/*", data["workspaces"])
+        self.assertEqual(data["submodules"], [{"path": "libs/x", "url": "https://github.com/org/x.git"}])
+        self.assertTrue(data["git"]["is_repo"])
+        self.assertEqual(data["git"]["head"], "main")
+        self.assertEqual(data["git"]["branches"], ["feature/a", "main"])
+        self.assertEqual(data["git"]["tags_count"], 1)
+        kinds = data["entrypoint_kinds"]
+        self.assertIn("services/api/app/main.py", kinds["http"])
+        self.assertIn("services/api/app/main.py", kinds["websocket"])
+        self.assertIn("services/api/app/tasks.py", kinds["worker"])
+        self.assertIn("services/api/app/jobs.py", kinds["cron"])
+        self.assertIn("services/api/app/cli.py", kinds["cli"])
+        self.assertIn("packages/cli/package.json", kinds["cli"])
+        self.assertIn("services/api/user.proto", kinds["grpc"])
+        self.assertGreaterEqual(data["file_classes"]["generated"], 1)
+        self.assertIn("third_party/lib.min.js", data["file_class_samples"]["vendored"])
+        self.assertIn("services/api/migrations/0001_init.sql", data["migrations"])
+        self.assertGreaterEqual(data["file_classes"]["app"], 1)
+        self.assertIn({"kind": "ingress_host", "value": "app.example.com", "file": "k8s/ingress.yaml"}, data["deploy_targets"])
+        self.assertIn(".env.local", data["env_files"])
+        self.assertIn("stripe", data["integrations"])
+        self.assertIn("email", data["data_signals"])
+        self.assertFalse(data["truncated"])
+        for tag in ("source", "data", "iac", "runtime", "native", "integrations", "api", "web"):
+            self.assertIn(tag, found.surfaces)
+
 
 class ThreatModelAndPlanTest(unittest.TestCase):
     def setUp(self):

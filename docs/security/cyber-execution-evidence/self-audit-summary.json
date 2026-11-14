@@ -1,0 +1,57 @@
+{
+ "root": "navin-ai-v2",
+ "duration_s": 101.6,
+ "files_seen": 4000,
+ "truncated": true,
+ "surfaces": [
+  "api",
+  "auth",
+  "workflow",
+  "websocket",
+  "docker",
+  "kubernetes",
+  "cloud",
+  "terraform",
+  "mobile",
+  "desktop",
+  "ai",
+  "mcp",
+  "source",
+  "data",
+  "cicd",
+  "iac",
+  "runtime",
+  "native",
+  "integrations"
+ ],
+ "findings": 139,
+ "by_severity": {
+  "high": 80,
+  "critical": 12,
+  "medium": 11,
+  "low": 30,
+  "info": 6
+ },
+ "matrix_summary": {
+  "total": 302,
+  "applicable": 251,
+  "not_applicable": 51,
+  "passed": 15,
+  "failed": 36,
+  "inconclusive": 70,
+  "blocked": 3,
+  "not_tested": 127,
+  "verified": 51,
+  "verified_coverage": 20.3,
+  "manual_review": 70,
+  "audit_complete": false,
+  "complete_blockers": 200,
+  "capabilities": {
+   "automated": 38,
+   "partial": 118,
+   "manual": 82,
+   "missing": 64
+  }
+ },
+ "note": "pattern-based and dataflow findings of the repository itself: a signal to review, not a verdict"
+}

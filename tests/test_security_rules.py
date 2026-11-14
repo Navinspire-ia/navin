@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from navin.security.rules import A03, LINE_RULES, scan_dependencies
+from navin.security.rules import A03, LINE_RULES, file_checks, scan_dependencies
 from navin.security.scan import run_security_scan, scan_heuristics
 
 _FIXTURE: dict[str, str] = {
@@ -275,6 +275,57 @@ class RulePackTest(unittest.TestCase):
             )
             findings = scan_heuristics(root)
         self.assertEqual([f["line"] for f in findings if f["id"] == "shell-true"], [2])
+
+    def test_extended_rules_positive_and_negative(self):
+        rules = {rule["id"]: rule for rule in LINE_RULES}
+
+        def hits(rid: str, line: str) -> bool:
+            rule = rules[rid]
+            exclude = rule["exclude"]
+            return bool(rule["pattern"].search(line)) and not (exclude and exclude.search(line))
+
+        table = [
+            ("spel-injection", 'parser.parseExpression(request.getParameter("e")).getValue();',
+             'parser.parseExpression("name").getValue();'),
+            ("ognl-injection", "Object v = Ognl.getValue(expr, ctx, root);", "Object v = props.getValue(expr);"),
+            ("dotnet-typenamehandling", "TypeNameHandling = TypeNameHandling.Auto,",
+             "TypeNameHandling = TypeNameHandling.None,"),
+            ("cs-binaryformatter", "s.TypeNameHandling = TypeNameHandling.Arrays;", "var s = new JsonSerializerSettings();"),
+            ("jackson-default-typing", "mapper.enableDefaultTyping();", "mapper.registerModule(new JavaTimeModule());"),
+            ("go-sql-sprintf", 'rows, err := db.Query(fmt.Sprintf(q, name))', 'rows, err := db.Query("SELECT 1 WHERE a = $1", name)'),
+            ("rust-unsafe-block", "let p = unsafe { *ptr };", "let unsafety_note = 1;"),
+            ("decompression-bomb", "raw = zlib.decompress(request.data)", "raw = zlib.decompress(blob, max_length=1 << 20)"),
+            ("toctou-access", "if os.access(path, os.W_OK):", "with open(path, 'w') as fh:"),
+            ("jwt-no-algorithms", "claims = jwt.decode(token, key)", 'claims = jwt.decode(token, key, algorithms=["HS256"])'),
+            ("jwt-no-algorithms", "jwt.verify(token, secret)", "jwt.verify(token, secret, { algorithms: ['HS256'] })"),
+            ("jwt-none", 'jwt.decode(t, k, options={"verify_signature": False})', 'jwt.decode(t, k, algorithms=["HS256"])'),
+            ("insecure-cookie", "res.cookie('sid', v, { sameSite: 'none' });",
+             "res.cookie('sid', v, { sameSite: 'none', secure: true });"),
+            ("weak-rsa-key", "rsa.generate_private_key(public_exponent=65537, key_size=1024)",
+             "rsa.generate_private_key(public_exponent=65537, key_size=3072)"),
+            ("weak-cipher", "Cipher(algorithms.AES(key), modes.ECB())", "Cipher(algorithms.AES(key), modes.GCM(iv))"),
+            ("bcrypt-low-cost", "salt = bcrypt.gensalt(rounds=6)", "salt = bcrypt.gensalt(rounds=12)"),
+            ("default-credentials", 'cfg = {"password": "admin"}', 'cfg = {"password": "Password"}'),
+            ("xss-safe-filter", "<p>{{ comment.body|safe }}</p>", "<p>{{ comment.body }}</p>"),
+            ("xss-safe-filter", "return Markup(user_bio)", 'return Markup("<b>static</b>")'),
+            ("inner-html", "this.s.bypassSecurityTrustResourceUrl(url)", "this.s.sanitizeUrl(url)"),
+            ("nosql-where", 'db.users.find({"$where": cond})', 'db.users.find({"name": name})'),
+            ("cloud-metadata-url", 'URL = "http://169.254.169.254/latest/meta-data/"', 'URL = "http://10.0.0.5/api"'),
+            ("tls-verify-off", "client = Client(verify_ssl=False)", "client = Client(verify_ssl=True)"),
+            ("csrf-disabled", "http.csrf(csrf -> csrf.disable());", "http.csrf(Customizer.withDefaults());"),
+            ("auth-bypass-flag", "http.authorizeHttpRequests(a -> a.anyRequest().permitAll());",
+             "http.authorizeHttpRequests(a -> a.anyRequest().authenticated());"),
+            ("xxe", "settings.ProhibitDtd = false;", "settings.ProhibitDtd = true;"),
+        ]
+        for rid, positive, negative in table:
+            with self.subTest(rule=rid, line=positive):
+                self.assertTrue(hits(rid, positive), f"{rid} missed: {positive}")
+            with self.subTest(rule=rid, line=negative):
+                self.assertFalse(hits(rid, negative), f"{rid} noise: {negative}")
+        unsafe = "class X { void f() { DocumentBuilderFactory f = DocumentBuilderFactory.newInstance(); } }\n"
+        safe = unsafe + 'f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);\n'
+        self.assertEqual([f["id"] for f in file_checks("A.java", unsafe)], ["java-xxe-factory"])
+        self.assertEqual(file_checks("A.java", safe), [])
 
     def test_dependency_pins(self):
         hits = scan_dependencies("package.json", '{"dependencies":{"lodash":"^4.17.21","minimist":"1.2.5"}}')

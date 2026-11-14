@@ -6118,7 +6118,7 @@ class GatewayHTTPHandler:
         action = (_query_first(query, "action") or "last").strip().lower()
         params = {
             key: _query_first(query, key) or ""
-            for key in ("path", "base_url", "scanners", "offline", "control", "checked", "note", "lang")
+            for key in ("path", "base_url", "scanners", "offline", "control", "checked", "note", "lang", "format", "database_ephemeral")
         }
         try:
             # An audit walks the tree and may run scanners for minutes: off the loop.

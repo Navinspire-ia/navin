@@ -2184,6 +2184,11 @@ class TuiRuntime:
             except Exception:  # noqa: BLE001 - a guest never breaks the host chat
                 logger.exception("TUI live share failed to forward a message")
         self._ensure_tasks()
+        if not model_preset:
+            try:
+                await asyncio.to_thread(self._align_session_model_pin)
+            except Exception:  # the turn still goes out; the engine keeps the old pin
+                logger.exception("TUI could not align the chat's model pin with the composer")
         metadata: dict[str, Any] = {"_wants_stream": True}
         if self.voice_mode:
             # Live call: same "expert colleague on a call" brief as the desktop.
@@ -2351,6 +2356,34 @@ class TuiRuntime:
         else:
             session.metadata[SESSION_MODEL_PIN_KEY] = name
         sessions.save(session)
+
+    def _align_session_model_pin(self) -> None:
+        """Make this chat's sticky pin name the model the composer shows.
+
+        The engine runs a chat on its sticky pin before the default model.
+        When the model shown changed another way (a ``/model`` command, a
+        settings change read back from disk, a project switch that carried the
+        previous model, a pin the picker no longer offers), the turn ran a
+        model the composer did not show: GPT-6.1 Sol on screen, Claude Fable
+        5.2 at work. The shown model wins, as if picked again.
+        """
+        loop = self.agent_loop
+        sessions = getattr(loop, "sessions", None)
+        if sessions is None:
+            return
+        from navin.agent.loop import AUTO_MODEL_PIN, SESSION_MODEL_PIN_KEY
+
+        pin = sessions.get_or_create(self.session_key).metadata.get(SESSION_MODEL_PIN_KEY)
+        if not isinstance(pin, str) or not pin.strip() or pin.strip().lower() == AUTO_MODEL_PIN:
+            return
+        shown = str(getattr(loop, "model_preset", None) or "default")
+        if pin.strip() == shown:
+            return
+        logger.info(
+            "chat {} pinned model {} while the composer shows {}; the shown model runs",
+            self.session_key, pin, shown,
+        )
+        self._remember_model_pin(shown)
 
     def _adopt_session_model_pin(self) -> None:
         """Put back the model picked for this chat.

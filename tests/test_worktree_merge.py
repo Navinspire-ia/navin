@@ -143,6 +143,31 @@ class LandTest(_Base):
         self.assertEqual(self.head(), before_head)
         self.assertEqual(snapshot(self.root), before_files)
 
+    def test_navin_internal_state_never_blocks_the_merge(self) -> None:
+        # Both sides rewrite Navin's bookkeeping during a run: the subagent's copy
+        # is not its work and must neither land nor collide with the user's.
+        for rel in (".navin/quality/verification-log.json", ".navin/improvement/code.json"):
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('{"v": 0}\n')
+        git(["add", "."], self.root)
+        git(["commit", "-m", "navin state"], self.root)
+        tree = self.checkout("t-internal")
+        (tree.path / "a.py").write_text("x = 1\ny = 5\n")
+        (tree.path / ".navin/quality/verification-log.json").write_text('{"v": "subagent"}\n')
+        (tree.path / ".navin/improvement/code.json").write_text('{"v": "subagent"}\n')
+        (self.root / ".navin/quality/verification-log.json").write_text('{"v": "user"}\n')
+        (self.root / ".navin/improvement/code.json").write_text('{"v": "user"}\n')
+        landed = worktree_merge.land(tree, "edit a")
+        assert landed is not None
+        result, _commit = landed
+        self.assertEqual(result.status, "merged")
+        self.assertEqual(result.files, ("a.py",))
+        self.assertEqual((self.root / "a.py").read_text(), "x = 1\ny = 5\n")
+        self.assertEqual((self.root / ".navin/quality/verification-log.json").read_text(), '{"v": "user"}\n')
+        self.assertEqual((self.root / ".navin/improvement/code.json").read_text(), '{"v": "user"}\n')
+        self.assert_no_force()
+
     def test_an_untracked_user_file_at_the_same_path_blocks(self) -> None:
         tree = self.checkout("t3b")
         (tree.path / "notes.md").write_text("theirs\n")

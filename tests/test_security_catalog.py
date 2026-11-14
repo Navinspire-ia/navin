@@ -21,6 +21,46 @@ from navin.security.model import (
 
 
 class CatalogShapeTest(unittest.TestCase):
+    def test_appsec_referential_302_controls_and_every_capability_points_at_a_real_engine(self):
+        import re
+        from pathlib import Path
+
+        from navin.security.analyzers import ANALYZERS, ENGINE_CONTROLS
+        from navin.security.appsec import capabilities as caps
+        from navin.security.appsec import referential as ref
+        from navin.security.scanners.registry import REGISTRY
+        from navin.security.verification.web_baseline import CHECK_IDS
+
+        per_category = [len(ref.controls_of(c.id)) for c in ref.CATEGORIES]
+        self.assertEqual(per_category, [13, 12, 18, 14, 14, 12, 11, 11, 14, 14, 18, 10, 13, 12, 15, 11, 12, 11, 17, 10, 9, 9, 10, 12])
+        self.assertEqual(ref.CONTROLS[0].id, "NAV-CYBER-DISC-001")
+        self.assertEqual(ref.control("NAV-CYBER-QA-012").category, "QA")
+        exported = ref.referential_json()
+        self.assertEqual(exported["metadata"]["status_enum"], list(ref.STATUS_ENUM))
+        self.assertEqual([c["id"] for c in exported["controls"]], list(ref.CONTROL_IDS))
+        markdown = ref.referential_markdown()
+        self.assertEqual(markdown.count("- [ ] **NAV-CYBER-"), 302)
+        self.assertNotRegex(markdown + str(exported), "[\u2013\u2014]")
+
+        self.assertEqual(set(caps.CAPABILITIES), set(ref.CONTROL_IDS))
+        engines = set(ANALYZERS) | set(ENGINE_CONTROLS) | set(REGISTRY) | {caps.DISC, caps.TM, caps.MX}
+        root = Path(__file__).resolve().parents[1] / "navin" / "security"
+        code = "".join(p.read_text(encoding="utf-8") for p in (root / "rules.py", root / "deep_scan.py", *(root / "analyzers").glob("*.py")))
+        rule_ids = set(re.findall(r"[\"']([a-z][a-z0-9:-]*)[\"']", code)) | set(CHECK_IDS) | {"dep:"}
+        rule_ids |= {f"navin-dataflow-{kind}" for kind in ("sql", "command", "code", "path", "deserialization", "ssrf", "template")}
+        rule_ids |= {"navin-tenant-unscoped", "navin-tenant-client-chosen"}
+        for cid, cap in caps.CAPABILITIES.items():
+            with self.subTest(control=cid):
+                self.assertTrue(set(cap.engines) <= engines, set(cap.engines) - engines)
+                if cap.mode in {"automated", "partial"}:
+                    self.assertTrue(cap.engines)
+                for pattern in cap.finding_ids:
+                    if pattern.endswith("*"):
+                        self.assertTrue(any(r.startswith(pattern[:-1]) for r in rule_ids), pattern)
+                    else:
+                        self.assertIn(pattern, rule_ids)
+        self.assertEqual(sum(caps.counts().values()), 302)
+
     def test_counts_match_the_reference(self):
         totals = catalog.catalog_payload()["totals"]
         self.assertEqual(totals["families"], 18)

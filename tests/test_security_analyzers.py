@@ -10,6 +10,7 @@ temporary folder and read as text by the analyzers: none of it is imported or ru
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import textwrap
 import unittest
@@ -497,6 +498,199 @@ class TenantTest(unittest.TestCase):
                        "app/crm/db.py": crm_db, "app/crm/store.py": query}) as tmp:
             report = analyze_project(tmp, only=["navin_tenant"])
         self.assertEqual({(f.file_path, f.line) for f in report.findings}, {("app/crm/store.py", 2)})
+
+
+SUPABASE_MIGRATION_1 = '''
+-- profiles: correctly secured, must yield nothing
+create table public.profiles (id uuid primary key, user_id uuid not null, bio text);
+alter table public.profiles enable row level security;
+create policy "own profile" on public.profiles for all to authenticated
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table public.notes (id serial primary key, user_id uuid, body text);  -- no RLS
+create table public.audit (id serial primary key, msg text);
+alter table public.audit enable row level security;                           -- no policy
+
+create table public.posts (id serial primary key, user_id uuid, body text);
+alter table public.posts enable row level security;
+create policy "read all" on public.posts for select using (true);
+create policy "read own" on public.posts for select to authenticated using (user_id = auth.uid());
+create policy "edit" on public.posts for update to authenticated using (user_id = auth.uid()) with check (true);
+
+create table public.docs (id serial primary key, tenant_id uuid, title text);
+alter table public.docs enable row level security;
+create policy "docs read" on public.docs for select to authenticated using (title is not null);
+
+create view public.post_feed as select id, body from public.posts;
+'''
+
+SUPABASE_MIGRATION_2 = '''
+create function public.admin_reset(p_table text) returns void language plpgsql security definer as $fn$
+begin
+  execute 'truncate ' || p_table;  -- ; inside the body
+end;
+$fn$;
+grant insert, update on public.docs to anon;
+create role reporting login bypassrls;
+'''
+
+SUPABASE_CLIENT = 'export const key = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;\n'
+DB_RULES = {
+    "db-rls-disabled", "db-rls-no-policy", "db-policy-permissive-true", "db-policy-tenant-change",
+    "db-policy-no-tenant-scope", "db-permissive-or", "db-security-definer-search-path",
+    "db-security-definer-exposed", "db-view-bypasses-rls", "db-grant-broad", "db-bypassrls-role",
+    "db-dynamic-sql", "db-service-role-client",
+}
+
+
+def _supabase_fixture(root: Path) -> list[Path]:
+    mig = root / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "001_init.sql").write_text(SUPABASE_MIGRATION_1, encoding="utf-8")
+    (mig / "002_more.sql").write_text(SUPABASE_MIGRATION_2, encoding="utf-8")
+    (root / "src").mkdir()
+    (root / "src" / "client.ts").write_text(SUPABASE_CLIENT, encoding="utf-8")
+    return sorted(mig.glob("*.sql"))
+
+
+class DatabaseTest(unittest.TestCase):
+    def test_static_rls_rules_and_a_secured_table_is_silent(self):
+        from navin.security.analyzers import database
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _supabase_fixture(Path(tmp))
+            findings = database.analyze(collect_sources(tmp))
+        self.assertEqual({f.id for f in findings}, DB_RULES)
+        self.assertFalse([f for f in findings if f.component == "public.profiles"])
+        tenant_change = next(f for f in findings if f.id == "db-policy-tenant-change")
+        self.assertEqual((tenant_change.severity, tenant_change.cwe), ("high", "CWE-639"))
+        self.assertTrue(all(f.source == "navin_database" and f.evidence[0].kind == "static" for f in findings))
+
+    @unittest.skipUnless(__import__("navin.security.analyzers.db_introspect", fromlist=["x"]).find_postgres_binaries(),
+                         "PostgreSQL binaries not installed")
+    def test_ephemeral_cluster_confirms_the_static_findings(self):
+        from navin.security.analyzers import database, db_introspect
+        from navin.security.model import merge_findings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            files = _supabase_fixture(Path(tmp))
+            marker = Path(tmp) / "escaped"
+            escape = Path(tmp) / "supabase" / "migrations" / "003_escape.sql"
+            escape.write_text(f"copy (select 1) to program 'touch {marker}';\n", encoding="utf-8")
+            mysql = Path(tmp) / "db" / "legacy_mysql.sql"
+            mysql.parent.mkdir()
+            mysql.write_text("CREATE TABLE `t` (id INT AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;\n", encoding="utf-8")
+            before = set(Path(tempfile.gettempdir()).glob("navin-pg-*"))
+            report = db_introspect.introspect_ephemeral([*files, escape, mysql], root=Path(tmp))
+            static = database.analyze(collect_sources(tmp))
+            self.assertEqual(set(Path(tempfile.gettempdir()).glob("navin-pg-*")) - before, set())
+            # Repository migrations never run as a superuser: no host command, no BYPASSRLS role.
+            self.assertFalse(marker.exists())
+        self.assertEqual(report.status, "ok", report.detail)
+        self.assertEqual([Path(p).name for p in report.applied], ["001_init.sql"], report.failed)
+        self.assertEqual({Path(f["file"]).name for f in report.failed}, {"002_more.sql", "003_escape.sql"})
+        self.assertEqual([(Path(s["file"]).name, s["reason"]) for s in report.skipped],
+                         [("legacy_mysql.sql", "MySQL/MariaDB script, not PostgreSQL")])
+        catalog_ids = {"db-rls-disabled", "db-policy-permissive-true", "db-security-definer-search-path",
+                       "db-security-definer-exposed", "db-view-bypasses-rls", "db-grant-broad"}
+        # Synthetic users A and B in the throwaway cluster: posts leaks to anon and to B, and lets A give a row to B.
+        role_ids = {"db-rls-anon-read", "db-rls-cross-tenant-read", "db-policy-tenant-change"}
+        self.assertEqual({f.id for f in report.findings}, catalog_ids | role_ids)
+        tests = {t["table"]: t for t in report.role_tests}
+        self.assertEqual({k for k, t in tests.items() if t["tested"]}, {"public.posts", "public.profiles"})
+        self.assertEqual(tests["public.posts"]["results"]["other_read"], 1)
+        secured = tests["public.profiles"]["results"]
+        self.assertEqual((secured["seeded"], secured["anon_read"], secured["other_read"], secured["other_update"], secured["other_delete"]),
+                         (2, 0, 0, 0, 0))
+        self.assertNotIn("other_insert", secured)  # WITH CHECK refused the row owned by B
+        self.assertNotIn("tenant_change", secured)
+        self.assertIn("auth.uid()", tests["public.docs"]["skipped"])
+        merged = merge_findings(static + report.findings)
+        proven = {f.id for f in merged if f.status in {"confirmed", "exploitable"}}
+        self.assertTrue(catalog_ids <= proven, catalog_ids - proven)
+        exploitable = {f.id for f in merged if f.status == "exploitable"}
+        self.assertTrue({"db-rls-cross-tenant-read", "db-policy-tenant-change"} <= exploitable, exploitable)
+        self.assertIn("db-bypassrls-role", {f.id for f in merged if f.status == "potential"})
+
+    def test_live_introspection_never_leaks_the_password(self):
+        from navin.security.analyzers import db_introspect
+
+        report = db_introspect.introspect_url("postgresql://bob:S3cretPw@127.0.0.1:1/x", timeout_s=10)
+        self.assertIn(report.status, {"failed", "not_installed"})
+        self.assertNotIn("S3cretPw", json.dumps(report.to_dict()))
+
+    def test_other_datastores_mysql_sqlserver_oracle_nosql_configs_and_connections(self):
+        from navin.security.analyzers import datastores
+
+        weak = {
+            "db/mysql.sql": """
+                CREATE USER 'app'@'%' IDENTIFIED BY '';
+                GRANT ALL PRIVILEGES ON *.* TO 'app'@'%';
+                CREATE DEFINER=`root`@`%` PROCEDURE p() SQL SECURITY DEFINER SELECT 1;
+            """,
+            "db/mssql.sql": """
+                EXEC sp_configure 'xp_cmdshell', 1;
+                ALTER DATABASE shop SET TRUSTWORTHY ON;
+                ALTER SERVER ROLE sysadmin ADD MEMBER app_login;
+                CREATE ASSEMBLY tools FROM 0x00 WITH PERMISSION_SET = UNSAFE;
+                CREATE SECURITY POLICY tenant_filter ADD FILTER PREDICATE dbo.fn_tenant(tenant_id) ON dbo.orders WITH (STATE = OFF);
+                GRANT SELECT ON dbo.orders TO PUBLIC;
+                GO
+            """,
+            "db/oracle.sql": "GRANT DBA TO app_user;\nCREATE OR REPLACE PROCEDURE p AUTHID DEFINER AS BEGIN NULL; END;\n",
+            "redis.conf": "bind 0.0.0.0\nprotected-mode no\n",
+            "mongod.conf": "net:\n  bindIp: 0.0.0.0\nsecurity:\n  authorization: disabled\n",
+            "my.cnf": "[mysqld]\nbind-address = 0.0.0.0\nlocal_infile = 1\nskip-grant-tables\n",
+            "pg_hba.conf": "host all all 0.0.0.0/0 trust\n",
+            "elasticsearch.yml": "xpack.security.enabled: false\nnetwork.host: 0.0.0.0\n",
+            "cassandra.yaml": "authenticator: AllowAllAuthenticator\n",
+            "firestore.rules": "service cloud.firestore {\n  match /{doc=**} {\n    allow read, write: if true;\n  }\n}\n",
+            "database.rules.json": '{"rules": {".read": true, ".write": "auth != null"}}\n',
+            "docker-compose.yml": """
+                services:
+                  db:
+                    image: mysql:8
+                    environment:
+                      MYSQL_ROOT_PASSWORD: root
+                    ports:
+                      - "3306:3306"
+                  pg:
+                    image: postgres:16
+                    environment:
+                      - POSTGRES_HOST_AUTH_METHOD=trust
+            """,
+            "src/db.ts": 'const url = "postgres://app@db:5432/shop?sslmode=disable";\nconst pool = new Pool({ ssl: { rejectUnauthorized: false } });\n',
+            "appsettings.json": '{"ConnectionStrings": {"Main": "Server=tcp:sql;Database=shop;User Id=sa;Password=x;TrustServerCertificate=True;"}}\n',
+            "src/main/java/App.java": 'String url = "jdbc:mysql://db:3306/shop?useSSL=false";\n',
+        }
+        with _project(weak) as tmp:
+            found = datastores.analyze(collect_sources(tmp))
+        self.assertEqual({f.id for f in found}, set(datastores.RULE_IDS))
+        by_file = {(f.id, f.file_path) for f in found}
+        self.assertIn(("ds-db-port-exposed", "docker-compose.yml"), by_file)
+        self.assertIn(("ds-conn-cert-unverified", "appsettings.json"), by_file)
+        self.assertIn(("ds-conn-tls-disabled", "src/main/java/App.java"), by_file)
+        self.assertNotIn("Password=x", json.dumps([f.to_dict() for f in found]))
+
+        hardened = {
+            "db/mysql.sql": "CREATE USER 'app'@'10.0.%' IDENTIFIED BY 'from-vault';\nGRANT SELECT, INSERT ON shop.* TO 'app'@'10.0.%';\n",
+            "redis.conf": "bind 127.0.0.1\nprotected-mode yes\nrequirepass ${REDIS_PASSWORD}\n",
+            "mongod.conf": "net:\n  bindIp: 127.0.0.1\nsecurity:\n  authorization: enabled\n",
+            "pg_hba.conf": "host all all 10.0.0.0/8 scram-sha-256\nlocal all all trust\n",
+            "firestore.rules": "match /notes/{id} {\n  allow read, write: if request.auth != null && request.auth.uid == resource.data.owner;\n}\n",
+            "docker-compose.yml": """
+                services:
+                  db:
+                    image: postgres:16
+                    environment:
+                      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+                    ports:
+                      - "127.0.0.1:5432:5432"
+            """,
+            "src/db.ts": 'const url = "postgres://app@db:5432/shop?sslmode=verify-full";\n',
+        }
+        with _project(hardened) as tmp:
+            self.assertEqual([f.id for f in datastores.analyze(collect_sources(tmp))], [])
 
 
 class BusinessLogicTest(unittest.TestCase):

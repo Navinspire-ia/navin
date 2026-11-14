@@ -1,0 +1,8 @@
+$ python -m pytest tests/test_security_catalog.py tests/test_security_analyzers.py tests/test_security_audit.py tests/test_security_scanners.py tests/test_security_reports.py tests/test_security_orchestrator.py tests/test_security_rules.py tests/test_security_verification.py -q --tb=line
+started: 2026-11-14T14:22:43Z
+exit code: 0
+
+...................................................................................................... [ 79%]
+.................... [ 94%]
+.......                                                                  [100%]
+129 passed, 670 subtests passed in 11.54s

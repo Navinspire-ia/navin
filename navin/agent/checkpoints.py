@@ -30,6 +30,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from navin.session.manager import Session
 
@@ -115,6 +117,25 @@ _live_edit_hook: ContextVar[LiveEditHook | None] = ContextVar(
 _LIVE_FLUSH_DELAY_S = 1.0
 
 
+# Called with the path of every agent write, in the writer's thread, before the
+# write lands. The turn binds one that snapshots the project once, at its first
+# edit, instead of copying the whole project at every prompt.
+BeforeEditHook = Callable[[str | Path], None]
+_before_edit_hook: ContextVar[BeforeEditHook | None] = ContextVar(
+    "navin_before_edit_hook",
+    default=None,
+)
+
+
+def bind_before_edit_hook(hook: BeforeEditHook) -> Token[BeforeEditHook | None]:
+    """Bind the hook every agent write calls before it lands (one per turn)."""
+    return _before_edit_hook.set(hook)
+
+
+def reset_before_edit_hook(token: Token[BeforeEditHook | None]) -> None:
+    _before_edit_hook.reset(token)
+
+
 def bind_checkpoint_recorder(recorder: TurnRecorder) -> Token[TurnRecorder | None]:
     """Bind a snapshot recorder for the current agent turn (async task)."""
     return _current_recorder.set(recorder)
@@ -161,6 +182,13 @@ def record_file_before(path: str | Path) -> None:
     freshness signal for the code index: the write about to happen makes the
     throttled revalidation snapshot stale.
     """
+    before_edit = _before_edit_hook.get()
+    if before_edit is not None:
+        try:
+            before_edit(path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            # A snapshot that cannot be taken must never stop the edit itself.
+            logger.warning("Pre-edit snapshot hook failed for {}: {}", path, exc)
     recorder = _current_recorder.get()
     if recorder is not None:
         first_recorded = recorder.record(path)

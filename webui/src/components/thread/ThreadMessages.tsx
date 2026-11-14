@@ -13,7 +13,6 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { History } from "lucide-react";
 import { MessageBubble } from "@/components/MessageBubble";
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
 import { InteractionEcho } from "@/components/thread/InteractionEcho";
@@ -22,10 +21,9 @@ import {
   type SelectedModelRoute,
 } from "@/components/thread/QuotaLimitCard";
 import { normalizeActivityTimeline, type TurnUnit } from "@/lib/activity-timeline";
-import type { CheckpointNotice, ContextCompactionNotice } from "@/hooks/useNavinStream";
+import type { ContextCompactionNotice } from "@/hooks/useNavinStream";
 import { formatTaskModelHint, messageTaskHint } from "@/lib/task-route-label";
 import type { CliAppInfo, McpPresetInfo, SlashCommand, UIMessage } from "@/lib/types";
-import { requestOpenCheckpoints } from "@/lib/workbench-events";
 import { useVirtualWindow } from "@/lib/virtualWindow";
 
 interface ThreadMessagesProps {
@@ -44,8 +42,6 @@ interface ThreadMessagesProps {
   forkBoundaryMessageCount?: number | null;
   /** Accepted for callers; context compaction is no longer shown in the thread. */
   contextCompaction?: ContextCompactionNotice | null;
-  /** Latest restore point snapshotted by the backend (one per user turn). */
-  checkpointNotice?: CheckpointNotice | null;
   /** A block that belongs to the flow rather than after it - the plan card.
    *  Anchored after this many messages so it stays with the turn that produced
    *  it; pass null to keep it trailing the last message while a run is live. */
@@ -242,7 +238,6 @@ export function ThreadMessages({
   mcpPresets = EMPTY_MCP_PRESETS,
   slashCommands = EMPTY_SLASH_COMMANDS,
   forkBoundaryMessageCount = null,
-  checkpointNotice = null,
   pinnedBlock = null,
   pinnedBlockAfterMessageCount = null,
   onOpenFilePreview,
@@ -262,10 +257,6 @@ export function ThreadMessages({
   const forkBoundaryAfterUnitIndex = useMemo(
     () => unitIndexAfterMessageCount(units, forkBoundaryMessageCount),
     [forkBoundaryMessageCount, units],
-  );
-  const checkpointAfterUnitIndex = useMemo(
-    () => unitIndexAfterMessageCount(units, checkpointNotice?.afterMessageCount ?? null),
-    [checkpointNotice, units],
   );
   // No anchor yet means the run is still live, and the block trails the last
   // message the way it always has.
@@ -387,9 +378,6 @@ export function ThreadMessages({
             {index === forkBoundaryAfterUnitIndex ? (
               <ForkBoundaryDivider label={t("thread.forkedFromHistory")} />
             ) : null}
-            {checkpointNotice && index === checkpointAfterUnitIndex ? (
-              <CheckpointDivider />
-            ) : null}
             {pinnedBlock && index === pinnedBlockAfterUnitIndex ? pinnedBlock : null}
           </Fragment>
         );
@@ -510,35 +498,6 @@ function unitIndexAfterMessageCount(
     if (seen >= messageCount) return i;
   }
   return null;
-}
-
-function CheckpointDivider() {
-  const { t } = useTranslation();
-  return (
-    <div
-      className="my-4 flex items-center gap-3 text-[13px] text-muted-foreground/70"
-      data-testid="thread-checkpoint-divider"
-    >
-      <span aria-hidden className="h-px flex-1 bg-border/60" />
-      <span className="inline-flex shrink-0 items-center gap-1.5">
-        <History className="h-3.5 w-3.5" aria-hidden />
-        <span>
-          {t("thread.checkpointSaved", {
-            defaultValue: "Restore point saved",
-          })}
-        </span>
-        <button
-          type="button"
-          onClick={requestOpenCheckpoints}
-          className="rounded px-1 py-0.5 font-medium text-foreground/70 underline decoration-dotted underline-offset-2 transition-colors hover:bg-accent hover:text-foreground"
-          data-testid="thread-checkpoint-open"
-        >
-          {t("thread.checkpointOpen", { defaultValue: "View checkpoints" })}
-        </button>
-      </span>
-      <span aria-hidden className="h-px flex-1 bg-border/60" />
-    </div>
-  );
 }
 
 function ForkBoundaryDivider({ label }: { label: string }) {

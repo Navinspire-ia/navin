@@ -24,8 +24,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from navin._version import __version__ as navin_version
 from navin.security import catalog
 from navin.security.analyzers import analyze_project, checked_controls
+from navin.security.analyzers.common import SKIP_DIRS
+from navin.security.appsec.matrix import build_matrix, matrix_of
 from navin.security.bridge import finding_from_legacy
 from navin.security.deep_scan import run_deep_security_scan
 from navin.security.model import Finding, finding_from_dict, merge_findings
@@ -45,6 +48,7 @@ _LEGACY_MAX_FINDINGS = 1000
 _QUOTED_SECRET = re.compile(r"""(["'`])([^"'`\s]{8,})\1""")
 _ASSIGNED_SECRET = re.compile(r"(?m)^(\s*[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*)([^\s\"'`#]{8,})\s*$")
 _GITIGNORE = "# Navin Security audit results: they quote code and paths, keep them local.\naudits/\nlast-audit.json\n*.sarif\n*.tmp\n"
+_MAX_SQL_FILES = 400
 
 
 class AuditStateError(RuntimeError):
@@ -54,12 +58,14 @@ class AuditStateError(RuntimeError):
 @dataclass
 class EngineRun:
     id: str
-    kind: str  # analyzer | rules | scanner
-    status: str  # ok | not_installed | not_applicable | timeout | failed | invalid_output | skipped
+    kind: str  # discovery | threat_model | analyzer | rules | scanner | database | dynamic
+    status: str  # ok | not_installed | not_applicable | timeout | failed | invalid_output | skipped | blocked
     findings: int = 0
     duration_s: float = 0.0
     detail: str = ""
     network: bool = False
+    version: str = ""
+    checks_run: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -79,6 +85,9 @@ class AuditResult:
     skipped_files: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     levels_reached: list[str] = field(default_factory=lambda: list(REACHED_LEVELS))
+    inputs: dict[str, Any] = field(default_factory=dict)
+    runtime_reports: dict[str, Any] = field(default_factory=dict)
+    threat_model: dict[str, Any] = field(default_factory=dict)
 
     def not_run(self) -> dict[str, str]:
         """Engine id -> why it did not run, for the report and the SARIF notifications."""
@@ -87,26 +96,34 @@ class AuditResult:
     def sarif(self, *, tool_version: str = "") -> dict[str, Any]:
         return to_sarif(self.findings, root=self.root, tool_version=tool_version, not_run=self.not_run())
 
-    def to_dict(self, *, max_findings: int | None = None) -> dict[str, Any]:
-        shown = self.findings if max_findings is None else self.findings[:max_findings]
-        return {
+    def to_dict(self, *, max_findings: int | None = None, matrix: bool = True) -> dict[str, Any]:
+        data = {
             "id": self.id,
             "root": self.root,
             "started_at": self.started_at,
             "duration_s": self.duration_s,
             "levels_reached": list(self.levels_reached),
+            "inputs": dict(self.inputs),
             "discovery": self.discovery,
             "threats": list(self.threats),
+            "threat_model": dict(self.threat_model),
             "plan": self.plan,
             "engines": [asdict(e) for e in self.engines],
-            "findings": [f.to_dict() for f in shown],
+            "findings": [f.to_dict() for f in self.findings],
             "findings_total": len(self.findings),
             "attack_paths": self.attack_paths,
             "coverage": self.coverage.to_dict(),
+            "runtime_reports": dict(self.runtime_reports),
             "follow_up_skills": list(self.follow_up_skills),
             "skipped_files": list(self.skipped_files),
             "notes": list(self.notes),
         }
+        if matrix:
+            # Built from every finding, before the list is cut for display.
+            data["matrix"] = build_matrix(data)
+        if max_findings is not None:
+            data["findings"] = data["findings"][:max_findings]
+        return data
 
 
 def _wanted_scanners(scanners: bool | Iterable[str]) -> set[str]:
@@ -140,7 +157,7 @@ def _legacy_rules(base: Path, sink: list[Finding], notes: list[str]) -> EngineRu
         notes.append(f"{rejected} rule match(es) could not be normalized and were left out")
     merged = merge_findings(found)
     sink.extend(merged)
-    return EngineRun("navin_rules", "rules", "ok", findings=len(merged), duration_s=spent)
+    return EngineRun("navin_rules", "rules", "ok", findings=len(merged), duration_s=spent, version=navin_version)
 
 
 def _scan(base: Path, wanted: set[str], scanners: bool | Iterable[str], *, offline: bool, timeout_s: int,
@@ -157,17 +174,19 @@ def _scan(base: Path, wanted: set[str], scanners: bool | Iterable[str], *, offli
             engines.append(EngineRun(scanner_id, "scanner", "skipped", detail="needs the network and the audit is offline", network=network))
             continue
         status = statuses.get(scanner_id)
+        version = status.version if status else ""
         if status is None or not status.available:
             hint = spec.install_hint or (status.error if status else "")
             engines.append(EngineRun(scanner_id, "scanner", "not_installed", detail=hint, network=network))
             continue
         left = deadline - time.monotonic()
         if left < 5:
-            engines.append(EngineRun(scanner_id, "scanner", "skipped", detail=f"the audit time budget ({budget_s:g} s) was used up", network=network))
+            engines.append(EngineRun(scanner_id, "scanner", "skipped", detail=f"the audit time budget ({budget_s:g} s) was used up", network=network,
+                                     version=version))
             continue
         run = run_scanner(scanner_id, base, timeout_s=int(max(5, min(timeout_s, left))))
         engines.append(EngineRun(scanner_id, "scanner", run.status, findings=len(run.findings),
-                                 duration_s=round(run.duration_s, 2), detail=run.detail[:300], network=network))
+                                 duration_s=round(run.duration_s, 2), detail=run.detail[:300], network=network, version=version))
         if run.ok:
             sink.extend(run.findings)
     return engines
@@ -200,11 +219,68 @@ def _not_applicable(found: Discovery) -> dict[str, str]:
 def _discovery_summary(found: Discovery) -> dict[str, Any]:
     data = found.to_dict()
     keep = ("files_seen", "languages", "frameworks", "databases", "auth", "api_styles", "payments",
-            "infrastructure", "native", "ai", "features", "hardening", "surfaces")
+            "infrastructure", "native", "ai", "features", "hardening", "surfaces", "monorepo", "workspaces",
+            "submodules", "git", "file_classes", "integrations", "data_signals", "truncated")
     out = {key: data[key] for key in keep if key in data}
     out["manifests"] = list(data.get("manifests") or [])[:30]
     out["entrypoints"] = len(data.get("entrypoints") or [])
+    out["entrypoint_kinds"] = {k: list(v)[:20] for k, v in (data.get("entrypoint_kinds") or {}).items()}
+    out["modules"] = list(data.get("modules") or [])[:50]
+    out["deploy_targets"] = list(data.get("deploy_targets") or [])[:30]
+    for key in ("env_files", "config_files", "migrations", "secret_like_files"):
+        out[key] = list(data.get(key) or [])[:50]
     return out
+
+
+def _threat_summary(model: Any) -> dict[str, Any]:
+    boundaries = [getattr(b, "title", "") or getattr(b, "id", "") for b in getattr(model, "boundaries", [])]
+    scenarios = [getattr(s, "id", "") for s in getattr(model, "scenarios", [])]
+    return {"boundaries": boundaries[:30], "scenarios": scenarios[:40]}
+
+
+def _sql_files(base: Path) -> list[Path]:
+    """The project's SQL files, bounded, never through a symlink, never outside the root."""
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            if path.suffix.lower() == ".sql" and not path.is_symlink():
+                out.append(path)
+                if len(out) >= _MAX_SQL_FILES:
+                    return out
+    return out
+
+
+def _ephemeral_database(base: Path, sink: list[Finding], reports: dict[str, Any], *, timeout_s: float) -> EngineRun:
+    from navin.security.analyzers.db_introspect import EPHEMERAL_ENGINE, introspect_ephemeral
+
+    files = _sql_files(base)
+    report = introspect_ephemeral(files, timeout_s=timeout_s, root=base)
+    sink.extend(report.findings)
+    reports["database"] = {
+        "engine": report.engine, "status": report.status, "postgres_version": report.postgres_version,
+        "applied": len(report.applied), "failed": report.failed[:20], "tables": len(report.tables),
+        "policies": len(report.policies), "duration_s": report.duration_s, "detail": report.detail,
+        "role_tests": report.role_tests[:100], "skipped": report.skipped[:50],
+    }
+    return EngineRun(EPHEMERAL_ENGINE, "database", report.status, findings=len(report.findings), duration_s=report.duration_s,
+                     detail=report.detail[:300], version=report.postgres_version)
+
+
+def _web_baseline(base_url: str, sink: list[Finding], reports: dict[str, Any]) -> EngineRun:
+    from navin.security.verification.web_baseline import ENGINE_ID, run_web_baseline
+
+    report = run_web_baseline(base_url)
+    sink.extend(report.findings)
+    reports["web"] = {
+        "engine": report.engine, "status": report.status, "target": report.target, "started_at": report.started_at,
+        "requests": report.requests, "checks_run": list(report.checks_run), "duration_s": report.duration_s,
+        "detail": report.detail,
+    }
+    return EngineRun(ENGINE_ID, "dynamic", report.status, findings=len(report.findings), duration_s=report.duration_s,
+                     detail=report.detail[:300] or f"{report.requests} request(s) to {report.target}", network=True,
+                     version=navin_version, checks_run=list(report.checks_run))
 
 
 def _plan_summary(plan: AuditPlan) -> dict[str, Any]:
@@ -239,8 +315,15 @@ def run_audit(
     offline: bool = False,
     scanner_timeout_s: int = 120,
     budget_s: float = 900.0,
+    database_ephemeral: bool = False,
 ) -> AuditResult:
-    """Audit *root*. Blocking (minutes when scanners run): call it off the loop."""
+    """Audit *root*. Blocking (minutes when scanners run): call it off the loop.
+
+    ``inputs.base_url`` is a target the user handed over: only then does the passive web check send
+    GET/HEAD/OPTIONS requests to it. ``database_ephemeral`` replays the project's SQL migrations in a
+    throwaway local PostgreSQL, under a non-superuser role, and reads its catalogs: opt-in, since the
+    migrations come from the audited repository.
+    """
     base = Path(root).expanduser().resolve()
     if not base.is_dir():
         raise NotADirectoryError(f"not a directory: {base}")
@@ -248,22 +331,40 @@ def run_audit(
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     inputs = inputs or AuditInputs()
     wanted = _wanted_scanners(scanners)
+    step = time.monotonic()
     found = discover(base, base_url=inputs.base_url)
+    engines: list[EngineRun] = [EngineRun("navin_discovery", "discovery", "ok", duration_s=round(time.monotonic() - step, 2),
+                                          detail=f"{found.files_seen} files read" + (" (stopped early)" if getattr(found, "truncated", False) else ""),
+                                          version=navin_version)]
     model = build_threat_model(found)
+    threat = _threat_summary(model)
+    engines.append(EngineRun("navin_threat_model", "threat_model", "ok", version=navin_version,
+                             detail=f"{len(threat['boundaries'])} trust boundaries, {len(threat['scenarios'])} scenarios"))
 
     findings: list[Finding] = []
-    engines: list[EngineRun] = []
     notes: list[str] = []
+    runtime: dict[str, Any] = {}
     analysis = analyze_project(base)
     for analyzer_id in analysis.ran:
         count = sum(1 for f in analysis.findings if f.source == analyzer_id)
         engines.append(EngineRun(analyzer_id, "analyzer", "ok", findings=count,
-                                 duration_s=analysis.durations.get(analyzer_id, 0.0)))
+                                 duration_s=analysis.durations.get(analyzer_id, 0.0), version=navin_version))
     findings.extend(analysis.findings)
     notes.extend(analysis.notes)
     engines.append(_legacy_rules(base, findings, notes))
     engines.extend(_scan(base, wanted, scanners, offline=offline, timeout_s=scanner_timeout_s,
                          deadline=clock + budget_s, budget_s=budget_s, sink=findings))
+    if database_ephemeral:
+        left = clock + budget_s - time.monotonic()
+        engines.append(_ephemeral_database(base, findings, runtime, timeout_s=max(30.0, min(180.0, left))))
+    else:
+        engines.append(EngineRun("navin_db_ephemeral", "database", "skipped",
+                                 detail="replaying the SQL migrations in a throwaway PostgreSQL is opt-in (database_ephemeral)"))
+    if inputs.base_url:
+        engines.append(_web_baseline(inputs.base_url, findings, runtime))
+    else:
+        engines.append(EngineRun("navin_web_baseline", "dynamic", "skipped",
+                                 detail="no base URL: the passive web checks only run on a target the user hands over"))
     available = {e.id for e in engines if e.kind == "scanner" and e.status != "not_installed"}
     plan = plan_audit(found, model, inputs, available_scanners=available)
 
@@ -277,6 +378,12 @@ def run_audit(
     for control_id, why in excluded.items():
         if report.controls[control_id].status == "not_assessed":
             report.controls[control_id].reason = why
+    levels = list(REACHED_LEVELS)
+    if "navin_web_baseline" in ran:
+        levels.append("L2")  # passive dynamic checks on the target the user handed over
+    origin = ""
+    if inputs.base_url:
+        origin = str(runtime.get("web", {}).get("target") or "")
     return AuditResult(
         id=f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}",
         root=str(base),
@@ -292,6 +399,11 @@ def run_audit(
         follow_up_skills=list(correlation.follow_up_skills),
         skipped_files=list(analysis.skipped)[:200],
         notes=list(dict.fromkeys(notes)),
+        levels_reached=levels,
+        inputs={"base_url": origin, "scanners": sorted(wanted), "offline": bool(offline),
+                "database_ephemeral": bool(database_ephemeral), "navin_version": navin_version},
+        runtime_reports=runtime,
+        threat_model=threat,
     )
 
 
@@ -348,6 +460,11 @@ def findings_of(audit: dict[str, Any]) -> list[Finding]:
 
 def coverage_of(audit: dict[str, Any]) -> Coverage:
     return Coverage.from_dict(audit.get("coverage") or {})
+
+
+def appsec_matrix_of(audit: dict[str, Any]) -> dict[str, Any]:
+    """The 302-control matrix of a saved audit (built now for an audit saved before matrices)."""
+    return matrix_of(audit)
 
 
 def sarif_of(audit: dict[str, Any], *, tool_version: str = "") -> dict[str, Any]:

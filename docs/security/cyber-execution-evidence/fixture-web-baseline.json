@@ -1,0 +1,32 @@
+{
+ "engine": "navin_web_baseline",
+ "status": "ok",
+ "target": "http://127.0.0.1:33731",
+ "started_at": "2026-11-14T14:45:05+00:00",
+ "requests": 16,
+ "checks_run": [
+  "web-csp-missing",
+  "web-csp-unsafe",
+  "web-xcto-missing",
+  "web-framing-missing",
+  "web-server-banner",
+  "web-cookie-flags",
+  "web-cache-private",
+  "web-error-leak",
+  "web-cors-reflect",
+  "web-cors-wildcard-credentials",
+  "web-security-txt-missing",
+  "web-debug-exposed",
+  "web-admin-exposed",
+  "web-graphql-introspection",
+  "web-openapi-exposed",
+  "web-sourcemap-exposed"
+ ],
+ "duration_s": 0.71,
+ "detail": "",
+ "methods_received_by_the_site": [
+  "GET",
+  "HEAD",
+  "OPTIONS"
+ ]
+}

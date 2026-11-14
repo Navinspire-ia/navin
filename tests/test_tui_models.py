@@ -129,6 +129,23 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         reopened._refresh_status()
         self.assertEqual(reopened.status.model_preset, "minimax", "closing and reopening the CLI keeps it")
 
+    async def test_a_turn_runs_the_model_the_composer_shows(self):
+        from navin.agent.loop import SESSION_MODEL_PIN_KEY
+
+        runtime = self.runtime
+        runtime.set_model_preset("minimax")
+        # The shown model changed without the chat's pin (a /model command, a
+        # settings reload): the engine still ran MiniMax under "Sonnet".
+        runtime.agent_loop.model_preset = "claude"
+        runtime.bus = SimpleNamespace(publish_inbound=AsyncMock())
+        runtime._ensure_tasks = Mock()
+        await runtime.send("Explain this code")
+        session = runtime.agent_loop.sessions.get_or_create(runtime.session_key)
+        self.assertEqual(session.metadata[SESSION_MODEL_PIN_KEY], "claude")
+        runtime.agent_loop.model_preset = None
+        await runtime.send("And this one")
+        self.assertNotIn(SESSION_MODEL_PIN_KEY, session.metadata, "the default shown: no pin left to override it")
+
     async def test_back_to_default_drops_the_chat_pin_and_a_stale_pin_is_ignored(self):
         from navin.agent.loop import SESSION_MODEL_PIN_KEY
 

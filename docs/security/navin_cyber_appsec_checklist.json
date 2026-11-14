@@ -1,0 +1,3055 @@
+{
+  "metadata": {
+    "title": "Navin Cyber - Catalogue de vérification Application Security",
+    "version": "1.0.0",
+    "updated": "2026-11-14",
+    "scope": "Inventaire, revue, scan et tests pour projets applicatifs de toute technologie; activer seulement les contrôles applicables.",
+    "control_count": 302,
+    "category_count": 24,
+    "status_enum": [
+      "not_tested",
+      "passed",
+      "failed",
+      "inconclusive",
+      "blocked",
+      "not_applicable"
+    ],
+    "coverage_rule": "Un contrôle ne compte comme couvert que si son exécution et les preuves sont disponibles; non-applicable doit être justifié.",
+    "safety": "Pas de scan actif sur production sans mandat et garde-fous; jamais de tests destructifs, de modification directe de base, ni de vraies données clients pour les tests d'isolement.",
+    "reference_urls": {
+      "OWASP ASVS 5.0": "https://asvs.owasp.org/",
+      "OWASP Top 10 2025": "https://top10.owasp.org/",
+      "OWASP WSTG": "https://wstg.owasp.org/",
+      "OWASP API Security": "https://api-security.owasp.org/",
+      "OWASP MASVS": "https://mas.owasp.org/MASVS/",
+      "OWASP LLM Top 10": "https://genai.owasp.org/llm-top-10/",
+      "OWASP MCP Top 10": "https://owasp.org/projects/mcp-top-10",
+      "NIST SSDF": "https://csrc.nist.gov/pubs/sp/800/218/final",
+      "PostgreSQL RLS": "https://www.postgresql.org/docs/current/ddl-rowsecurity.html",
+      "Supabase RLS": "https://supabase.com/docs/guides/database/postgres/row-level-security",
+      "OWASP SAMM": "https://owaspsamm.org/model/"
+    }
+  },
+  "controls": [
+    {
+      "id": "NAV-CYBER-DISC-001",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Recenser tous les dépôts, sous-modules, branches et monorepos",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-002",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Détecter chaque langage, framework, version et gestionnaire de dépendances",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-003",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Identifier les applications web, API, mobiles, desktop, CLI, bibliothèques et services",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-004",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Inventorier les points d'entrée HTTP, RPC, WebSocket, GraphQL, workers et tâches planifiées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-005",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Recenser les domaines, sous-domaines, URL, environnements et points de déploiement autorisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-006",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Découvrir les bases, schémas, files, caches, stockages objets et systèmes tiers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-007",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Cartographier les flux de données, frontières de confiance et échanges interservices",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-008",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Identifier les rôles humains, de service, administrateurs et leurs parcours",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-009",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Localiser les fichiers de configuration, secrets, scripts, migrations et manifestes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-010",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Associer artefacts compilés et versions déployées aux commits et environnements",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-011",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Distinguer code applicatif, code généré, exemples, tests et dépendances vendorisées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-012",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Établir pour chaque contrôle le périmètre autorisé, les exclusions et les preuves disponibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-DISC-013",
+      "category": "Découverte et cartographie",
+      "applicability": "all",
+      "verification_mode": "read_only",
+      "task": "Détecter les surfaces non documentées et composants orphelins",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "inventaire statique, parsers, SBOM, manifests"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-001",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Reconstituer l'architecture logique et les dépendances critiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-002",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Identifier frontières de confiance entre clients, serveurs, données et services tiers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-003",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Construire des scénarios de menace par fonctionnalité sensible et par rôle",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-004",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier la séparation frontend/backend et l'absence de confiance dans le client",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-005",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier les principes de moindre privilège et de refus par défaut",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-006",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier la segmentation des plans de contrôle, de données et d'administration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-007",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Contrôler la séparation des tenants et des environnements de développement/production",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-008",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Examiner les chemins de contournement des contrôles de sécurité",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-009",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier le modèle de confiance des services tiers et webhooks",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-010",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Identifier les points uniques de défaillance ayant un impact de sécurité",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-011",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier que les opérations sensibles sont journalisées et approuvées selon le risque",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-ARCH-012",
+      "category": "Architecture et conception sécurisée",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier la traçabilité des exigences de sécurité vers des tests exécutables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "graphe architecture, revue guidee, threat modeling"
+    },
+    {
+      "id": "NAV-CYBER-SAST-001",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter injections SQL, NoSQL et requêtes construites par concaténation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-002",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter injections de commandes système et paramètres shell non maîtrisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-003",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter injections LDAP, XPath, XQuery et moteurs de recherche",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-004",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter injections de templates, expressions et interpréteurs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-005",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter XSS stockées, réfléchies et DOM liées aux flux de données",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-006",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter désérialisation non sûre et chargement de types arbitraires",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-007",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter traversée de chemins, lecture/écriture arbitraire et inclusion de fichiers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-008",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter SSRF et accès non maîtrisé aux URL, notamment aux métadonnées cloud",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-009",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter XXE et parsers XML non sécurisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-010",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter exécution de code dynamique, eval et chargement de modules non maîtrisé",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-011",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter prototype pollution et manipulation dangereuse d'objets dynamiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-012",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter redirections ouvertes et validation insuffisante des destinations",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-013",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter ReDoS et expressions régulières à complexité dangereuse",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-014",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter débordements mémoire, use-after-free, integer overflow et accès non bornés si langage concerné",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-015",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter chemins de concurrence, data races, TOCTOU et défauts de synchronisation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-016",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter manipulations de formats d'archives, Zip Slip et bombes de décompression",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-017",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter désactivation des contrôles de sécurité dans les branches de code",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-SAST-018",
+      "category": "Analyse statique du code et défauts techniques",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier validation des entrées, encodage contextuel des sorties et typage des données",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Semgrep/CodeQL, linters sécurité, analyse de flux"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-001",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler création de compte, validation d'email et invitation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-002",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler politique de mots de passe et stockage par hachage adapté",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-003",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler récupération de compte, réinitialisation et changement de mot de passe",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-004",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier activation, révocation et contournement éventuel de la MFA",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-005",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier limites de tentatives, anti-énumération et protection contre credential stuffing",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-006",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier durée de vie, rotation et révocation des sessions et refresh tokens",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-007",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler cookies Secure, HttpOnly, SameSite et fixation de session",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-008",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Valider JWT: algorithmes autorisés, signatures, audiences, issuers, expiration et clés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-009",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler OAuth2/OIDC: redirect URI, PKCE, state, nonce et échange de code",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-010",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier le lien entre identité externe et compte local (account linking)",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-011",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler déconnexion, invalidation de session et changement de privilèges",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-012",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier authentification des services, workloads et tâches automatisées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-013",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence d'identifiants par défaut, comptes de test et chemins de contournement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTH-014",
+      "category": "Authentification et gestion des sessions",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler authentification et validation des signatures des callbacks/webhooks",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests de comptes et sessions isolés, revue config"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-001",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester BOLA/IDOR sur chaque objet accessible par identifiant",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-002",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester contrôle d'autorisation au niveau de chaque fonction et endpoint",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-003",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester autorisation par propriété/champ (lecture et écriture)",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-004",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester élévation horizontale entre utilisateurs de même niveau",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-005",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester élévation verticale vers fonctions opérateur, support et administrateur",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-006",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester isolation entre tenants, organisations, projets, entités et environnements",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-007",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier les contrôles d'accès côté serveur sur chaque opération sensible",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-008",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester accès non autorisé via exports, recherche, listes et fonctionnalités batch",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-009",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester mass assignment et champs protégés acceptés à la création/modification",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-010",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler l'héritage, la propagation et la révocation des rôles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-011",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Contrôler délégation, impersonation et accès support avec audit et expiration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-012",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Tester accès aux ressources liées, fichiers, commentaires et métadonnées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-013",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier restrictions des clés API, scopes OAuth et permissions des comptes techniques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-AUTHZ-014",
+      "category": "Autorisations et isolation des accès",
+      "applicability": "auth",
+      "verification_mode": "hybrid",
+      "task": "Vérifier qu'un cache ou index de recherche ne contourne pas les règles d'accès",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice rôles-ressources, tests multi-comptes isolés"
+    },
+    {
+      "id": "NAV-CYBER-BUS-001",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Modéliser les états autorisés des processus métiers sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-002",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester sauts d'étapes, validation prématurée et bypass d'approbation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-003",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester accès ou modification après clôture, annulation ou expiration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-004",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester doubles soumissions, replays et idempotence des opérations",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-005",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester concurrence, courses critiques et double traitement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-006",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Contrôler montants, unités, soldes, arrondis, bornes et valeurs négatives",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-007",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier unicité, intégrité et cohérence des références métier",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-008",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester séparation des tâches, double validation et privilèges incompatibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-009",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester falsification de prix, quotas, limites et paramètres métier venant du client",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-010",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester incohérence entre frontend, API, files et traitements différés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-011",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections contre abus de fonctionnalités sensibles et automatisation massive",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-BUS-012",
+      "category": "Logique métier, états et transactions",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester l'échec partiel des workflows et la restauration d'un état cohérent",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "tests métiers, scénarios de transitions et concurrence contrôles"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-001",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Scanner secrets dans les fichiers source et de configuration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-002",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Scanner secrets dans tout l'historique Git accessible et tags autorisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-003",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Scanner .env, fichiers de tests, exemples, notebooks et scripts",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-004",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Scanner secrets dans images, binaires, bundles JS et ressources embarquées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-005",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier absence de secrets dans logs, traces, messages d'erreur et artefacts CI",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-006",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Identifier clés réutilisées entre environnements et scopes trop étendus",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-007",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier politique de rotation, révocation et durée de vie des secrets",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-008",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier usage de gestionnaires de secrets et absence de clés dans le frontend",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-009",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier permissions d'accès aux secrets par service et environnement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-010",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter certificats et clés privées divulgués, expirés ou mal protégés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-SECRET-011",
+      "category": "Secrets, identifiants et exposition",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Détecter données de connexion de production dans fixtures et sauvegardes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Gitleaks/TruffleHog, gestion secrets"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-001",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier TLS et certificats sur les flux applicatifs concernés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-002",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Rechercher algorithmes obsolètes et paramètres cryptographiques faibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-003",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier hachage des mots de passe avec sel et coût adaptés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-004",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier usage d'aléa cryptographique approprié pour jetons et clés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-005",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier chiffrement authentifié et gestion correcte nonce/IV",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-006",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier signatures, validation et intégrité des objets critiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-007",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier dérivation, stockage, rotation et séparation des clés cryptographiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-008",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Détecter cryptographie maison ou contournement de validation TLS",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-009",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier chiffrement des sauvegardes et données sensibles au repos",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-010",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier non-divulgation de clés dans frontend, mobile, desktop et logs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-CRYP-011",
+      "category": "Cryptographie et protection des échanges",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier résistance aux attaques de rejeu et anti-replay lorsque nécessaire",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse statique, revue bibliothèques crypto et configs TLS"
+    },
+    {
+      "id": "NAV-CYBER-API-001",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Inventorier endpoints et méthodes à partir du code, schémas et runtime",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-002",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Comparer routes exposées aux spécifications OpenAPI/GraphQL/protobuf",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-003",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Tester authentification et autorisation de chaque méthode ou resolver",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-004",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Tester BOLA, BFLA, BOPLA et mass assignment des requêtes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-005",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Contrôler validation stricte des paramètres, types, tailles et formats",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-006",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Contrôler pagination, limites de ressources, complexité GraphQL et profondeur",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-007",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Contrôler rate limits, quotas et protections contre abus métier",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-008",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier CORS, origines autorisées et requêtes cross-origin authentifiées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-009",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier gestion des erreurs sans divulgation d'informations internes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-010",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité des subscriptions, WebSocket et canaux temps réel",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-011",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier signatures, idempotence et protection replay des webhooks",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-012",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier consommation sûre des API tierces, schémas et erreurs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-013",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier impossibilité d'accès aux API internes/admin depuis canaux non prévus",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-API-014",
+      "category": "API REST, GraphQL, gRPC et communications",
+      "applicability": "api",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protection SSRF des endpoints prenant des URLs en entrée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "schémas OpenAPI, tests API en préproduction"
+    },
+    {
+      "id": "NAV-CYBER-WEB-001",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Explorer les routes et ressources publiques avec un crawl borné",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-002",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Contrôler TLS, HSTS et redirections HTTP vers HTTPS",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-003",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Contrôler en-têtes CSP, X-Content-Type-Options et politique de framing",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-004",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Contrôler cookies, sessions et stockage navigateur sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-005",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester XSS réfléchies, stockées et DOM avec charges non destructrices",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-006",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester CSRF sur actions qui modifient l'état",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-007",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester injections et path traversal avec corpus sûr et limites strictes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-008",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester upload de fichiers: types, taille, stockage, isolation et inspection",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-009",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester contrôle des téléchargements et accès aux fichiers privés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-010",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Tester sécurité CORS, postMessage et intégrations iframe",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-011",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Vérifier protections clickjacking et open redirect",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-012",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Vérifier cache/CDN: absence de réponse privée partagée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-013",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Vérifier source maps, mode debug et ressources internes exposées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-WEB-014",
+      "category": "Applications web et tests dynamiques",
+      "applicability": "web",
+      "verification_mode": "staging_active",
+      "task": "Vérifier séparation des routes d'administration et endpoints techniques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP ZAP baseline; DAST actif seulement en préproduction autorisée"
+    },
+    {
+      "id": "NAV-CYBER-DB-001",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Inventorier bases, schémas, tables, collections, vues, fonctions et triggers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-002",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Inventorier rôles, utilisateurs, GRANT/REVOKE et privilèges par objet",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-003",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier accès par moindre privilège et comptes séparés lecture/écriture/admin",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-004",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester injection des requêtes générées par ORM, SQL brut et procédures",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-005",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Détecter bases, consoles, ports et endpoints de données exposés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-006",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier chiffrement des connexions et règles de connexion depuis l'application",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-007",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier activation de RLS sur tables exposées lorsqu'applicable",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-008",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester RLS SELECT en utilisateur normal, anonyme et utilisateurs de tenants différents",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-009",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester RLS INSERT et WITH CHECK pour empêcher création dans un autre tenant",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-010",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester RLS UPDATE avec USING et WITH CHECK, y compris changement de tenant_id",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-011",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester RLS DELETE et permissions de suppression des rôles ordinaires",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-012",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier politiques permissive/restrictive, combinaisons OR/AND et deny par défaut",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-013",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier contournements RLS via propriétaire, superuser et BYPASSRLS",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-014",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Contrôler fonctions SECURITY DEFINER, search_path et droits EXECUTE",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-015",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Contrôler vues security_invoker et droits des vues matérialisées/exposées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-016",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Tester routes RPC/ORM/jobs utilisant service_role ou connexion privilégiée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-017",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier migrations SQL, déclencheurs, contraintes et défauts de privilèges",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DB-018",
+      "category": "Bases SQL/NoSQL, RLS et sécurité des données",
+      "applicability": "db",
+      "verification_mode": "hybrid",
+      "task": "Vérifier audits de lecture/écriture sensibles et protections des dumps/backups",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "introspection read-only, pgTAP / tests rôles en base ephemere"
+    },
+    {
+      "id": "NAV-CYBER-DATA-001",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Identifier données sensibles, personnelles, financières et secrets métier",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-002",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Cartographier parcours, réplications, exports et stockage des données",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-003",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Contrôler minimisation des données renvoyées par API et UI",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-004",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Contrôler anonymisation et masquage des jeux de test et de démonstration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-005",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Vérifier politiques de rétention, purge et suppression autorisée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-006",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Contrôler partages de fichiers, liens signés, expiration et autorisations",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-007",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Vérifier segmentation des stockages et isolation par tenant",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-008",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections contre exfiltration via logs, analytics et télémétrie",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-009",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Vérifier recherche/index/vector store sans accès transversal non autorisé",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-DATA-010",
+      "category": "Protection des données et vie privée",
+      "applicability": "data",
+      "verification_mode": "hybrid",
+      "task": "Tester données personnelles présentes dans caches, exports et artefacts",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "classification, inspection des flux autorisés"
+    },
+    {
+      "id": "NAV-CYBER-SCA-001",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Recenser dépendances directes, transitives et dépendances de build",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-002",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Produire un SBOM avec versions et provenance quand disponible",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-003",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Faire la correspondance avec CVE, avis fournisseurs et bases de vulnérabilités",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-004",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Croiser vulnérabilités exploitables connues CISA KEV, EPSS et contexte du projet",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-005",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Identifier packages abandonnés ou non maintenus et versions obsolètes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-006",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Identifier typosquatting, dependency confusion et paquets non attendus",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-007",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier intégrité et cohérence des lockfiles et résolutions de versions",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-008",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier absence de dépendances flottantes sur chemins critiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-009",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier scripts d'installation et hooks potentiellement dangereux",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-010",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Vérifier provenance des packages, signatures et attestations disponibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-011",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Scanner licences et obligations contractuelles selon la politique de l'organisation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-012",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Analyser vendored code, sous-modules et binaires tiers embarqués",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-SCA-013",
+      "category": "Dépendances et chaîne d'approvisionnement",
+      "applicability": "source",
+      "verification_mode": "read_only",
+      "task": "Suivre nouvelles vulnérabilités affectant les versions déjà déployées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OSV-Scanner, Grype, Trivy, Syft/SBOM"
+    },
+    {
+      "id": "NAV-CYBER-CICD-001",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections des branches critiques et règles de revue",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-002",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier CODEOWNERS, approbations et séparation des rôles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-003",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections contre injection dans scripts de pipeline",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-004",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier permissions minimales des tokens et intégrations CI",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-005",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier isolation des runners, caches et artefacts entre projets",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-006",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de secrets dans les variables accessibles aux contributions externes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-007",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier signatures de commits/releases si exigées par la politique",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-008",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier provenance, signature et traçabilité des artefacts de build",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-009",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier contrôles de sécurité bloquants avant publication et déploiement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-010",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier séparation dev/test/preprod/prod et validations de production",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-011",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier reproductibilité ou traçabilité du build et intégrité des dépendances",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-CICD-012",
+      "category": "Git, dépôt, build et CI/CD",
+      "applicability": "cicd",
+      "verification_mode": "hybrid",
+      "task": "Vérifier qu'une version déployée correspond au commit et à l'artefact audités",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse Git et pipelines, OpenSSF Scorecard"
+    },
+    {
+      "id": "NAV-CYBER-IAC-001",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Scanner Dockerfiles et images de base pour versions vulnérables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-002",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier exécution non-root et capacités Linux minimales des conteneurs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-003",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Contrôler systèmes de fichiers read-only et restrictions de privilèges",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-004",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Scanner configurations Terraform, OpenTofu, CloudFormation et équivalents",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-005",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Scanner Helm, Kustomize et manifests Kubernetes du projet",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-006",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier RBAC Kubernetes et permissions des service accounts",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-007",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier NetworkPolicies et exposition des services/ingress",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-008",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier secrets Kubernetes et gestion via coffre externe si nécessaire",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-009",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier admission policies, quotas et Pod Security Standards",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-010",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier limites de ressources pour réduire risques d'épuisement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-011",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier buckets, volumes, DB cloud et stockages exposés publiquement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-012",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier IAM cloud et absence de wildcard excessifs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-013",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier accès aux métadonnées cloud et protections contre SSRF",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-014",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier séparation des réseaux et des identités par environnement",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-IAC-015",
+      "category": "Cloud, containers, IaC et Kubernetes applicatif",
+      "applicability": "iac",
+      "verification_mode": "hybrid",
+      "task": "Vérifier cohérence des configurations déployées et déclarées (drift)",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "Checkov, Trivy config, Kubernetes policy"
+    },
+    {
+      "id": "NAV-CYBER-RUN-001",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier mode debug désactivé et stack traces protégées en production",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-002",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Contrôler configuration effective versus configuration attendue",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-003",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier validation des variables et absence de valeurs sûres remplacées en prod",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-004",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de routes cachées, endpoints test et consoles exposées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-005",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Contrôler permissions système et chemins de fichiers de l'application",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-006",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier chargement dynamique et exécution de plugins non fiables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-007",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier mises à jour signées et mécanismes de rollback",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-008",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier limitation de consommation mémoire, CPU et connexions",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-009",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier échecs de dépendances, timeouts, retries et circuit breakers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-010",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier comportement fail-closed des opérations de sécurité critiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-RUN-011",
+      "category": "Configuration runtime et qualité du déploiement",
+      "applicability": "runtime",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité des tâches planifiées, workers, files et consumers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue configuration et analyse runtime non intrusive"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-001",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Analyser manifests, permissions et composants exportés Android",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-002",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Analyser entitlements, ATS, URL schemes et universal links iOS",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-003",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier stockage local de secrets et données sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-004",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier usage Android Keystore/iOS Keychain selon le contexte",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-005",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier chiffrement et intégrité des données locales sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-006",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Contrôler TLS, validation des certificats et politiques de transport",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-007",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Tester deep links, intents, webviews et ponts JavaScript natifs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-008",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier authentification biométrique et protections de session",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-009",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de secrets et endpoints administratifs dans APK/IPA",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-010",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Tester résilience à la modification des packages et instrumentation selon risque",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-011",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier mécanismes de mise à jour, signature et publication",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-MOBILE-012",
+      "category": "Applications mobiles Android et iOS",
+      "applicability": "mobile",
+      "verification_mode": "hybrid",
+      "task": "Vérifier confidentialité des SDK analytics/publicitaires et permissions",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "MobSF, MASVS/MASTG, simulateur de test"
+    },
+    {
+      "id": "NAV-CYBER-DESK-001",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Scanner installateurs, binaires et bibliothèques embarquées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-002",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier signature de code et vérification de signature au lancement/mise à jour",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-003",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier mise à jour sécurisée contre substitution et rétrogradation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-004",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier permissions de fichiers, dossiers, journaux et données utilisateur",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-005",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier stockage des identifiants dans coffre-fort système quand disponible",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-006",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité IPC, sockets locaux, protocol handlers et localhost API",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-007",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité Electron/Tauri/WebView, navigation et isolation contexte",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-008",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protection des commandes CLI contre injections et arguments non fiables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-009",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sûreté des plugins, extensions et modules téléchargés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-010",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier élévation de privilèges et séparation des processus",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-DESK-011",
+      "category": "Applications desktop, CLI, extensions et installateurs",
+      "applicability": "desktop",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence d'informations sensibles dans crash dumps et logs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse binaires et packaging isolée"
+    },
+    {
+      "id": "NAV-CYBER-AI-001",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Identifier modèles, providers, prompts, tools, agents, mémoires et RAG utilisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-002",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Tester injections de prompt directes et indirectes sur contenus non fiables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-003",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Tester franchissement des frontières entre instructions système et données externes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-004",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier que sorties du modèle sont validées avant commandes, SQL et API",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-005",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Contrôler autorisations par outil avec identité et permissions du demandeur",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-006",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Détecter excessive agency, scopes trop larges et autonomie non bornée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-007",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sandbox des outils d'exécution de code et restrictions d'accès réseau",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-008",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de secrets et PII dans prompts, traces et appels providers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-009",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Contrôler isolation multi-tenant de la mémoire, des embeddings et du RAG",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-010",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Tester empoisonnement de documents, index, métadonnées et retrieval",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-011",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier provenance et inspection de documents ou fichiers ingérés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-012",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Contrôler MCP: authentification, scopes, descriptions d'outils et trust boundaries",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-013",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Tester tool poisoning, shadowing et substitutions de serveurs MCP",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-014",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier prévention d'exfiltration via tools, URL, messages et fichiers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-015",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Tester boucles autonomes, budgets, quotas, limites temporelles et kill switch",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-016",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier journalisation et attribution utilisateur de chaque action agentique",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-AI-017",
+      "category": "Applications IA, LLM, agents, RAG et MCP",
+      "applicability": "ai",
+      "verification_mode": "hybrid",
+      "task": "Vérifier que les actions destructrices exigent une approbation selon la politique",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "OWASP LLM/MCP, tests de sécurité agentique en bac à sable"
+    },
+    {
+      "id": "NAV-CYBER-OBS-001",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier journaux d'authentification et d'accès aux ressources sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-002",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier journaux d'administration et modifications d'autorisations",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-003",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier corrélation trace-id, user-id, tenant-id et transaction-id sans secrets",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-004",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections contre altération et suppression des journaux d'audit",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-005",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de secrets et données personnelles non nécessaires dans les logs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-006",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier alertes sur tentatives d'accès interdites et anomalies critiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-007",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier gestion des exceptions sans fuite d'informations sensibles",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-008",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sauvegardes, restauration testée et intégrité des données",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-009",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier dégradation contrôlée et continuité des fonctions de sécurité",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-OBS-010",
+      "category": "Journalisation, surveillance, erreurs et résilience",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier cohérence horodatage, rétention et capacité d'investigation",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "revue logs, instrumentation et exercices isolés"
+    },
+    {
+      "id": "NAV-CYBER-SRV-001",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier authentification des fonctions HTTP et déclencheurs événementiels",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-002",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier IAM minimal des fonctions et comptes d'exécution",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-003",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier validation des payloads de files, événements et objets",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-004",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier idempotence, déduplication et reprise après échec",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-005",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité des variables d'environnement et secrets runtime",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-006",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier restrictions réseau, VPC et endpoints internes",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-007",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier protections contre déclenchement massif et dépassement de coûts",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-008",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier permissions et intégrité des packages et layers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-SRV-009",
+      "category": "Fonctions serverless, edge, workers et jobs",
+      "applicability": "serverless",
+      "verification_mode": "hybrid",
+      "task": "Vérifier conformité des politiques de timeout, retry et dead-letter queue",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse IaC et fonctions serverless"
+    },
+    {
+      "id": "NAV-CYBER-BIN-001",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Analyser code natif pour erreurs mémoire et arithmétiques",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-002",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier compilation durcie et protections de la plateforme",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-003",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier provenance et signatures des firmwares et binaires",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-004",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier intégrité et authenticité du mécanisme de mise à jour",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-005",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier parser de formats binaires, paquets et protocole custom",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-006",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier limitations et permissions des modules WebAssembly",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-007",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier l'isolation des bibliothèques FFI et appels natifs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-008",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier absence de clés embarquées dans firmware ou ressources",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-BIN-009",
+      "category": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+      "applicability": "native",
+      "verification_mode": "hybrid",
+      "task": "Vérifier fuzzing des parsers sur cible de test isolée",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "fuzzing securise, analyse binaire et compilation"
+    },
+    {
+      "id": "NAV-CYBER-INT-001",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Inventorier fournisseurs externes, SDK et flux de données",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-002",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier authentification et scopes des connecteurs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-003",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier validation et authentification des événements entrants",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-004",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sorties vers domaines externes autorisés et contrôles SSRF",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-005",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier rotation et révocation des clés d'intégration",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-006",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier traitement des erreurs et réponses malformées de tiers",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-007",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier la séparation des tenants chez les intégrations et mappings d'identité",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-008",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier gestion des limites API, retries et déduplication",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-009",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier implications de la désactivation d'un fournisseur ou SDK",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-INT-010",
+      "category": "Intégrations et services tiers",
+      "applicability": "intégrations",
+      "verification_mode": "hybrid",
+      "task": "Vérifier sécurité des partages de fichiers et URLs pré-signées",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "analyse des flux API et permissions fournisseurs"
+    },
+    {
+      "id": "NAV-CYBER-QA-001",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Exécuter les moteurs SAST/SCA/secret/IaC pertinents et enregistrer leurs versions",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-002",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester que les moteurs s'exécutent réellement et produisent des résultats exploitables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-003",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Comparer surfaces détectées et éléments réellement présents dans le dépôt",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-004",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Cartographier contrôles couverts, non couverts, non applicables et bloqués",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-005",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier que chaque résultat est lié à un fichier, ligne, endpoint ou actif précis",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-006",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Valider les findings critiques par reproduction sûre lorsque possible",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-007",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Évaluer faux positifs, faux négatifs et limites des outils utilisés",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-008",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Conserver configurations, empreintes et date des scans pour reproductibilité",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-009",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Tester que les correctifs génèrent des tests de régression et un nouveau scan",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-010",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Vérifier non-régression sur pull requests, releases et nouveaux actifs",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-011",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Bloquer l'étiquette \"audit complet\" si un contrôle requis n'a pas été exécuté",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    },
+    {
+      "id": "NAV-CYBER-QA-012",
+      "category": "Qualité des scans, preuve et couverture",
+      "applicability": "all",
+      "verification_mode": "hybrid",
+      "task": "Produire un rapport machine-readable des lacunes et preuves avec responsables",
+      "default_status": "not_tested",
+      "evidence_required": true,
+      "tool_family": "matrice de preuves, validation des résultats et suivi de couverture"
+    }
+  ]
+}

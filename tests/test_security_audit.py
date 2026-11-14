@@ -149,6 +149,45 @@ class AuditRunTest(unittest.TestCase):
         self.assertEqual(mask_secret("API_TOKEN=abcdef123456"), "API_TOKEN=abcd****")
         self.assertEqual(mask_secret("port = 8080"), "port = 8080")
 
+    def test_appsec_matrix_proves_every_status_and_never_calls_an_audit_with_gaps_complete(self):
+        with _project() as tmp, mock.patch.object(audit_mod, "detect_scanners", _statuses(set())):
+            root = Path(tmp)
+            (root / "package.json").write_text('{"dependencies": {"react": "18.2.0", "mysql2": "3.9.0"}}\n', encoding="utf-8")
+            (root / "docker-compose.yml").write_text(
+                "services:\n  db:\n    image: mysql:8\n    environment:\n      MYSQL_ROOT_PASSWORD: root\n    ports:\n      - \"3306:3306\"\n",
+                encoding="utf-8")
+            matrix = run_audit(root, scanners=False).to_dict()["matrix"]
+        rows = {r["id"]: r for r in matrix["controls"]}
+        s = matrix["summary"]
+        self.assertEqual((s["total"], len(rows), len(matrix["categories"])), (302, 302, 24))
+        sql = rows["NAV-CYBER-SAST-001"]
+        self.assertEqual(sql["status"], "failed")
+        self.assertTrue(sql["findings"] and any(ref.startswith("app.py:") for ref in sql["evidence_refs"]))
+        self.assertEqual(rows["NAV-CYBER-DB-005"]["status"], "failed")  # MySQL port published on every interface, root password
+        self.assertGreaterEqual(rows["NAV-CYBER-DB-005"]["findings_count"], 2)
+        self.assertEqual(rows["NAV-CYBER-AUTH-013"]["status"], "not_applicable")  # no login or session code in this project
+        # MySQL has no row-level security: the RLS controls say why they do not apply.
+        self.assertEqual(rows["NAV-CYBER-DB-008"]["status"], "not_applicable")
+        self.assertIn("no row-level security", rows["NAV-CYBER-DB-008"]["reason_if_not_applicable"])
+        self.assertEqual(rows["NAV-CYBER-WEB-002"]["status"], "blocked")  # web surface, no authorized base URL
+        self.assertIn("base URL", rows["NAV-CYBER-WEB-002"]["reason"])
+        self.assertEqual(rows["NAV-CYBER-MOBILE-001"]["status"], "not_applicable")
+        self.assertEqual(rows["NAV-CYBER-SECRET-002"]["status"], "not_applicable")  # no git history to scan
+        for row in rows.values():
+            with self.subTest(control=row["id"]):
+                if row["status"] == "not_applicable":
+                    self.assertTrue(row["reason_if_not_applicable"])
+                if row["status"] == "passed":
+                    self.assertIn(row["capability"], {"automated", "partial"})
+                    self.assertTrue(row["executed_at"] and row["tool_name"] and row["evidence_refs"])
+                if row["capability"] in {"manual", "missing"}:
+                    self.assertNotEqual(row["status"], "passed")
+        verified = sum(1 for r in rows.values() if r["status"] in {"passed", "failed"})
+        self.assertEqual(s["verified"], verified)
+        self.assertEqual(s["verified_coverage"], round(100 * verified / s["applicable"], 1))
+        self.assertFalse(s["audit_complete"])
+        self.assertEqual(s["complete_blockers"], s["applicable"] - verified)
+
 
 class SavedStateTest(unittest.TestCase):
     def test_save_load_checklist_and_manual_ticks(self):
@@ -237,6 +276,7 @@ class PanelApiTest(unittest.TestCase):
         with _project() as tmp, mock.patch.object(audit_mod, "detect_scanners", _statuses(set())):
             self.assertEqual(security_audit_payload("catalog", {})["totals"]["controls"], len(catalog.CONTROLS))
             self.assertIsNone(security_audit_payload("last", {"path": tmp})["audit"])
+            self.assertIsNone(security_audit_payload("matrix", {"path": tmp})["matrix"])
             with self.assertRaises(SecurityAuditError) as missing:
                 security_audit_sarif(tmp)
             self.assertEqual(missing.exception.status, 404)
@@ -255,11 +295,20 @@ class PanelApiTest(unittest.TestCase):
             body, filename = security_audit_sarif(tmp)
             self.assertEqual(json.loads(body)["version"], "2.1.0")
             self.assertTrue(filename.endswith(".sarif"))
+            matrix = security_audit_payload("matrix", {"path": tmp})["matrix"]
+            self.assertEqual((matrix["audit_id"], matrix["summary"]["total"]), (ran["audit"]["id"], 302))
+            self.assertEqual(ran["matrix"]["summary"], matrix["summary"])
+            exported = security_audit_payload("matrix_export", {"path": tmp, "format": "json"})
+            self.assertEqual((json.loads(exported["content"])["audit_id"], exported["mime"]), (ran["audit"]["id"], "application/json"))
+            self.assertIn("Couverture Navin Cyber", security_audit_payload("matrix_export", {"path": tmp, "format": "md"})["content"])
+            referential = json.loads(security_audit_payload("referential", {"format": "json"})["content"])
+            self.assertEqual((referential["metadata"]["control_count"], len(referential["controls"])), (302, 302))
             for action, params, status in (
                 ("run", {"path": "relative"}, 400),
                 ("run", {"path": "/definitely/not/here"}, 404),
                 ("check", {"path": tmp, "control": "C9.99"}, 400),
                 ("run", {"path": tmp, "scanners": "maybe"}, 400),
+                ("matrix_export", {"path": tmp, "format": "pdf"}, 400),
                 ("explode", {"path": tmp}, 400),
             ):
                 with self.subTest(action=action, params=params), self.assertRaises(SecurityAuditError) as err:

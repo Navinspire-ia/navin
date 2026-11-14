@@ -1,0 +1,548 @@
+[
+ {
+  "id": "db-policy-permissive-true",
+  "severity": "high",
+  "status": "exploitable",
+  "cwe": "CWE-284",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:4",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create policy posts_insert on public.posts for insert to authenticated with check (true)"
+ },
+ {
+  "id": "db-policy-tenant-change",
+  "severity": "high",
+  "status": "exploitable",
+  "cwe": "CWE-639",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:5",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create policy posts_update on public.posts for update to authenticated using (auth.uid() = user_id) with check (true)"
+ },
+ {
+  "id": "db-rls-cross-tenant-read",
+  "severity": "high",
+  "status": "exploitable",
+  "cwe": "CWE-639",
+  "source": "navin_db_ephemeral",
+  "where": "supabase/migrations/001_init.sql:1",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "{\"anon_read\": 2, \"other_delete\": 0, \"other_read\": 1, \"other_update\": 0, \"own_read\": 1, \"seeded\": 2, \"tenant_change\": 1}"
+ },
+ {
+  "id": "navin-dataflow-deserialization",
+  "severity": "critical",
+  "status": "confirmed",
+  "cwe": "CWE-502",
+  "source": "navin_dataflow",
+  "where": "app.py:18",
+  "controls": [
+   "C1.05"
+  ],
+  "observed": "1. app.py:18 source request.data\n2. app.py:18 sink yaml.load(request.data)"
+ },
+ {
+  "id": "db-policy-permissive-true",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-284",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:5",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create policy posts_update on public.posts for update to authenticated using (auth.uid() = user_id) with check (true)"
+ },
+ {
+  "id": "db-rls-disabled",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-284",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:9",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create table public.audit_log (id bigserial primary key, user_id uuid, event text)"
+ },
+ {
+  "id": "db-grant-broad",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-732",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:10",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "grant all on public.audit_log to anon"
+ },
+ {
+  "id": "db-security-definer-search-path",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-426",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:11",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create function public.get_secret() returns text language sql security definer as $$ select 'x' $$"
+ },
+ {
+  "id": "db-view-bypasses-rls",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-284",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:12",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create view public.all_notes as select * from public.notes"
+ },
+ {
+  "id": "web-debug-exposed",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-215",
+  "source": "navin_web_baseline",
+  "where": "/actuator/env",
+  "controls": [
+   "C7.10"
+  ],
+  "observed": "HTTP 200\nServer: BaseHTTP/0.6 Python/3.12.3, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: application/json, Content-Length: 66\n\n{\"propertySources\":[{\"name\":\"systemEnvironment\",\"properties\":{}}]}"
+ },
+ {
+  "id": "web-cors-reflect",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-942",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "navin-dataflow-sql",
+  "severity": "high",
+  "status": "confirmed",
+  "cwe": "CWE-89",
+  "source": "navin_dataflow",
+  "where": "app.py:13",
+  "controls": [
+   "C1.01"
+  ],
+  "observed": "1. app.py:12 source request.args.get('name')\n2. app.py:12 name = request.args.get('name')\n3. app.py:13 sink db.execute(\"SELECT * FROM users WHERE name = '%s'\" % name)"
+ },
+ {
+  "id": "db-security-definer-exposed",
+  "severity": "medium",
+  "status": "confirmed",
+  "cwe": "CWE-269",
+  "source": "navin_database",
+  "where": "supabase/migrations/001_init.sql:11",
+  "controls": [
+   "C2.09"
+  ],
+  "observed": "create function public.get_secret() returns text language sql security definer as $$ select 'x' $$"
+ },
+ {
+  "id": "web-csp-missing",
+  "severity": "medium",
+  "status": "confirmed",
+  "cwe": "CWE-693",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "web-framing-missing",
+  "severity": "medium",
+  "status": "confirmed",
+  "cwe": "CWE-1021",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "web-cookie-flags",
+  "severity": "medium",
+  "status": "confirmed",
+  "cwe": "CWE-614",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C2.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "web-openapi-exposed",
+  "severity": "low",
+  "status": "confirmed",
+  "cwe": "CWE-200",
+  "source": "navin_web_baseline",
+  "where": "/openapi.json",
+  "controls": [
+   "C3.03"
+  ],
+  "observed": "HTTP 200\nServer: BaseHTTP/0.6 Python/3.12.3, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: application/json, Content-Length: 19\n\n{\"openapi\":\"3.0.0\"}"
+ },
+ {
+  "id": "web-sourcemap-exposed",
+  "severity": "low",
+  "status": "confirmed",
+  "cwe": "CWE-540",
+  "source": "navin_web_baseline",
+  "where": "/app.js.map",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 200\nServer: BaseHTTP/0.6 Python/3.12.3, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: application/json, Content-Length: 13\n\n"
+ },
+ {
+  "id": "web-server-banner",
+  "severity": "low",
+  "status": "confirmed",
+  "cwe": "CWE-200",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "web-cache-private",
+  "severity": "low",
+  "status": "confirmed",
+  "cwe": "CWE-525",
+  "source": "navin_web_baseline",
+  "where": "/",
+  "controls": [
+   "C2.04"
+  ],
+  "observed": "HTTP 200\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Access-Control-Allow-Origin: https://navin-probe.invalid, Content-Length: 44\n\n<html><script src='/app.js'></script></html>"
+ },
+ {
+  "id": "web-security-txt-missing",
+  "severity": "info",
+  "status": "confirmed",
+  "cwe": "",
+  "source": "navin_web_baseline",
+  "where": "/.well-known/security.txt",
+  "controls": [
+   "C3.04"
+  ],
+  "observed": "HTTP 404\nServer: Apache/2.4.1, Date: Sat, 14 Nov 2026 14:45:05 GMT, Content-Type: text/html, Content-Length: 9\n\nnot found"
+ },
+ {
+  "id": "k8s-privileged",
+  "severity": "critical",
+  "status": "potential",
+  "cwe": "CWE-250",
+  "source": "navin_rules",
+  "where": "k8s/deploy.yaml:12",
+  "controls": [
+   "C4.06",
+   "C4.05"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "gha-injection",
+  "severity": "critical",
+  "status": "potential",
+  "cwe": "CWE-94",
+  "source": "navin_rules",
+  "where": ".github/workflows/ci.yml:6",
+  "controls": [
+   "C6.10",
+   "C1.04"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "sql-execute-format",
+  "severity": "critical",
+  "status": "potential",
+  "cwe": "CWE-89",
+  "source": "navin_rules",
+  "where": "app.py:13",
+  "controls": [
+   "C1.01"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "gha-pr-target",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-829",
+  "source": "navin_rules",
+  "where": ".github/workflows/ci.yml:1",
+  "controls": [
+   "C4.04"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "yaml-load",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-502",
+  "source": "navin_rules",
+  "where": "app.py:18",
+  "controls": [
+   "C1.05"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "jwt-hardcoded-secret",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-798",
+  "source": "navin_rules",
+  "where": "app.py:23",
+  "controls": [
+   "C5.06",
+   "C1.10"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "ds-mysql-empty-password",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-258",
+  "source": "navin_datastores",
+  "where": "db/mysql.sql:1",
+  "controls": [
+   "C2.10"
+  ],
+  "observed": "CREATE USER 'app'@'%' IDENTIFIED BY '';"
+ },
+ {
+  "id": "ds-sql-grant-all-global",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-269",
+  "source": "navin_datastores",
+  "where": "db/mysql.sql:2",
+  "controls": [
+   "C2.08"
+  ],
+  "observed": "GRANT ALL PRIVILEGES ON *.* TO 'app'@'%';"
+ },
+ {
+  "id": "ds-db-default-password",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-1392",
+  "source": "navin_datastores",
+  "where": "docker-compose.yml:5",
+  "controls": [
+   "C2.10"
+  ],
+  "observed": "MYSQL_ROOT_PASSWORD: ***"
+ },
+ {
+  "id": "ds-redis-protected-mode-off",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-306",
+  "source": "navin_datastores",
+  "where": "redis.conf:2",
+  "controls": [
+   "C4.09"
+  ],
+  "observed": "protected-mode no"
+ },
+ {
+  "id": "navin-auth-missing",
+  "severity": "high",
+  "status": "potential",
+  "cwe": "CWE-862",
+  "source": "navin_auth",
+  "where": "app.py:17",
+  "controls": [
+   "C2.08"
+  ],
+  "observed": "def config():"
+ },
+ {
+  "id": "docker-root-user",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-250",
+  "source": "navin_rules",
+  "where": "Dockerfile:1",
+  "controls": [
+   "C4.06",
+   "C4.05"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "ds-mysql-any-host",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-284",
+  "source": "navin_datastores",
+  "where": "db/mysql.sql:1",
+  "controls": [
+   "C4.09"
+  ],
+  "observed": "CREATE USER 'app'@'%' IDENTIFIED BY '';"
+ },
+ {
+  "id": "ds-conn-tls-disabled",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-319",
+  "source": "navin_datastores",
+  "where": "src/db.ts:1",
+  "controls": [
+   "C4.09"
+  ],
+  "observed": "const url = \"postgres://app@db:5432/shop?sslmode=disable\";"
+ },
+ {
+  "id": "jwt-no-algorithms",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-347",
+  "source": "navin_rules",
+  "where": "app.py:23",
+  "controls": [
+   "C2.03"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "ds-db-port-exposed",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-668",
+  "source": "navin_datastores",
+  "where": "docker-compose.yml:7",
+  "controls": [
+   "C4.09"
+  ],
+  "observed": "- \"3306:3306\""
+ },
+ {
+  "id": "ds-db-bind-all",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-668",
+  "source": "navin_datastores",
+  "where": "redis.conf:1",
+  "controls": [
+   "C4.09"
+  ],
+  "observed": "bind 0.0.0.0"
+ },
+ {
+  "id": "ds-definer-routine",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-269",
+  "source": "navin_datastores",
+  "where": "supabase/migrations/001_init.sql:11",
+  "controls": [
+   "C2.08"
+  ],
+  "observed": "create function public.get_secret() returns text language sql security definer as $$ select 'x' $$;"
+ },
+ {
+  "id": "ds-redis-no-auth",
+  "severity": "medium",
+  "status": "potential",
+  "cwe": "CWE-306",
+  "source": "navin_datastores",
+  "where": "redis.conf:1",
+  "controls": [
+   "C2.10",
+   "C4.09"
+  ],
+  "observed": "bind 0.0.0.0"
+ },
+ {
+  "id": "docker-latest-tag",
+  "severity": "low",
+  "status": "potential",
+  "cwe": "CWE-1104",
+  "source": "navin_rules",
+  "where": "Dockerfile:1",
+  "controls": [
+   "C4.01"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "no-lockfile",
+  "severity": "low",
+  "status": "potential",
+  "cwe": "CWE-1104",
+  "source": "navin_rules",
+  "where": "package.json:1",
+  "controls": [
+   "C4.01"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "k8s-no-limits",
+  "severity": "low",
+  "status": "potential",
+  "cwe": "CWE-770",
+  "source": "navin_rules",
+  "where": "k8s/deploy.yaml:1",
+  "controls": [
+   "C7.01",
+   "C3.02"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "flask-no-auth",
+  "severity": "low",
+  "status": "potential",
+  "cwe": "CWE-306",
+  "source": "navin_rules",
+  "where": "app.py:1",
+  "controls": [
+   "C4.05"
+  ],
+  "observed": ""
+ },
+ {
+  "id": "docker-no-healthcheck",
+  "severity": "info",
+  "status": "potential",
+  "cwe": "CWE-693",
+  "source": "navin_rules",
+  "where": "Dockerfile:1",
+  "controls": [
+   "C4.05"
+  ],
+  "observed": ""
+ }
+]

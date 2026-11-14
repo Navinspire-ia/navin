@@ -11,7 +11,13 @@ One entry, ``/api/webui/security-audit?action=...&path=<project>``:
 - ``checklist``: the 70 controls with status, manual ticks and progress;
 - ``check``: tick or untick a control by hand (``control``, ``checked``, ``note``);
 - ``coverage``: the coverage report as markdown (``lang``);
+- ``matrix``: the 302-control matrix of the last audit (``null`` before the first audit);
+- ``matrix_export``: that matrix as a file (``format=json|md``): ``{filename, content, mime}``;
+- ``referential``: the 302-control referential itself as a file (``format=json|md``);
 - ``sarif``: the last audit as a SARIF download.
+
+``run`` also takes ``database_ephemeral=true`` to replay the SQL migrations in a throwaway local
+PostgreSQL (opt-in: the migrations come from the audited project).
 """
 
 from __future__ import annotations
@@ -21,8 +27,15 @@ from pathlib import Path
 from typing import Any
 
 from navin.security import catalog
+from navin.security.appsec import (
+    matrix_json,
+    matrix_markdown,
+    referential_json,
+    referential_markdown,
+)
 from navin.security.orchestrator.audit import (
     AuditStateError,
+    appsec_matrix_of,
     checklist_state,
     coverage_of,
     load_last_audit,
@@ -34,7 +47,7 @@ from navin.security.orchestrator.audit import (
 from navin.security.orchestrator.scan_planner import AuditInputs
 from navin.security.reports.compliance import coverage_markdown
 
-ACTIONS = ("catalog", "run", "last", "checklist", "check", "coverage", "sarif")
+ACTIONS = ("catalog", "run", "last", "checklist", "check", "coverage", "matrix", "matrix_export", "referential", "sarif")
 _MAX_FINDINGS = 500
 
 
@@ -69,10 +82,23 @@ def _flag(value: str | None, default: bool) -> bool:
 
 
 def _with_cap(audit: dict[str, Any]) -> dict[str, Any]:
+    audit = {k: v for k, v in audit.items() if k != "matrix"}  # served on its own
     findings = audit.get("findings") or []
     if len(findings) <= _MAX_FINDINGS:
         return audit
     return {**audit, "findings": findings[:_MAX_FINDINGS], "findings_truncated": len(findings) - _MAX_FINDINGS}
+
+
+def _export_format(value: str | None) -> str:
+    fmt = (value or "json").strip().lower()
+    if fmt not in {"json", "md"}:
+        raise SecurityAuditError(f"unknown format {value!r}; expected json or md")
+    return fmt
+
+
+def _file(filename: str, content: str, fmt: str) -> dict[str, str]:
+    mime = "application/json" if fmt == "json" else "text/markdown"
+    return {"filename": filename, "content": content, "mime": mime}
 
 
 def security_audit_payload(action: str, params: dict[str, str]) -> dict[str, Any]:
@@ -80,6 +106,11 @@ def security_audit_payload(action: str, params: dict[str, str]) -> dict[str, Any
     verb = (action or "").strip().lower()
     if verb == "catalog":
         return catalog.catalog_payload()
+    if verb == "referential":
+        fmt = _export_format(params.get("format"))
+        if fmt == "json":
+            return _file("navin_cyber_appsec_checklist.json", json.dumps(referential_json(), ensure_ascii=False, indent=2) + "\n", fmt)
+        return _file("navin_cyber_appsec_checklist.md", referential_markdown(), fmt)
     if verb not in ACTIONS or verb == "sarif":
         raise SecurityAuditError(f"unknown action {verb!r}; expected one of {', '.join(a for a in ACTIONS if a != 'sarif')}")
     root = _project(params.get("path", ""))
@@ -90,13 +121,16 @@ def security_audit_payload(action: str, params: dict[str, str]) -> dict[str, Any
                 inputs=AuditInputs(base_url=(params.get("base_url") or "").strip()),
                 scanners=_flag(params.get("scanners"), True),
                 offline=_flag(params.get("offline"), False),
+                database_ephemeral=_flag(params.get("database_ephemeral"), False),
             )
             save_audit(root, result)
             audit = result.to_dict()
-            return {"audit": _with_cap(audit), "checklist": checklist_state(root, audit)}
+            return {"audit": _with_cap(audit), "checklist": checklist_state(root, audit), "matrix": audit["matrix"]}
         audit = load_last_audit(root)
         if verb == "last":
             return {"audit": _with_cap(audit) if audit else None}
+        if verb == "matrix":
+            return {"matrix": appsec_matrix_of(audit) if audit else None}
         if verb == "checklist":
             return checklist_state(root, audit)
         if verb == "check":
@@ -107,6 +141,12 @@ def security_audit_payload(action: str, params: dict[str, str]) -> dict[str, Any
             return checklist_state(root, audit)
         if audit is None:
             raise SecurityAuditError("no audit saved for this project yet: run one first", status=404)
+        if verb == "matrix_export":
+            fmt = _export_format(params.get("format"))
+            matrix = appsec_matrix_of(audit)
+            stem = f"navin-cyber-coverage-{root.name or 'project'}-{audit.get('id', 'audit')}"
+            content = matrix_json(matrix) if fmt == "json" else matrix_markdown(matrix)
+            return _file(f"{stem}.{fmt}", content, fmt)
         lang = (params.get("lang") or "en").strip().lower()
         return {"markdown": coverage_markdown(coverage_of(audit), lang=lang), "audit_id": audit.get("id")}
     except AuditStateError as exc:

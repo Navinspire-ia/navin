@@ -223,14 +223,22 @@ def _safe_label(label: str) -> str:
     return text or "multitask"
 
 
+# Navin's own bookkeeping, rewritten by every run (strategy scores, the
+# verification log). The copy a subagent leaves in its checkout is not its work:
+# landing it would only collide with the user's copy and block the merge.
+INTERNAL_STATE = (".navin/improvement", ".navin/quality")
+
+
 def commit_checkout(checkout: worktree.Worktree, label: str) -> str | None:
     """Commit everything the subagent left in its checkout; return the tip.
 
     Returns None when there is nothing tracked to land (only ignored output,
     or git failed), in which case the caller keeps the checkout as before.
+    Navin's internal state (:data:`INTERNAL_STATE`) is never committed.
     """
     path = checkout.path
-    if _ok(["add", "-A"], cwd=path) is None:
+    excluded = [f":(exclude){entry}" for entry in INTERNAL_STATE]
+    if _ok(["add", "-A", "--", ".", *excluded], cwd=path) is None:
         return None
     staged = _run(["diff", "--cached", "--quiet"], cwd=path)
     if staged is None:

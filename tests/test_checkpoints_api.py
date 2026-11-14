@@ -154,21 +154,93 @@ def test_invalid_and_unknown_ids(project: Path) -> None:
     assert exc.value.status == 404
 
 
-def test_spawn_pre_turn_checkpoint_is_best_effort(project: Path) -> None:
-    from navin.webui.checkpoints_api import spawn_pre_turn_checkpoint
+def test_a_turn_snapshots_the_project_once_and_only_at_its_first_edit(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from navin.agent.checkpoints import (
+        bind_before_edit_hook,
+        record_file_before,
+        reset_before_edit_hook,
+    )
+    from navin.webui import checkpoints_api
 
-    thread = spawn_pre_turn_checkpoint(project, label="fix the login bug")
-    thread.join(timeout=30)
-    assert not thread.is_alive()
-    listing = list_checkpoints(project)["checkpoints"]
-    assert len(listing) == 1
-    assert listing[0]["reason"] == "pre-turn"
-    assert listing[0]["label"] == "fix the login bug"
+    taken: list[str] = []
+    real = checkpoints_api.create_checkpoint
+    monkeypatch.setattr(checkpoints_api, "create_checkpoint",
+                        lambda root, **kw: taken.append(str(root)) or real(root, **kw))
+    hook = checkpoints_api.pre_edit_snapshot_hook(project, label="fix the login bug")
+    # A turn that only reads or answers binds the hook and never calls it: no copy.
+    assert taken == [] and list_checkpoints(project) == {"checkpoints": []}
 
-    # A missing root must not raise (the turn goes on).
-    bad = spawn_pre_turn_checkpoint(project / "nope", label="x")
-    bad.join(timeout=30)
-    assert not bad.is_alive()
+    token = bind_before_edit_hook(hook)
+    try:
+        record_file_before(tmp_path / "elsewhere.txt")  # outside the project: no snapshot
+        assert taken == []
+        record_file_before(project / "app.py")
+        listing = list_checkpoints(project)["checkpoints"]
+        # The first edit waited for the snapshot: it holds the file as it was.
+        assert [(c["reason"], c["label"]) for c in listing] == [("pre-edit", "fix the login bug")]
+        (project / "app.py").write_text("print('v2')\n", encoding="utf-8")
+        record_file_before(project / "lib" / "util.py")
+        record_file_before(project / "app.py")
+    finally:
+        reset_before_edit_hook(token)
+    assert taken == [str(project)]
+    patch = diff_checkpoint(project, listing[0]["id"])["patch"]
+    assert "-print('v1')" in patch and "+print('v2')" in patch
+
+
+def test_one_snapshot_at_a_time_per_project_and_none_for_subagent_checkouts(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from navin.agent import worktree
+    from navin.webui import checkpoints_api
+
+    release = threading.Event()
+    runs: list[str] = []
+
+    def slow(root, **kw):
+        runs.append(str(root))
+        release.wait(10)
+        return {"created": True}
+
+    monkeypatch.setattr(checkpoints_api, "create_checkpoint", slow)
+    first = checkpoints_api.snapshot_in_background(project, "a")
+    second = checkpoints_api.snapshot_in_background(project, "b")
+    assert first is not None and second is first  # the running copy is shared, not doubled
+    release.set()
+    assert first.wait(10)
+    assert runs == [str(project)]
+
+    checkouts = tmp_path / "worktrees"
+    monkeypatch.setattr(worktree, "worktrees_root", lambda: checkouts)
+    (checkouts / "proj" / "1234").mkdir(parents=True)
+    assert checkpoints_api.snapshot_in_background(checkouts / "proj" / "1234", "x") is None
+    assert runs == [str(project)]
+
+    # A missing root never raises: the turn goes on without its restore point.
+    missing = checkpoints_api.snapshot_in_background(project / "nope", "x")
+    assert missing is not None and missing.wait(10)
+
+
+def test_a_stale_index_lock_no_longer_blocks_every_snapshot(project: Path) -> None:
+    import os
+    import time
+
+    from navin.webui.checkpoints_api import ensure_shadow_repo, snapshot_in_background
+
+    create_checkpoint(project, label="base")
+    lock = ensure_shadow_repo(project).host_git_dir / "index.lock"
+    lock.write_text("", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+    (project / "app.py").write_text("print('v3')\n", encoding="utf-8")
+    done = snapshot_in_background(project, "after crash")
+    assert done is not None and done.wait(30)
+    assert not lock.exists()
+    assert [c["label"] for c in list_checkpoints(project)["checkpoints"]] == ["after crash", "base"]
 
 
 def test_ambient_git_env_cannot_hijack_the_shadow_repo(

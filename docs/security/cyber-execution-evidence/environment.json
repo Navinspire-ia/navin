@@ -1,0 +1,58 @@
+{
+ "generated_at": "2026-11-14T14:45:03Z",
+ "navin_version": "2.4.14",
+ "python": "3.12.3",
+ "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+ "postgres": {
+  "found": true,
+  "version": 16
+ },
+ "scanners": {
+  "semgrep": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "gitleaks": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "gitleaks_history": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "trivy": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "osv_scanner": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "bandit": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "pip_audit": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  },
+  "npm_audit": {
+   "installed": true,
+   "version": "11.16.0",
+   "path": "/home/aymen/.npm-global/bin/npm"
+  },
+  "cargo_audit": {
+   "installed": false,
+   "version": "",
+   "path": ""
+  }
+ },
+ "note": "a scanner that is not installed is recorded as such: its controls stay blocked, never passed"
+}

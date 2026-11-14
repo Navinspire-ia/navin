@@ -25,7 +25,7 @@ import {
   promptTop,
 } from "@/components/thread/promptNavigation";
 import { cn } from "@/lib/utils";
-import type { CheckpointNotice, ContextCompactionNotice } from "@/hooks/useNavinStream";
+import type { ContextCompactionNotice } from "@/hooks/useNavinStream";
 import type { CliAppInfo, McpPresetInfo, SlashCommand, UIMessage } from "@/lib/types";
 import { useIsomorphicLayoutEffect } from "@/lib/useIsomorphicLayoutEffect";
 
@@ -227,8 +227,6 @@ interface ThreadViewportProps {
   forkBoundaryMessageCount?: number | null;
   /** Latest automatic context compaction reported by the backend. */
   contextCompaction?: ContextCompactionNotice | null;
-  /** Latest restore point snapshotted by the backend (one per user turn). */
-  checkpointNotice?: CheckpointNotice | null;
   hasMoreBefore?: boolean;
   loadingOlder?: boolean;
   userMessageOffset?: number;
@@ -311,7 +309,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   slashCommands = [],
   forkBoundaryMessageCount = null,
   contextCompaction = null,
-  checkpointNotice = null,
   hasMoreBefore = false,
   loadingOlder = false,
   userMessageOffset = 0,
@@ -379,16 +376,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           afterMessageCount: Math.max(
             0,
             contextCompaction.afterMessageCount - hiddenMessageCount,
-          ),
-        }
-      : null;
-  const visibleCheckpointNotice =
-    checkpointNotice
-      ? {
-          ...checkpointNotice,
-          afterMessageCount: Math.max(
-            0,
-            checkpointNotice.afterMessageCount - hiddenMessageCount,
           ),
         }
       : null;
@@ -1002,7 +989,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   slashCommands={slashCommands}
                   forkBoundaryMessageCount={visibleForkBoundaryMessageCount}
                   contextCompaction={visibleContextCompaction}
-                  checkpointNotice={visibleCheckpointNotice}
                   pinnedBlock={pinnedBlock}
                   pinnedBlockAfterMessageCount={visiblePinnedBlockAfterMessageCount}
                   onOpenFilePreview={onOpenFilePreview}

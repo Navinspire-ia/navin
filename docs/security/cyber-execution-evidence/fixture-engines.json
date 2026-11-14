@@ -1,0 +1,219 @@
+[
+ {
+  "id": "navin_discovery",
+  "kind": "discovery",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 0,
+  "duration_s": 0.01,
+  "detail": "11 files read",
+  "checks_run": []
+ },
+ {
+  "id": "navin_threat_model",
+  "kind": "threat_model",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "6 trust boundaries, 8 scenarios",
+  "checks_run": []
+ },
+ {
+  "id": "navin_dataflow",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 2,
+  "duration_s": 0.0,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_auth",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 1,
+  "duration_s": 0.0,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_tenant",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_business_logic",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_database",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 9,
+  "duration_s": 0.01,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_datastores",
+  "kind": "analyzer",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 11,
+  "duration_s": 0.0,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "navin_rules",
+  "kind": "rules",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 13,
+  "duration_s": 0.25,
+  "detail": "",
+  "checks_run": []
+ },
+ {
+  "id": "semgrep",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "pipx install semgrep",
+  "checks_run": []
+ },
+ {
+  "id": "gitleaks",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "https://github.com/gitleaks/gitleaks/releases",
+  "checks_run": []
+ },
+ {
+  "id": "gitleaks_history",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "https://github.com/gitleaks/gitleaks/releases",
+  "checks_run": []
+ },
+ {
+  "id": "trivy",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "https://trivy.dev/latest/getting-started/installation/",
+  "checks_run": []
+ },
+ {
+  "id": "osv_scanner",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "https://google.github.io/osv-scanner/installation/",
+  "checks_run": []
+ },
+ {
+  "id": "bandit",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "pipx install bandit",
+  "checks_run": []
+ },
+ {
+  "id": "pip_audit",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "pipx install pip-audit",
+  "checks_run": []
+ },
+ {
+  "id": "npm_audit",
+  "kind": "scanner",
+  "status": "not_applicable",
+  "version": "11.16.0",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "needs one of package-lock.json in /tmp/tmp2fdbh5o0/fixture-shop",
+  "checks_run": []
+ },
+ {
+  "id": "cargo_audit",
+  "kind": "scanner",
+  "status": "not_installed",
+  "version": "",
+  "findings": 0,
+  "duration_s": 0.0,
+  "detail": "cargo install cargo-audit --locked",
+  "checks_run": []
+ },
+ {
+  "id": "navin_db_ephemeral",
+  "kind": "database",
+  "status": "ok",
+  "version": "16.2",
+  "findings": 11,
+  "duration_s": 1.112,
+  "detail": "1 migration(s) applied, 0 failed, 1 other-dialect script(s) skipped, PostgreSQL 16.2, row-level access tested on 2 table(s) as anon and as two users",
+  "checks_run": []
+ },
+ {
+  "id": "navin_web_baseline",
+  "kind": "dynamic",
+  "status": "ok",
+  "version": "2.4.14",
+  "findings": 11,
+  "duration_s": 0.71,
+  "detail": "16 request(s) to http://127.0.0.1:33731",
+  "checks_run": [
+   "web-csp-missing",
+   "web-csp-unsafe",
+   "web-xcto-missing",
+   "web-framing-missing",
+   "web-server-banner",
+   "web-cookie-flags",
+   "web-cache-private",
+   "web-error-leak",
+   "web-cors-reflect",
+   "web-cors-wildcard-credentials",
+   "web-security-txt-missing",
+   "web-debug-exposed",
+   "web-admin-exposed",
+   "web-graphql-introspection",
+   "web-openapi-exposed",
+   "web-sourcemap-exposed"
+  ]
+ }
+]

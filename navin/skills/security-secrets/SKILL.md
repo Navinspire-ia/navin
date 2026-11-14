@@ -24,13 +24,13 @@ Default posture is read-only and non-destructive: report evidence and a proposed
 
 ## Engines
 
-- Registered scanners (use `navin.security.scanners`, results arrive as normalized findings): gitleaks, trivy.
+- Registered scanners (use `navin.security.scanners`, results arrive as normalized findings): gitleaks, gitleaks_history (every commit of every ref, when the project is a git repository), trivy.
 - Other engines named by the catalog: navin_rules, trufflehog. Use one only when it is installed.
 - A scanner that is not installed or did not run means the check was not done, not that it passed.
 
 ## Method
 
-1. Run the registered scanners (gitleaks, trivy) and review `.env` files, CI variables, mobile resources and logs.
+1. Run the registered scanners (gitleaks on the tree, gitleaks_history on the git history, trivy) and review `.env` files, CI variables, mobile resources and logs.
 2. Never print or store a secret value: report rule, file, line and a masked match only.
 3. For each hit decide live or placeholder from the format and the surrounding code; do not call the provider to test a key.
 4. Trace propagation: git history, build artifacts, container layers, client bundles, prompts and logs.

@@ -326,6 +326,20 @@ describe("messages typed while the agent works", () => {
     expect(send.mock.calls[1][0]).toMatch(/(^|\s)then fix the test$/);
   });
 
+  it("start their turn in the mode they were queued in", async () => {
+    // Queued in Security, the message went out as plain text once the agent
+    // was done: an ordinary turn, no security review.
+    const send = vi.fn();
+    const { rerender } = render(
+      <ThreadComposer onSend={send} onStop={vi.fn()} isStreaming turnMode="security" />,
+    );
+    typeAndPress("find the weak spots");
+    expect(send).not.toHaveBeenCalled();
+    rerender(<ThreadComposer onSend={send} onStop={vi.fn()} turnMode="security" />);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send.mock.calls[0][0]).toBe("/fortify find the weak spots");
+  });
+
   it("keeps the composer's footprint while typing, so the chat does not move", () => {
     // The queue button used to appear at the first key and leave when the
     // message was queued: the chips beside it shrank and grew while typing.

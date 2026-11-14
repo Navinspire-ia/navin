@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from navin.security import catalog
-from navin.security.analyzers import auth, business_logic, dataflow, tenant
+from navin.security.analyzers import auth, business_logic, database, dataflow, datastores, tenant
 from navin.security.analyzers.common import MAX_FILES, SourceSet, collect_sources
 from navin.security.model import Finding, sort_findings
 from navin.security.remediation.guidance import apply_guidance
@@ -28,12 +28,35 @@ ANALYZERS: dict[str, Callable[[SourceSet], list[Finding]]] = {
     auth.ANALYZER_ID: auth.analyze,
     tenant.ANALYZER_ID: tenant.analyze,
     business_logic.ANALYZER_ID: business_logic.analyze,
+    database.ANALYZER_ID: database.analyze,
+    datastores.ANALYZER_ID: datastores.analyze,
 }
 ANALYZER_CONTROLS: dict[str, frozenset[str]] = {
     dataflow.ANALYZER_ID: dataflow.CHECKED_CONTROLS,
     auth.ANALYZER_ID: auth.CHECKED_CONTROLS,
     tenant.ANALYZER_ID: tenant.CHECKED_CONTROLS,
     business_logic.ANALYZER_ID: business_logic.CHECKED_CONTROLS,
+    database.ANALYZER_ID: database.CHECKED_CONTROLS,
+    datastores.ANALYZER_ID: datastores.CHECKED_CONTROLS,
+}
+
+# The controls the offline rule pack (navin/security/rules.py and deep_scan.py) really checks: a rule exists
+# whose purpose is the control. The catalog also lists "navin_rules" on controls no rule covers (mobile storage,
+# deep links, rate limiting, event logging...): reading those as clean after a rule pass was a false
+# "clean", so the controls are named here instead of read off the catalog.
+RULE_CONTROLS: frozenset[str] = frozenset({
+    "C1.01", "C1.02", "C1.03", "C1.04", "C1.05", "C1.06", "C1.07", "C1.10",
+    "C2.03", "C2.04", "C2.10",
+    "C3.01", "C3.04", "C3.05", "C3.06", "C3.07",
+    "C4.04", "C4.05", "C4.06", "C4.09", "C4.10",
+    "C7.02", "C7.03", "C7.07", "C7.10",
+})
+# Engines that are neither analyzers nor registry scanners, with the controls each one checks.
+ENGINE_CONTROLS: dict[str, frozenset[str]] = {
+    "navin_rules": RULE_CONTROLS,
+    "navin_web_baseline": frozenset({"C2.04", "C3.03", "C3.04", "C4.09", "C7.10"}),
+    "navin_db_ephemeral": frozenset({"C2.09"}),
+    "navin_db_live": frozenset({"C2.09"}),
 }
 
 
@@ -89,14 +112,16 @@ async def analyze_project_async(root: str | Path, **kwargs: Any) -> AnalysisRepo
 
 
 def checked_controls(engine_ids: Iterable[str]) -> set[str]:
-    """Controls the given engines really check (analyzers declare theirs; scanners per the catalog)."""
+    """Controls the given engines really check (analyzers and built-in engines declare theirs; scanners per the catalog)."""
     out: set[str] = set()
     for engine_id in engine_ids:
         if engine_id in ANALYZER_CONTROLS:
             out |= ANALYZER_CONTROLS[engine_id]
+        elif engine_id in ENGINE_CONTROLS:
+            out |= ENGINE_CONTROLS[engine_id]
         else:
             out |= {c.id for c in catalog.controls_for_scanner(engine_id)}
     return out
 
 
-__all__ = ["ANALYZERS", "ANALYZER_CONTROLS", "AnalysisReport", "analyze_project", "analyze_project_async", "checked_controls"]
+__all__ = ["ANALYZERS", "ANALYZER_CONTROLS", "ENGINE_CONTROLS", "RULE_CONTROLS", "AnalysisReport", "analyze_project", "analyze_project_async", "checked_controls"]

@@ -1,0 +1,46 @@
+{
+ "engine": "navin_db_ephemeral",
+ "status": "ok",
+ "postgres_version": "16.2",
+ "applied": 1,
+ "failed": [],
+ "tables": 3,
+ "policies": 4,
+ "duration_s": 1.112,
+ "detail": "1 migration(s) applied, 0 failed, 1 other-dialect script(s) skipped, PostgreSQL 16.2, row-level access tested on 2 table(s) as anon and as two users",
+ "role_tests": [
+  {
+   "table": "public.notes",
+   "tested": true,
+   "owner_column": "user_id",
+   "results": {
+    "seeded": 2,
+    "anon_read": 0,
+    "own_read": 1,
+    "other_read": 0,
+    "other_update": 0,
+    "other_delete": 0
+   }
+  },
+  {
+   "table": "public.posts",
+   "tested": true,
+   "owner_column": "user_id",
+   "results": {
+    "seeded": 2,
+    "anon_read": 2,
+    "own_read": 1,
+    "other_read": 1,
+    "other_update": 0,
+    "other_delete": 0,
+    "tenant_change": 1
+   }
+  }
+ ],
+ "skipped": [
+  {
+   "file": "/tmp/tmp2fdbh5o0/fixture-shop/db/mysql.sql",
+   "reason": "MySQL/MariaDB script, not PostgreSQL"
+  }
+ ]
+}

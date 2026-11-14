@@ -16,9 +16,11 @@ from typing import Any
 
 from navin.agent.tools.quality import _QualityTool
 from navin.security import catalog
+from navin.security.appsec import matrix_markdown
 from navin.security.model import Finding
 from navin.security.orchestrator.audit import (
     AuditStateError,
+    appsec_matrix_of,
     checklist_state,
     coverage_of,
     findings_of,
@@ -33,10 +35,11 @@ from navin.security.remediation import propose_patches, validate_patch
 from navin.security.reports.compliance import coverage_markdown
 
 SARIF_FILE = "navin-security.sarif"
-_ACTIONS = ("run", "plan", "report", "patch", "checklist")
+_ACTIONS = ("run", "plan", "report", "patch", "checklist", "matrix")
 _REMINDER = (
     "A clean control means no engine that ran found a weakness; it is not proof of security. "
-    "Report potential findings as weaknesses to confirm, confirmed ones as vulnerabilities."
+    "Report potential findings as weaknesses to confirm, confirmed ones as vulnerabilities. "
+    "Never call the audit complete unless matrix.audit_complete is true."
 )
 
 
@@ -80,25 +83,44 @@ def _need_audit(root: Path) -> dict[str, Any]:
     return audit
 
 
-def _run(root: Path, *, base_url: str, scanners: bool, offline: bool, timeout_s: int, sarif: bool, max_findings: int) -> str:
+def _matrix_brief(matrix: dict[str, Any]) -> dict[str, Any]:
+    s = matrix["summary"]
+    return {
+        "referential": f"{matrix['referential']['id']} {matrix['referential']['version']} ({s['total']} controls)",
+        "verified_coverage": s["verified_coverage"],
+        "applicable": s["applicable"], "passed": s["passed"], "failed": s["failed"], "inconclusive": s["inconclusive"],
+        "blocked": s["blocked"], "not_tested": s["not_tested"], "not_applicable": s["not_applicable"],
+        "manual_review": s["manual_review"], "audit_complete": s["audit_complete"],
+        "failed_controls": [r["id"] for r in matrix["controls"] if r["status"] == "failed"][:40],
+        "blocked_controls": [{"id": r["id"], "reason": r["reason"][:160]} for r in matrix["controls"] if r["status"] == "blocked"][:20],
+    }
+
+
+def _run(root: Path, *, base_url: str, scanners: bool, offline: bool, timeout_s: int, sarif: bool, max_findings: int,
+         database_ephemeral: bool = False) -> str:
     result = run_audit(root, inputs=AuditInputs(base_url=base_url), scanners=scanners, offline=offline,
-                       scanner_timeout_s=timeout_s)
+                       scanner_timeout_s=timeout_s, database_ephemeral=database_ephemeral)
     saved = save_audit(root, result)
+    data = result.to_dict()
     totals = result.coverage.totals
     by_status = totals["by_status"]
+    matrix = _matrix_brief(data["matrix"])
     header = (
         f"security_audit id={result.id} findings={len(result.findings)} exploitable={by_status['exploitable']} "
         f"confirmed={by_status['confirmed']} potential={by_status['potential']} "
         f"controls={totals['assessed']}/{totals['controls']} partial={totals['partial']} "
-        f"score={totals['score']}/100 grade={totals['grade']} duration={result.duration_s}s\n"
+        f"score={totals['score']}/100 grade={totals['grade']} "
+        f"appsec={matrix['verified_coverage']}% verified of {matrix['applicable']} applicable "
+        f"complete={str(matrix['audit_complete']).lower()} duration={result.duration_s}s\n"
     )
     payload = {
         "saved": saved.relative_to(root).as_posix(),
         "sarif": _write_sarif(root, result.sarif()) if sarif else None,
         "levels_reached": result.levels_reached,
         "next_levels": result.plan.get("missing_inputs"),
-        "engines": [{"id": e.id, "kind": e.kind, "status": e.status, "findings": e.findings, "detail": e.detail}
+        "engines": [{"id": e.id, "kind": e.kind, "status": e.status, "version": e.version, "findings": e.findings, "detail": e.detail}
                     for e in result.engines],
+        "matrix": matrix,
         "findings_total": len(result.findings),
         "findings": [_slim(f) for f in result.findings[:max_findings]],
         "attack_paths": result.attack_paths[:5],
@@ -178,6 +200,14 @@ def _checklist(root: Path, *, lang: str) -> str:
     return header + catalog.checklist_markdown(done, lang=lang)
 
 
+def _matrix(root: Path) -> str:
+    matrix = appsec_matrix_of(_need_audit(root))
+    brief = _matrix_brief(matrix)
+    header = (f"security_audit matrix audit={matrix['audit_id']} verified={brief['verified_coverage']}% "
+              f"complete={str(brief['audit_complete']).lower()}\n")
+    return header + matrix_markdown(matrix)
+
+
 class SecurityAuditTool(_QualityTool):
     """Navin Security audit of the project with evidence levels and control coverage."""
 
@@ -199,8 +229,13 @@ class SecurityAuditTool(_QualityTool):
             "navin-security.sarif. plan: levels L1-L5 reachable and the inputs each still needs, without scanning. "
             "report: coverage report of the last audit (lang=fr|en|ar). patch: mechanical fixes for the last "
             "audit's findings, each checked with git apply on a copy, never applied (review, then apply_patch). "
-            "checklist: the 70 controls with progress. scanners=false runs only the built-in engines (fast); "
-            "offline=true skips the scanners that use the network."
+            "checklist: the 70 controls with progress. matrix: the last audit against the 302-control Navin Cyber "
+            "AppSec referential (24 families): per control passed / failed / inconclusive / blocked / not_tested / "
+            "not_applicable with the engine, its version, the scope, the date and the evidence, verified coverage "
+            "and whether the audit is complete. scanners=false runs only the built-in engines (fast); "
+            "offline=true skips the scanners that use the network; database_ephemeral=true replays the project's "
+            "SQL migrations in a throwaway local PostgreSQL (no superuser) and reads its RLS catalog; base_url (a "
+            "target the user authorized, preferably staging) adds passive GET/HEAD/OPTIONS web checks."
         )
 
     @property
@@ -213,8 +248,9 @@ class SecurityAuditTool(_QualityTool):
         return {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": list(_ACTIONS), "description": "run (default) | plan | report | patch | checklist"},
-                "base_url": {"type": "string", "description": "URL of a running test instance; plan says what the dynamic level still needs."},
+                "action": {"type": "string", "enum": list(_ACTIONS), "description": "run (default) | plan | report | patch | checklist | matrix"},
+                "base_url": {"type": "string", "description": "URL of a running test instance the user authorized: run adds passive web checks; plan says what the dynamic level still needs."},
+                "database_ephemeral": {"type": "boolean", "description": "run: replay the SQL migrations in a throwaway local PostgreSQL and read its RLS catalog (default false)."},
                 "scanners": {"type": "boolean", "description": "run: default true; false keeps the built-in analyzers and rules only."},
                 "offline": {"type": "boolean", "description": "run: skip the scanners that send data to the network (npm audit, advisory databases)."},
                 "scanner_timeout_s": {"type": "integer", "minimum": 10, "maximum": 600, "description": "run: limit per scanner (default 120)."},
@@ -236,6 +272,7 @@ class SecurityAuditTool(_QualityTool):
         lang: str = "en",
         max_findings: int = 40,
         finding: str = "",
+        database_ephemeral: bool = False,
         **kwargs: Any,
     ) -> Any:
         root, error = self._root_or_error()
@@ -251,7 +288,10 @@ class SecurityAuditTool(_QualityTool):
                 timeout = max(10, min(600, int(scanner_timeout_s or 120)))
                 cap = max(1, min(200, int(max_findings or 40)))
                 return await asyncio.to_thread(_run, root, base_url=str(base_url or "").strip(), scanners=bool(scanners),
-                                               offline=bool(offline), timeout_s=timeout, sarif=bool(sarif), max_findings=cap)
+                                               offline=bool(offline), timeout_s=timeout, sarif=bool(sarif), max_findings=cap,
+                                               database_ephemeral=bool(database_ephemeral))
+            if verb == "matrix":
+                return await asyncio.to_thread(_matrix, root)
             if verb == "plan":
                 return await asyncio.to_thread(_plan, root, base_url=str(base_url or "").strip())
             if verb == "report":

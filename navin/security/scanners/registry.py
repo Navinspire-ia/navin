@@ -160,6 +160,17 @@ REGISTRY: dict[str, ScannerSpec] = {
             install_hint="https://github.com/gitleaks/gitleaks/releases",
         ),
         ScannerSpec(
+            id="gitleaks_history", binary="gitleaks", license="MIT", homepage="https://github.com/gitleaks/gitleaks",
+            families=("secrets",),
+            # Every commit of every ref: a secret deleted from the tree stays in the history.
+            argv=("detect", "--source", ROOT_PLACEHOLDER, "--log-opts=--all", "--no-banner", "--redact", "--exit-code", "0",
+                  "--report-format", "json", "--report-path", REPORT_PLACEHOLDER),
+            parse=adapters.parse_gitleaks,
+            permissions=Permissions(read_tree=True, writes_report=True, note="reads the git history; redacted report in a private temp file, deleted after parsing"),
+            requires=(".git",), timeout_s=600,
+            install_hint="https://github.com/gitleaks/gitleaks/releases",
+        ),
+        ScannerSpec(
             id="trivy", binary="trivy", license="Apache-2.0", homepage="https://trivy.dev",
             families=("supply_chain", "infrastructure", "secrets"),
             argv=("fs", "--format", "json", "--quiet", "--scanners", "vuln,misconfig,secret", ROOT_PLACEHOLDER),

@@ -247,6 +247,7 @@ import {
 import { railWidthFor, type DevRailDensity } from "@/lib/dev-rail-layout";
 import { cn } from "@/lib/utils";
 import { requestCyberLaunch } from "@/lib/cyber-launch";
+import { CyberCoveragePanel } from "@/components/dev/CyberCoveragePanel";
 import { requestReviewLaunch } from "@/lib/review-launch";
 import { requestReverseLaunch } from "@/lib/reverse-launch";
 import { openSettingsDialog } from "@/lib/settings-events";
@@ -4828,6 +4829,15 @@ export function DevWorkbench({
   >(null);
   // Target picked in a menu, waiting for "Create the <platform> app?".
   const [appFactoryConfirm, setAppFactoryConfirm] = useState<string | null>(null);
+  const [cyberCoverageOpen, setCyberCoverageOpen] = useState(false);
+  const cyberCoverageEl = (
+    <CyberCoveragePanel
+      open={cyberCoverageOpen}
+      onOpenChange={setCyberCoverageOpen}
+      token={token}
+      root={currentRoot ?? null}
+    />
+  );
   const appFactoryMenuItems = (): DevOtherMenuItem[] =>
     onRunAction
       ? (["mobile", "desktop"] as const).map((kind) => {
@@ -5272,6 +5282,23 @@ export function DevWorkbench({
                     "Security audit of the project: switches the chat to Security mode",
                   ),
                 },
+                onBadgeClick: () => setCyberCoverageOpen(true),
+                // Two ways in: the chat audit (Security mode) and the
+                // coverage matrix of the 302-control referential.
+                menu: [
+                  {
+                    key: "audit",
+                    icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                    label: tx("dev.cyberCoverage.menuAudit", "Audit in Security mode"),
+                    onSelect: () => requestCyberLaunch(),
+                  },
+                  {
+                    key: "coverage",
+                    icon: <ListTodo className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                    label: tx("dev.cyberCoverage.menuCoverage", "Coverage of the 302 controls"),
+                    onSelect: () => setCyberCoverageOpen(true),
+                  },
+                ],
                 active: false,
                 keepLayout: true,
                 go: () => requestCyberLaunch(),
@@ -5756,6 +5783,7 @@ export function DevWorkbench({
           </div>
           {collapsedRail}
           {appFactoryDialogEl}
+          {cyberCoverageEl}
         </div>
         {renderStatusBar()}
       </div>
@@ -5790,6 +5818,7 @@ export function DevWorkbench({
       onOpenChange={setCommandPalette}
     />
     {appFactoryDialogEl}
+          {cyberCoverageEl}
     <DevLocationPicker
       open={locationPicker != null}
       title={locationPicker?.title ?? ""}

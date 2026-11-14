@@ -30,14 +30,19 @@ rather than abandoned.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import shutil
 import subprocess
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from loguru import logger
 
 from navin.utils import wsl
 from navin.utils.git_argv import git_route
@@ -424,23 +429,118 @@ def diff_checkpoint(
     return {"id": sha[:12], "files": files, "patch": patch, "truncated": truncated}
 
 
-def spawn_pre_turn_checkpoint(root: Path | str, label: str = "") -> threading.Thread:
-    """Best-effort full workspace snapshot before an agent turn.
+# git never holds index.lock this long: an older one was left by a killed git,
+# and while it stays every later snapshot of the project fails.
+_STALE_LOCK_S = 600.0
+# How long the first edit of a turn waits for its snapshot before going on.
+# A first snapshot of a big project can take minutes; the edit does not.
+PRE_EDIT_WAIT_S = 10.0
+_in_flight: dict[str, threading.Event] = {}
+_in_flight_lock = threading.Lock()
 
-    Runs in a daemon thread: the turn must never wait on (or fail because of)
-    snapshotting. The agent's first file edit only happens after a full LLM
-    round-trip, which in practice gives the snapshot ample time to land.
+
+def _norm(path: Path | str) -> str:
+    """A comparable absolute form of *path*, without touching the disk."""
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _inside(path: Path | str, root: Path | str) -> bool:
+    target, base = _norm(path), _norm(root)
+    return target == base or target.startswith(base.rstrip(os.sep) + os.sep)
+
+
+def _is_subagent_checkout(root: Path | str) -> bool:
+    """A subagent's isolated checkout: disposable, and git already tracks it."""
+    from navin.agent.worktree import worktrees_root
+
+    return _inside(root, worktrees_root())
+
+
+def _clear_stale_lock(repo: ShadowRepo) -> None:
+    lock = repo.host_git_dir / "index.lock"
+    try:
+        age = time.time() - lock.stat().st_mtime
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.info("checkpoints: cannot read {}: {}", lock, exc)
+        return
+    if age > _STALE_LOCK_S:
+        lock.unlink(missing_ok=True)
+        logger.info("checkpoints: removed a stale index.lock ({:.0f} s old) in {}", age, repo.git_dir)
+
+
+def snapshot_in_background(
+    root: Path | str, label: str = "", *, reason: str = "pre-edit"
+) -> threading.Event | None:
+    """Snapshot *root* in a daemon thread; the returned event is set once it is done.
+
+    One snapshot at a time per project: a call while one is running gets that
+    one's event instead of starting a second copy of the same tree. Subagent
+    checkouts are never snapshotted (None): each would otherwise grow its own
+    shadow repository, a full copy of the project.
     """
+    if _is_subagent_checkout(root):
+        return None
+    key = _norm(root)
+    with _in_flight_lock:
+        running = _in_flight.get(key)
+        if running is not None:
+            return running
+        done = threading.Event()
+        _in_flight[key] = done
 
     def _work() -> None:
         try:
-            create_checkpoint(root, label=label[:80], reason="pre-turn")
-        except Exception:  # noqa: BLE001 - snapshot failures must stay silent
-            pass
+            _clear_stale_lock(ensure_shadow_repo(root))
+            create_checkpoint(root, label=label[:80], reason=reason)
+        except (CheckpointError, OSError, subprocess.SubprocessError) as exc:
+            # The turn goes on without its restore point; say why in the log.
+            logger.info("checkpoints: snapshot of {} skipped: {}", root, exc)
+        finally:
+            with _in_flight_lock:
+                _in_flight.pop(key, None)
+            done.set()
 
-    thread = threading.Thread(target=_work, name="workspace-checkpoint", daemon=True)
-    thread.start()
-    return thread
+    threading.Thread(target=_work, name="workspace-checkpoint", daemon=True).start()
+    return done
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def pre_edit_snapshot_hook(
+    root: Path | str, label: str = "", *, wait_s: float = PRE_EDIT_WAIT_S
+) -> Callable[[Path | str], None]:
+    """The before-edit hook of one turn: snapshot *root* once, before its first write there.
+
+    A turn that only reads or answers never copies the project. The first write
+    inside *root* starts the snapshot and waits for it (at most *wait_s*), so the
+    restore point holds the files as they were before the turn touched them.
+    Called on the event loop thread, it never waits.
+    """
+    fired = threading.Event()
+    guard = threading.Lock()
+
+    def hook(path: Path | str) -> None:
+        if fired.is_set() or not _inside(path, root):
+            return
+        with guard:
+            if fired.is_set():
+                return
+            fired.set()
+        done = snapshot_in_background(root, label)
+        if done is None or _on_event_loop():
+            return
+        if not done.wait(wait_s):
+            logger.info("checkpoints: snapshot of {} still running after {:.0f} s; the edit goes on", root, wait_s)
+
+    return hook
 
 
 def restore_checkpoint(

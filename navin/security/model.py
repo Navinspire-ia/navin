@@ -144,13 +144,16 @@ class Finding:
         A dependency advisory is keyed on the advisory and the package instead:
         two different CVEs in one lockfile share the file and often the CWE,
         never the key, while the same CVE reported by two scanners merges.
+        A named component (a table, a view, a function, a server) keeps two
+        objects a few lines apart from collapsing into one finding.
         """
         if self.family == "supply_chain" and self.component:
             return "|".join([self.family, self.cve or self.id, self.file_path, self.component])
         bucket = (self.line // 5) if isinstance(self.line, int) else -1
-        return "|".join(
-            [self.family, self.cwe or self.id, self.file_path, self.endpoint, str(bucket)]
-        )
+        parts = [self.family, self.cwe or self.id, self.file_path, self.endpoint, str(bucket)]
+        if self.component:
+            parts.append(self.component)
+        return "|".join(parts)
 
     @property
     def severity_rank(self) -> int:

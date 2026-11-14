@@ -1,0 +1,568 @@
+{
+ "summary": {
+  "total": 302,
+  "applicable": 232,
+  "not_applicable": 70,
+  "passed": 23,
+  "failed": 46,
+  "inconclusive": 67,
+  "blocked": 2,
+  "not_tested": 94,
+  "verified": 69,
+  "verified_coverage": 29.7,
+  "manual_review": 58,
+  "audit_complete": false,
+  "complete_blockers": 163,
+  "capabilities": {
+   "automated": 38,
+   "partial": 118,
+   "manual": 82,
+   "missing": 64
+  }
+ },
+ "applicability": [
+  {
+   "tag": "all",
+   "detected": true,
+   "reason": "always applicable"
+  },
+  {
+   "tag": "source",
+   "detected": true,
+   "reason": "surface source detected"
+  },
+  {
+   "tag": "auth",
+   "detected": true,
+   "reason": "surface auth detected"
+  },
+  {
+   "tag": "api",
+   "detected": true,
+   "reason": "surface api detected"
+  },
+  {
+   "tag": "web",
+   "detected": true,
+   "reason": "surface web detected"
+  },
+  {
+   "tag": "db",
+   "detected": true,
+   "reason": "surface database detected"
+  },
+  {
+   "tag": "data",
+   "detected": true,
+   "reason": "surface data detected"
+  },
+  {
+   "tag": "cicd",
+   "detected": true,
+   "reason": "surface cicd detected"
+  },
+  {
+   "tag": "iac",
+   "detected": true,
+   "reason": "surface iac detected"
+  },
+  {
+   "tag": "runtime",
+   "detected": true,
+   "reason": "surface runtime detected"
+  },
+  {
+   "tag": "mobile",
+   "detected": false,
+   "reason": "no mobile surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "desktop",
+   "detected": false,
+   "reason": "no desktop surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "ai",
+   "detected": false,
+   "reason": "no ai surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "serverless",
+   "detected": false,
+   "reason": "no serverless surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "native",
+   "detected": false,
+   "reason": "no native surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "intégrations",
+   "detected": false,
+   "reason": "no intégrations surface found by discovery in 11 files read"
+  },
+  {
+   "tag": "rls",
+   "detected": true,
+   "reason": "datastore with row-level access control: postgresql, sql, supabase"
+  }
+ ],
+ "categories": [
+  {
+   "id": "DISC",
+   "number": 1,
+   "name": {
+    "fr": "Découverte et cartographie",
+    "en": "Discovery and mapping",
+    "ar": "الاكتشاف ورسم الخرائط"
+   },
+   "applicability": "all",
+   "verification_mode": "read_only",
+   "total": 13,
+   "applicable": 13,
+   "not_tested": 2,
+   "passed": 5,
+   "failed": 0,
+   "inconclusive": 6,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "ARCH",
+   "number": 2,
+   "name": {
+    "fr": "Architecture et conception sécurisée",
+    "en": "Secure architecture and design",
+    "ar": "البنية والتصميم الآمن"
+   },
+   "applicability": "all",
+   "verification_mode": "hybrid",
+   "total": 12,
+   "applicable": 12,
+   "not_tested": 5,
+   "passed": 0,
+   "failed": 2,
+   "inconclusive": 5,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "SAST",
+   "number": 3,
+   "name": {
+    "fr": "Analyse statique du code et défauts techniques",
+    "en": "Static code analysis and technical flaws",
+    "ar": "التحليل الثابت للشيفرة والعيوب التقنية"
+   },
+   "applicability": "source",
+   "verification_mode": "read_only",
+   "total": 18,
+   "applicable": 17,
+   "not_tested": 0,
+   "passed": 5,
+   "failed": 2,
+   "inconclusive": 10,
+   "blocked": 0,
+   "not_applicable": 1
+  },
+  {
+   "id": "AUTH",
+   "number": 4,
+   "name": {
+    "fr": "Authentification et gestion des sessions",
+    "en": "Authentication and session management",
+    "ar": "المصادقة وإدارة الجلسات"
+   },
+   "applicability": "auth",
+   "verification_mode": "hybrid",
+   "total": 14,
+   "applicable": 14,
+   "not_tested": 7,
+   "passed": 1,
+   "failed": 4,
+   "inconclusive": 2,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "AUTHZ",
+   "number": 5,
+   "name": {
+    "fr": "Autorisations et isolation des accès",
+    "en": "Authorization and access isolation",
+    "ar": "التفويض وعزل الوصول"
+   },
+   "applicability": "auth",
+   "verification_mode": "hybrid",
+   "total": 14,
+   "applicable": 14,
+   "not_tested": 9,
+   "passed": 0,
+   "failed": 4,
+   "inconclusive": 1,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "BUS",
+   "number": 6,
+   "name": {
+    "fr": "Logique métier, états et transactions",
+    "en": "Business logic, states and transactions",
+    "ar": "منطق الأعمال والحالات والمعاملات"
+   },
+   "applicability": "all",
+   "verification_mode": "hybrid",
+   "total": 12,
+   "applicable": 12,
+   "not_tested": 11,
+   "passed": 1,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "SECRET",
+   "number": 7,
+   "name": {
+    "fr": "Secrets, identifiants et exposition",
+    "en": "Secrets, credentials and exposure",
+    "ar": "الأسرار وبيانات الاعتماد والتعرض"
+   },
+   "applicability": "source",
+   "verification_mode": "read_only",
+   "total": 11,
+   "applicable": 10,
+   "not_tested": 3,
+   "passed": 2,
+   "failed": 0,
+   "inconclusive": 4,
+   "blocked": 1,
+   "not_applicable": 1
+  },
+  {
+   "id": "CRYP",
+   "number": 8,
+   "name": {
+    "fr": "Cryptographie et protection des échanges",
+    "en": "Cryptography and transport protection",
+    "ar": "التشفير وحماية التبادلات"
+   },
+   "applicability": "all",
+   "verification_mode": "hybrid",
+   "total": 11,
+   "applicable": 11,
+   "not_tested": 3,
+   "passed": 2,
+   "failed": 1,
+   "inconclusive": 5,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "API",
+   "number": 9,
+   "name": {
+    "fr": "API REST, GraphQL, gRPC et communications",
+    "en": "REST, GraphQL, gRPC APIs and communications",
+    "ar": "واجهات REST وGraphQL وgRPC والاتصالات"
+   },
+   "applicability": "api",
+   "verification_mode": "hybrid",
+   "total": 14,
+   "applicable": 14,
+   "not_tested": 4,
+   "passed": 1,
+   "failed": 3,
+   "inconclusive": 6,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "WEB",
+   "number": 10,
+   "name": {
+    "fr": "Applications web et tests dynamiques",
+    "en": "Web applications and dynamic testing",
+    "ar": "تطبيقات الويب والاختبارات الديناميكية"
+   },
+   "applicability": "web",
+   "verification_mode": "staging_active",
+   "total": 14,
+   "applicable": 14,
+   "not_tested": 6,
+   "passed": 0,
+   "failed": 6,
+   "inconclusive": 2,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "DB",
+   "number": 11,
+   "name": {
+    "fr": "Bases SQL/NoSQL, RLS et sécurité des données",
+    "en": "SQL/NoSQL databases, RLS and data security",
+    "ar": "قواعد بيانات SQL/NoSQL وRLS وأمن البيانات"
+   },
+   "applicability": "db",
+   "verification_mode": "hybrid",
+   "total": 18,
+   "applicable": 18,
+   "not_tested": 1,
+   "passed": 0,
+   "failed": 13,
+   "inconclusive": 4,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "DATA",
+   "number": 12,
+   "name": {
+    "fr": "Protection des données et vie privée",
+    "en": "Data protection and privacy",
+    "ar": "حماية البيانات والخصوصية"
+   },
+   "applicability": "data",
+   "verification_mode": "hybrid",
+   "total": 10,
+   "applicable": 10,
+   "not_tested": 7,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 3,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "SCA",
+   "number": 13,
+   "name": {
+    "fr": "Dépendances et chaîne d'approvisionnement",
+    "en": "Dependencies and supply chain",
+    "ar": "التبعيات وسلسلة التوريد"
+   },
+   "applicability": "source",
+   "verification_mode": "read_only",
+   "total": 13,
+   "applicable": 13,
+   "not_tested": 8,
+   "passed": 0,
+   "failed": 2,
+   "inconclusive": 2,
+   "blocked": 1,
+   "not_applicable": 0
+  },
+  {
+   "id": "CICD",
+   "number": 14,
+   "name": {
+    "fr": "Git, dépôt, build et CI/CD",
+    "en": "Git, repository, build and CI/CD",
+    "ar": "Git والمستودع والبناء وCI/CD"
+   },
+   "applicability": "cicd",
+   "verification_mode": "hybrid",
+   "total": 12,
+   "applicable": 12,
+   "not_tested": 9,
+   "passed": 0,
+   "failed": 2,
+   "inconclusive": 1,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "IAC",
+   "number": 15,
+   "name": {
+    "fr": "Cloud, containers, IaC et Kubernetes applicatif",
+    "en": "Cloud, containers, IaC and application Kubernetes",
+    "ar": "السحابة والحاويات وIaC وKubernetes"
+   },
+   "applicability": "iac",
+   "verification_mode": "hybrid",
+   "total": 15,
+   "applicable": 15,
+   "not_tested": 3,
+   "passed": 0,
+   "failed": 5,
+   "inconclusive": 7,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "RUN",
+   "number": 16,
+   "name": {
+    "fr": "Configuration runtime et qualité du déploiement",
+    "en": "Runtime configuration and deployment quality",
+    "ar": "إعدادات التشغيل وجودة النشر"
+   },
+   "applicability": "runtime",
+   "verification_mode": "hybrid",
+   "total": 11,
+   "applicable": 11,
+   "not_tested": 7,
+   "passed": 0,
+   "failed": 2,
+   "inconclusive": 2,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "MOBILE",
+   "number": 17,
+   "name": {
+    "fr": "Applications mobiles Android et iOS",
+    "en": "Android and iOS mobile applications",
+    "ar": "تطبيقات الجوال Android وiOS"
+   },
+   "applicability": "mobile",
+   "verification_mode": "hybrid",
+   "total": 12,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 12
+  },
+  {
+   "id": "DESK",
+   "number": 18,
+   "name": {
+    "fr": "Applications desktop, CLI, extensions et installateurs",
+    "en": "Desktop applications, CLI, extensions and installers",
+    "ar": "تطبيقات سطح المكتب وواجهات الأوامر والإضافات والمثبتات"
+   },
+   "applicability": "desktop",
+   "verification_mode": "hybrid",
+   "total": 11,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 11
+  },
+  {
+   "id": "AI",
+   "number": 19,
+   "name": {
+    "fr": "Applications IA, LLM, agents, RAG et MCP",
+    "en": "AI, LLM, agents, RAG and MCP applications",
+    "ar": "تطبيقات الذكاء الاصطناعي والنماذج اللغوية والوكلاء وRAG وMCP"
+   },
+   "applicability": "ai",
+   "verification_mode": "hybrid",
+   "total": 17,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 17
+  },
+  {
+   "id": "OBS",
+   "number": 20,
+   "name": {
+    "fr": "Journalisation, surveillance, erreurs et résilience",
+    "en": "Logging, monitoring, errors and résilience",
+    "ar": "السجلات والمراقبة والأخطاء والمرونة"
+   },
+   "applicability": "all",
+   "verification_mode": "hybrid",
+   "total": 10,
+   "applicable": 10,
+   "not_tested": 7,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 3,
+   "blocked": 0,
+   "not_applicable": 0
+  },
+  {
+   "id": "SRV",
+   "number": 21,
+   "name": {
+    "fr": "Fonctions serverless, edge, workers et jobs",
+    "en": "Serverless, edge, workers and jobs",
+    "ar": "الدوال بدون خادم والحافة والعمال والمهام"
+   },
+   "applicability": "serverless",
+   "verification_mode": "hybrid",
+   "total": 9,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 9
+  },
+  {
+   "id": "BIN",
+   "number": 22,
+   "name": {
+    "fr": "Bibliothèques natives, firmware, WebAssembly et embarqué",
+    "en": "Native libraries, firmware, WebAssembly and embedded",
+    "ar": "المكتبات الأصلية والبرامج الثابتة وWebAssembly والأنظمة المدمجة"
+   },
+   "applicability": "native",
+   "verification_mode": "hybrid",
+   "total": 9,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 9
+  },
+  {
+   "id": "INT",
+   "number": 23,
+   "name": {
+    "fr": "Intégrations et services tiers",
+    "en": "Third-party intégrations and services",
+    "ar": "التكاملات وخدمات الأطراف الثالثة"
+   },
+   "applicability": "intégrations",
+   "verification_mode": "hybrid",
+   "total": 10,
+   "applicable": 0,
+   "not_tested": 0,
+   "passed": 0,
+   "failed": 0,
+   "inconclusive": 0,
+   "blocked": 0,
+   "not_applicable": 10
+  },
+  {
+   "id": "QA",
+   "number": 24,
+   "name": {
+    "fr": "Qualité des scans, preuve et couverture",
+    "en": "Scan quality, evidence and coverage",
+    "ar": "جودة الفحص والأدلة والتغطية"
+   },
+   "applicability": "all",
+   "verification_mode": "hybrid",
+   "total": 12,
+   "applicable": 12,
+   "not_tested": 2,
+   "passed": 6,
+   "failed": 0,
+   "inconclusive": 4,
+   "blocked": 0,
+   "not_applicable": 0
+  }
+ ]
+}

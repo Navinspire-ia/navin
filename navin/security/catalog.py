@@ -264,7 +264,7 @@ CONTROLS: tuple[Control, ...] = (
        ["injection", "api"], "L1", "static", ["navin_rules", "navin_dataflow", "schemathesis"], "security-sast-review",
        ["CWE-20", "CWE-116", "ASVS V5"]),
     _c("C1.10", "G1", "Secrets codes en dur et logs sensibles", "Hardcoded secrets and sensitive logs", "الأسرار المضمنة والسجلات الحساسة",
-       ["secrets", "audit_logging"], "L1", "static", ["navin_rules", "gitleaks", "trivy", "trufflehog"], "security-secrets",
+       ["secrets", "audit_logging"], "L1", "static", ["navin_rules", "gitleaks", "gitleaks_history", "trivy", "trufflehog"], "security-secrets",
        ["CWE-798", "CWE-532", "ASVS V14"]),
     # G2 - identities, sessions and permissions
     _c("C2.01", "G2", "Brute force et credential stuffing", "Brute force and credential stuffing", "القوة الغاشمة وحشو بيانات الاعتماد",
@@ -515,7 +515,7 @@ LEVELS: tuple[Level, ...] = (
     Level("L1", _n("Statique", "Static", "ثابت"),
           _n("Code, secrets, dependances et configuration", "Code, secrets, dependencies and configuration", "الشيفرة والأسرار والتبعيات والإعدادات"),
           ["source tree"],
-          ["navin_rules", "navin_dataflow", "semgrep", "bandit", "gitleaks", "trivy", "osv_scanner", "checkov", "pip_audit", "npm_audit", "cargo_audit"]),
+          ["navin_rules", "navin_dataflow", "semgrep", "bandit", "gitleaks", "gitleaks_history", "trivy", "osv_scanner", "checkov", "pip_audit", "npm_audit", "cargo_audit"]),
     Level("L2", _n("Dynamique", "Dynamic", "ديناميكي"),
           _n("Site en fonctionnement, API et authentification", "Running site, API and authentication", "الموقع العامل وواجهات API والمصادقة"),
           ["base_url", "test accounts"],

@@ -38,8 +38,10 @@ from navin.agent.automation_turns import publish_next_deferred_turn
 from navin.agent.checkpoints import (
     CheckpointStore,
     TurnRecorder,
+    bind_before_edit_hook,
     bind_checkpoint_recorder,
     bind_live_edit_hook,
+    reset_before_edit_hook,
     reset_checkpoint_recorder,
     reset_live_edit_hook,
 )
@@ -95,7 +97,6 @@ from navin.bus.outbound_events import (
 from navin.bus.progress import build_bus_progress_callback
 from navin.bus.queue import MessageBus
 from navin.bus.runtime_events import (
-    CheckpointSaved,
     ContextCompacted,
     GoalStateChanged,
     RuntimeEventBus,
@@ -2669,6 +2670,7 @@ class AgentLoop:
         turn_recorder: TurnRecorder | None = None
         recorder_token = None
         live_hook_token = None
+        before_edit_token = None
         auto_checkpoint_name: str | None = None
         if session is not None and original_user_text and not ephemeral:
             try:
@@ -2681,33 +2683,22 @@ class AgentLoop:
                     auto=True,
                     prompt=original_user_text,
                 )
+                # The restore point stays in Code > Checkpoints and /checkpoint:
+                # a divider in the chat at every message was only noise.
                 auto_checkpoint_name = meta["name"]
-                # Surface the restore point in the chat transcript: the user
-                # should see, at the exact spot in the conversation, that this
-                # turn can be rewound.
-                self._runtime_events().checkpoint_saved(
-                    CheckpointSaved(
-                        session_key=session.key,
-                        name=auto_checkpoint_name or "",
-                        auto=True,
-                    )
-                )
             except OSError as exc:
                 logger.warning("Auto checkpoint failed for {}: {}", session.key, exc)
             turn_recorder = TurnRecorder()
             recorder_token = bind_checkpoint_recorder(turn_recorder)
-            # Full workspace snapshot (shadow git) so the Dev workbench can
-            # one-click restore the pre-turn state. Fire-and-forget daemon
-            # thread; never blocks or fails the turn.
-            try:
-                from navin.webui.checkpoints_api import spawn_pre_turn_checkpoint
+            # Full workspace snapshot (shadow git) for the Dev workbench's
+            # one-click restore, taken at the turn's first edit only: a turn
+            # that just reads or answers never copies the project.
+            if effective_scope.project_path:
+                from navin.webui.checkpoints_api import pre_edit_snapshot_hook
 
-                if effective_scope.project_path:
-                    spawn_pre_turn_checkpoint(
-                        effective_scope.project_path, label=original_user_text
-                    )
-            except Exception:  # noqa: BLE001 - snapshotting is best-effort
-                pass
+                before_edit_token = bind_before_edit_hook(
+                    pre_edit_snapshot_hook(effective_scope.project_path, label=original_user_text)
+                )
             # Stream each first-touch edit into the pending-review store while
             # the turn is still running, so open editors highlight agent
             # changes live instead of after the final answer.
@@ -2901,6 +2892,8 @@ class AgentLoop:
             turn_scope_stack.close()
             if live_hook_token is not None:
                 reset_live_edit_hook(live_hook_token)
+            if before_edit_token is not None:
+                reset_before_edit_hook(before_edit_token)
             if recorder_token is not None:
                 reset_checkpoint_recorder(recorder_token)
                 if turn_recorder is not None and session is not None and (

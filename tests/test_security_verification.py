@@ -282,5 +282,132 @@ class TriageAndRescanTest(unittest.TestCase):
         self.assertEqual((reopened.verified, item.validation.state, item.validation.rescan), (False, "open", "still_present"))
 
 
+class _WebHandler(BaseHTTPRequestHandler):
+    hits: list[tuple[str, str]] = []
+    hardened = False
+
+    def log_message(self, *args):  # silence the test output
+        pass
+
+    def _answer(self):
+        cls = type(self)
+        cls.hits.append((self.command, self.path))
+        path = self.path.split("?", 1)[0]
+        if cls.hardened:
+            body = {"/": "<html>ok</html>",
+                    "/.well-known/security.txt": "Contact: mailto:sec@x.test"}.get(path, "not found")
+            self.send_response(200 if path in {"/", "/.well-known/security.txt"} else 404)
+            self.send_header("Content-Type", "text/html" if path == "/" else "text/plain")
+            self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Server", "web")
+            self.send_header("Set-Cookie", "sessionid=abc; Secure; HttpOnly; SameSite=Lax")
+        elif path == "/off":
+            self.send_response(302)
+            self.send_header("Location", "http://evil.example/steal")
+            body = ""
+        else:
+            pages = {
+                "/": ('<html><script src="/static/app.js"></script></html>', "text/html", 200),
+                "/.env": ("DB_PASSWORD=hunter2\nAPI_KEY=abc\n", "text/plain", 200),
+                "/.git/HEAD": ("ref: refs/heads/main\n", "text/plain", 200),
+                "/graphql": ('{"data": {"__schema": {"types": [{"name": "Query"}]}}}', "application/json", 200),
+                "/openapi.json": ('{"openapi": "3.0.0"}', "application/json", 200),
+                "/static/app.js.map": ('{"version": 3, "mappings": "AAAA"}', "application/json", 200),
+            }
+            body, ctype, code = pages.get(path, ("Traceback (most recent call last):\n  File x", "text/plain", 500))
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Server", "Apache/2.4.1")
+            self.send_header("Set-Cookie", "sessionid=abc")
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+        self.end_headers()
+        if self.command != "HEAD" and body:
+            self.wfile.write(body.encode())
+
+
+for _verb in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE"):
+    setattr(_WebHandler, f"do_{_verb}", _WebHandler._answer)
+
+
+class _WebServer(_Server):
+    def __init__(self, hardened: bool = False):
+        self.hardened = hardened
+
+    def __enter__(self):
+        _WebHandler.hits = []
+        _WebHandler.hardened = self.hardened
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _WebHandler)
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.port}"
+        return self
+
+
+class WebBaselineTest(unittest.TestCase):
+    def test_weak_server_yields_findings_with_read_only_requests(self):
+        from navin.security.verification.web_baseline import run_web_baseline
+
+        with _WebServer() as srv:
+            report = run_web_baseline(srv.base, timeout_s=5)
+        ids = {f.id for f in report.findings}
+        expected = {"web-csp-missing", "web-xcto-missing", "web-framing-missing", "web-cookie-flags",
+                    "web-cors-reflect", "web-server-banner", "web-sourcemap-exposed", "web-debug-exposed",
+                    "web-error-leak", "web-graphql-introspection", "web-openapi-exposed",
+                    "web-cache-private", "web-security-txt-missing"}
+        self.assertEqual(report.status, "ok")
+        self.assertTrue(expected <= ids, expected - ids)
+        self.assertTrue({m for m, _ in _WebHandler.hits} <= {"GET", "HEAD", "OPTIONS"})
+        self.assertLessEqual(report.requests, 40)
+        self.assertTrue(all(f.status == "confirmed" and f.evidence[0].kind == "dynamic" for f in report.findings))
+        self.assertNotIn("hunter2", str(report.to_dict()))
+
+    def test_hardened_server_yields_no_header_findings(self):
+        from navin.security.verification.web_baseline import _HEADER_CHECKS, run_web_baseline
+
+        with _WebServer(hardened=True) as srv:
+            report = run_web_baseline(srv.base, timeout_s=5)
+        self.assertEqual(report.status, "ok")
+        self.assertEqual({f.id for f in report.findings} & _HEADER_CHECKS, set())
+        self.assertEqual(report.findings, [])
+
+    def test_off_origin_redirect_not_followed_and_empty_url(self):
+        from navin.security.verification.web_baseline import run_web_baseline
+
+        calls: list[str] = []
+        empty = run_web_baseline("", sender=lambda *a, **k: calls.append(a[1]))
+        self.assertEqual((empty.status, calls), ("not_applicable", []))
+        with _WebServer() as srv:
+            res = send_probe("GET", srv.base + "/off", Authorization(targets=(srv.base,)), timeout_s=5)
+            report = run_web_baseline(srv.base, timeout_s=5, max_requests=3)
+        self.assertEqual(res.status, 302)
+        self.assertTrue(all(p != "/steal" for _, p in _WebHandler.hits))
+        self.assertLessEqual(report.requests, 3)
+        self.assertEqual(report.target, srv.base)
+
+    def test_https_target_without_hsts_or_redirect(self):
+        from navin.security.verification.probe import ProbeResult
+        from navin.security.verification.web_baseline import run_web_baseline
+
+        sent: list[tuple[str, str]] = []
+
+        def sender(method, url, auth, **kwargs):
+            sent.append((method, url))
+            return ProbeResult(method=method, url=url, status=200 if url.startswith("https://") or url == "http://shop.example/" else 404,
+                               headers={"Content-Type": "text/html"}, body="<html></html>")
+
+        report = run_web_baseline("https://shop.example", sender=sender, timeout_s=1)
+        ids = {f.id for f in report.findings}
+        self.assertTrue({"web-hsts-missing", "web-https-redirect-missing"} <= ids, ids)
+        self.assertIn(("GET", "http://shop.example/"), sent)  # the plain-HTTP twin of the same host, nothing else
+        self.assertTrue(all(u.startswith(("https://shop.example", "http://shop.example/")) for _, u in sent))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@
  */
 import type { SendOptions } from "@/hooks/useNavinStream";
 import type { AttachmentKind } from "@/hooks/useAttachedImages";
+import type { ComposerTurnMode } from "@/components/thread/ComposerModeMenu";
 import { isTimeoutError } from "@/lib/http";
 import type {
   OutboundCliAppMention,
@@ -68,6 +69,9 @@ export interface QueuedPrompt {
   text: string;
   images?: QueuedPromptImage[];
   options?: QueuedPromptOptions;
+  /** Composer mode when the prompt was queued (Review, Security, Plan...):
+   * the turn it starts later runs in that mode, not as plain text. */
+  mode?: ComposerTurnMode;
 }
 
 export function queuedPromptsStorageKey(key?: string | null): string | null {
@@ -174,11 +178,16 @@ export function normalizeQueuedPrompt(item: unknown, index: number): QueuedPromp
     ? record.id
     : `queued-prompt-restored-${index}`;
   const options = normalizeQueuedOptions(record.options);
+  // Checked against the mode list when the prompt is sent; here only its shape.
+  const mode = typeof record.mode === "string" && /^[a-z]{2,16}$/.test(record.mode)
+    ? record.mode
+    : undefined;
   return {
     id,
     text,
     ...(images.length > 0 ? { images } : {}),
     ...(options ? { options } : {}),
+    ...(mode ? { mode } : {}),
   };
 }
 
@@ -206,6 +215,7 @@ function serializeQueuedPrompts(prompts: QueuedPrompt[], withImages: boolean): s
         ? { images: prompt.images.slice(0, QUEUED_PROMPT_MAX_IMAGES) }
         : {}),
       ...(prompt.options ? { options: prompt.options } : {}),
+      ...(prompt.mode ? { mode: prompt.mode } : {}),
     })),
   );
 }
