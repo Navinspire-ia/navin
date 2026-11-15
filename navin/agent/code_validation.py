@@ -1247,6 +1247,24 @@ class CodeValidationState:
             self.test_result_note = ""
         self.needs_tests |= require_tests
 
+    def _generated_report(self, path: str) -> bool:
+        """A data or report file inside an output folder (build/, dist/, .navin/...).
+
+        An audit subagent told to change nothing wrote build/security-api.json and
+        ended failed as "Changes not validated" (2026-11-15): no checker covers such a
+        file, so the gate it armed could never be met. Code files there still arm it.
+        Pure path arithmetic, no disk access.
+        """
+        candidate = PurePosixPath(path.replace("\\", "/"))
+        if candidate.suffix.lower() in _CODE_SUFFIXES:
+            return False
+        if self.root is not None and candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(PurePosixPath(str(self.root).replace("\\", "/")))
+            except ValueError:
+                return False
+        return bool(_GENERATED_DIRS.intersection(candidate.parent.parts))
+
     def _in_project(self, path: str) -> bool:
         """Scratch files outside the project (a /tmp probe script) are not the delivery.
 
@@ -1319,7 +1337,10 @@ class CodeValidationState:
             self.touched.update(outside)
             scratch_only = bool(paths) and outside == paths
             paths -= outside
-            relevant = {path for path in paths if development_path(path)}
+            relevant = {
+                path for path in paths
+                if development_path(path) and not self._generated_report(path)
+            }
             # Docs, notes and other non-development files never arm the gate:
             # no checker covers them, so it could never be satisfied. An edit
             # whose paths are unknown still arms it (the safe side).

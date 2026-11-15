@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OrganizationSettings } from "@/components/settings/OrganizationSettings";
+import { settingsNavItemsFor } from "@/components/settings/SettingsView";
 
 const STATUS = {
   present: true,
@@ -92,5 +93,18 @@ describe("OrganizationSettings", () => {
     await waitFor(() => expect(calls.some((call) => call.url.includes("action=key"))).toBe(true));
     expect(calls.find((call) => call.url.includes("action=key"))?.body).toEqual({ api_key: "sk-litellm-user-123456" });
     await waitFor(() => expect(input.value).toBe(""));
+  });
+});
+
+describe("Settings > Organization entry", () => {
+  it("is listed only for Navin SM or an organization in force", () => {
+    const keys = (settings: { organization_section?: boolean } | null) =>
+      settingsNavItemsFor(settings).map((item) => item.key);
+    expect(keys(null)).not.toContain("organization");
+    expect(keys({})).not.toContain("organization");
+    expect(keys({ organization_section: false })).not.toContain("organization");
+    expect(keys({ organization_section: true })).toContain("organization");
+    // Only that entry depends on it.
+    expect(keys({ organization_section: true }).length - keys({}).length).toBe(1);
   });
 });

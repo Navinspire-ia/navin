@@ -114,6 +114,15 @@ class AgentHook:
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
         pass
 
+    def withdraws_stream(self) -> bool:
+        """Whether a segment this hook streamed can be taken back off the screen.
+
+        True only when a stream end marked ``discarded`` reaches a UI that drops
+        the segment. The runner shows a task answer live only then; otherwise it
+        holds the text until every completion gate passed.
+        """
+        return False
+
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         pass
 
@@ -205,6 +214,11 @@ class CompositeHook(AgentHook):
 
     def wants_streaming(self) -> bool:
         return any(h.wants_streaming() for h in self._hooks)
+
+    def withdraws_stream(self) -> bool:
+        # Every hook that shows the stream must be able to take a segment back.
+        streaming = [h for h in self._hooks if h.wants_streaming()]
+        return bool(streaming) and all(h.withdraws_stream() for h in streaming)
 
     async def _for_each_hook_safe(self, method_name: str, *args: Any, **kwargs: Any) -> None:
         for h in self._hooks:

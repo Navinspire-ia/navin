@@ -149,7 +149,14 @@ class Finding:
         """
         if self.family == "supply_chain" and self.component:
             return "|".join([self.family, self.cve or self.id, self.file_path, self.component])
-        bucket = (self.line // 5) if isinstance(self.line, int) else -1
+        if not isinstance(self.line, int):
+            bucket = -1
+        elif self.family in _ONE_PER_LINE_FAMILIES:
+            # Two keys on consecutive lines of a config file are two credentials to rotate, and each line of
+            # a requirements file is its own package: they are never one finding.
+            bucket = self.line
+        else:
+            bucket = self.line // 5
         parts = [self.family, self.cwe or self.id, self.file_path, self.endpoint, str(bucket)]
         if self.component:
             parts.append(self.component)
@@ -263,6 +270,10 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# Families where every line is its own object (see Finding.key).
+_ONE_PER_LINE_FAMILIES = frozenset({"secrets", "supply_chain"})
 
 
 def merge_findings(findings: list[Finding]) -> list[Finding]:

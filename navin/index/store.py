@@ -330,10 +330,16 @@ def load_cache(root: Path) -> dict[str, FileEntry]:
         }
 
 
-def save_cache(root: Path, entries: dict[str, FileEntry], meta: dict[str, Any]) -> None:
-    """Atomically persist the index; failures are non-fatal by design."""
+def save_cache(
+    root: Path, entries: dict[str, FileEntry], meta: dict[str, Any], *, path: Path | None = None,
+) -> None:
+    """Atomically persist the index; failures are non-fatal by design.
+
+    ``path`` is the cache file resolved by the caller (a delayed save resolves
+    it when it is scheduled); by default it is resolved now.
+    """
     _write_lines(
-        cache_path(root),
+        path if path is not None else cache_path(root),
         {"root": str(root.resolve(strict=False)), "meta": meta},
         ((rel, entry.to_json()) for rel, entry in entries.items()),
     )
@@ -343,7 +349,7 @@ def save_cache(root: Path, entries: dict[str, FileEntry], meta: dict[str, Any]) 
 # to encode on a large repo), and revalidate() runs on the turn's critical
 # path after every agent edit. Only the latest snapshot per root is written.
 _SAVE_DELAY_S = 1.0
-_pending_saves: dict[str, tuple[Path, dict[str, FileEntry], dict[str, Any]]] = {}
+_pending_saves: dict[str, tuple[Path, dict[str, FileEntry], dict[str, Any], Path]] = {}
 _save_timers: dict[str, threading.Timer] = {}
 _save_lock = threading.Lock()
 
@@ -352,11 +358,15 @@ def save_cache_soon(root: Path, entries: dict[str, FileEntry], meta: dict[str, A
     """Schedule :func:`save_cache` off the caller's thread, latest snapshot wins.
 
     ``entries`` must not be mutated afterwards; the index replaces its dict on
-    every change instead of editing it in place.
+    every change instead of editing it in place. The cache file is resolved
+    now: a save that fires after the config folder changed (another config
+    loaded, the next test) still lands next to the config it was made for,
+    instead of creating an ``index`` folder in the new one.
     """
     key = str(root)
+    target = cache_path(root)
     with _save_lock:
-        _pending_saves[key] = (root, entries, meta)
+        _pending_saves[key] = (root, entries, meta, target)
         if key in _save_timers:
             return
         timer = threading.Timer(_SAVE_DELAY_S, _flush_pending_save, args=(key,))
@@ -372,7 +382,8 @@ def _flush_pending_save(key: str) -> None:
     if timer is not None:
         timer.cancel()
     if pending is not None:
-        save_cache(*pending)
+        root, entries, meta, target = pending
+        save_cache(root, entries, meta, path=target)
 
 
 def flush_pending_save(root: Path) -> None:

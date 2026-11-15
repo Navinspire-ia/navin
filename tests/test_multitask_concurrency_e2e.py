@@ -193,6 +193,7 @@ def _finals_text(outbound: list, chat_id: str) -> str:
 def _visible_stream_text(outbound: list, chat_id: str) -> str:
     """Reconstruct the chat's streamed answer, excluding withdrawn segments."""
     segments: dict[str, str] = {}
+    finals: list[str] = []
     for message in outbound:
         if message.chat_id != chat_id:
             continue
@@ -200,9 +201,13 @@ def _visible_stream_text(outbound: list, chat_id: str) -> str:
         if isinstance(event, StreamDeltaEvent):
             stream_id = event.stream_id or ""
             segments[stream_id] = segments.get(stream_id, "") + message.content
-        elif isinstance(event, StreamEndEvent) and event.discarded:
-            segments.pop(event.stream_id or "", None)
-    return "\n".join([*segments.values(), *_finals(outbound, chat_id)])
+        elif isinstance(event, StreamEndEvent):
+            if event.discarded:
+                segments.pop(event.stream_id or "", None)
+        elif isinstance(message.content, str) and message.content:
+            # A delta message carries its text too: only non-stream messages are finals here.
+            finals.append(message.content)
+    return "\n".join([*segments.values(), *finals])
 
 
 def test_two_chats_started_together_keep_their_own_history(tmp_path):

@@ -393,34 +393,38 @@ def _why_relisted(kept, root, moved_after_first) -> str:
 def test_listing_is_reused_until_a_folder_or_the_index_moves(tmp_path):
     import time
 
-    _git_repo(tmp_path)
-    _backdate(tmp_path)
+    # The project is a folder of its own: tmp_path also holds this test's config, where
+    # Navin's background caches (code index, notes) write and so move tmp_path itself.
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git_repo(root)
+    _backdate(root)
     cv._LISTINGS.clear()
-    first = cv.workspace_code_snapshot(tmp_path)
+    first = cv.workspace_code_snapshot(root)
     assert "src/a.py" in first
-    held = cv._LISTINGS.get(str(tmp_path))
-    assert held is not None and held.stamps is not None, _listing_report(tmp_path)
-    kept = cv._LISTINGS[str(tmp_path)]
+    held = cv._LISTINGS.get(str(root))
+    assert held is not None and held.stamps is not None, _listing_report(root)
+    kept = cv._LISTINGS[str(root)]
     moved_after_first = _moved(kept)
     # An edit in place moves no folder: same listing, new stamp.
     time.sleep(0.01)
-    (tmp_path / "src" / "a.py").write_text("A = 22222\n")
-    edited = cv.workspace_code_snapshot(tmp_path)
-    assert cv._LISTINGS.get(str(tmp_path)) is kept, _why_relisted(kept, tmp_path, moved_after_first)
+    (root / "src" / "a.py").write_text("A = 22222\n")
+    edited = cv.workspace_code_snapshot(root)
+    assert cv._LISTINGS.get(str(root)) is kept, _why_relisted(kept, root, moved_after_first)
     assert edited["src/a.py"] != first["src/a.py"]
     # A new file in a watched folder, an empty folder and a git add are all seen.
-    (tmp_path / "src" / "b.py").write_text("B = 2\n")
-    assert "src/b.py" in cv.workspace_code_snapshot(tmp_path)
-    (tmp_path / "empty" / "c.py").write_text("C = 3\n")
-    assert "empty/c.py" in cv.workspace_code_snapshot(tmp_path)
-    (tmp_path / "build" / "ignored.py").write_text("X = 1\n")
-    assert "build/ignored.py" not in cv.workspace_code_snapshot(tmp_path)
-    (tmp_path / "a.log").write_text("x")
-    assert not any(path.endswith(".log") for path in cv.workspace_code_snapshot(tmp_path))
-    (tmp_path / "newdir").mkdir()
-    (tmp_path / "newdir" / "d.py").write_text("D = 4\n")
-    assert "newdir/d.py" in cv.workspace_code_snapshot(tmp_path)
-    (tmp_path / "src" / "a.py").unlink()
+    (root / "src" / "b.py").write_text("B = 2\n")
+    assert "src/b.py" in cv.workspace_code_snapshot(root)
+    (root / "empty" / "c.py").write_text("C = 3\n")
+    assert "empty/c.py" in cv.workspace_code_snapshot(root)
+    (root / "build" / "ignored.py").write_text("X = 1\n")
+    assert "build/ignored.py" not in cv.workspace_code_snapshot(root)
+    (root / "a.log").write_text("x")
+    assert not any(path.endswith(".log") for path in cv.workspace_code_snapshot(root))
+    (root / "newdir").mkdir()
+    (root / "newdir" / "d.py").write_text("D = 4\n")
+    assert "newdir/d.py" in cv.workspace_code_snapshot(root)
+    (root / "src" / "a.py").unlink()
     # Still in the git index: listed, with no stamp, exactly like git ls-files.
-    assert cv.workspace_code_snapshot(tmp_path)["src/a.py"] is None
-    assert cv.workspace_code_snapshot(tmp_path) == _reference_snapshot(tmp_path)
+    assert cv.workspace_code_snapshot(root)["src/a.py"] is None
+    assert cv.workspace_code_snapshot(root) == _reference_snapshot(root)

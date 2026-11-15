@@ -316,6 +316,16 @@ class RulePackTest(unittest.TestCase):
             ("auth-bypass-flag", "http.authorizeHttpRequests(a -> a.anyRequest().permitAll());",
              "http.authorizeHttpRequests(a -> a.anyRequest().authenticated());"),
             ("xxe", "settings.ProhibitDtd = false;", "settings.ProhibitDtd = true;"),
+            # Prefixed constant names are the usual case; the value is split so no key-shaped literal
+            # sits in this file (push protection on the public mirror).
+            ("hardcoded-secret", 'AWS_SECRET_ACCESS_KEY = "' + "q8Vt2mXr9LkPz4Wn7Ys1" + "Bc6Df3Gh5Jk0Lm2Np8Qr" + '"',
+             "query = f\"SELECT id FROM users WHERE name = '{user}' AND password = '{digest}'\""),
+            ("hardcoded-secret", 'DB_PASSWORD = "Tr0ub4dor&3-prod"', 'ROUTES = {"reset_password": "/reset-password"}'),
+            ("hardcoded-secret", 'const STRIPE_API_KEY = "' + "rk_prod_" + "9fK2mQ7xL4vB8nR1" + '";',
+             "password = f'{prefix}{value}'"),
+            ("cors-wildcard", 'CORS(app, origins="*", supports_credentials=True)',
+             'CORS(app, origins=["https://app.example.org"])'),
+            ("cors-wildcard", 'CORS(app, resources={r"/api/*": {"origins": "*"}})', "origins = load_allowed_origins()"),
         ]
         for rid, positive, negative in table:
             with self.subTest(rule=rid, line=positive):

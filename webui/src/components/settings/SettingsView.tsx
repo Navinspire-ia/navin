@@ -1146,6 +1146,11 @@ export function SettingsView({
   }, [token]);
 
   const hasSettings = settings !== null;
+  const organizationSection = settings?.organization_section === true;
+  useEffect(() => {
+    // A link to Settings > Organization in standard Navin lands on the overview instead.
+    if (activeSection === "organization" && hasSettings && !organizationSection) selectSection("overview");
+  }, [activeSection, hasSettings, organizationSection, selectSection]);
   // Both sections mount the token usage table, so both need the refresh:
   // Account used to keep whatever figures were current when Settings opened.
   const usageIsVisible = activeSection === "overview" || activeSection === "account";
@@ -2855,7 +2860,7 @@ export function SettingsView({
           />
         );
       case "organization":
-        return <OrganizationSettings token={token} />;
+        return organizationSection ? <OrganizationSettings token={token} /> : null;
       case "sites":
         return <SitesSettings token={token} />;
       case "git":
@@ -2879,6 +2884,7 @@ export function SettingsView({
     >
       {showSidebar ? (
         <SettingsSidebar
+          items={settingsNavItemsFor(settings)}
           activeSection={activeSection}
           onSelectSection={selectSection}
           onBackToChat={onBackToChat}
@@ -3116,6 +3122,13 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { key: "about", icon: Info, fallback: "About" },
 ];
 
+/** The sidebar entries for these settings: Organization only for Navin SM or an organization in force. */
+export function settingsNavItemsFor(settings: Pick<SettingsPayload, "organization_section"> | null) {
+  return SETTINGS_NAV_ITEMS.filter(
+    (item) => item.key !== "organization" || settings?.organization_section === true,
+  );
+}
+
 function visibleWebuiDefaultAccessMode(mode: string | null | undefined): WebuiDefaultAccessMode {
   return mode === "full" ? "full" : "default";
 }
@@ -3131,12 +3144,14 @@ function titleForSection(section: SettingsSectionKey): string {
 }
 
 function SettingsSidebar({
+  items,
   activeSection,
   onSelectSection,
   onBackToChat,
   onToggleSidebar,
   hostChromeInset,
 }: {
+  items: typeof SETTINGS_NAV_ITEMS;
   activeSection: SettingsSectionKey;
   onSelectSection: (section: SettingsSectionKey) => void;
   onBackToChat: () => void;
@@ -3182,7 +3197,7 @@ function SettingsSidebar({
         aria-label={t("settings.sidebar.ariaLabel")}
         className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 max-lg:[scrollbar-width:none] max-lg:[&::-webkit-scrollbar]:hidden lg:mx-0 lg:mt-1 lg:block lg:min-h-0 lg:flex-1 lg:space-y-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0 lg:pb-0 lg:pe-1 lg:[scrollbar-width:thin]"
       >
-        {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback, labelKey }) => {
+        {items.map(({ key, icon: Icon, fallback, labelKey }) => {
           const active =
             key === activeSection
             || (key === "tools" && (activeSection === "tools" || activeSection === "apps"))

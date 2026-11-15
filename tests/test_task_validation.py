@@ -24,7 +24,12 @@ from navin.agent.tools.quality import VerifyTool
 from navin.agent.tools.shell import ExecTool
 from navin.board.store import ProjectBoardStore
 from navin.bus.events import InboundMessage
-from navin.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamedResponseEvent
+from navin.bus.outbound_events import (
+    ProgressEvent,
+    StreamDeltaEvent,
+    StreamedResponseEvent,
+    StreamEndEvent,
+)
 from navin.bus.queue import MessageBus
 from navin.providers.base import LLMResponse
 from navin.quality.evidence import VerificationEvidence
@@ -93,6 +98,8 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(
         loop.tools.register(BoardTool(workspace=tmp_path))
         task = None
         deltas = []
+        live = []
+        kept = []
         timeline = []
         key = "cli:direct" if surface == "cli" else "websocket:acceptance-tests"
         expected = "Done: discounts and invalid input verified by 5 passing tests."
@@ -107,14 +114,25 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(
 
         async def streamed(text):
             deltas.append(text)
+            live.append(text)
             timeline.append("answer")
-            assert timeline.count("saved") >= 1, "The final answer must follow its durable save"
 
         async def progress(content, **_kwargs):
             timeline.append("activity")
 
-        async def stream_end(**_kwargs):
-            return None
+        async def stream_end(*, resuming=False, discarded=False, **_kwargs):
+            # The answer streams live while it is written; a rejected candidate
+            # is withdrawn, and the accepted one is closed only once it is saved.
+            if discarded:
+                live.clear()
+                timeline.append("withdrawn")
+                return
+            if live:
+                kept.append("".join(live))
+                live.clear()
+            timeline.append("paused" if resuming else "closed")
+            if not resuming:
+                assert timeline.count("saved") >= 1, "The final answer is closed only after its durable save"
 
         request = "Implement discounted_total: round to cents and reject negative prices or percentages outside 0..100."
         try:
@@ -133,6 +151,8 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(
                         response = await loop.bus.consume_outbound()
                         if isinstance(response.event, StreamDeltaEvent):
                             await streamed(response.event.content)
+                        if isinstance(response.event, StreamEndEvent):
+                            await stream_end(resuming=response.event.resuming, discarded=response.event.discarded)
                         if isinstance(response.event, ProgressEvent):
                             await progress(response.content)
                         if response.event is None or isinstance(response.event, StreamedResponseEvent):
@@ -150,8 +170,17 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(
             if surface != "cli" and not premature_board_closures:
                 assert session.metadata["_turn_budget_continuation_rounds"] == 2
             if surface in {"cli", "desktop_stream"}:
-                assert deltas == [expected], "Only the accepted final answer is streamed, once"
-                assert timeline[-1] == "answer", "No task activity may follow the conclusion"
+                assert kept == [expected], "Only the accepted final answer stays on screen, once"
+                assert "".join(deltas).count(expected) == 1, "The accepted answer streams once"
+                # From its first word to its close, the conclusion is only its own text,
+                # the durable save, then the close: no task activity follows it.
+                boundary = max(
+                    (i for i, event in enumerate(timeline) if event not in {"answer", "saved", "closed"}),
+                    default=-1,
+                )
+                conclusion = timeline[boundary + 1:]
+                assert conclusion[0] == "answer" and conclusion[-1] == "closed", timeline
+                assert "saved" in conclusion, timeline
             # A fresh reader must show the same conclusion, without the rejected
             # candidate becoming permanent narration above the tool activity.
             restored = SessionManager(tmp_path).get_or_create(key)
@@ -1007,11 +1036,17 @@ def test_the_reminder_asks_for_one_or_two_tests_in_essential_mode(tmp_path, monk
     assert "test_paste.py" in missing and "test_menu.py" in missing
 
 
-def test_green_candidate_waits_for_late_work_before_streaming_or_history(tmp_path):
-    """No pending validation is needed to reject a premature conclusion."""
+def test_green_candidate_shows_live_and_stays_when_the_user_typed_during_it(tmp_path):
+    """No pending validation is needed to hold a premature conclusion: it streams live.
+
+    The candidate appears while the model writes it (a held task answer arrived in one block at the
+    end). The message the user typed while it finished keeps it, on screen and in history; the
+    accepted final follows in its own segment.
+    """
     async def run():
         (tmp_path / "evidence.txt").write_text("verified detail\n")
         events = []
+        ends = []
         checkpoints = []
         injected = False
         candidate = "Everything is complete before the late result."
@@ -1028,8 +1063,8 @@ def test_green_candidate_waits_for_late_work_before_streaming_or_history(tmp_pat
         async def progress(text, **_kwargs):
             events.append(("activity", text))
 
-        async def stream_end(**_kwargs):
-            return None
+        async def stream_end(*, resuming=False, discarded=False):
+            ends.append((resuming, discarded))
 
         async def inject(**_kwargs):
             nonlocal injected
@@ -1050,8 +1085,12 @@ def test_green_candidate_waits_for_late_work_before_streaming_or_history(tmp_pat
         ))
         assert result.stop_reason == "completed"
         assert result.final_content == final
-        assert [text for kind, text in events if kind == "answer"] == [final]
+        assert [text for kind, text in events if kind == "answer"] == [candidate, final]
         assert events[-1] == ("answer", final)
+        assert result.final_streamed, "the accepted final reached the screen live"
+        # Neither segment is withdrawn: the candidate stays because the user typed after it.
+        assert not any(discarded for _resuming, discarded in ends)
+        assert ends[-1] == (False, False)
         assert any(kind == "activity" for kind, _ in events)
         assert provider.calls == 3
         rejected = next(m for m in result.messages if m.get("content") == candidate)

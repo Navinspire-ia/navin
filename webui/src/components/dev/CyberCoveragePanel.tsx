@@ -3,8 +3,9 @@
 
 /**
  * "Couverture Cyber": coverage matrix of the 302-control Navin Cyber AppSec
- * referential for the project's last security audit. Runs an audit, filters
- * the controls and exports the matrix (JSON / Markdown).
+ * referential for the project's last security audit. The audit itself runs
+ * in the chat (Security mode); this panel only shows its result, filters the
+ * controls and exports the matrix (JSON / Markdown).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +17,6 @@ import {
   ChevronRight,
   Download,
   Loader2,
-  Play,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { requestCyberLaunch } from "@/lib/cyber-launch";
 import { saveTextFile } from "@/lib/save-blob";
 import {
   CONTROL_STATUSES,
@@ -33,10 +34,8 @@ import {
   exportFilename,
   fetchCoverageMatrix,
   filterControls,
-  formatElapsed,
   formatPercent,
   groupByCategory,
-  runCoverageAudit,
   type ControlStatus,
   type CoverageControl,
   type MatrixPayload,
@@ -80,13 +79,6 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
   const [state, setState] = useState<LoadState>("loading");
   const [matrix, setMatrix] = useState<MatrixPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [runStart, setRunStart] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [scanners, setScanners] = useState(true);
-  const [offline, setOffline] = useState(false);
-  const [databaseEphemeral, setDatabaseEphemeral] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [statuses, setStatuses] = useState<Set<ControlStatus>>(new Set());
@@ -113,30 +105,12 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
     if (open) void load();
   }, [open, load]);
 
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running]);
-
-  const run = async () => {
-    if (!root || running) return;
-    setRunning(true);
-    const start = Date.now();
-    setRunStart(start);
-    setNow(start);
-    setError(null);
-    try {
-      const next = await runCoverageAudit(tokenRef.current, root, { scanners, offline, baseUrl, databaseEphemeral });
-      setMatrix(next ?? null);
-      setState("ready");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setState("error");
-    } finally {
-      setRunning(false);
-      setRunStart(null);
-    }
+  // One way to audit: the chat in Security mode. The agent picks the engines
+  // (SQL migrations replayed when the project has them) and asks the user
+  // only for what it cannot decide, such as an authorized staging URL.
+  const runInChat = () => {
+    onOpenChange(false);
+    requestCyberLaunch();
   };
 
   const doExport = async (format: "json" | "md") => {
@@ -178,59 +152,8 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
     else next.add(value);
     return next;
   };
-  const busy = running || exporting !== null;
+  const busy = exporting !== null;
   const lang = i18n?.language ?? "en";
-
-  const runControls = (
-    <div className="space-y-2 rounded-md border p-3" data-testid="cyber-coverage-run">
-      <div className="flex flex-wrap items-center gap-4 text-sm">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={scanners} disabled={running} onChange={(e) => setScanners(e.target.checked)} />
-          {tx("scanners", "Run the scanners")}
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={offline} disabled={running} onChange={(e) => setOffline(e.target.checked)} />
-          {tx("offline", "Offline (no network)")}
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={databaseEphemeral}
-            disabled={running}
-            onChange={(e) => setDatabaseEphemeral(e.target.checked)}
-          />
-          {tx("databaseEphemeral", "Test the SQL migrations in a throwaway local PostgreSQL")}
-        </label>
-      </div>
-      <label className="block text-sm">
-        <span className="mb-1 block text-xs text-muted-foreground">{tx("baseUrl", "Target URL for dynamic checks (optional)")}</span>
-        <Input
-          value={baseUrl}
-          disabled={running}
-          placeholder="https://staging.example.com"
-          onChange={(e) => setBaseUrl(e.target.value)}
-          aria-label={tx("baseUrl", "Target URL for dynamic checks (optional)")}
-        />
-      </label>
-      <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-        {tx("baseUrlWarning", "Dynamic checks only go to a target you are authorized to test, preferably staging.")}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void run()} disabled={busy || !root} data-testid="cyber-coverage-run-button">
-          {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-          {tx("run", "Run the audit")}
-        </Button>
-        {running && runStart !== null ? (
-          <span className="text-xs text-muted-foreground" role="status" data-testid="cyber-coverage-running">
-            {tx("running", "Audit running ({{elapsed}}). It can take several minutes.", {
-              elapsed: formatElapsed(now - runStart),
-            })}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
 
   const renderControl = (control: CoverageControl) => {
     const expanded = openRows.has(control.id);
@@ -300,12 +223,12 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
 
         {!root ? (
           <p className="text-sm text-muted-foreground">{tx("noProject", "Open a project first.")}</p>
-        ) : state === "loading" && !running ? (
+        ) : state === "loading" ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="cyber-coverage-loading">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             {tx("loading", "Loading the coverage matrix...")}
           </p>
-        ) : state === "error" && !running ? (
+        ) : state === "error" ? (
           <div className="space-y-2" role="alert" data-testid="cyber-coverage-error">
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
             <Button size="sm" variant="outline" onClick={() => void load()}>
@@ -316,9 +239,12 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
         ) : !matrix ? (
           <div className="space-y-3" data-testid="cyber-coverage-empty">
             <p className="text-sm text-muted-foreground">
-              {tx("empty", "No security audit is saved for this project yet. Run one to fill the 302-control matrix.")}
+              {tx("empty", "No security audit is saved for this project yet. The audit runs in the chat, in Security mode: it fills this 302-control matrix.")}
             </p>
-            {runControls}
+            <Button size="sm" onClick={runInChat} data-testid="cyber-coverage-run-in-chat">
+              <ShieldCheck className="h-4 w-4" aria-hidden />
+              {tx("runInChat", "Run the audit in the chat")}
+            </Button>
           </div>
         ) : (
           <div className="space-y-4" data-testid="cyber-coverage-data">
@@ -428,6 +354,10 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
                 ))}
               </select>
               <div className="ms-auto flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" disabled={busy} onClick={runInChat} data-testid="cyber-coverage-new-audit">
+                  <ShieldCheck className="h-4 w-4" aria-hidden />
+                  {tx("newAuditInChat", "New audit in the chat")}
+                </Button>
                 <Button size="sm" variant="outline" disabled={busy} onClick={() => void load()}>
                   <RefreshCw className="h-4 w-4" aria-hidden />
                   {tx("reload", "Reload")}
@@ -443,8 +373,6 @@ export function CyberCoveragePanel({ open, onOpenChange, token, root }: CyberCov
               </div>
             </div>
             {error ? <p className="text-xs text-red-600 dark:text-red-400" role="alert">{error}</p> : null}
-
-            {runControls}
 
             <div className="space-y-1">
               {groups.length === 0 ? (

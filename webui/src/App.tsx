@@ -132,6 +132,7 @@ import { NavinClient, type ProductModuleId } from "@/lib/navin-client";
 import {
   OPEN_BOARD_TASK_EVENT,
   OPEN_CHECKPOINTS_EVENT,
+  OPEN_CYBER_COVERAGE_EVENT,
   OPEN_SESSION_PLAN_EVENT,
 } from "@/lib/workbench-events";
 import { speakOnce } from "@/lib/tts";
@@ -2030,10 +2031,12 @@ function Shell({
     window.addEventListener(OPEN_CHECKPOINTS_EVENT, openCode);
     window.addEventListener(OPEN_SESSION_PLAN_EVENT, openCode);
     window.addEventListener(OPEN_BOARD_TASK_EVENT, openCode);
+    window.addEventListener(OPEN_CYBER_COVERAGE_EVENT, openCode);
     return () => {
       window.removeEventListener(OPEN_CHECKPOINTS_EVENT, openCode);
       window.removeEventListener(OPEN_SESSION_PLAN_EVENT, openCode);
       window.removeEventListener(OPEN_BOARD_TASK_EVENT, openCode);
+      window.removeEventListener(OPEN_CYBER_COVERAGE_EVENT, openCode);
     };
   }, [navigate]);
 

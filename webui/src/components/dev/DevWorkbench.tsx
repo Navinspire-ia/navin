@@ -208,9 +208,11 @@ import { DiffPair } from "@/components/thread/activity/DiffPair";
 import {
   OPEN_BOARD_TASK_EVENT,
   OPEN_CHECKPOINTS_EVENT,
+  OPEN_CYBER_COVERAGE_EVENT,
   OPEN_SESSION_PLAN_EVENT,
   consumePendingOpenBoard,
   consumePendingOpenCheckpoints,
+  consumePendingOpenCyberCoverage,
   consumePendingOpenSessionPlan,
   requestShowPendingReview,
 } from "@/lib/workbench-events";
@@ -4830,6 +4832,17 @@ export function DevWorkbench({
   // Target picked in a menu, waiting for "Create the <platform> app?".
   const [appFactoryConfirm, setAppFactoryConfirm] = useState<string | null>(null);
   const [cyberCoverageOpen, setCyberCoverageOpen] = useState(false);
+  // The "302-control matrix" link of a finished audit in the chat opens this
+  // panel; App brings the Code module up first when needed.
+  useEffect(() => {
+    const openCoverage = () => {
+      consumePendingOpenCyberCoverage();
+      setCyberCoverageOpen(true);
+    };
+    if (consumePendingOpenCyberCoverage()) setCyberCoverageOpen(true);
+    window.addEventListener(OPEN_CYBER_COVERAGE_EVENT, openCoverage);
+    return () => window.removeEventListener(OPEN_CYBER_COVERAGE_EVENT, openCoverage);
+  }, []);
   const cyberCoverageEl = (
     <CyberCoveragePanel
       open={cyberCoverageOpen}
@@ -5266,10 +5279,12 @@ export function DevWorkbench({
                 go: () => openSettingsDialog("team"),
               },
               {
-                // Cyber launcher, right above Reverse: switches the chat to the
-                // Security mode (/fortify: code scan, dependencies, secrets, API,
-                // pentest, threat model, code/PR review, IaC/cloud/K8s/Docker
-                // posture, remediation) and asks what to audit.
+                // Cyber launcher, right above Reverse: one way in. It switches
+                // the chat to the Security mode (/fortify: code scan,
+                // dependencies, secrets, API, pentest, threat model, the
+                // 302-control referential, IaC/cloud/K8s/Docker posture,
+                // remediation). The coverage matrix opens from the audit row
+                // in the chat, not from a second entry here.
                 key: "cyber",
                 icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.cyberTab", "Cyber"),
@@ -5282,23 +5297,6 @@ export function DevWorkbench({
                     "Security audit of the project: switches the chat to Security mode",
                   ),
                 },
-                onBadgeClick: () => setCyberCoverageOpen(true),
-                // Two ways in: the chat audit (Security mode) and the
-                // coverage matrix of the 302-control referential.
-                menu: [
-                  {
-                    key: "audit",
-                    icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                    label: tx("dev.cyberCoverage.menuAudit", "Audit in Security mode"),
-                    onSelect: () => requestCyberLaunch(),
-                  },
-                  {
-                    key: "coverage",
-                    icon: <ListTodo className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                    label: tx("dev.cyberCoverage.menuCoverage", "Coverage of the 302 controls"),
-                    onSelect: () => setCyberCoverageOpen(true),
-                  },
-                ],
                 active: false,
                 keepLayout: true,
                 go: () => requestCyberLaunch(),

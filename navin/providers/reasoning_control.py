@@ -344,6 +344,11 @@ def classify_rejection(error: Exception | str) -> str | None:
         text = f"{body} {error}".lower()
     else:
         text = str(error).lower()
+    # A gateway error often arrives as the repr of a dict holding the upstream
+    # message, so its quotes are escaped: LiteLLM on Bedrock answered GPT-6.1 Sol's
+    # "none" with "Unsupported value: \'none\'" (2026-11-15). Unescaped, the
+    # quoted value is recognised and the effort steps down instead of failing over.
+    text = text.replace("\\'", "'").replace('\\"', '"')
     if not any(topic in text for topic in _TOPIC_MARKERS):
         return None
     if any(marker in text for marker in _HISTORY_MARKERS):

@@ -32,6 +32,7 @@ from navin.security.orchestrator.audit import (
 )
 from navin.security.orchestrator.scan_planner import AuditInputs
 from navin.security.remediation import propose_patches, validate_patch
+from navin.security.report_html import write_security_report
 from navin.security.reports.compliance import coverage_markdown
 
 SARIF_FILE = "navin-security.sarif"
@@ -124,6 +125,8 @@ def _run(root: Path, *, base_url: str, scanners: bool, offline: bool, timeout_s:
         "findings_total": len(result.findings),
         "findings": [_slim(f) for f in result.findings[:max_findings]],
         "attack_paths": result.attack_paths[:5],
+        # Installed playbooks only: a name the agent cannot read would send it looking for nothing.
+        "skills": [{"id": route["id"], "reason": route["reason"]} for route in result.skill_routes if route.get("path")],
         "follow_up_skills": result.follow_up_skills,
         "files_not_analyzed": len(result.skipped_files),
         "notes": result.notes,
@@ -148,6 +151,43 @@ def _plan(root: Path, *, base_url: str) -> str:
         "controls_not_planned": len(plan.not_covered),
     }
     return header + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _report_html(root: Path, *, lang: str, findings_json: str, limits: list[str]) -> tuple[str, Path]:
+    """The readable report of the verified findings: scenario, impact, proof and fix per finding."""
+    try:
+        items = json.loads(findings_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"findings_json is not valid JSON: {exc}") from exc
+    if isinstance(items, dict) and isinstance(items.get("findings"), list):
+        items = items["findings"]
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError("findings_json must be a JSON array of finding objects")
+    notes = [str(row) for row in limits if str(row).strip()]
+    audit = load_last_audit(root)
+    coverage: dict[str, Any] | None = None
+    engines: list[dict[str, Any]] = []
+    if audit is not None:
+        try:
+            coverage = _matrix_brief(appsec_matrix_of(audit))
+        except (KeyError, TypeError, ValueError) as exc:
+            notes.append(f"302-control coverage unavailable for audit {audit.get('id')}: {exc}")
+        for engine in audit.get("engines") or []:
+            if isinstance(engine, dict):
+                ran = engine.get("status") == "ok"
+                engines.append({"tool": engine.get("id"), "available": ran,
+                                "count": engine.get("findings") if ran else engine.get("status")})
+    title = ("Audit de sécurité - " if lang == "fr" else "Security audit - ") + root.name
+    path = write_security_report(root, findings=items, kind="audit", tools=engines, title=title,
+                                 lang=lang, coverage=coverage, limits=notes)
+    data = path.with_suffix(".json")
+    header = f"security_audit report html={path.name} json={data.name} findings={len(items)}\n"
+    payload = {
+        "html": str(path),
+        "json": str(data),
+        "next": "Give the user the report path, sum the findings up in the chat and ask which # to fix first.",
+    }
+    return header + json.dumps(payload, ensure_ascii=False, indent=2), path
 
 
 def _report(root: Path, *, lang: str, sarif: bool) -> str:
@@ -233,9 +273,11 @@ class SecurityAuditTool(_QualityTool):
             "AppSec referential (24 families): per control passed / failed / inconclusive / blocked / not_tested / "
             "not_applicable with the engine, its version, the scope, the date and the evidence, verified coverage "
             "and whether the audit is complete. scanners=false runs only the built-in engines (fast); "
-            "offline=true skips the scanners that use the network; database_ephemeral=true replays the project's "
-            "SQL migrations in a throwaway local PostgreSQL (no superuser) and reads its RLS catalog; base_url (a "
-            "target the user authorized, preferably staging) adds passive GET/HEAD/OPTIONS web checks."
+            "offline=true skips the scanners that use the network; database_ephemeral (default true) replays the "
+            "project's SQL migrations in a throwaway local PostgreSQL (no superuser, nothing listens on the network, "
+            "deleted at the end) and reads its RLS catalog, so access-rule flaws are proven and not guessed: it is "
+            "reported not_applicable without SQL files and not_installed without PostgreSQL, and false skips it; "
+            "base_url (a target the user authorized, preferably staging) adds passive GET/HEAD/OPTIONS web checks."
         )
 
     @property
@@ -250,7 +292,7 @@ class SecurityAuditTool(_QualityTool):
             "properties": {
                 "action": {"type": "string", "enum": list(_ACTIONS), "description": "run (default) | plan | report | patch | checklist | matrix"},
                 "base_url": {"type": "string", "description": "URL of a running test instance the user authorized: run adds passive web checks; plan says what the dynamic level still needs."},
-                "database_ephemeral": {"type": "boolean", "description": "run: replay the SQL migrations in a throwaway local PostgreSQL and read its RLS catalog (default false)."},
+                "database_ephemeral": {"type": "boolean", "description": "run: replay the SQL migrations in a throwaway local PostgreSQL and read its RLS catalog (default true; false skips it)."},
                 "scanners": {"type": "boolean", "description": "run: default true; false keeps the built-in analyzers and rules only."},
                 "offline": {"type": "boolean", "description": "run: skip the scanners that send data to the network (npm audit, advisory databases)."},
                 "scanner_timeout_s": {"type": "integer", "minimum": 10, "maximum": 600, "description": "run: limit per scanner (default 120)."},
@@ -258,6 +300,8 @@ class SecurityAuditTool(_QualityTool):
                 "lang": {"type": "string", "enum": ["fr", "en", "ar"], "description": "report / checklist language (default en)."},
                 "max_findings": {"type": "integer", "minimum": 1, "maximum": 200, "description": "run: findings listed in the answer (default 40); the saved audit keeps all."},
                 "finding": {"type": "string", "description": "patch: fingerprint of one finding (default: every finding with a mechanical fix)."},
+                "findings_json": {"type": "string", "description": "report: JSON array of the VERIFIED findings, each with severity, status, confidence, file_path, line, summary, trigger_flow (steps), exploit_scenario, existing_code (real excerpt), impact, remediation, counter_examples. Writes the readable security-report-*.html (scenario, impact, proof and fix per finding, plan, coverage) and its .json, and opens it."},
+                "limits": {"type": "array", "items": {"type": "string"}, "description": "report with findings_json: what this audit could not verify, shown in the report."},
             },
         }
 
@@ -272,7 +316,9 @@ class SecurityAuditTool(_QualityTool):
         lang: str = "en",
         max_findings: int = 40,
         finding: str = "",
-        database_ephemeral: bool = False,
+        database_ephemeral: bool = True,
+        findings_json: str = "",
+        limits: list[str] | None = None,
         **kwargs: Any,
     ) -> Any:
         root, error = self._root_or_error()
@@ -294,6 +340,13 @@ class SecurityAuditTool(_QualityTool):
                 return await asyncio.to_thread(_matrix, root)
             if verb == "plan":
                 return await asyncio.to_thread(_plan, root, base_url=str(base_url or "").strip())
+            if verb == "report" and str(findings_json or "").strip():
+                text, path = await asyncio.to_thread(_report_html, root, lang=language,
+                                                     findings_json=str(findings_json),
+                                                     limits=list(limits or []))
+                if self._open_file_preview(path):
+                    text = text.replace("\n", " preview=opened\n", 1)
+                return text
             if verb == "report":
                 return await asyncio.to_thread(_report, root, lang=language, sarif=bool(sarif))
             if verb == "patch":

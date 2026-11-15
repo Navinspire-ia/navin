@@ -10,15 +10,18 @@ import { describe, expect, it } from "vitest";
 import {
   OPEN_BOARD_TASK_EVENT,
   OPEN_CHECKPOINTS_EVENT,
+  OPEN_CYBER_COVERAGE_EVENT,
   OPEN_SESSION_PLAN_EVENT,
   SHOW_PENDING_REVIEW_EVENT,
   consumePendingBoardTaskFocus,
   consumePendingOpenBoard,
   consumePendingOpenCheckpoints,
+  consumePendingOpenCyberCoverage,
   consumePendingOpenSessionPlan,
   matchBoardTask,
   requestOpenBoardTask,
   requestOpenCheckpoints,
+  requestOpenCyberCoverage,
   requestOpenSessionPlan,
   requestShowPendingReview,
 } from "./workbench-events";
@@ -135,6 +138,32 @@ describe("board task workbench events", () => {
     expect(matchBoardTask(tasks, { title: "Open Preview in the…" })?.id).toBe("a");
     expect(matchBoardTask(tasks, { title: "Nothing like this" })).toBeUndefined();
     expect(matchBoardTask(tasks, null)).toBeUndefined();
+  });
+});
+
+describe("cyber coverage workbench events", () => {
+  it("dispatches open-cyber-coverage and keeps it pending once for a later mount", () => {
+    const target = new EventTarget();
+    const hadDispatch = "dispatchEvent" in globalThis;
+    const originalDispatch = (globalThis as Record<string, unknown>).dispatchEvent;
+    (globalThis as Record<string, unknown>).dispatchEvent =
+      target.dispatchEvent.bind(target);
+    let received = 0;
+    target.addEventListener(OPEN_CYBER_COVERAGE_EVENT, () => {
+      received += 1;
+    });
+    try {
+      requestOpenCyberCoverage();
+    } finally {
+      if (hadDispatch) {
+        (globalThis as Record<string, unknown>).dispatchEvent = originalDispatch;
+      } else {
+        delete (globalThis as Record<string, unknown>).dispatchEvent;
+      }
+    }
+    expect(received).toBe(1);
+    expect(consumePendingOpenCyberCoverage()).toBe(true);
+    expect(consumePendingOpenCyberCoverage()).toBe(false);
   });
 });
 

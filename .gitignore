@@ -193,6 +193,12 @@ sessions/
 # Fichiers locaux d'execution (kubeconfig de clusters de test...), jamais versionnes.
 .run/
 
+# Rapports d'audit et de revue ecrits a la racine par le mode Security ou une
+# revue (HTML, PDF, JSON) : ils peuvent citer un secret trouve dans le projet,
+# jamais versionnes ni publies (GitHub a bloque une cle OpenRouter le 2026-11-15).
+/security-report-*
+/review-report-*
+
 # Design systems generes par le skill ui-ux-pro-max quand un agent tourne
 # a la racine du depot : artefacts de session, jamais versionnes.
 design-system/

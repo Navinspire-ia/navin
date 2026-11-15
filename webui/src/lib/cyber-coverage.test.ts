@@ -8,10 +8,8 @@ import {
   exportFilename,
   fetchCoverageMatrix,
   filterControls,
-  formatElapsed,
   formatPercent,
   groupByCategory,
-  runCoverageAudit,
   securityAuditUrl,
   type CoverageCategory,
   type CoverageControl,
@@ -34,24 +32,23 @@ describe("cyber-coverage", () => {
     expect(securityAuditUrl("run", { path: "/p q", base_url: "" })).toBe("/api/webui/security-audit?action=run&path=%2Fp+q");
   });
 
-  it("fetches the matrix (null when none) and runs with options", async () => {
+  it("fetches the matrix (null when none)", async () => {
     apiRequest.mockResolvedValueOnce({ matrix: null });
     expect(await fetchCoverageMatrix("tok", "/proj")).toBeNull();
     expect(apiRequest.mock.calls[0][0]).toContain("action=matrix&path=%2Fproj");
     apiRequest.mockResolvedValueOnce({ matrix: { audit_id: "a1" } });
-    const m = await runCoverageAudit("tok", "/proj", { scanners: false, offline: true, baseUrl: " https://s.example " });
-    expect(m).toEqual({ audit_id: "a1" });
-    const url = apiRequest.mock.calls[1][0] as string;
-    expect(url).toContain("scanners=false");
-    expect(url).toContain("offline=true");
-    expect(url).toContain("base_url=https%3A%2F%2Fs.example");
+    expect(await fetchCoverageMatrix("tok", "/proj")).toEqual({ audit_id: "a1" });
   });
 
-  it("formats percent and elapsed time", () => {
+  it("has no way to start an audit: that happens in the chat", async () => {
+    const mod = await import("./cyber-coverage");
+    expect("runCoverageAudit" in mod).toBe(false);
+  });
+
+  it("formats percent", () => {
     expect(formatPercent(87.45, "en")).toBe("87.5 %");
     expect(formatPercent(undefined, "en")).toBe("0.0 %");
     expect(formatPercent(140, "en")).toBe("100.0 %");
-    expect(formatElapsed(125_000)).toBe("2:05");
   });
 
   it("picks the category name by language with an English fallback", () => {

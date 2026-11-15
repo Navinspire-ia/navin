@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from navin.agent.tools import security_audit as tool_mod
 from navin.agent.tools.security_audit import SARIF_FILE, SecurityAuditTool
 from navin.security import catalog
 from navin.security.model import Finding
@@ -251,6 +252,14 @@ class ToolTest(unittest.TestCase):
             self.assertEqual(json.loads((root / SARIF_FILE).read_text(encoding="utf-8"))["version"], "2.1.0")
             self.assertNotIn(SECRET, out)
             self.assertIn("not proof of security", data["reminder"])
+            # The playbooks the audit calls for reach the agent with their reason: the stack's and the
+            # ones owning a family that has findings, not only the two follow-ups.
+            skills = {row["id"]: row["reason"] for row in data["skills"]}
+            self.assertIn("security-injection", skills)
+            self.assertIn("findings: injection", skills["security-injection"])
+            self.assertEqual(skills["security-threat-modeling"], "always on")
+            self.assertLessEqual(set(data["follow_up_skills"]), set(skills))
+            self.assertGreater(len(skills), len(data["follow_up_skills"]))
 
             report = asyncio.run(tool.execute(action="report", lang="fr"))
             self.assertIn("Couverture de l'audit Navin Security", report)
@@ -269,6 +278,94 @@ class ToolTest(unittest.TestCase):
             self.assertIn(f"/{len(catalog.CONTROLS)}", checklist.split("\n", 1)[0])
             self.assertIn("قائمة تدقيق", checklist)
             self.assertIn("unknown action", str(asyncio.run(tool.execute(action="exploit"))))
+
+    def test_the_agent_replays_the_sql_migrations_unless_told_not_to(self):
+        # Security mode runs the audit from the chat: proving the access rules
+        # of the migrations is part of it by default, and stays skippable.
+        with _project() as tmp, mock.patch.object(audit_mod, "detect_scanners", _statuses(set())), \
+                mock.patch.object(tool_mod, "run_audit", wraps=tool_mod.run_audit) as spy:
+            tool = SecurityAuditTool(workspace=Path(tmp))
+            asyncio.run(tool.execute(action="run", scanners=False))
+            self.assertIs(spy.call_args.kwargs["database_ephemeral"], True)
+            asyncio.run(tool.execute(action="run", scanners=False, database_ephemeral=False))
+            self.assertIs(spy.call_args.kwargs["database_ephemeral"], False)
+        self.assertIn("default true", SecurityAuditTool(workspace=Path(tmp)).parameters["properties"]["database_ephemeral"]["description"])
+
+
+class DistinctFindingsTest(unittest.TestCase):
+    def test_neighbouring_secrets_and_pins_stay_separate_findings(self):
+        # Measured on a planted sample: a cloud key id and its secret on consecutive lines came back as one
+        # finding, and three vulnerable pins of one requirements file as one.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(audit_mod, "detect_scanners", _statuses(set())):
+            root = Path(tmp)
+            # Values are split so no key-shaped literal sits in this file.
+            (root / "config.py").write_text(
+                'AWS_ACCESS_KEY_ID = "AKIA' + "Z7Q3XMPLE4NAVIN2" + '"\n'
+                'AWS_SECRET_ACCESS_KEY = "' + "q8Vt2mXr9LkPz4Wn7Ys1" + "Bc6Df3Gh5Jk0Lm2Np8Qr" + '"\n',
+                encoding="utf-8",
+            )
+            (root / "requirements.txt").write_text("flask==0.12.2\npyyaml==5.1\nrequests==2.19.1\n", encoding="utf-8")
+            result = audit_mod.run_audit(root, scanners=False)
+        secrets = {f.line for f in result.findings if f.file_path == "config.py"}
+        self.assertLessEqual({1, 2}, secrets)
+        pins = {f.line for f in result.findings if f.file_path == "requirements.txt"}
+        self.assertEqual(pins, {1, 2, 3})
+
+
+class ReadableReportTest(unittest.TestCase):
+    def test_report_of_verified_findings_has_scenarios_and_fixes(self):
+        # Measured 2026-11-15: the audit closed with a code review page, dark JSON on dark, no
+        # scenario and no recommendation.
+        import asyncio
+        import json
+        import tempfile
+
+        finding = {
+            "severity": "high", "status": "confirmed", "confidence": 0.9,
+            "file_path": "app/upload.py", "line": 74,
+            "summary": "Upload name writes outside the folder",
+            "trigger_flow": ["POST /upload", "filename=../../x", "open(path, wb)"],
+            "exploit_scenario": "A signed-in user sends a ../ name and overwrites a server file.",
+            "existing_code": "path = base / upload.filename",
+            "impact": "Arbitrary file write.",
+            "remediation": "Keep the base name only and check the path stays under the folder.",
+            "counter_examples": ["/api/avatar uses secure_filename"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = str(asyncio.run(SecurityAuditTool(workspace=root).execute(
+                action="report", lang="fr", findings_json=json.dumps([finding]),
+                limits=["Pas de cible de staging"],
+            )))
+            self.assertTrue(out.startswith("security_audit report html=security-report-"), out[:200])
+            pages = list(root.glob("security-report-*.html"))
+            data = list(root.glob("security-report-*.json"))
+            self.assertEqual((len(pages), len(data)), (1, 1))
+            page = pages[0].read_text(encoding="utf-8")
+            saved = json.loads(data[0].read_text(encoding="utf-8"))
+        for expected in (
+            "Scénario d'attaque", "<li>filename=../../x</li>", "Correction recommandée",
+            "Keep the base name only", "Contre-exemples vérifiés", "/api/avatar uses secure_filename",
+            "Pas de cible de staging", "confirmée (flux tracé)", "90 %", "app/upload.py:74",
+            "Preuve dans le code",
+        ):
+            self.assertIn(expected, page)
+        # The raw findings live in the JSON file, not dumped into the page.
+        self.assertNotIn("trigger_flow", page)
+        self.assertEqual(saved["findings"][0]["line"], 74)
+
+    def test_report_refuses_findings_that_are_not_a_list(self):
+        import asyncio
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for bad in ("not json", '{"x": 1}'):
+                out = str(asyncio.run(SecurityAuditTool(workspace=root).execute(action="report", findings_json=bad)))
+                self.assertIn("findings_json", out)
+            self.assertEqual(list(root.glob("security-report-*")), [])
 
 
 class PanelApiTest(unittest.TestCase):

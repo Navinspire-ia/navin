@@ -117,6 +117,27 @@ export function matchBoardTask<T extends { id: string; title: string }>(
   return tasks.find((task) => normalizeTaskTitle(task.title).startsWith(wanted));
 }
 
+// The security audit runs in the chat (Security mode); its result is the
+// 302-control matrix. The "matrix" link of a finished audit row opens the
+// coverage panel in the Code workbench. Same pending-flag race as above.
+
+export const OPEN_CYBER_COVERAGE_EVENT = "navin:open-cyber-coverage";
+
+let pendingOpenCyberCoverage = false;
+
+export function requestOpenCyberCoverage(): void {
+  pendingOpenCyberCoverage = true;
+  if (typeof globalThis.dispatchEvent === "function" && typeof CustomEvent !== "undefined") {
+    globalThis.dispatchEvent(new CustomEvent(OPEN_CYBER_COVERAGE_EVENT));
+  }
+}
+
+export function consumePendingOpenCyberCoverage(): boolean {
+  const pending = pendingOpenCyberCoverage;
+  pendingOpenCyberCoverage = false;
+  return pending;
+}
+
 // The composer review bar can be hidden or collapsed; Changes in the Code
 // rail brings it back expanded so every pending file is visible.
 

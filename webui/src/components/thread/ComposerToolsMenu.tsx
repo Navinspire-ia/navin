@@ -94,7 +94,7 @@ export function ComposerToolsMenu({
   const shown = tools.filter((entry): entry is [string, LucideIcon, ComposerToolAction] => Boolean(entry[2]));
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (open) permission.refresh(); }}>
       <DropdownMenuTrigger asChild disabled={disabled}>
         <Button
           type="button"

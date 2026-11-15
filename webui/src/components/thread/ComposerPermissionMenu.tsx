@@ -59,6 +59,8 @@ const MODES: Array<{
  * The confirmation posture read from and saved to the gateway. Shared by the
  * toolbar menu and the narrow composer's More menu, so only the one on screen
  * fetches it. `mode` stays null until the gateway answered: no guessed value.
+ * `refresh` reads it again: a CLI can change it while this window is open, and
+ * a menu showing a stale "Full access" cannot be used to pick it back.
  */
 export function useExecApprovalMode() {
   const { token } = useClient();
@@ -78,6 +80,13 @@ export function useExecApprovalMode() {
     };
   }, [token]);
 
+  const refresh = useCallback(() => {
+    if (!token || saving) return;
+    void fetchExecPolicy(token)
+      .then((payload) => setMode(payload.approval_mode ?? "autonomous"))
+      .catch(() => undefined);
+  }, [saving, token]);
+
   const choose = useCallback(
     (next: ExecApprovalMode) => {
       if (!token || next === mode) return;
@@ -92,7 +101,7 @@ export function useExecApprovalMode() {
     [mode, token],
   );
 
-  return { mode, saving, choose };
+  return { mode, saving, choose, refresh };
 }
 
 export type ExecApprovalModeState = ReturnType<typeof useExecApprovalMode>;
@@ -151,12 +160,12 @@ export function ComposerPermissionSubmenu({
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const { mode, saving, choose } = state;
+  const { mode, saving, choose, refresh } = state;
   if (!mode) return null;
   const current = MODES.find((item) => item.mode === mode) ?? MODES[0];
   const Icon = current.icon;
   return (
-    <DropdownMenuSub>
+    <DropdownMenuSub onOpenChange={(open) => { if (open) refresh(); }}>
       <DropdownMenuSubTrigger
         disabled={disabled || saving}
         data-testid="composer-tools-permission"
@@ -193,7 +202,7 @@ export function ComposerPermissionMenu({
   iconOnly?: boolean;
 }) {
   const { t } = useTranslation();
-  const { mode, saving, choose } = useExecApprovalMode();
+  const { mode, saving, choose, refresh } = useExecApprovalMode();
 
   if (!mode) return null;
   const current = MODES.find((item) => item.mode === mode) ?? MODES[0];
@@ -201,7 +210,7 @@ export function ComposerPermissionMenu({
   const label = t(current.labelKey, { defaultValue: current.labelDefault });
 
   return (
-    <DropdownMenu modal={false}>
+    <DropdownMenu modal={false} onOpenChange={(open) => { if (open) refresh(); }}>
       <DropdownMenuTrigger asChild disabled={disabled || saving}>
         <Button
           type="button"

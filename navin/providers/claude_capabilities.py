@@ -196,6 +196,7 @@ def learn_claude_thinking_off(model: str, error: object) -> bool:
 _NO_FORCED_TOOL_CHOICE = (
     "opus-5-5", "opus-5.5", "sonnet-5-5", "sonnet-5.5",
     "fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1",
+    "fable-5-2", "fable-5.2", "mythos-5-2", "mythos-5.2",
 )
 
 

@@ -15,7 +15,7 @@ from navin.agent.approval import ApprovalBroker, bind_approval_gate, reset_appro
 from navin.agent.loop import AgentLoop, should_inject_into_active_turn
 from navin.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from navin.agent.tools.exec_session import WriteStdinTool
-from navin.agent.tools.shell import ExecTool, StdinCommandGuard
+from navin.agent.tools.shell import ExecTool, StdinCommandGuard, follow_saved_exec_policy
 from navin.bus.events import InboundMessage
 from navin.bus.outbound_events import ApprovalClosedEvent, ApprovalRequestedEvent
 from navin.bus.queue import MessageBus
@@ -205,6 +205,60 @@ def test_live_cli_and_desktop_switch_resumes_a_command_without_an_extra_model_ca
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             await loop.close_mcp()
+    asyncio.run(run())
+
+
+def test_a_running_engine_follows_the_permission_mode_another_navin_saved(tmp_path):
+    """Desktop asked at every command while its menu (read from the file) said Full access."""
+    async def run():
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        config = Config()
+        config.agents.defaults.workspace = str(workspace)
+        apply_approval_mode(config, "always")
+        save_config(config)
+        provider = ScriptedProvider([
+            tool_call("exec", command="echo follow-check"),
+            LLMResponse(content="Shell check complete."),
+        ])
+        loop = AgentLoop.from_config(load_config(), MessageBus(), provider=provider)
+        loop._mcp_servers = {}
+        loop.approvals.enable_channel("websocket")
+        assert loop.tools.get("exec").ask_every_command
+        # Another Navin (a CLI) switches to Full access and saves it.
+        other = load_config()
+        apply_approval_mode(other, "autonomous")
+        save_config(other)
+        task = asyncio.create_task(loop.run())
+        try:
+            await loop.bus.publish_inbound(InboundMessage(
+                channel="websocket", sender_id="user", chat_id="follow", content="Run the shell check.",
+            ))
+            async with asyncio.timeout(20):
+                while True:
+                    message = await loop.bus.consume_outbound()
+                    assert not isinstance(message.event, ApprovalRequestedEvent), "Full access must not ask"
+                    if message.content == "Shell check complete.":
+                        break
+            assert not loop.tools.get("exec").ask_every_command
+            assert not loop.approvals.config.enabled
+            # And back: confirmations turned on elsewhere are honoured too.
+            other = load_config()
+            apply_approval_mode(other, "always")
+            save_config(other)
+            assert await follow_saved_exec_policy(loop, loop.tools)
+            assert loop.tools.get("exec").ask_every_command
+            assert not await follow_saved_exec_policy(loop, loop.tools), "nothing new to take over"
+        finally:
+            loop.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await loop.close_mcp()
+
+        # An engine built from an in-memory config is not tied to the file.
+        detached = AgentLoop(provider=ScriptedProvider([]), workspace=workspace, bus=MessageBus(),
+                             tools_config=Config().tools)
+        assert not await follow_saved_exec_policy(detached, detached.tools)
     asyncio.run(run())
 
 

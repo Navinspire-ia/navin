@@ -198,6 +198,20 @@ class RejectionClassificationTest(unittest.TestCase):
         self.assertIsNone(classify_rejection("400 'temperature' does not support 0.2"))
         self.assertIsNone(classify_rejection("connection reset by peer"))
 
+    def test_gateway_refusal_with_escaped_quotes(self) -> None:
+        # Measured 2026-11-15: LiteLLM on Bedrock refused GPT-6.1 Sol's "none" inside the repr of a
+        # dict, quotes escaped. Unrecognised, the turn failed over to another model.
+        error = (
+            "Error code: 400 - {'error': {'message': 'litellm.BadRequestError: BedrockException - "
+            '{"message":"The model returned the following errors: Unsupported value: \\\'none\\\' is '
+            "not supported with the \\'global.openai.gpt-6.1-sol\\' model. Supported values are: "
+            "\\'low\\', \\'medium\\', \\'high\\', \\'xhigh\\', and \\'max\\'.\"}', "
+            "'type': 'invalid_request_error', 'param': None, 'code': '400'}}"
+        )
+        self.assertIn("\\'none\\'", error)
+        self.assertEqual(classify_rejection(error), REJECT_VALUE)
+        self.assertIsNone(classify_rejection("400 \\'temperature\\' does not support 0.2"))
+
 
 class NegotiatorTest(unittest.TestCase):
     SHAPES = [{"a": 1}, {"b": 2}, {"c": 3}]

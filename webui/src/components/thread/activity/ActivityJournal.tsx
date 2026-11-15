@@ -50,6 +50,7 @@ import {
   isIndexTool,
   journalHasDetails,
   journalTaskLink,
+  journalCyberMatrixLink,
   isReportedFailure,
   journalToneForEntry,
   type ActivityJournalDigest,
@@ -72,7 +73,7 @@ import type { CliAppInfo, McpPresetInfo } from "@/lib/types";
 import { HighlightedOutput, RunOutputFooter } from "@/components/thread/activity/HighlightedOutput";
 import { hasRunOutputNote, tidyRunOutput } from "@/lib/ansi";
 import { cn } from "@/lib/utils";
-import { requestOpenBoardTask, type BoardTaskFocusRequest } from "@/lib/workbench-events";
+import { requestOpenBoardTask, requestOpenCyberCoverage, type BoardTaskFocusRequest } from "@/lib/workbench-events";
 
 export const JOURNAL_TARGET_CLASS = "text-foreground/92 font-medium";
 export const JOURNAL_META_CLASS = "text-foreground/58";
@@ -1175,6 +1176,28 @@ function TaskTarget({
   );
 }
 
+function CyberMatrixLink() {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        requestOpenCyberCoverage();
+      }}
+      data-testid="activity-journal-cyber-matrix"
+      className={cn(
+        JOURNAL_META_CLASS,
+        "shrink-0 cursor-pointer rounded-[3px] underline underline-offset-[3px]",
+        "transition-colors hover:text-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
+      {t("message.activityJournalCyberMatrix", { defaultValue: "302-control matrix" })}
+    </button>
+  );
+}
+
 function CopyCommandButton({ command }: { command: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -1435,6 +1458,7 @@ function JournalLine({
           {entry.detail}
         </span>
       ) : null}
+      {!compact && journalCyberMatrixLink(entry) ? <CyberMatrixLink /> : null}
       {!compact ? <CountBadge count={entry.count} /> : null}
     </span>
   );

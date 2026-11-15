@@ -14,6 +14,8 @@ const apiRequest = vi.fn();
 vi.mock("@/lib/api", () => ({ apiRequest: (...args: unknown[]) => apiRequest(...args) }));
 const saveTextFile = vi.fn();
 vi.mock("@/lib/save-blob", () => ({ saveTextFile: (...args: unknown[]) => saveTextFile(...args) }));
+const requestCyberLaunch = vi.fn();
+vi.mock("@/lib/cyber-launch", () => ({ requestCyberLaunch: (...args: unknown[]) => requestCyberLaunch(...args) }));
 
 import { CyberCoveragePanel } from "./CyberCoveragePanel";
 
@@ -21,6 +23,7 @@ afterEach(() => {
   cleanup();
   apiRequest.mockReset();
   saveTextFile.mockReset();
+  requestCyberLaunch.mockReset();
 });
 
 const matrix = {
@@ -44,21 +47,28 @@ const matrix = {
 };
 
 describe("CyberCoveragePanel", () => {
-  it("goes from empty to running to data, filters and exports", async () => {
-    let finishRun: (value: unknown) => void = () => {};
+  it("sends the audit to the chat instead of running a form of its own", async () => {
+    apiRequest.mockResolvedValue({ matrix: null });
+    const onOpenChange = vi.fn();
+    render(<CyberCoveragePanel open onOpenChange={onOpenChange} token="tok" root="/proj" />);
+    expect((await screen.findByTestId("cyber-coverage-empty")).textContent).toContain("Security mode");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByPlaceholderText("https://staging.example.com")).toBeNull();
+    expect(screen.queryByTestId("cyber-coverage-run-button")).toBeNull();
+    fireEvent.click(screen.getByTestId("cyber-coverage-run-in-chat"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(requestCyberLaunch).toHaveBeenCalledTimes(1);
+    expect(apiRequest.mock.calls.some(([url]) => String(url).includes("action=run"))).toBe(false);
+  });
+
+  it("shows the last audit, filters, exports and starts a new audit in the chat", async () => {
     apiRequest.mockImplementation((url: string) => {
       if (url.includes("action=matrix_export")) return Promise.resolve({ filename: "m.md", content: "# m", mime: "text/markdown" });
-      if (url.includes("action=matrix")) return Promise.resolve({ matrix: null });
-      return new Promise((resolve) => { finishRun = resolve; });
+      return Promise.resolve({ matrix });
     });
     render(<CyberCoveragePanel open onOpenChange={() => {}} token="tok" root="/proj" />);
-    await screen.findByTestId("cyber-coverage-empty");
-    fireEvent.click(screen.getByTestId("cyber-coverage-run-button"));
-    expect(await screen.findByTestId("cyber-coverage-running")).toBeTruthy();
-    expect((screen.getByTestId("cyber-coverage-run-button") as HTMLButtonElement).disabled).toBe(true);
-    expect(apiRequest.mock.calls.at(-1)?.[0]).toContain("action=run");
-    finishRun({ audit: {}, checklist: {}, matrix });
     await screen.findByTestId("cyber-coverage-data");
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getByTestId("cyber-coverage-percent").textContent).toContain("20");
     expect(screen.getByTestId("cyber-coverage-incomplete").textContent).toContain("API-07");
     expect(screen.queryByTestId("cyber-coverage-complete")).toBeNull();
@@ -78,6 +88,9 @@ describe("CyberCoveragePanel", () => {
 
     fireEvent.click(screen.getByText("Export Markdown"));
     await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith("m.md", "# m", "text/markdown"));
+
+    fireEvent.click(screen.getByTestId("cyber-coverage-new-audit"));
+    expect(requestCyberLaunch).toHaveBeenCalledTimes(1);
   });
 
   it("shows the error with a working retry", async () => {

@@ -3,8 +3,9 @@
 
 /**
  * Coverage matrix of the Navin Cyber AppSec referential (302 controls, 24
- * categories): types, client for `/api/webui/security-audit`, and the pure
- * helpers the Cyber coverage panel uses (grouping, filtering, formatting).
+ * categories): types, read-only client for `/api/webui/security-audit`, and
+ * the pure helpers the Cyber coverage panel uses (grouping, filtering,
+ * formatting). The audit itself runs in the chat, in Security mode.
  */
 
 import { apiRequest } from "@/lib/api";
@@ -107,16 +108,7 @@ export interface MatrixExport {
   mime: string;
 }
 
-export interface RunOptions {
-  scanners: boolean;
-  offline: boolean;
-  baseUrl?: string;
-  databaseEphemeral?: boolean;
-}
-
 const READ_TIMEOUT_MS = 60_000;
-/** A full audit runs scanners and can take several minutes. */
-const RUN_TIMEOUT_MS = 30 * 60_000;
 
 export function securityAuditUrl(action: string, params: Record<string, string | undefined>): string {
   const query = new URLSearchParams({ action });
@@ -134,26 +126,6 @@ export async function fetchCoverageMatrix(token: string, path: string): Promise<
     READ_TIMEOUT_MS,
   );
   return res?.matrix ?? null;
-}
-
-export async function runCoverageAudit(
-  token: string,
-  path: string,
-  options: RunOptions,
-): Promise<MatrixPayload> {
-  const res = await apiRequest<{ matrix: MatrixPayload }>(
-    securityAuditUrl("run", {
-      path,
-      scanners: String(options.scanners),
-      offline: String(options.offline),
-      base_url: options.baseUrl?.trim() || undefined,
-      database_ephemeral: options.databaseEphemeral ? "true" : undefined,
-    }),
-    token,
-    undefined,
-    RUN_TIMEOUT_MS,
-  );
-  return res.matrix;
 }
 
 export async function exportCoverageMatrix(
@@ -224,12 +196,4 @@ export function exportFilename(serverName: string | undefined, auditId: string, 
   if (cleaned) return cleaned;
   const id = (auditId || "audit").replace(/[^A-Za-z0-9._-]+/g, "_");
   return `navin-cyber-coverage-${id}.${format}`;
-}
-
-/** mm:ss elapsed time for the running state. */
-export function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }

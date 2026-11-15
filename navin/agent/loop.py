@@ -378,6 +378,8 @@ class TurnContext:
     # The final text is a notice the loop wrote itself (never streamed).
     final_is_notice: bool = False
     defer_final_stream: bool = False
+    # The accepted final answer as it was streamed live by the runner (None: not streamed).
+    final_streamed_text: str | None = None
 
     on_progress: Callable[..., Awaitable[None]] | None = None
     on_stream: Callable[[str], Awaitable[None]] | None = None
@@ -1233,7 +1235,7 @@ class AgentLoop:
             config.tools.visual_qa.preset = str(
                 (config.model_routes or {}).get("vision") or ""
             )
-        return cls(
+        loop = cls(
             bus=bus,
             provider=provider,
             workspace=config.workspace_path,
@@ -1266,6 +1268,12 @@ class AgentLoop:
             model_presets_loader=model_presets_loader,
             **extra,
         )
+        from navin.agent.tools.shell import bind_saved_exec_policy
+
+        # The permission mode is changed by any Navin (desktop, a CLI): this
+        # engine follows what is saved in its settings file at each turn.
+        bind_saved_exec_policy(loop, config)
+        return loop
 
     def _sync_subagent_runtime_limits(self) -> None:
         """Keep subagent runtime limits aligned with mutable loop settings."""
@@ -2525,6 +2533,7 @@ class AgentLoop:
         tools: ToolRegistry | None = None,
         request_context: RequestContext | None = None,
         defer_final_stream: bool = False,
+        final_stream_state: dict[str, Any] | None = None,
     ) -> tuple[str | None, list[str], list[dict], str, bool]:
         """Run the agent iteration loop.
 
@@ -3020,6 +3029,10 @@ class AgentLoop:
                     await on_retry_wait(
                         f"Connection interrupted. Progress saved; resuming automatically in {delay:.0f}s."
                     )
+        if final_stream_state is not None and defer_final_stream and result.final_streamed:
+            # Already on screen and left open: the delivery boundary closes it
+            # after the save instead of publishing it a second time.
+            final_stream_state["text"] = result.final_content
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     def _publish_model_failover(self, chosen_model: str, served_model: str) -> None:
@@ -3379,6 +3392,11 @@ class AgentLoop:
                 if not self.turn_recovery.matches(msg, session_key):
                     dispatch_skipped = True
                     return
+                from navin.agent.tools.shell import follow_saved_exec_policy
+
+                # Another Navin may have changed the permission mode since the
+                # last turn (Full access chosen from a CLI): this turn uses it.
+                await follow_saved_exec_policy(self, self.tools)
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 # One full subagent wave (AgentDefaults.max_concurrent_subagents,
@@ -4537,6 +4555,7 @@ class AgentLoop:
         ctx.defer_final_stream = bool(
             ctx.on_stream is not None and not (ctx.msg.metadata or {}).get("conversational_turn")
         )
+        final_stream_state: dict[str, Any] = {}
         result = await self._run_agent_loop(
             ctx.initial_messages,
             runtime=ctx.runtime,
@@ -4560,8 +4579,10 @@ class AgentLoop:
             tools=ctx.tools,
             request_context=ctx.request_context,
             defer_final_stream=ctx.defer_final_stream,
+            final_stream_state=final_stream_state,
         )
         final_content, tools_used, all_msgs, stop_reason, had_injections = result
+        ctx.final_streamed_text = final_stream_state.get("text")
         ctx.final_content = final_content
         ctx.tools_used = tools_used
         ctx.all_messages = all_msgs
@@ -4637,6 +4658,7 @@ class AgentLoop:
             )
         if ctx.suppress_response:
             ctx.outbound = None
+            await self._withdraw_live_final(ctx)
             return "ok"
         ctx.outbound = self._assemble_outbound(
             ctx.msg,
@@ -4648,21 +4670,45 @@ class AgentLoop:
             turn_latency_ms=ctx.turn_latency_ms,
             final_is_notice=ctx.final_is_notice,
         )
+        live_final = ctx.final_streamed_text
         if (
             ctx.defer_final_stream and ctx.outbound is not None
             and isinstance(ctx.outbound.event, StreamedResponseEvent)
             and ctx.on_stream is not None
         ):
-            # This is the only publication of a task's accepted final answer.
-            # Nothing that can resume its work or fail its save follows it.
-            await ctx.on_stream(ctx.final_content or "")
-            if ctx.on_stream_end is not None:
-                await ctx.on_stream_end(resuming=False)
+            # The delivery of a task's accepted final answer. Nothing that can
+            # resume its work or fail its save follows it.
+            if live_final is not None and live_final == ctx.final_content:
+                # Already on screen as it was written: only closed, now that it is saved.
+                if ctx.on_stream_end is not None:
+                    await ctx.on_stream_end(resuming=False)
+            else:
+                await self._withdraw_live_final(ctx)
+                await ctx.on_stream(ctx.final_content or "")
+                if ctx.on_stream_end is not None:
+                    await ctx.on_stream_end(resuming=False)
+        else:
+            # Not delivered as that stream (a notice, a reply the message tool
+            # already sent): the text shown live leaves the screen.
+            await self._withdraw_live_final(ctx)
         if ctx.outbound is not None and phase_timings:
             ctx.outbound.metadata["phase_timings_ms"] = phase_timings
         if ctx.ephemeral and ctx.outbound is not None:
             ctx.outbound.metadata["_stop_reason"] = ctx.stop_reason
         return "ok"
+
+    @staticmethod
+    async def _withdraw_live_final(ctx: TurnContext) -> None:
+        """Take off the screen a final answer streamed live that is not the one delivered."""
+        if ctx.final_streamed_text is None or ctx.on_stream_end is None:
+            return
+        ctx.final_streamed_text = None
+        from navin.agent.progress_hook import AgentProgressHook
+
+        if AgentProgressHook._on_progress_accepts(ctx.on_stream_end, "discarded"):
+            await ctx.on_stream_end(resuming=True, discarded=True)
+        else:
+            await ctx.on_stream_end(resuming=True)
 
     @staticmethod
     def _phase_timings_ms(ctx: TurnContext) -> dict[str, int]:

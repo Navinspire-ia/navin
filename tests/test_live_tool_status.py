@@ -36,6 +36,23 @@ def test_status_follows_the_streamed_tool_call():
     assert labels[3] == "Preparing command: npm install zod…"
 
 
+def test_no_empty_counter_and_no_one_letter_command():
+    # Measured in a desktop chat: "Writing… 0 chars" and "Preparing command: c…".
+    async def run() -> list[str]:
+        hook = _Hook()
+        status = _ToolDraftStatus(hook)
+        status._MIN_INTERVAL_S = 0
+        await status.feed({"index": 0, "name": "write_file", "arguments_delta": ""})
+        await status.feed({"index": 1, "name": "exec", "arguments_delta": '{"command":"c'})
+        await status.feed({"index": 1, "arguments_delta": "d /home/project && npm test"})
+        return hook.labels
+
+    labels = asyncio.run(run())
+    assert labels[0] == "Writing…"
+    assert labels[1] == "Preparing exec…"
+    assert labels[2] == "Preparing command: cd /home/project && npm test…"
+
+
 def test_updates_are_throttled():
     async def run() -> int:
         hook = _Hook()

@@ -35,6 +35,7 @@ from navin.security.model import Finding, finding_from_dict, merge_findings
 from navin.security.orchestrator.discovery import Discovery, discover
 from navin.security.orchestrator.finding_correlator import correlate
 from navin.security.orchestrator.scan_planner import AuditInputs, AuditPlan, plan_audit
+from navin.security.orchestrator.skill_router import route_skills
 from navin.security.orchestrator.threat_model import build_threat_model
 from navin.security.reports.compliance import Coverage, coverage
 from navin.security.reports.sarif import to_sarif
@@ -82,6 +83,9 @@ class AuditResult:
     attack_paths: list[dict[str, Any]]
     coverage: Coverage
     follow_up_skills: list[str] = field(default_factory=list)
+    # The security-* playbooks this audit calls for: the stack's, plus the ones owning a family that has
+    # findings, each with its reason. The agent reads them; without this list it only saw the two follow-ups.
+    skill_routes: list[dict[str, Any]] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     levels_reached: list[str] = field(default_factory=lambda: list(REACHED_LEVELS))
@@ -115,6 +119,7 @@ class AuditResult:
             "coverage": self.coverage.to_dict(),
             "runtime_reports": dict(self.runtime_reports),
             "follow_up_skills": list(self.follow_up_skills),
+            "skill_routes": [dict(route) for route in self.skill_routes],
             "skipped_files": list(self.skipped_files),
             "notes": list(self.notes),
         }
@@ -397,6 +402,7 @@ def run_audit(
         attack_paths=[path.to_dict() for path in correlation.attack_paths],
         coverage=report,
         follow_up_skills=list(correlation.follow_up_skills),
+        skill_routes=[route.to_dict() for route in route_skills(found.surfaces, correlation)],
         skipped_files=list(analysis.skipped)[:200],
         notes=list(dict.fromkeys(notes)),
         levels_reached=levels,

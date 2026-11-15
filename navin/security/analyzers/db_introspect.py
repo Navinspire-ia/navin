@@ -30,6 +30,7 @@ from loguru import logger
 from navin.security.analyzers import database as static_db
 from navin.security.analyzers.common import TENANT_RE, SourceFile
 from navin.security.model import Evidence, Finding
+from navin.utils.proc import no_window_kwargs
 
 EPHEMERAL_ENGINE = "navin_db_ephemeral"
 LIVE_ENGINE = "navin_db_live"
@@ -130,7 +131,8 @@ class IntrospectionReport:
 
 def _version_of(binary: str) -> int:
     try:
-        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10,
+                             stdin=subprocess.DEVNULL, **no_window_kwargs()).stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.debug("postgres version probe failed for {}: {}", binary, exc)
         return 0
@@ -158,7 +160,8 @@ def find_postgres_binaries() -> PostgresBinaries | None:
 
 
 def _run(cmd: list[str], *, timeout: float, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=max(1.0, timeout), env=env, stdin=subprocess.DEVNULL)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=max(1.0, timeout), env=env,
+                          stdin=subprocess.DEVNULL, **no_window_kwargs())
 
 
 def _first_error(stderr: str) -> str:
@@ -475,7 +478,8 @@ def _role_tests(psql: str, reader: _Reader, mig_conn: list[str], env: dict[str, 
         script = _role_test_sql(fq, owner, str(owner_col["type"]), required)
         # Read from stdin so psql splits the statements and ON_ERROR_ROLLBACK keeps a refused one from aborting the rest.
         proc = subprocess.run([psql, *mig_conn, "-X", "-q", "-A", "-t", "-v", "ON_ERROR_ROLLBACK=on"], input=script,
-                              capture_output=True, text=True, timeout=max(1.0, min(30.0, left)), env=env)
+                              capture_output=True, text=True, timeout=max(1.0, min(30.0, left)), env=env,
+                              **no_window_kwargs())
         results: dict[str, int] = {}
         for line in proc.stdout.splitlines():
             parts = line.strip().split(" ")

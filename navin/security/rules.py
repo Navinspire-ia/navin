@@ -133,9 +133,12 @@ LINE_RULES: list[dict[str, Any]] = [
        "Move the DSN to a secret store; rotate the password.",
        r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)://(?!(?:user(?:name)?|admin|root|[a-z]+):(?:password|pass|pwd|secret|[a-z]+)@)[^\s:/@\"']+:[^\s@\"']{4,}@(?!(?:localhost|127\.0\.0\.1|db|postgres|mysql|redis|mongo)(?::|/|$|[\"'\s]))",
        cwe="CWE-798", owasp=A07, conf=0.85, exclude=_PLACEHOLDER),
+    # The name may carry a prefix (DB_PASSWORD, STRIPE_API_KEY, AWS_SECRET_ACCESS_KEY): most real constants
+    # do. A value made only of format placeholders ('{digest}' inside an f-string query) or a route path
+    # ('/reset-password') is not a credential.
     _r("hardcoded-secret", "high", "Secrets", "Hardcoded secret or credential",
        "Move the value to env vars or a secrets vault, then rotate it.",
-       r"(?i)\b(password|passwd|pwd|secret(?:[_-]?key)?|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key)\b[\"']?\s*[:=]\s*[\"'][^\"'\s]{8,}[\"']",
+       r"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret(?:[_-]?(?:access[_-]?)?key)?|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key)\b[\"']?\s*[:=]\s*[\"'](?!(?:\{[^{}\"']*\})+[\"'])(?!\.{0,2}/[\w\-./:{}]*[\"'])[^\"'\s]{8,}[\"']",
        cwe="CWE-798", owasp=A07, conf=0.74, exclude=_SECRET_EXCLUDE),
     _r("hardcoded-secret-env", "high", "Secrets", "Secret value committed in an env or config file",
        "Keep .env out of git (.gitignore), rotate the exposed value.",
@@ -394,7 +397,7 @@ LINE_RULES: list[dict[str, Any]] = [
     # ---- Misconfiguration --------------------------------------------------
     _r("cors-wildcard", "medium", "CORS", "CORS allows any origin (*)",
        "Restrict allowed origins to an explicit allow-list.",
-       r"(?i)(Access-Control-Allow-Origin[\"']?\s*[\]:,=]\s*[\"']\*|allow_origins\s*=\s*\[?\s*[\"']\*|(?<![\w])origin\s*:\s*[\"']\*[\"']|AllowAnyOrigin|CORS_ALLOW_ALL_ORIGINS\s*=\s*True|CORS_ORIGIN_ALLOW_ALL\s*=\s*True|\.allowedOrigins\(\s*\"\*\")",
+       r"(?i)(Access-Control-Allow-Origin[\"']?\s*[\]:,=]\s*[\"']\*|allow_origins\s*=\s*\[?\s*[\"']\*|(?<![\w])origins?[\"']?\s*[:=]\s*\[?\s*[\"']\*[\"']|AllowAnyOrigin|CORS_ALLOW_ALL_ORIGINS\s*=\s*True|CORS_ORIGIN_ALLOW_ALL\s*=\s*True|\.allowedOrigins\(\s*\"\*\")",
        cwe="CWE-942", owasp=A05, ex="Origin: https://evil.example", poc="Cross-origin credentialed fetch from another origin.", conf=0.8),
     _r("cors-reflect", "high", "CORS", "CORS reflects the request Origin with credentials",
        "Validate Origin against an allow-list.", r"(?i)Access-Control-Allow-Origin[\"']?\s*[\],:=]\s*(?:req|request)\.headers",

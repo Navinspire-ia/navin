@@ -619,6 +619,11 @@ export function journalTaskLink(entry: ActivityJournalEntry): { id?: string; tit
   };
 }
 
+/** A finished security audit row links to the 302-control matrix it filled. */
+export function journalCyberMatrixLink(entry: ActivityJournalEntry): boolean {
+  return entry.kind === "tool" && entry.tool === "security_audit" && entry.status === "done";
+}
+
 /** The question of an ``ask_user`` call, on one line. */
 export function journalQuestionFromArgs(args: string): string {
   const record = parseArgsRecord(args);

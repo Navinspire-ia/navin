@@ -1249,6 +1249,26 @@ class BridgedRootThrottleTest(unittest.TestCase):
         thread.return_value.start.assert_called_once()
         warmer._warming.discard(key)
 
+    def test_a_delayed_save_lands_next_to_the_config_it_was_made_for(self) -> None:
+        # The save timer fires 1 s later: by then another config folder may be
+        # current (the next test in CI). The cache must not create an "index"
+        # folder there, which moved the next test's project folder stamp.
+        from navin.config.loader import get_config_path, set_config_path
+        from navin.index import store
+
+        previous = get_config_path()
+        self.addCleanup(set_config_path, previous)
+        with TemporaryDirectory() as first, TemporaryDirectory() as second:
+            set_config_path(Path(first) / "config.json")
+            target = store.cache_path(self.root)
+            with mock.patch("navin.index.store.threading.Timer") as timer:
+                store.save_cache_soon(self.root, {}, {"version": 1})
+            timer.return_value.start.assert_called_once()
+            set_config_path(Path(second) / "config.json")
+            store.flush_pending_save(self.root)
+            self.assertTrue(store._index_path(target).is_file())
+            self.assertFalse((Path(second) / "index").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

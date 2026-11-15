@@ -274,23 +274,73 @@ async def request_exec_policy_reload(bus: Any, *, timeout: float = 10.0) -> dict
     }
 
 
-async def handle_exec_policy_reload(state: Any, msg: Any, registry: Any) -> bool:
-    """Runtime-control handler: re-read config and hot-apply the exec policy."""
-    from navin.bus.events import (
-        INBOUND_META_RUNTIME_CONTROL,
-        RUNTIME_CONTROL_ACK,
-        RUNTIME_CONTROL_EXEC_POLICY_RELOAD,
+def exec_policy_fingerprint(tools: Any) -> str:
+    """What a running engine must match in the settings: confirmations, shell rules, workspace fence."""
+    import json
+
+    exec_cfg = tools.exec
+    approvals = tools.approvals
+    return json.dumps(
+        {
+            "approvals": approvals.model_dump(mode="json") if hasattr(approvals, "model_dump") else repr(approvals),
+            "allow": list(exec_cfg.allow_patterns),
+            "deny": list(exec_cfg.deny_patterns),
+            "builtin_deny": bool(exec_cfg.builtin_deny_rules),
+            "restrict": bool(tools.restrict_to_workspace),
+            "profile": tools.security_profile,
+        },
+        sort_keys=True,
+        default=str,
     )
 
-    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-    if metadata.get(INBOUND_META_RUNTIME_CONTROL) != RUNTIME_CONTROL_EXEC_POLICY_RELOAD:
+
+def bind_saved_exec_policy(state: Any, config: Any) -> None:
+    """Tie an engine to the settings file it was built from, so it follows later saves.
+
+    Each Navin (the desktop engine, every CLI) holds the permission mode in
+    memory and only the one that saved a change applied it: a desktop set to
+    Full access from a CLI kept asking at every command while its menu, read
+    from the file, said Full access. An engine built without a file (tests,
+    the SDK with an in-memory Config) is not tied to anything.
+    """
+    path = getattr(config, "_loaded_path", None)
+    if not isinstance(path, str) or not path:
+        return
+    state._saved_exec_policy = (Path(path), exec_policy_fingerprint(config.tools))
+
+
+async def follow_saved_exec_policy(state: Any, registry: Any) -> bool:
+    """Apply the exec policy saved since this engine last applied one; True when it changed.
+
+    Called at the start of each turn. The file is read off the event loop and
+    only re-parsed when it changed on disk.
+    """
+    source = getattr(state, "_saved_exec_policy", None)
+    if source is None:
         return False
+    path, applied = source
+    from navin.config.loader import load_config_cached
 
-    ack = metadata.get(RUNTIME_CONTROL_ACK)
     try:
-        from navin.config.loader import load_config
+        saved = await asyncio.to_thread(load_config_cached, path)
+    except (OSError, ValueError) as exc:
+        logger.warning("exec policy: could not read {} ({}); keeping the current policy", path, exc)
+        return False
+    fingerprint = exec_policy_fingerprint(saved.tools)
+    if fingerprint == applied:
+        return False
+    # The cached config is shared and read-only: the engine keeps its own copy.
+    result = apply_saved_exec_policy(state, registry, saved.model_copy(deep=True))
+    if not result.get("ok"):
+        return False
+    state._saved_exec_policy = (path, fingerprint)
+    logger.info("exec policy: applied the permission settings saved in {}", path)
+    return True
 
-        config = load_config()
+
+def apply_saved_exec_policy(state: Any, registry: Any, config: Any) -> dict[str, Any]:
+    """Hot-apply the exec policy of ``config`` to a running engine and its tools."""
+    try:
         approvals = getattr(state, "approvals", None)
         apply_config = getattr(approvals, "apply_config", None)
         if callable(apply_config):
@@ -353,12 +403,45 @@ async def handle_exec_policy_reload(state: Any, msg: Any, registry: Any) -> bool
             }
     except Exception as exc:
         logger.exception("exec policy hot reload failed")
-        result = {
-            "ok": False,
-            "message": "Exec policy hot reload failed; restart navin to apply.",
-            "requires_restart": True,
-            "error": str(exc),
-        }
+        return _exec_policy_reload_failure(exc)
+    source = getattr(state, "_saved_exec_policy", None)
+    if source is not None:
+        # Applied here already: the next turn has nothing to take over.
+        state._saved_exec_policy = (source[0], exec_policy_fingerprint(config.tools))
+    return result
+
+
+def _exec_policy_reload_failure(exc: BaseException) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "message": "Exec policy hot reload failed; restart navin to apply.",
+        "requires_restart": True,
+        "error": str(exc),
+    }
+
+
+async def handle_exec_policy_reload(state: Any, msg: Any, registry: Any) -> bool:
+    """Runtime-control handler: re-read config and hot-apply the exec policy."""
+    from navin.bus.events import (
+        INBOUND_META_RUNTIME_CONTROL,
+        RUNTIME_CONTROL_ACK,
+        RUNTIME_CONTROL_EXEC_POLICY_RELOAD,
+    )
+
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    if metadata.get(INBOUND_META_RUNTIME_CONTROL) != RUNTIME_CONTROL_EXEC_POLICY_RELOAD:
+        return False
+
+    ack = metadata.get(RUNTIME_CONTROL_ACK)
+    try:
+        from navin.config.loader import load_config
+
+        config = load_config()
+    except Exception as exc:
+        logger.exception("exec policy hot reload failed")
+        result = _exec_policy_reload_failure(exc)
+    else:
+        result = apply_saved_exec_policy(state, registry, config)
     if isinstance(ack, asyncio.Future) and not ack.done():
         ack.set_result(result)
     return True

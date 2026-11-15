@@ -54,6 +54,13 @@ class AgentProgressHook(AgentHook):
     def wants_streaming(self) -> bool:
         return self._on_stream is not None
 
+    def withdraws_stream(self) -> bool:
+        return (
+            self._on_stream is not None
+            and self._on_stream_end is not None
+            and self._on_progress_accepts(self._on_stream_end, "discarded")
+        )
+
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
         if not text:

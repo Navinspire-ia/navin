@@ -246,6 +246,8 @@ def test_settings_show_the_organization_models_and_keep_the_gateway_out_of_provi
     _deploy(monkeypatch, tmp_path, _org_file())
 
     payload = settings_payload()
+    # An organization in force keeps Settings > Organization listed, in standard Navin too.
+    assert payload["organization_section"] is True
     rows = {row["name"]: row for row in payload["model_presets"]}
     assert rows["org:gpt-4o"]["active"] and rows["org:gpt-4o"]["locked"]
     assert rows["org:gpt-4o"]["source"] == "organization" and rows["org:gpt-4o"]["vision"]
@@ -255,6 +257,14 @@ def test_settings_show_the_organization_models_and_keep_the_gateway_out_of_provi
     with pytest.raises(WebUISettingsError) as refused:
         update_provider_settings({"provider": ["organization"], "api_base": ["https://elsewhere.example"]})
     assert refused.value.status == 409
+
+
+def test_standard_navin_without_an_organization_does_not_list_the_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    from navin import edition
+
+    assert settings_payload()["organization_section"] is False
+    monkeypatch.setattr(edition, "EDITION", edition.SM)
+    assert settings_payload()["organization_section"] is True
 
 
 def test_cached_settings_follow_the_organization_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

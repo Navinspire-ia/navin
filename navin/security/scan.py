@@ -187,7 +187,7 @@ def _iter_files(root: Path, subpath: str | None) -> list[tuple[str, Path]]:
             if ".min." in name.lower() or name.endswith((".lock", "-lock.json")):
                 continue
             # Our own HTML deliverables quote every payload they report on.
-            if name.startswith(("security-report-", "review-report-")) and name.endswith(".html"):
+            if name.startswith(("security-report-", "review-report-")) and name.endswith((".html", ".json")):
                 continue
             full = Path(dirpath) / name
             try:

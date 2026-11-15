@@ -1113,6 +1113,8 @@ class AgentRunResult:
     prompt_profile: dict[str, Any] | None = None
     retryable_error: bool = False
     retry_after_s: float | None = None
+    # The accepted final answer already reached a live channel while it was written.
+    final_streamed: bool = False
 
 
 class AgentRunner:
@@ -1600,7 +1602,6 @@ class AgentRunner:
         # The text answer the delivery nudge was sent after, and where the
         # nudge sits: a blank reply to the nudge keeps that answer.
         delivery_nudged_text: str | None = None
-        delivery_nudged_streamed = False
         delivery_nudge_index = -1
         # Did the final answer reach a streaming channel as deltas? A
         # streaming channel drops the final message (it was "streamed"), so an
@@ -2269,7 +2270,6 @@ class AgentRunner:
                 messages.append(assistant_message)
                 messages.append(build_delivery_continue_message())
                 delivery_nudged_text = clean
-                delivery_nudged_streamed = context.streamed_content
                 delivery_nudge_index = len(messages) - 1
                 await hook.after_iteration(context)
                 continue
@@ -2661,19 +2661,24 @@ class AgentRunner:
             if hook.wants_streaming() and context.streamed_content:
                 if (
                     length_parts
-                    and not spec.defer_final_stream
                     and response.finish_reason != "error"
                     and not is_blank_text(clean)
                 ):
                     # The answer was cut by the output limit: its parts are
-                    # joined below and sent as one last segment. Kept on
-                    # screen, this live last part showed the end twice.
+                    # joined and sent as one last segment (below, or at the
+                    # delivery boundary of a task turn). Kept on screen, this
+                    # live last part showed the end twice.
                     context.stream_discarded = True
                     try:
                         await hook.on_stream_end(context, resuming=True)
                     finally:
                         context.stream_discarded = False
                         context.streamed_content = False
+                elif spec.defer_final_stream and response.finish_reason != "error" and not is_blank_text(clean):
+                    # Shown live as it was written; the entry point closes this
+                    # segment at its delivery boundary, after the history save
+                    # (or withdraws it if the delivered answer differs).
+                    pass
                 else:
                     await hook.on_stream_end(context, resuming=False)
             elif context.streamed_reasoning:
@@ -2759,7 +2764,9 @@ class AgentRunner:
                     },
                 )
                 final_content = delivery_nudged_text
-                final_streamed = delivery_nudged_streamed
+                # That answer was withdrawn from the screen at the nudge: it is
+                # published again, never taken for already shown.
+                final_streamed = False
                 context.final_content = final_content
                 context.stop_reason = stop_reason
                 await hook.after_iteration(context)
@@ -2814,6 +2821,16 @@ class AgentRunner:
                 },
             )
             final_streamed = context.streamed_content and not finalized and not length_parts
+            if (
+                spec.defer_final_stream
+                and hook.wants_streaming()
+                and context.streamed_content
+                and not final_streamed
+            ):
+                # The live text is not the answer delivered (a finalization
+                # retry replaced it): off the screen, the entry point sends the
+                # accepted one.
+                await self._discard_candidate(hook, context, None)
             context.final_content = final_content
             context.stop_reason = stop_reason
             await hook.after_iteration(context)
@@ -2898,6 +2915,7 @@ class AgentRunner:
                 LLMProvider._extract_retry_after_from_response(response)
                 if stop_reason == "error" else None
             ),
+            final_streamed=bool(final_content) and final_streamed,
         )
 
     @staticmethod
@@ -2999,10 +3017,15 @@ class AgentRunner:
 
         progress_state: dict[str, bool] | None = None
         # Every task answer is a candidate until ALL completion gates pass,
-        # including plan/hooks/injections after green tests. Keep live thinking,
-        # tool drafts and genuine tool-bound commentary; do not paint a rejected
-        # conclusion and then turn it into permanent narration.
-        defer_unverified_text = bool(
+        # including plan/hooks/injections after green tests. A live channel
+        # (desktop, CLI) still shows it while the model writes it: a candidate a
+        # gate rejects is withdrawn from the screen by _discard_candidate (stream
+        # end marked discarded), never kept as narration. Held back, a task answer
+        # arrived in one block once the model had finished writing it (2026-11-15).
+        # Only the progress-delta path and a stream that cannot be taken back
+        # still wait.
+        live_candidates = wants_streaming and hook.withdraws_stream()
+        defer_unverified_text = not live_candidates and bool(
             spec.defer_final_stream
             or not spec.conversational_turn
             or (spec.loop_guard and spec.loop_guard.validation.pending)
@@ -4429,6 +4452,7 @@ class AgentRunner:
 
 _PATH_ARG_RE = re.compile(r'"(?:path|file_path)"\s*:\s*"([^"]{1,200})"')
 _COMMAND_ARG_RE = re.compile(r'"(?:command|cmd)"\s*:\s*"((?:[^"\\]|\\.){1,80})')
+_COMMAND_LABEL_MIN_CHARS = 6
 
 
 class _ToolDraftStatus:
@@ -4469,17 +4493,23 @@ class _ToolDraftStatus:
     @staticmethod
     def _label(call: dict[str, Any]) -> str:
         name, args = call["name"] or "a tool", call["args"]
-        size = f"{len(args) / 1000:.1f}k chars" if len(args) >= 1000 else f"{len(args)} chars"
+        # "0 chars" before the first argument byte read as a broken counter.
+        size = (
+            f" {len(args) / 1000:.1f}k chars" if len(args) >= 1000
+            else f" {len(args)} chars" if args else ""
+        )
         if name in ("write_file", "apply_patch", "edit_file", "notebook_edit"):
             paths = _PATH_ARG_RE.findall(args)
             verb = "Writing" if name == "write_file" else "Editing"
             if paths:
                 more = f" (+{len(paths) - 1} files)" if len(paths) > 1 else ""
-                return f"{verb} {paths[-1]}{more}… {size}"
-            return f"{verb}… {size}"
+                return f"{verb} {paths[-1]}{more}…{size}"
+            return f"{verb}…{size}"
         if name == "exec":
             match = _COMMAND_ARG_RE.search(args)
-            if match:
+            # A command named by its first letter ("Preparing command: c…")
+            # says nothing: it waits for a readable start.
+            if match and len(match.group(1).strip()) >= _COMMAND_LABEL_MIN_CHARS:
                 return f"Preparing command: {match.group(1)}…"
         return f"Preparing {name}…"
 

@@ -1930,6 +1930,8 @@ export interface SettingsPayload {
   model_routes?: Record<string, string>;
   /** Task routing on (default) or off for every chat. */
   model_routing_enabled?: boolean;
+  /** Settings > Organization is listed: Navin SM, or an organization file in force. */
+  organization_section?: boolean;
   /** Collaboration Mode (Settings > Team) on or off for every chat. */
   collab_enabled?: boolean;
   /** Enabled teammates, for the chat's Team switch and avatars. */

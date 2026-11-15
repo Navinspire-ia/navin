@@ -150,6 +150,15 @@ class ExpertWorkflowWiringTest(unittest.TestCase):
         self.assertIn("the user decides", plan)
         self.assertIn("Do not start, claim or try to execute step 1", plan)
         self.assertIn("run only the phases that apply to that target", _WORKFLOW_BRIEFS["/fortify"][2])
+        # The whole audit happens in the chat: the classic phases plus the
+        # 302-control referential, a single question at most, proof per flaw.
+        fortify = _WORKFLOW_BRIEFS["/fortify"][2]
+        self.assertIn("security_audit(action=run)", fortify)
+        self.assertIn("security_audit(action=matrix)", fortify)
+        self.assertIn("Read every one of them with skill(action=read)", fortify)
+        self.assertIn("at most one ask_user", fortify)
+        self.assertIn("Never present a potential finding as confirmed", fortify)
+        self.assertIn("what an attacker gains", fortify)
 
     def test_reverse_brief_is_static_first_and_keeps_evidence_on_disk(self) -> None:
         brief = _WORKFLOW_BRIEFS["/reverse"][2]

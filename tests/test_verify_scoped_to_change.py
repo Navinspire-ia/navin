@@ -10,6 +10,7 @@ agent then spent the turn on JWT secrets and a Playwright install.
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -136,6 +137,33 @@ class NoSuiteForTheChangeTest(unittest.TestCase):
 
     def test_a_docs_edit_never_arms_the_gate(self) -> None:
         self.assertFalse(self._state_after_edit("README.md").pending)
+
+    def test_a_report_written_into_an_output_folder_never_arms_the_gate(self) -> None:
+        # Measured 2026-11-15: three read-only audit subagents wrote build/security-*.json and
+        # ended failed as "Changes not validated".
+        self.assertFalse(self._state_after_edit("build/security-clients.json").pending)
+        self.assertFalse(self._state_after_edit(".navin/security/audit.json").pending)
+        # Code in an output folder, and data files elsewhere, still need their check.
+        self.assertTrue(self._state_after_edit("build/webpack.config.js").pending)
+        self.assertTrue(self._state_after_edit("config/settings.json").pending)
+
+    def test_a_report_under_an_absolute_output_folder_never_arms_the_gate(self) -> None:
+        from navin.agent.code_validation import CodeValidationState
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # The project itself may sit under a folder named like an output one.
+            root = Path(tmp) / "build" / "app"
+            root.mkdir(parents=True)
+            for path, pending in (
+                (str(root / "build" / "security-api.json"), False),
+                (str(root / "config" / "settings.json"), True),
+            ):
+                state = CodeValidationState(root=root)
+                state.observe(
+                    "write_file", {"path": path, "content": "{}"}, "ok", status="ok",
+                    require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+                )
+                self.assertEqual(state.pending, pending, path)
 
     def test_verify_with_nothing_applicable_closes_the_gate(self) -> None:
         from navin.quality.evidence import VerificationEvidence

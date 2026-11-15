@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildJournalTimeline,
   currentJournalEntry,
+  journalCyberMatrixLink,
   journalFactsFromArgs,
   journalTargetFromArgs,
   journalTaskIdFromArgs,
@@ -13,6 +14,7 @@ import {
   journalToneForTool,
   parseAskUserAnswer,
   summarizeJournal,
+  type ActivityJournalEntry,
   type ActivityJournalStatus,
   type JournalStep,
 } from "./activityJournalModel";
@@ -321,5 +323,17 @@ describe("spawn rows", () => {
     ], { streaming: false });
     expect(bare.target).toBe("Audit the auth flow");
     expect(bare.detail).toBeUndefined();
+  });
+});
+
+describe("journalCyberMatrixLink", () => {
+  it("links only a finished security audit row to the 302-control matrix", () => {
+    const row = (tool: string, status: ActivityJournalStatus, kind = "tool") =>
+      ({ id: "r", kind, tone: "tool", seq: 1, status, tool }) as unknown as ActivityJournalEntry;
+    expect(journalCyberMatrixLink(row("security_audit", "done"))).toBe(true);
+    expect(journalCyberMatrixLink(row("security_audit", "running"))).toBe(false);
+    expect(journalCyberMatrixLink(row("security_audit", "error"))).toBe(false);
+    expect(journalCyberMatrixLink(row("security_scan", "done"))).toBe(false);
+    expect(journalCyberMatrixLink(row("security_audit", "done", "shell"))).toBe(false);
   });
 });

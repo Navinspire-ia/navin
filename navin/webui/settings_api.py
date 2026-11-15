@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from navin import __version__, organization
+from navin import __version__, edition, organization
 from navin.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 from navin.audio.transcription import resolve_transcription_config
@@ -2522,6 +2522,9 @@ def settings_payload(
         "model_presets": model_presets,
         "model_routes": dict(config.model_routes),
         "model_routing_enabled": bool(config.model_routing_enabled),
+        # Settings > Organization is the Navin SM screen. Standard Navin lists it only while an
+        # organization file is in force (deployed by IT or imported), so it can still be seen or removed.
+        "organization_section": edition.current() == edition.SM or org_in_force is not None,
         # Collaboration Mode switch (Settings > Team and the chat's model menu).
         "collab_enabled": bool(config.collab.enabled),
         "collab_members": [
