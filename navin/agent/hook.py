@@ -198,6 +198,12 @@ class AgentHook:
 AgentTurnHookFactory = Callable[[AgentTurnHookContext], AgentHook | None]
 
 
+def _hook_flag(hook: Any, name: str) -> bool:
+    """A boolean capability of a hook; False when the hook does not define it."""
+    method = getattr(hook, name, None)
+    return bool(method()) if callable(method) else False
+
+
 class CompositeHook(AgentHook):
     """Fan-out hook that delegates to an ordered list of hooks.
 
@@ -217,8 +223,10 @@ class CompositeHook(AgentHook):
 
     def withdraws_stream(self) -> bool:
         # Every hook that shows the stream must be able to take a segment back.
-        streaming = [h for h in self._hooks if h.wants_streaming()]
-        return bool(streaming) and all(h.withdraws_stream() for h in streaming)
+        # Unlike wants_streaming this asks every hook, so a duck-typed hook that
+        # defines neither method (usage, cron spend) counts as not streaming.
+        streaming = [h for h in self._hooks if _hook_flag(h, "wants_streaming")]
+        return bool(streaming) and all(_hook_flag(h, "withdraws_stream") for h in streaming)
 
     async def _for_each_hook_safe(self, method_name: str, *args: Any, **kwargs: Any) -> None:
         for h in self._hooks:

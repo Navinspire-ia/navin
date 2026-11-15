@@ -3396,7 +3396,9 @@ class AgentLoop:
 
                 # Another Navin may have changed the permission mode since the
                 # last turn (Full access chosen from a CLI): this turn uses it.
-                await follow_saved_exec_policy(self, self.tools)
+                # Nothing to read when this engine follows no saved policy.
+                if getattr(self, "_saved_exec_policy", None) is not None:
+                    await follow_saved_exec_policy(self, self.tools)
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 # One full subagent wave (AgentDefaults.max_concurrent_subagents,
