@@ -24,6 +24,10 @@ from navin.providers.fallback_policy import (
     QUOTA_CEILING_KIND,
     circuit_cooldown_s,
     is_exhausted_account,
+    is_history_reasoning_rejection,
+    is_shared_key_limit,
+    shared_key_limit_wait_s,
+    strip_history_reasoning,
 )
 from navin.providers.model_switch_notice import notify_relay
 
@@ -253,6 +257,12 @@ class FallbackProvider(LLMProvider):
     def supports_progress_deltas(self) -> bool:
         return bool(getattr(self._primary, "supports_progress_deltas", False))
 
+    def _same_credentials(self, other: LLMProvider) -> bool:
+        """True when *other* reaches the same endpoint with the same key."""
+        mine = (getattr(self._primary, "api_key", None), getattr(self._primary, "api_base", None))
+        theirs = (getattr(other, "api_key", None), getattr(other, "api_base", None))
+        return bool(mine[0]) and mine == theirs
+
     def _primary_available(self) -> bool:
         """Return True if the primary provider is not currently tripped."""
         if self._primary_tripped_at is None:
@@ -445,6 +455,51 @@ class FallbackProvider(LLMProvider):
                     self._relayed = False
                     await notify_relay("")
                 return response
+            # Replayed reasoning (a thinking block signed by another model, or
+            # a reasoning field Bedrock refuses on assistant turns) fails the
+            # same way on every model behind the gateway: resend the step
+            # without it instead of walking the whole fallback list.
+            if is_history_reasoning_rejection(response) and not (
+                has_streamed is not None and has_streamed[0]
+            ):
+                stripped = strip_history_reasoning(
+                    kwargs.get("messages"), drop_reasoning_text=True
+                )
+                if stripped is not kwargs.get("messages"):
+                    logger.warning(
+                        "Primary model '{}' refused reasoning replayed from history; "
+                        "resending without it",
+                        primary_model,
+                    )
+                    kwargs["messages"] = stripped
+                    response = await call(self._primary, kwargs)
+                    if response.finish_reason != "error":
+                        self._primary_failures = 0
+                        return response
+
+            # A per-key limit (LiteLLM max_parallel_requests) refuses every
+            # model behind the same key: wait for the window once, then only
+            # fall back to models reached through other credentials.
+            if is_shared_key_limit(response) and not (
+                has_streamed is not None and has_streamed[0]
+            ):
+                import asyncio
+
+                wait = shared_key_limit_wait_s(response)
+                logger.warning(
+                    "Key-level limit on '{}' ({}); waiting {:.1f}s instead of switching "
+                    "models on the same key",
+                    primary_model,
+                    (response.content or "")[:80],
+                    wait,
+                )
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                response = await call(self._primary, kwargs)
+                if response.finish_reason != "error":
+                    self._primary_failures = 0
+                    return response
+
             primary_error = (response.content or primary_error)[:120]
 
             if not self._should_fallback(response):
@@ -468,9 +523,15 @@ class FallbackProvider(LLMProvider):
                     kwargs["on_content_delta"] = None
 
             last_response = response
-            self._primary_failures += 1
-            cooldown = circuit_cooldown_s(response)
-            if cooldown is not None:
+            # A key-level limit says nothing about the model: do not trip its
+            # circuit, or the next steps would skip it for a minute.
+            key_limited = is_shared_key_limit(response)
+            if not key_limited:
+                self._primary_failures += 1
+            cooldown = None if key_limited else circuit_cooldown_s(response)
+            if key_limited:
+                pass
+            elif cooldown is not None:
                 self._open_primary_circuit(
                     primary_model,
                     cooldown,
@@ -545,12 +606,33 @@ class FallbackProvider(LLMProvider):
                 )
                 continue
 
+            if (
+                last_response is not None or primary_was_attempted
+            ) and is_shared_key_limit(last_response or response) and self._same_credentials(
+                fallback_provider
+            ):
+                logger.info(
+                    "Skipping fallback '{}': same key as the limited model",
+                    fallback_model,
+                )
+                continue
+
             # Named in front of Working while it takes the step.
             await notify_relay(self._label(fallback_model))
             original_values = {
                 name: kwargs.get(name, _MISSING)
-                for name in ("model", "max_tokens", "temperature", "reasoning_effort")
+                for name in (
+                    "model",
+                    "max_tokens",
+                    "temperature",
+                    "reasoning_effort",
+                    "messages",
+                )
             }
+            # Thinking blocks are signed for the model that wrote them; no
+            # other model accepts them, so they never travel to a fallback.
+            if "messages" in kwargs:
+                kwargs["messages"] = strip_history_reasoning(kwargs["messages"])
             kwargs["model"] = fallback_model
             kwargs["max_tokens"] = fallback.max_tokens
             kwargs["temperature"] = fallback.temperature

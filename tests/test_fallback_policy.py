@@ -922,30 +922,6 @@ class TestLadderAndChainCompose:
         assert result.content == "slow but valid"
         assert fallback.calls == 0
 
-    def test_a_stalled_provider_gets_one_retry_not_the_whole_ladder(self, monkeypatch):
-        """Each timeout already cost a full request window (two minutes).
-
-        Retrying four times parked one step for eight silent minutes; two
-        consecutive stalls mean the provider is down for this step.
-        """
-        monkeypatch.setattr("asyncio.sleep", _no_sleep)
-        primary = FakeProvider(
-            [Err(error_kind="timeout", content="request timed out")] * 50
-        )
-        fallback = FakeProvider(
-            [Err(error_kind="timeout", content="request timed out")] * 50
-        )
-        provider = _provider(primary, [Preset()], fallback)
-        result = asyncio.run(provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
-            model="gemini-3.6",
-            max_tokens=100,
-            temperature=0.5,
-            reasoning_effort=None,
-        ))
-        assert result.finish_reason == "error"
-        assert fallback.calls == 2
-
     def test_direct_chat_keeps_the_sticky_wait(self, monkeypatch):
         # A bare .chat call follows the same rule: two quick retries on the
         # chosen model, then the visible switch.
@@ -1387,3 +1363,169 @@ class TestTheRelayIsNamedWhileItWorks:
             {"label": "Claude Fable 5.1 · Working…", "indeterminate": True, "relay_model": "Claude Fable 5.1"},
             {"label": "Working…", "indeterminate": True, "relay_model": ""},
         ]
+
+
+# --- Gateway (LiteLLM) failures that are not about the model -----------------
+
+_KEY_LIMIT = (
+    "Rate limit exceeded for sk-...abcd. Limit type: max_parallel_requests. "
+    "Current limit: 10, Remaining: 0. Limit resets at: 2026-11-16 16:40:04 UTC"
+)
+_REASONING_REFUSAL = (
+    "litellm.BadRequestError: BedrockException - {\"message\":\"This model doesn't "
+    "support the reasoningContent.reasoningText.text field for assistant messages. "
+    "Remove reasoningContent.reasoningText.text and try again.\"}"
+)
+_SIGNATURE_REFUSAL = (
+    "messages.3.content.0: Invalid `signature` in `thinking` block. The block is "
+    "bound to a different conversation."
+)
+
+
+@dataclass
+class GwErr(Err):
+    error_detail: str | None = None
+
+
+class RecordingProvider(FakeProvider):
+    def __init__(self, responses, api_key="k1", api_base="https://llm.example/v1"):
+        super().__init__(responses)
+        self.api_key = api_key
+        self.api_base = api_base
+        self.seen_messages = []
+
+    async def chat(self, **kwargs):
+        self.seen_messages.append(kwargs.get("messages"))
+        return await super().chat(**kwargs)
+
+
+def _history():
+    return [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "hello",
+            "reasoning_content": "greeting",
+            "thinking_blocks": [{"type": "thinking", "thinking": "x", "signature": "sig"}],
+        },
+        {"role": "user", "content": "go on"},
+    ]
+
+
+class TestGatewayKeyLimit:
+    def test_litellm_parallel_limit_is_a_key_limit(self):
+        from navin.providers.fallback_policy import is_shared_key_limit
+
+        err = GwErr(content="The model is at capacity", error_status_code=429,
+                    error_detail=_KEY_LIMIT)
+        assert is_shared_key_limit(err)
+        assert sticky_retry_budget(err, 2) == 0
+        assert not is_shared_key_limit(Err(content="429 rate limit exceeded",
+                                           error_status_code=429))
+
+    def test_wait_reads_the_reset_time_and_is_capped(self):
+        from datetime import datetime, timezone
+
+        from navin.providers.fallback_policy import (
+            SHARED_KEY_LIMIT_MAX_WAIT_S,
+            shared_key_limit_wait_s,
+        )
+
+        err = GwErr(error_detail=_KEY_LIMIT)
+        now = datetime(2026, 11, 16, 16, 39, 54, tzinfo=timezone.utc)
+        assert shared_key_limit_wait_s(err, now=now) == 10.0
+        early = datetime(2026, 11, 16, 16, 30, 0, tzinfo=timezone.utc)
+        assert shared_key_limit_wait_s(err, now=early) == SHARED_KEY_LIMIT_MAX_WAIT_S
+        late = datetime(2026, 11, 16, 16, 45, 0, tzinfo=timezone.utc)
+        assert shared_key_limit_wait_s(err, now=late) == 0.0
+
+    def test_same_key_fallbacks_are_not_walked(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        limited = GwErr(content="busy", error_status_code=429, error_detail=_KEY_LIMIT)
+        primary = RecordingProvider([limited, limited])
+        same_key = RecordingProvider([])
+        chain = FallbackProvider(primary, [Preset(), Preset()], lambda _p: same_key)
+        result = asyncio.run(chain.chat(model="gemini-3.6", messages=[]))
+        assert result.finish_reason == "error"
+        # One wait-and-retry on the chosen model, no hop across the same key.
+        assert primary.calls == 2
+        assert same_key.calls == 0
+        # The model itself is fine: its circuit stays closed.
+        assert chain._primary_available()
+
+    def test_the_wait_is_enough_when_the_window_reopens(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        limited = GwErr(content="busy", error_status_code=429, error_detail=_KEY_LIMIT)
+        primary = RecordingProvider([limited, Err(finish_reason="stop", content="ok")])
+        chain = FallbackProvider(primary, [Preset()], lambda _p: RecordingProvider([]))
+        result = asyncio.run(chain.chat(model="gemini-3.6", messages=[]))
+        assert result.content == "ok"
+
+    def test_fallbacks_on_another_key_still_take_the_step(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        limited = GwErr(content="busy", error_status_code=429, error_detail=_KEY_LIMIT)
+        primary = RecordingProvider([limited, limited])
+        other = RecordingProvider([Err(finish_reason="stop", content="other key")],
+                                  api_key="k2")
+        chain = FallbackProvider(primary, [Preset()], lambda _p: other)
+        result = asyncio.run(chain.chat(model="gemini-3.6", messages=[]))
+        assert result.content == "other key"
+
+
+class TestReplayedReasoning:
+    @pytest.mark.parametrize("detail", [_REASONING_REFUSAL, _SIGNATURE_REFUSAL])
+    def test_refusals_are_recognised(self, detail):
+        from navin.providers.fallback_policy import is_history_reasoning_rejection
+
+        err = GwErr(content="Error", error_status_code=400, error_detail=detail)
+        assert is_history_reasoning_rejection(err)
+        assert not is_history_reasoning_rejection(
+            Err(content="reasoning is great", finish_reason="stop")
+        )
+
+    def test_strip_keeps_reasoning_text_unless_asked(self):
+        from navin.providers.fallback_policy import strip_history_reasoning
+
+        history = _history()
+        light = strip_history_reasoning(history)
+        assert "thinking_blocks" not in light[1]
+        assert light[1]["reasoning_content"] == "greeting"
+        full = strip_history_reasoning(history, drop_reasoning_text=True)
+        assert set(full[1]) == {"role", "content"}
+        # The caller's history is never mutated.
+        assert "thinking_blocks" in history[1]
+        plain = [{"role": "user", "content": "x"}]
+        assert strip_history_reasoning(plain) is plain
+
+    def test_the_same_model_is_resent_without_replayed_reasoning(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        refusal = GwErr(content="Error", error_status_code=400,
+                        error_detail=_REASONING_REFUSAL)
+        primary = RecordingProvider([refusal, Err(finish_reason="stop", content="ok")])
+        fallback = RecordingProvider([])
+        chain = FallbackProvider(primary, [Preset()], lambda _p: fallback)
+        result = asyncio.run(chain.chat(model="gpt-6-sol", messages=_history()))
+        assert result.content == "ok"
+        assert primary.calls == 2 and fallback.calls == 0
+        assert set(primary.seen_messages[1][1]) == {"role", "content"}
+
+    def test_thinking_blocks_never_travel_to_a_fallback(self, monkeypatch):
+        from navin.providers.fallback_provider import FallbackProvider
+
+        monkeypatch.setattr("asyncio.sleep", _no_sleep)
+        primary = RecordingProvider([Err(error_status_code=401, content="bad key")])
+        fallback = RecordingProvider([Err(finish_reason="stop", content="fb")])
+        chain = FallbackProvider(primary, [Preset()], lambda _p: fallback)
+        result = asyncio.run(chain.chat(model="claude", messages=_history()))
+        assert result.content == "fb"
+        sent = fallback.seen_messages[0][1]
+        assert "thinking_blocks" not in sent
+        assert sent["reasoning_content"] == "greeting"

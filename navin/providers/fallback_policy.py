@@ -377,6 +377,10 @@ def sticky_retry_budget(response: Any, budget: int) -> int:
         return budget
     if not is_worth_retrying(response):
         return 0
+    if is_shared_key_limit(response) or is_history_reasoning_rejection(response):
+        # Both have their own single, targeted retry in the failover chain:
+        # a wait for the key window, or a resend without replayed reasoning.
+        return 0
     if circuit_cooldown_s(response) is not None:
         return 0
     return budget
@@ -467,6 +471,120 @@ def retry_delay(
     if max_delay is not None:
         delay = min(delay, max(0.0, float(max_delay)))
     return delay
+
+
+def _error_text(response: Any) -> str:
+    """Generic rewrite plus the provider's own words, where the details live."""
+    parts = (
+        getattr(response, "content", None),
+        getattr(response, "error_detail", None),
+    )
+    return " ".join(str(p) for p in parts if p)
+
+
+#: LiteLLM's per-key limiter: "Rate limit exceeded for <key>. Limit type:
+#: max_parallel_requests. Current limit: 10, Remaining: 0. Limit resets at: ..."
+_SHARED_KEY_LIMIT_RE = re.compile(
+    r"max_parallel_requests|parallel request limit|"
+    r"rate limit exceeded for .{0,120}?limit type",
+    re.IGNORECASE | re.DOTALL,
+)
+_LIMIT_RESETS_AT_RE = re.compile(
+    r"limit resets at:?\s*(\d{4}-\d{2}-\d{2}[ t]\d{2}:\d{2}:\d{2})\s*utc",
+    re.IGNORECASE,
+)
+
+#: Longest wait for a per-key limit window before asking again.
+SHARED_KEY_LIMIT_MAX_WAIT_S = 30.0
+
+
+def is_shared_key_limit(response: Any) -> bool:
+    """True when the refusal is a limit on the API key, not on the model.
+
+    A gateway (LiteLLM) that caps a virtual key at N parallel requests answers
+    429 for every model behind that key. Walking the fallback list on the same
+    key only multiplies the refusals; waiting for the window is the fix.
+    """
+    if getattr(response, "finish_reason", None) != "error":
+        return False
+    return _SHARED_KEY_LIMIT_RE.search(_error_text(response)) is not None
+
+
+def shared_key_limit_wait_s(response: Any, now: Any = None) -> float:
+    """Seconds until the per-key window reopens, capped and never negative."""
+    from datetime import datetime, timezone
+
+    hinted = getattr(response, "error_retry_after_s", None) or getattr(
+        response, "retry_after", None
+    )
+    if hinted:
+        try:
+            return max(0.0, min(float(hinted), SHARED_KEY_LIMIT_MAX_WAIT_S))
+        except (TypeError, ValueError):
+            pass
+    match = _LIMIT_RESETS_AT_RE.search(_error_text(response))
+    if match:
+        try:
+            resets = datetime.fromisoformat(match.group(1).replace("t", " ").replace("T", " "))
+            resets = resets.replace(tzinfo=timezone.utc)
+            current = now or datetime.now(timezone.utc)
+            seconds = (resets - current).total_seconds()
+            return max(0.0, min(seconds, SHARED_KEY_LIMIT_MAX_WAIT_S))
+        except ValueError:
+            pass
+    return STICKY_MAX_DELAY_S
+
+
+#: The request was refused because of reasoning replayed from history: a
+#: thinking block signed by another model or conversation, or a reasoning
+#: field the target model does not accept on assistant turns (Bedrock).
+_HISTORY_REASONING_RE = re.compile(
+    r"reasoningcontent\.reasoningtext|"
+    r"reasoning content.{0,60}(?:remove|cannot|not support)|"
+    r"(?:cannot|can't) contain reasoning content|"
+    r"invalid `?signature`? in `?thinking`? block|"
+    r"thinking\.block_binding",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_history_reasoning_rejection(response: Any) -> bool:
+    """True when stripping replayed reasoning from history would fix the request.
+
+    Every model behind the same gateway rejects the same history, so switching
+    models loops through the whole list; resending without it succeeds.
+    """
+    if getattr(response, "finish_reason", None) != "error":
+        return False
+    return _HISTORY_REASONING_RE.search(_error_text(response)) is not None
+
+
+def strip_history_reasoning(
+    messages: Any, *, drop_reasoning_text: bool = False
+) -> Any:
+    """Copy of *messages* without signed thinking blocks (and optionally reasoning text).
+
+    Thinking blocks carry a signature bound to the model and conversation that
+    produced them; no other model accepts them. Plain ``reasoning_content`` is
+    kept unless ``drop_reasoning_text`` is set (DeepSeek needs it on the wire).
+    """
+    if not isinstance(messages, list):
+        return messages
+    cleaned: list[Any] = []
+    changed = False
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            cleaned.append(msg)
+            continue
+        drop = {"thinking_blocks", "provider_specific_fields"}
+        if drop_reasoning_text:
+            drop |= {"reasoning_content", "reasoning"}
+        if not drop.intersection(msg):
+            cleaned.append(msg)
+            continue
+        changed = True
+        cleaned.append({k: v for k, v in msg.items() if k not in drop})
+    return cleaned if changed else messages
 
 
 def model_switch_notice(primary_model: str, served_model: str) -> str:
