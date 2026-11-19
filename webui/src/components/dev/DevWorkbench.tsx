@@ -131,6 +131,8 @@ import { localPreviewPortFromUrl } from "@/components/dev/previewConsole";
 import { RecentEditsTracker } from "@/components/dev/recentEdits";
 import { DevMobilePreview } from "@/components/dev/DevMobilePreview";
 import { MarkdownText } from "@/components/MarkdownText";
+import { AnnotationLayer } from "@/components/annotations/AnnotationLayer";
+import { requestAnnotation } from "@/lib/annotations";
 import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
@@ -4719,6 +4721,7 @@ export function DevWorkbench({
               </div>
             ) : showMdPreview ? (
               <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+                <AnnotationLayer filePath={projectRelativePath(path)}>
                 <MarkdownText
                   className={cn(
                     "prose prose-sm max-w-none dark:prose-invert",
@@ -4729,6 +4732,7 @@ export function DevWorkbench({
                 >
                   {draft}
                 </MarkdownText>
+                </AnnotationLayer>
               </div>
             ) : (
               <PanelErrorBoundary resetKey={path}>
@@ -4771,6 +4775,20 @@ export function DevWorkbench({
                       ? (payload) => seedSelectionToChat(path, payload)
                       : undefined
                   }
+                  onAnnotateSelection={(payload) => {
+                    // Lands in the review tray of the conversation on screen.
+                    requestAnnotation({
+                      source: {
+                        kind: "file",
+                        path: projectRelativePath(path),
+                        fromLine: payload.fromLine,
+                        toLine: payload.toLine,
+                      },
+                      quote: payload.text,
+                      offset: 0,
+                      rect: payload.rect,
+                    });
+                  }}
                   onFormatDocument={() => void formatDocument(path)}
                   filePath={path}
                   blameByLine={

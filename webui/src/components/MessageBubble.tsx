@@ -35,6 +35,9 @@ import {
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { isValidationPendingMessage, ValidationPendingCard } from "@/components/thread/ValidationPendingCard";
 import { MarkdownText } from "@/components/MarkdownText";
+import { AnnotationLayer } from "@/components/annotations/AnnotationLayer";
+import { ReviewFeedbackCard } from "@/components/annotations/ReviewFeedbackCard";
+import { contentFingerprint, parseReviewMessage } from "@/lib/annotations";
 import { ReasoningCard } from "@/components/thread/activity/ReasoningRow";
 import { RevertPromptDialog } from "@/components/RevertPromptDialog";
 import { SlashCommandText } from "@/components/SlashCommandText";
@@ -283,6 +286,12 @@ export const MessageBubble = memo(function MessageBubble({
       .sort(([a], [b]) => a.localeCompare(b));
   }, [phaseTimingsMs]);
 
+  // Finds this answer's annotations again when its id changed after a reload.
+  const messageKey = useMemo(
+    () => (message.role === "assistant" && !message.isStreaming ? contentFingerprint(message.content) : ""),
+    [message.content, message.isStreaming, message.role],
+  );
+
   if (message.kind === "trace") {
     return <TraceGroup message={message} animClass={baseAnim} />;
   }
@@ -296,6 +305,8 @@ export const MessageBubble = memo(function MessageBubble({
     const hasText = visibleContent.trim().length > 0;
     // "/apps android" sent by the Code menus: a request card, not a bare word.
     const appRequest = parseAppFactoryCommand(visibleContent);
+    // A batch of annotations sent from the review tray: a compact card.
+    const reviewItems = parseReviewMessage(visibleContent);
     const slashCommand = matchingSlashCommand(visibleContent, slashCommands);
     // Mode routing (/ask, /forge, /blueprint, …) is composer plumbing: show
     // only the prompt text. Checked on the raw first token so it works even
@@ -442,6 +453,8 @@ export const MessageBubble = memo(function MessageBubble({
             ) : null}
             {appRequest ? (
               <AppFactoryRequestCard target={appRequest} />
+            ) : reviewItems ? (
+              <ReviewFeedbackCard items={reviewItems} />
             ) : (
               <p
                 dir="auto"
@@ -552,12 +565,19 @@ export const MessageBubble = memo(function MessageBubble({
           ) : validationPending ? (
             <ValidationPendingCard content={message.content} onOpenFilePreview={onOpenFilePreview} />
           ) : (
-            <MarkdownText
-              streaming={!!message.isStreaming}
-              onOpenFilePreview={onOpenFilePreview}
+            // Select a passage of a finished answer to annotate it.
+            <AnnotationLayer
+              messageId={message.id}
+              messageKey={messageKey}
+              enabled={showAssistantActions && !assistantErrorOverride}
             >
-              {assistantErrorOverride ?? message.content}
-            </MarkdownText>
+              <MarkdownText
+                streaming={!!message.isStreaming}
+                onOpenFilePreview={onOpenFilePreview}
+              >
+                {assistantErrorOverride ?? message.content}
+              </MarkdownText>
+            </AnnotationLayer>
           )}
           {media.length > 0 ? <MessageMedia media={media} align="left" /> : null}
           {showAssistantFooterRow ? (

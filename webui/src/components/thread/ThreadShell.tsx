@@ -39,6 +39,8 @@ import {
   type ComposerTurnMode,
 } from "@/components/thread/ComposerModeMenu";
 import { ThreadComposer, type ComposerModelOption, type ComposerTeamMode } from "@/components/thread/ThreadComposer";
+import { AnnotationDock } from "@/components/annotations/AnnotationDock";
+import { AnnotationScopeContext } from "@/components/annotations/AnnotationLayer";
 import {
   createSubagentCardStore,
   LiveSubagentsPanel,
@@ -3004,6 +3006,9 @@ export function ThreadShell({
               onOpenPanel={subagentJournal.openPanel}
             />
           ) : null}
+          {!isViewer ? (
+            <AnnotationDock scope={chatId} onSend={handleThreadSend} canSend={!isStreaming} />
+          ) : null}
           <div className="relative z-10">
         <ThreadComposer
           key={chatId}
@@ -3257,6 +3262,7 @@ export function ThreadShell({
           >
             <SubagentJournalContext.Provider value={subagentJournal}>
             <PendingChangesContext.Provider value={pendingReview.changes}>
+            <AnnotationScopeContext.Provider value={isViewer ? null : chatId}>
             <ThreadViewport
               ref={viewportRef}
               messages={displayMessages}
@@ -3284,6 +3290,7 @@ export function ThreadShell({
               onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
               onRevertResubmit={onRevertResubmit ? handleRevertResubmit : undefined}
             />
+            </AnnotationScopeContext.Provider>
             </PendingChangesContext.Provider>
             </SubagentJournalContext.Provider>
           </FilePreviewAvailabilityProvider>

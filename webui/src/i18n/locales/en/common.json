@@ -12004,5 +12004,28 @@
     },
     "yes": "yes",
     "no": "no"
+  },
+  "annotations": {
+    "block": "Annotate this block",
+    "count_one": "Review: {{count}} annotation",
+    "count_other": "Review: {{count}} annotations",
+    "wait": "Wait for the current answer to finish.",
+    "clear": "Clear",
+    "send": "Send feedback",
+    "action": "Action",
+    "actions": {
+      "clarify": "Clarify",
+      "example": "Give an example",
+      "alternative": "Find an alternative",
+      "keep": "Good, keep this",
+      "remove": "Remove this",
+      "expand": "Expand",
+      "comment": "Comment"
+    },
+    "remove": "Remove annotation",
+    "commentPlaceholder": "Add a comment (optional)",
+    "toolbar": "Annotate selection",
+    "commentHint": "Or write your own comment...",
+    "keysHint": "Press a letter to tag. Enter adds the comment, Ctrl+Enter sends it now, Alt+letter tags with the comment."
   }
 }

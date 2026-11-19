@@ -12004,5 +12004,28 @@
     },
     "yes": "oui",
     "no": "non"
+  },
+  "annotations": {
+    "block": "Annoter ce bloc",
+    "count_one": "Revue : {{count}} annotation",
+    "count_other": "Revue : {{count}} annotations",
+    "wait": "Attendez la fin de la réponse en cours.",
+    "clear": "Effacer",
+    "send": "Envoyer les retours",
+    "action": "Action",
+    "actions": {
+      "clarify": "Clarifier",
+      "example": "Donner un exemple",
+      "alternative": "Trouver une alternative",
+      "keep": "Bien, à garder",
+      "remove": "Supprimer ceci",
+      "expand": "Développer",
+      "comment": "Commentaire"
+    },
+    "remove": "Retirer l'annotation",
+    "commentPlaceholder": "Ajouter un commentaire (facultatif)",
+    "toolbar": "Annoter la sélection",
+    "commentHint": "Ou écrivez votre propre commentaire...",
+    "keysHint": "Appuyez sur une lettre pour étiqueter. Entrée ajoute le commentaire, Ctrl+Entrée l'envoie tout de suite, Alt+lettre étiquette avec le commentaire."
   }
 }

@@ -212,6 +212,15 @@
   ::selection {
     @apply bg-primary/15;
   }
+
+  /* Review annotations: passages the user marked in an answer or a file. */
+  ::highlight(navin-annotation) {
+    background-color: rgb(245 158 11 / 0.28);
+  }
+
+  ::highlight(navin-annotation-keep) {
+    background-color: rgb(34 197 94 / 0.24);
+  }
 }
 
 @layer utilities {

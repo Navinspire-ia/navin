@@ -839,6 +839,7 @@ export default function CodeEditor({
   onRequestCompletion,
   onRequestEdit,
   onAddSelectionToChat,
+  onAnnotateSelection,
   onFormatDocument,
   blameByLine,
   filePath,
@@ -917,6 +918,13 @@ export default function CodeEditor({
     text: string;
     fromLine: number;
     toLine: number;
+  }) => void;
+  /** Mod-Shift-L: annotate the current selection for the review tray. */
+  onAnnotateSelection?: (payload: {
+    text: string;
+    fromLine: number;
+    toLine: number;
+    rect: { left: number; top: number; right: number; bottom: number };
   }) => void;
   /** Shift-Alt-F: run the project formatter over the buffer (VS Code parity). */
   onFormatDocument?: () => void;
@@ -1586,6 +1594,31 @@ export default function CodeEditor({
         },
       });
     }
+    if (onAnnotateSelection) {
+      const annotate = onAnnotateSelection;
+      navBindings.push({
+        key: "Mod-Shift-l",
+        run(view) {
+          const sel = view.state.selection.main;
+          if (sel.empty) return false;
+          const start = view.coordsAtPos(sel.from);
+          const end = view.coordsAtPos(sel.to) ?? start;
+          const box = view.dom.getBoundingClientRect();
+          annotate({
+            text: view.state.sliceDoc(sel.from, sel.to),
+            fromLine: view.state.doc.lineAt(sel.from).number,
+            toLine: view.state.doc.lineAt(sel.to).number,
+            rect: {
+              left: start?.left ?? box.left,
+              top: start?.top ?? box.top,
+              right: end?.right ?? box.right,
+              bottom: end?.bottom ?? box.top,
+            },
+          });
+          return true;
+        },
+      });
+    }
     if (onFormatDocument && !readOnly) {
       const format = onFormatDocument;
       navBindings.push({
@@ -1688,6 +1721,7 @@ export default function CodeEditor({
     onRequestCompletion,
     onRequestEdit,
     onAddSelectionToChat,
+    onAnnotateSelection,
     onFormatDocument,
     canToggleBreakpoint,
     handleToggleBreakpoint,
